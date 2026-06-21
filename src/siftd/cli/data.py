@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -15,6 +16,7 @@ from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
     from siftd.ingestion import IngestEvent, IngestStats
+    from siftd.output.live import LiveRegion
 
 
 class _AdapterCounts:
@@ -60,6 +62,11 @@ class _IngestTextRenderer:
         self.quiet = quiet
         self._counts: dict[str, _AdapterCounts] = {}
         self._started: set[str] = set()
+        self._live: LiveRegion | None = None  # attached for the TTY bars
+
+    def attach_live(self, live: LiveRegion) -> None:
+        """Attach the live region whose bars replace per-file streaming on a TTY."""
+        self._live = live
 
     def handle_event(self, event: IngestEvent) -> None:
         counts = self._counts.setdefault(event.adapter, _AdapterCounts(event.total))
@@ -68,6 +75,17 @@ class _IngestTextRenderer:
         counts.add(event.status, event.reason)
 
         if self.quiet:
+            return
+
+        # Live tier: every adapter gets a re-painting progress bar; the per-file
+        # scroll is gone. Force a paint past the throttle on a new adapter, an
+        # error, or completion — the moments worth not dropping.
+        if self._live is not None and self._live.active:
+            new_adapter = event.adapter not in self._started
+            self._started.add(event.adapter)
+            done = bool(counts.total) and counts.processed >= counts.total
+            force = new_adapter or event.status == "error" or done
+            self._live.update(self._bars_block(), force=force)
             return
 
         if event.status != "skipped":
@@ -79,6 +97,65 @@ class _IngestTextRenderer:
 
         if counts.processed == counts.total and event.adapter in self._started:
             self._print_adapter_done(event.adapter, counts)
+
+    def finalize_live(self) -> None:
+        """Deposit the final bar frame into scrollback (no-op when not live)."""
+        if self._live is not None and self._live.active:
+            self._live.finalize(self._bars_block())
+
+    def _bars_block(self):
+        """All started adapters as one block of re-painting progress-bar rows."""
+        from painted import Block, current_icons, current_palette, join_vertical
+
+        from siftd.output.common import term_width
+        from siftd.output.live import bar_row, spinner_glyph
+
+        pal = current_palette()
+        ic = current_icons()
+        items = [(n, c) for n, c in self._counts.items() if n in self._started]
+        if not items:
+            return Block.empty(0, 0)
+
+        label_width = max(12, max(len(n) for n, _ in items))
+        bar_width = max(10, min(28, term_width() - label_width - 44))
+
+        # Shared column widths so every row's stats align vertically — the
+        # progress fraction and each count right-align to the widest in the set.
+        prog = {n: f"{c.processed}/{c.total or 0}" for n, c in items}
+        prog_w = max(len(s) for s in prog.values())
+        new_w = max(len(str(c.new)) for _, c in items)
+        upd_w = max(len(str(c.updated_total)) for _, c in items)
+        skip_w = max(len(str(c.skipped)) for _, c in items)
+        any_err = any(c.error for _, c in items)
+        err_w = max((len(str(c.error)) for _, c in items), default=1)
+
+        rows = []
+        for name, c in items:
+            total = c.total or 0
+            frac = (c.processed / total) if total else 0.0
+            done = bool(total) and c.processed >= total
+            if done and c.error:
+                glyph, gstyle = ic.error, pal.error
+            elif done:
+                glyph, gstyle = ic.ok, pal.success
+            else:
+                glyph, gstyle = spinner_glyph(), pal.accent
+            segments = [
+                (f"{prog[name]:>{prog_w}}  ", pal.muted),
+                ("new ", None), (f"{c.new:>{new_w}}", pal.success),
+                ("  upd ", None), (f"{c.updated_total:>{upd_w}}", pal.accent),
+                ("  skip ", None), (f"{c.skipped:>{skip_w}}", pal.muted),
+            ]
+            # Show the err column for every row when any adapter errored, so the
+            # structure stays consistent down the set (0 where clean).
+            if any_err:
+                segments += [("  err ", None), (f"{c.error:>{err_w}}", pal.error)]
+            rows.append(bar_row(
+                name, frac, label_width=label_width, bar_width=bar_width,
+                segments=segments, glyph=glyph, glyph_style=gstyle, label_style=pal.muted,
+                filled_char="━", empty_char="─",  # a thin rule, not a full block
+            ))
+        return join_vertical(*rows)
 
     def _print_adapter_done(self, adapter: str, counts: _AdapterCounts) -> None:
         parts = [
@@ -98,70 +175,79 @@ class _IngestTextRenderer:
 
     def print_summary(self, stats: IngestStats) -> None:
         """Print final ingestion summary."""
-        active = [
-            (name, counts)
-            for name, counts in self._counts.items()
-            if counts.new > 0 or counts.updated_total > 0 or counts.error > 0
-        ]
-
         has_content = (
             stats.conversations or stats.prompts
             or stats.responses or stats.tool_calls
         )
 
-        if not active:
-            if stats.files_found == 0:
-                if not self.quiet:
-                    print("\nNo files found.")
-            else:
-                if not self.quiet:
-                    msg = f"\n{stats.files_found} files scanned, all up to date."
-                    if self.verbose:
-                        all_reasons: dict[str, int] = {}
-                        for counts in self._counts.values():
-                            for reason, count in counts.skip_reasons.items():
-                                all_reasons[reason] = all_reasons.get(reason, 0) + count
-                        if all_reasons:
-                            parts = ", ".join(
-                                f"{reason} {count}"
-                                for reason, count in sorted(all_reasons.items())
-                            )
-                            msg += f" ({parts})"
-                    print(msg)
+        if not has_content:
+            # Nothing landed — an empty-state note (the bars already showed the
+            # per-adapter skip/err disposition). Don't claim "up to date" if
+            # files actually errored.
+            if not self.quiet:
+                if stats.files_found == 0:
+                    status.info("No files found.")
+                elif stats.files_errored:
+                    status.warning(f"{stats.files_errored} file(s) errored; nothing new ingested.")
+                else:
+                    detail = self._skip_reasons_detail() if self.verbose else None
+                    status.info(f"{stats.files_found} files scanned, all up to date.", detail=detail)
             return
 
         if self.quiet:
-            if has_content:
-                print(self._format_totals_line(stats))
+            print(self._format_totals_line(stats))
             return
 
-        # Per-adapter table
+        # Per-adapter content yield + grand-total footer, deposited below the
+        # bars (which already carried the new/upd/skip disposition).
         print()
-        name_w = max(len(name) for name, _ in active)
-        new_w = max(len(str(c.new)) for _, c in active)
-        upd_w = max(len(str(c.updated_total)) for _, c in active)
-        skip_w = max(len(str(c.skipped)) for _, c in active)
+        self._print_summary_table(stats)
 
-        for name, c in active:
-            line = (
-                f"{name:<{name_w}}"
-                f"  {c.new:>{new_w}} new"
-                f"  {c.updated_total:>{upd_w}} updated"
-                f"  {c.skipped:>{skip_w}} skipped"
-            )
-            if self.verbose and c.skip_reasons:
-                reasons = ", ".join(
-                    f"{reason} {count}"
-                    for reason, count in sorted(c.skip_reasons.items())
-                )
-                line += f" ({reasons})"
-            if c.error:
-                line += f"  {c.error} error"
-            print(line)
+    def _print_summary_table(self, stats: IngestStats) -> None:
+        from painted import Align, current_palette, join_vertical, print_block
 
-        indent = " " * name_w
-        print(f"{indent}  ──")
-        print(f"{indent}  {self._format_totals_line(stats)}")
+        from siftd.output.common import term_width
+        from siftd.output.live import text_row
+        from siftd.output.table import Col, render_table
+
+        pal = current_palette()
+        # Per-adapter content from stats.by_harness — only adapters that actually
+        # yielded something (an all-skip adapter contributes no rows here).
+        yielded = [
+            (name, h)
+            for name, h in stats.by_harness.items()
+            if h.get("conversations") or h.get("prompts")
+            or h.get("responses") or h.get("tool_calls")
+        ]
+        cols = [
+            Col("ADAPTER", lambda it: it[0], fill=True, min_width=10),
+            Col("CONVERSATIONS", lambda it: str(it[1].get("conversations", 0)),
+                align=Align.END, style=pal.accent),
+            Col("PROMPTS", lambda it: str(it[1].get("prompts", 0)), align=Align.END),
+            Col("RESPONSES", lambda it: str(it[1].get("responses", 0)), align=Align.END),
+            Col("TOOL_CALLS", lambda it: str(it[1].get("tool_calls", 0)),
+                align=Align.END, style=pal.muted),
+        ]
+
+        budget = term_width() if sys.stdout.isatty() else None
+        table_block = render_table(cols, yielded, width=budget)
+        totals = text_row([("  " + self._format_totals_line(stats), pal.muted)])
+        parts = [table_block, totals]
+        if self.verbose:
+            detail = self._skip_reasons_detail()
+            if detail:
+                parts.append(text_row([("  skipped: " + detail, pal.muted)]))
+        print_block(join_vertical(*parts))
+
+    def _skip_reasons_detail(self) -> str | None:
+        """Aggregate skip-reason breakdown across all adapters, or None."""
+        all_reasons: dict[str, int] = {}
+        for counts in self._counts.values():
+            for reason, count in counts.skip_reasons.items():
+                all_reasons[reason] = all_reasons.get(reason, 0) + count
+        if not all_reasons:
+            return None
+        return ", ".join(f"{reason} {count}" for reason, count in sorted(all_reasons.items()))
 
     @staticmethod
     def _format_totals_line(stats: IngestStats) -> str:
@@ -355,13 +441,30 @@ def cmd_ingest(args) -> int:
     if not json_mode:
         if not quiet:
             print("\nIngesting...")
+
+    # On a Unicode TTY, per-adapter progress bars re-paint in place; a pipe /
+    # --json / non-UTF-8 locale leaves the region inactive and the renderer
+    # falls back to its plain streaming (or quiet) path.
+    from siftd.output.live import LiveRegion
+
+    live = LiveRegion(enabled=not quiet and not json_mode)
+    if not json_mode:
+        renderer.attach_live(live)  # type: ignore[union-attr]
     try:
-        result = run_ingest(
-            db_path=db,
-            adapter_names=args.adapter,
-            scan_paths=args.path,
-            on_event=renderer.handle_event,
-        )
+        with live:
+            try:
+                result = run_ingest(
+                    db_path=db,
+                    adapter_names=args.adapter,
+                    scan_paths=args.path,
+                    on_event=renderer.handle_event,
+                )
+            finally:
+                # Deposit the final frame even if ingest raised; never let this
+                # mask the real error (the cursor restore is __exit__'s job).
+                if not json_mode:
+                    with contextlib.suppress(Exception):
+                        renderer.finalize_live()  # type: ignore[union-attr]
     except AdapterSelectionError as exc:
         message = str(exc)
         if json_mode:
@@ -763,6 +866,59 @@ def _doctor_list(args) -> int:
     return 0
 
 
+def _run_fix_steps(steps: list, conn, db) -> int:
+    """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
+
+    Dissolves the two hand-rolled ``\\r``-overwrite spinners onto the shared live
+    region: on a Unicode TTY each step shows a spinner line that resolves in
+    place to ``✓``/``✗``; a pipe / non-Unicode locale prints the resolved lines
+    plainly (ascii-aware), keeping the per-step feedback the ``\\r`` form gave.
+    """
+    from painted import ASCII_ICONS, Block, current_icons, current_palette, join_vertical
+
+    from siftd.output.common import supports_unicode
+    from siftd.output.live import LiveRegion, spinner_glyph, text_row
+
+    pal = current_palette()
+    ic = current_icons()
+    plain_icons = ic if supports_unicode() else ASCII_ICONS
+    outcomes: list[tuple[str, str]] = []  # (severity, text)
+    errors = 0
+
+    def _glyph(severity: str):
+        return (ic.ok, pal.success) if severity == "success" else (ic.error, pal.error)
+
+    def block(pending: str | None = None) -> Block:
+        rows = []
+        for severity, text in outcomes:
+            g, gs = _glyph(severity)
+            rows.append(text_row([(f"  {g} ", gs), (text, None)]))
+        if pending is not None:
+            rows.append(text_row([(f"  {spinner_glyph()} ", pal.accent), (f"{pending}...", pal.muted)]))
+        return join_vertical(*rows) if rows else Block.empty(0, 0)
+
+    live = LiveRegion()
+    with live:
+        for label, fn in steps:
+            if live.active:
+                live.update(block(pending=label), force=True)
+            try:
+                result = fn(conn, db)
+                outcomes.append(("success", f"{label}: {result}"))
+            except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
+                outcomes.append(("error", f"{label}: {e}"))
+                errors += 1
+            # Active: the next step's pending frame (or finalize, for the last
+            # step) repaints this resolved row — no separate post-resolve update.
+            if not live.active:
+                severity, text = outcomes[-1]
+                mark = plain_icons.ok if severity == "success" else plain_icons.error
+                print(f"  {mark} {text}")
+        if live.active:
+            live.finalize(block())
+    return errors
+
+
 def _doctor_fix(args) -> int:
     """Execute cached fixes from the last doctor run."""
     from siftd.doctor.fixes import clear_findings_cache, load_findings_cache
@@ -789,17 +945,8 @@ def _doctor_fix(args) -> int:
 
     print(f"Applying {len(actionable)} fix(es):\n")
 
-    errors = 0
-    for entry in actionable:
-        cmd = entry["fix_command"]
-        label, fn = _FIX_REGISTRY[cmd]
-        print(f"  ⠋ {label}...", end="", flush=True)
-        try:
-            result = fn(conn, db)
-            print(f"\r  ✓ {label}: {result}")
-        except Exception as e:
-            print(f"\r  ✗ {label}: {e}")
-            errors += 1
+    steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
+    errors = _run_fix_steps(steps, conn, db)
 
     conn.close()
     clear_findings_cache()
@@ -820,17 +967,9 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
         return 1
 
     conn = open_database(db)
-    label, fn = _FIX_REGISTRY[fix_command]
-    print(f"  ⠋ {label}...", end="", flush=True)
-    try:
-        result = fn(conn, db)
-        print(f"\r  ✓ {label}: {result}")
-        conn.close()
-        return 0
-    except Exception as e:
-        print(f"\r  ✗ {label}: {e}")
-        conn.close()
-        return 1
+    errors = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
+    conn.close()
+    return 1 if errors else 0
 
 
 # Fix registry: maps fix_command → (label, callable(conn, db_path) → str)

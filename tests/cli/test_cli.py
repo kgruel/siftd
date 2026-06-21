@@ -227,7 +227,9 @@ class TestIngestCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        assert "unchanged" in captured.out
+        # An all-skipped run is an empty-state: the verbose skip-reason breakdown
+        # rides the status.info "all up to date" detail (ℹ, stderr).
+        assert "unchanged" in captured.err
 
     def test_ingest_unknown_adapter(self, tmp_path, capsys):
         """siftd ingest with unknown adapter returns error."""

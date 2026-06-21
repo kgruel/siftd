@@ -1,5 +1,6 @@
 """Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy)."""
 
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,14 @@ from conftest import FIXTURES_DIR
 import siftd.cli.data as data_cli
 from siftd.cli import main
 from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
+from siftd.output.live import LiveRegion
+
+
+class _FakeTTY(io.StringIO):
+    """A StringIO that claims to be a terminal (drives the live path active)."""
+
+    def isatty(self) -> bool:
+        return True
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,7 +172,8 @@ class TestIngestTextRenderer:
         renderer = _IngestTextRenderer(verbose=False)
         stats = FakeStats(files_found=0, conversations=0, prompts=0, responses=0, tool_calls=0)
         renderer.print_summary(stats)
-        assert "No files found" in capsys.readouterr().out
+        # Empty-states route through the status vocabulary (ℹ, stderr).
+        assert "No files found" in capsys.readouterr().err
 
     def test_print_summary_all_up_to_date(self, capsys):
         renderer = _IngestTextRenderer(verbose=False)
@@ -173,11 +183,12 @@ class TestIngestTextRenderer:
             counts.add("skipped", "unchanged")
         renderer._counts["test_adapter"] = counts
         stats = FakeStats(
-            files_found=5, files_ingested=0, files_replaced=0,
+            files_found=5, files_ingested=0, files_replaced=0, files_errored=0,
             conversations=0, prompts=0, responses=0, tool_calls=0,
         )
         renderer.print_summary(stats)
-        assert "all up to date" in capsys.readouterr().out
+        # Empty-states route through the status vocabulary (ℹ, stderr).
+        assert "all up to date" in capsys.readouterr().err
 
     def test_print_summary_quiet_shows_totals_line(self, capsys):
         renderer = _IngestTextRenderer(verbose=False, quiet=True)
@@ -190,6 +201,88 @@ class TestIngestTextRenderer:
         out = capsys.readouterr().out
         assert "2 conversations" in out
         assert "4 prompts" in out
+
+    def test_print_summary_table_shows_per_adapter_content(self, capsys):
+        # The summary pivots to per-adapter CONTENT yield (from by_harness) —
+        # not the file disposition the bars already carried.
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=5, files_errored=0, conversations=3, prompts=8, responses=8, tool_calls=2,
+            by_harness={
+                "claude_code": {"conversations": 2, "prompts": 6, "responses": 6, "tool_calls": 2},
+                "aider": {"conversations": 1, "prompts": 2, "responses": 2, "tool_calls": 0},
+            },
+        )
+        renderer.print_summary(stats)
+        out = capsys.readouterr().out
+        for header in ("ADAPTER", "CONVERSATIONS", "PROMPTS", "RESPONSES", "TOOL_CALLS"):
+            assert header in out
+        assert "NEW" not in out and "SKIPPED" not in out  # no longer file disposition
+        assert "claude_code" in out and "aider" in out
+        assert "3 conversations" in out  # grand-total footer
+
+    def test_print_summary_table_excludes_adapters_with_no_content(self, capsys):
+        # An all-skip adapter yields nothing → no row in the content table.
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=10, files_errored=0, conversations=2, prompts=4, responses=4, tool_calls=1,
+            by_harness={
+                "claude_code": {"conversations": 2, "prompts": 4, "responses": 4, "tool_calls": 1},
+                "vscode": {"conversations": 0, "prompts": 0, "responses": 0, "tool_calls": 0},
+            },
+        )
+        renderer.print_summary(stats)
+        out = capsys.readouterr().out
+        assert "claude_code" in out
+        assert "vscode" not in out
+
+    def test_print_summary_warns_when_errors_and_nothing_landed(self, capsys):
+        # Files errored and nothing new ingested → a warning, not "all up to date".
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=3, files_errored=2,
+            conversations=0, prompts=0, responses=0, tool_calls=0,
+        )
+        renderer.print_summary(stats)
+        err = capsys.readouterr().err
+        assert "errored" in err
+        assert "all up to date" not in err
+
+    def test_active_ingest_bars_paint_to_tty(self, monkeypatch):
+        # The active live path: handle_event drives _bars_block through the REAL
+        # InPlaceRenderer (against a fake-TTY sink), finalize_live deposits.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        stream = _FakeTTY()
+        live = LiveRegion(stream=stream)
+        assert live.active
+        renderer = _IngestTextRenderer(verbose=False)
+        renderer.attach_live(live)
+        with live:
+            renderer.handle_event(FakeEvent(adapter="claude_code", status="ingested", index=1, total=2))
+            renderer.handle_event(
+                FakeEvent(adapter="claude_code", status="skipped", reason="unchanged", index=2, total=2)
+            )
+            renderer.finalize_live()
+        out = stream.getvalue()
+        assert "━" in out  # a (thin) progress bar was painted
+        assert "claude_code" in out  # the adapter label rode the bar row
+
+    def test_finalize_live_noop_when_inactive_or_empty(self, monkeypatch):
+        renderer = _IngestTextRenderer(verbose=False)
+        renderer.finalize_live()  # no live attached → no-op, no raise
+
+        inactive = LiveRegion(stream=io.StringIO())  # not a TTY
+        renderer.attach_live(inactive)
+        with inactive:
+            renderer.finalize_live()  # inactive → guarded no-op
+
+        # Active but zero adapters started → _bars_block is empty; finalize on an
+        # empty Block must not raise.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        live = LiveRegion(stream=_FakeTTY())
+        renderer.attach_live(live)
+        with live:
+            renderer.finalize_live()
 
     def test_status_label_mapping(self):
         assert _IngestTextRenderer._status_label("ingested") == "new"
@@ -644,6 +737,37 @@ class TestCmdDoctor:
 
 
 class TestDataDirectBranches:
+    def test_run_fix_steps_plain_log_and_error_count(self, capsys):
+        # Non-TTY (capsys): the dissolved spinner prints a plain step-log and
+        # returns the error count. A failing step is reported, not raised.
+        def boom(conn, db):
+            raise RuntimeError("nope")
+
+        steps = [("Good", lambda conn, db: "did 3"), ("Bad", boom)]
+        errors = data_cli._run_fix_steps(steps, conn=None, db=None)
+        assert errors == 1
+        out = capsys.readouterr().out
+        assert "Good: did 3" in out
+        assert "Bad: nope" in out
+
+    def test_run_fix_steps_active_paints_spinner_log(self, monkeypatch, capsys):
+        # Active TTY: the dissolved spinner paints through the real InPlaceRenderer
+        # (pending → resolved in place) rather than the plain per-step print.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+        def boom(conn, db):
+            raise RuntimeError("nope")
+
+        errors = data_cli._run_fix_steps(
+            [("Good", lambda conn, db: "ok"), ("Bad", boom)], conn=None, db=None
+        )
+        assert errors == 1
+        out = capsys.readouterr().out
+        assert "Good: ok" in out and "Bad: nope" in out
+        # A live frame was painted (spinner and/or resolved glyph), not a plain log.
+        assert "⠋" in out or "✓" in out
+
     def test_copy_query_and_formatter_branches(self, monkeypatch, capsys):
         monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: [])
         rc = data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=True))
