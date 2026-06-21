@@ -107,7 +107,11 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.list_models", lambda **k: ["m1"])
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: [{"path": "/w1"}])
     monkeypatch.setattr("siftd.api.tags.list_tags", lambda **k: [SimpleNamespace(name="tag1")])
-    out = _run(hr.ui_meta.fn(SimpleNamespace(), tmp_path / "db.db", None))
+    # Pass facet params explicitly (off-route, Parameter defaults are markers).
+    out = _run(hr.ui_meta.fn(
+        SimpleNamespace(), tmp_path / "db.db", None, tag=None, view="chunks",
+        mode="auto", workspace=None, model=None, owner=None, since=None, before=None,
+    ))
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
 
 

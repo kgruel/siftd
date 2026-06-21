@@ -349,7 +349,47 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
+  // --- Find: mirror the live search state into the canonical URL (Slice 3a) ---
+  // The control strip targets #list (so it never re-renders and keeps focus),
+  // which means it can't push a URL via static htmx. After each find swap settles
+  // we reconstruct /?view=search&<facets> from the strip and replaceState it — so
+  // a refresh reproduces the query, a shared link carries it, and clicking a hit
+  // (which pushState's /?id=) leaves a search entry that Back restores with the
+  // current facets. replaceState (not push) so refinements don't stack history.
+  // CSP-safe: History API + DOM reads only, no eval/inline.
+  var FIND_FACETS = [
+    ['q', 'search'], ['shape', 'view'], ['engine', 'mode'],
+    ['workspace', 'workspace'], ['model', 'model'], ['tag', 'tag'],
+    ['owner', 'owner'], ['since', 'since'], ['before', 'before'],
+  ];
+  function syncFindUrl() {
+    var filters = document.getElementById('filters');
+    if (!filters || !document.querySelector('#main .find')) return;
+    var url = ['view=search'];      // canonical shell params (q/shape/engine/…)
+    var ctrl = [];                  // control params (search/view/mode/…)
+    FIND_FACETS.forEach(function (pair) {
+      var el = filters.querySelector('[name="' + pair[1] + '"]');
+      var v = el ? (el.value || '').trim() : '';
+      if (!v) return;
+      if (pair[1] === 'view' && v === 'chunks') return;  // default result-shape
+      if (pair[1] === 'mode' && v === 'auto') return;     // default engine
+      url.push(pair[0] + '=' + encodeURIComponent(v));
+      ctrl.push(pair[1] + '=' + encodeURIComponent(v));
+    });
+    var shellUrl = '/?' + url.join('&');
+    if (location.pathname + location.search !== shellUrl) {
+      history.replaceState(history.state, '', shellUrl);
+    }
+    // Keep the two-stage children's reload targets in step with the live query,
+    // so a back/forward history *restore* (which re-fires their hx-trigger=load)
+    // reproduces the prefilled strip + results — not the empty initial mount.
+    var cqs = ctrl.length ? '?' + ctrl.join('&') : '';
+    var list = document.getElementById('list');
+    if (list) list.setAttribute('hx-get', '/query' + cqs);
+    filters.setAttribute('hx-get', '/meta' + cqs);
+  }
+
+  function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); syncFindUrl(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

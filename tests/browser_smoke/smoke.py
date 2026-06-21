@@ -418,6 +418,10 @@ async def flow(cdp, check, goto, code_conv):
     await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
+    # Slice 3a: the live search state is mirrored into the canonical URL, so a
+    # refresh/shared link reproduces the query.
+    synced = await cdp.eval("location.search.includes('view=search') && location.search.includes('q=needle')")
+    check("search state mirrored into the URL (?view=search&q=needle)", bool(synced))
     await cdp.click("#list .search-hit__main")
     await cdp.drain(1.5)
     folio = await cdp.eval("!!document.querySelector('#main .folio')")
@@ -439,6 +443,19 @@ async def flow(cdp, check, goto, code_conv):
     check("find hit opens folio in trace mode", bool(jump_trace))
     check("search jump marks + lands on the matched event",
           bool(is_target) and bool(hint_consumed), f"target={is_target} consumed={hint_consumed}")
+
+    # Slice 3a — the retain crux: Back from the folio restores the prior search
+    # results (URL carries the query, so the restore reproduces them).
+    await cdp.eval("history.back()")
+    await cdp.drain(2.5)
+    back_url = await cdp.eval("location.search")
+    back_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    back_has_find = await cdp.eval("!!document.querySelector('#main .find')")
+    check(
+        "back from folio retains the prior search results",
+        ("q=needle" in (back_url or "")) and (back_hits or 0) > 0,
+        f"url={back_url} hits={back_hits} find={back_has_find}",
+    )
 
     # sessions view: live zone (loopback server -> live on, sandbox -> empty)
     # over the day-grouped ingested timeline; hist bars scaled by enhance.js

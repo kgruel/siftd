@@ -316,8 +316,12 @@ def test_find_deep_link_propagates_query(ctx):
     """?q= deep-links through the shell to /find, which seeds both the control
     strip (prefill) and the initial list with the term."""
     client, _cid = ctx
+    # The search view is server-rendered inline into #main (so a back-restore
+    # reproduces it), so the shell carries the find host's /meta + /query mounts
+    # directly rather than a /find?q= mount.
     shell = client.get("/", params={"q": "needle"}).text
-    assert "/find?q=needle" in shell
+    assert 'class="find"' in shell
+    assert "/meta?search=needle" in shell and "/query?search=needle" in shell
     find = client.get("/find", params={"q": "needle"}).text
     assert "/meta?search=needle" in find
     assert "/query?search=needle" in find
@@ -925,7 +929,8 @@ def test_tags_rows_drill_into_find(tags_ctx):
 
 def test_tag_deep_link_propagates_through_shell_and_find(tags_ctx):
     shell = tags_ctx.get("/", params={"tag": "research:auth"}).text
-    assert 'hx-get="/find?tag=research%3Aauth"' in shell
+    # ?tag= → search view, server-rendered inline (host carries the /query mount).
+    assert 'class="find"' in shell and "/query?tag=research%3Aauth" in shell
     find = tags_ctx.get("/find", params={"tag": "research:auth"}).text
     assert "/meta?tag=research%3Aauth" in find and "/query?tag=research%3Aauth" in find
     meta = tags_ctx.get("/meta", params={"tag": "research:auth"}).text
@@ -1219,7 +1224,8 @@ def test_legacy_presence_params_still_resolve(ctx):
     # Back-compat: the old presence-based deep links keep working without ?view=.
     client, cid = ctx
     assert "/folio?id=" in client.get("/", params={"id": cid}).text
-    assert "/find?q=" in client.get("/", params={"q": "needle"}).text
+    # ?q= → search view (inline host carrying the control-name mount).
+    assert "/query?search=needle" in client.get("/", params={"q": "needle"}).text
 
 
 def test_ws_sort_links_push_canonical_shell_url(ctx):
@@ -1242,3 +1248,56 @@ def test_brush_pushes_canonical_shell_url(tmp_path):
     with _hx_client(create_app(db_path=db, auth_config=None)) as c:
         body = c.get("/dashboard").text
         assert 'hx-push-url="/?view=stats&amp;model=claude-opus"' in body
+
+
+# ---------------------------------------------------------------------------
+# Slice 3a — search state in the URL (retain / refresh / share the full query).
+# ---------------------------------------------------------------------------
+
+
+def test_shell_decodes_full_search_facets(ctx):
+    """The shell decodes ?view=search + canonical facets into an inline find host
+    whose /meta + /query mounts carry the whole query (mapped to control names),
+    so a refresh / shared link / back-restore reproduces it."""
+    client, _cid = ctx
+    body = client.get("/", params={
+        "view": "search", "q": "needle", "shape": "thread",
+        "engine": "hybrid", "workspace": "/proj",
+    }).text
+    assert 'class="find"' in body  # server-rendered inline (not an empty mount)
+    assert "/query?" in body
+    assert "search=needle" in body and "view=thread" in body
+    assert "mode=hybrid" in body and "workspace=" in body
+
+
+def test_find_threads_facets_to_meta_and_query(ctx):
+    """ui_find maps the canonical facets onto the control names (shape→view,
+    engine→mode, q→search) and threads them to BOTH /meta and /query mounts."""
+    client, _cid = ctx
+    body = client.get("/find", params={
+        "q": "needle", "shape": "thread", "engine": "hybrid",
+        "workspace": "/proj", "model": "claude-opus",
+    }).text
+    meta = body.split('id="filters"')[1].split("</div>")[0]
+    lst = body.split('id="list"')[1].split("</div>")[0]
+    for frag in (meta, lst):
+        assert "search=needle" in frag
+        assert "view=thread" in frag and "mode=hybrid" in frag
+        assert "workspace=" in frag and "model=claude-opus" in frag
+
+
+def test_meta_prefills_all_facets(ctx):
+    """A deep-linked /meta reflects every facet (not just search/tag/view/mode),
+    so the rebuilt strip mirrors the URL — the retain/refresh contract."""
+    client, _cid = ctx
+    body = client.get("/meta", params={
+        "workspace": "/proj", "model": "claude-opus", "owner": "alice",
+        "since": "2026-01-01", "view": "thread",
+    }).text
+    # workspace + model selects carry the selected option; owner + since prefill.
+    ws = body.split('name="workspace"')[1].split("</select>")[0]
+    assert "selected" in ws
+    md = body.split('name="model"')[1].split("</select>")[0]
+    assert 'value="claude-opus" selected' in md
+    assert 'name="owner"' in body and 'value="alice"' in body
+    assert 'name="since"' in body and 'value="2026-01-01"' in body

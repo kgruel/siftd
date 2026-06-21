@@ -194,14 +194,59 @@ def _shell_redirect(request: Request, view: str, **state: str | None) -> Redirec
     return Redirect(_canonical_url(view, **state), status_code=303)
 
 
+# The canonical search facets carried in the shell URL, in mount-URL order. The
+# URL name avoids the two collisions with the view selector: result-shape is
+# ``shape`` (not ``view``) and the engine is ``engine`` (not ``mode``, which is
+# the folio's reading/trace axis). ``ui_find`` maps these back to the control
+# names (search/view/mode/…) when it builds the /meta + /query mounts.
+_SEARCH_FACET_KEYS: tuple[str, ...] = (
+    "q", "shape", "engine", "workspace", "model", "tag", "owner", "since", "before",
+)
+
+# Canonical search-facet name → the /meta + /query CONTROL name (q→search,
+# shape→view result-shape, engine→mode; the rest are identity).
+_SEARCH_CANON_TO_CONTROL: dict[str, str] = {
+    "q": "search", "shape": "view", "engine": "mode", "workspace": "workspace",
+    "model": "model", "tag": "tag", "owner": "owner", "since": "since", "before": "before",
+}
+
+
+def _search_control_qs(search: dict[str, Any]) -> str:
+    """Build the control-name querystring (``?search=…&view=…&…``) the /meta and
+    /query mounts speak, from the canonical search-facet map."""
+    from urllib.parse import quote as urlquote
+
+    parts = [
+        f"{ctrl}={urlquote(str(search[canon]).strip())}"
+        for canon, ctrl in _SEARCH_CANON_TO_CONTROL.items()
+        if search.get(canon) and str(search[canon]).strip()
+    ]
+    return ("?" + "&".join(parts)) if parts else ""
+
+
+def _find_host(qs: str) -> str:
+    """The Find host fragment: the two-stage shell whose #filters (control strip)
+    and #list (results) mount /meta + /query with ``qs``. Shared by ``ui_find``
+    (the htmx mount) and ``_page_shell`` (server-rendered inline into #main so a
+    history restore reproduces the query — see _page_shell)."""
+    return (
+        '<div class="find" data-view="search" data-title="Search"'
+        ' data-kick="query · facets">'
+        f'<div class="find__filters" id="filters" role="search"'
+        f' hx-get="/meta{qs}" hx-trigger="load"></div>'
+        f'<div class="find__list" id="list"'
+        f' hx-get="/query{qs}" hx-trigger="load"></div>'
+        "</div>"
+    )
+
+
 def _resolve_view(
     *,
     view: str | None,
     conv_id: str | None,
     folio_mode: str | None,
     folio_event: str | None,
-    search_q: str | None,
-    tag: str | None,
+    search: dict[str, str] | None,
     workspace_id: str | None,
     follow_sid: str | None,
     model: str | None,
@@ -215,14 +260,19 @@ def _resolve_view(
     ``?ws=`` → workspaces, ``?follow=`` → sessions) so older links and the
     ``_hx_detail`` drill-downs (which still push ``/?id=``/``/?tag=``/``/?ws=``)
     keep round-tripping. ``main_url`` is the fragment the shell's ``#main`` mounts.
+
+    ``search`` is the canonical search-facet map (see ``_SEARCH_FACET_KEYS``); the
+    search branch threads its non-empty members onto the /find mount so a refresh
+    / shared link / back-restore reproduces the full query (Slice 3a).
     """
     from urllib.parse import quote as urlquote
 
+    search = search or {}
     v = view if view in _VALID_VIEWS else None
     if v is None:
         if conv_id:
             v = "transcript"
-        elif search_q or tag:
+        elif search.get("q") or search.get("tag"):
             v = "search"
         elif workspace_id:
             v = "workspaces"
@@ -243,11 +293,11 @@ def _resolve_view(
                 main += f"&event={urlquote(folio_event)}"
         return "transcript", main
     if v == "search":
-        parts: list[str] = []
-        if search_q:
-            parts.append(f"q={urlquote(search_q)}")
-        if tag:
-            parts.append(f"tag={urlquote(tag)}")
+        parts = [
+            f"{k}={urlquote(search[k])}"
+            for k in _SEARCH_FACET_KEYS
+            if search.get(k)
+        ]
         qs = ("?" + "&".join(parts)) if parts else ""
         return "search", f"/find{qs}"
     if v == "tags":
@@ -275,8 +325,7 @@ def _page_shell(
     conv_id: str | None = None,
     folio_mode: str | None = None,
     folio_event: str | None = None,
-    search_q: str | None = None,
-    tag: str | None = None,
+    search: dict[str, str] | None = None,
     follow_sid: str | None = None,
     workspace_id: str | None = None,
     model: str | None = None,
@@ -301,8 +350,7 @@ def _page_shell(
         conv_id=conv_id,
         folio_mode=folio_mode,
         folio_event=folio_event,
-        search_q=search_q,
-        tag=tag,
+        search=search,
         workspace_id=workspace_id,
         follow_sid=follow_sid,
         model=model,
@@ -346,6 +394,25 @@ def _page_shell(
         _asset_v("siftd.css"), _asset_v("enhance.js"), _asset_v("auth.js")
     )
 
+    # #main is normally an empty shell that hx-gets its view on load. The search
+    # view is server-rendered INLINE instead: a history restore (back/forward)
+    # re-processes #main's content and re-fires the host's children — but an empty
+    # #main's own hx-trigger=load does NOT re-fire on restore, so an empty mount
+    # would come back blank. Inlining the host makes back-from-folio reproduce the
+    # query (the retain crux); other views restore fine from the htmx snapshot.
+    if active == "search":
+        main_inner = _find_host(_search_control_qs(search or {}))
+        main_el = (
+            '<main class="content" id="main" hx-history-elt hx-swap="innerHTML">'
+            + main_inner
+            + "</main>"
+        )
+    else:
+        main_el = (
+            '<main class="content" id="main" hx-history-elt'
+            f' hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>'
+        )
+
     return f"""\
 <!DOCTYPE html>
 <html lang="en">
@@ -385,7 +452,7 @@ def _page_shell(
       <span class="ct" id="sw-count"></span>
       <span class="kick" id="sw-kick"></span>
     </header>
-    <main class="content" id="main" hx-history-elt hx-get="{esc(main_url)}" hx-trigger="load" hx-swap="innerHTML"></main>
+    {main_el}
   </div>
 </div>
 <script src="/static/vendor/prism/prism-core.min.js"></script>
@@ -411,6 +478,12 @@ def ui_shell(
     model: str | None = Parameter(query="model", default=None),
     sort: str | None = Parameter(query="sort", default=None),
     follow: str | None = Parameter(query="follow", default=None),
+    shape: str | None = Parameter(query="shape", default=None),
+    engine: str | None = Parameter(query="engine", default=None),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    owner: str | None = Parameter(query="owner", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
 ) -> Response:
     """Serve the Swiss page shell — the single full-page HTML response.
 
@@ -418,18 +491,25 @@ def ui_shell(
         ?id=     — open a conversation (Transcript folio); ?mode=trace + ?event=
                    carry a search → folio jump so a hard reload re-lands on the
                    matched event (event validated to a safe anchor token)
-        ?q=      — pre-populate Search
+        ?q=      — pre-populate Search; the full search state rides the canonical
+                   facets (q/shape/engine/workspace/model/tag/owner/since/before)
+                   so a refresh / shared link reproduces the whole query (3a)
         ?tag=    — Find pre-filtered by a tag (Tags view drill-down)
         ?ws=     — open a workspace detail (Workspaces view drill-down)
         ?follow= — follow a live session (Sessions; degrades to the Sessions
                    view when live endpoints are off)
     """
     footer = _shell_footer(db_path, with_counts=auth_config is None)
+    search = {
+        "q": q, "shape": shape, "engine": engine, "workspace": workspace,
+        "model": model, "tag": tag, "owner": owner, "since": since, "before": before,
+    }
     return Response(
         content=_page_shell(
             view=view,
             conv_id=id, folio_mode=mode, folio_event=_safe_event_id(event),
-            search_q=q, tag=tag, workspace_id=ws, model=model, sort=sort,
+            search={k: v for k, v in search.items() if v},
+            workspace_id=ws, model=model, sort=sort,
             follow_sid=follow,
             footer=footer, live_enabled=live_enabled,
         ),
@@ -788,6 +868,13 @@ def ui_find(
     request: Request,
     q: str | None = Parameter(query="q", default=None),
     tag: str | None = Parameter(query="tag", default=None),
+    shape: str | None = Parameter(query="shape", default=None),
+    engine: str | None = Parameter(query="engine", default=None),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    owner: str | None = Parameter(query="owner", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
 ) -> Response:
     """The Swiss 'Find' view: one surface unifying metadata facets + content search.
 
@@ -808,29 +895,22 @@ def ui_find(
     fallback otherwise — the same ranking the CLI/REST surfaces serve, with the
     engine that ran named in the result header.
     """
-    red = _shell_redirect(request, "search", q=q, tag=tag)
+    red = _shell_redirect(
+        request, "search",
+        q=q, tag=tag, shape=shape, engine=engine, workspace=workspace,
+        model=model, owner=owner, since=since, before=before,
+    )
     if red is not None:
         return red
 
-    from urllib.parse import quote as urlquote
-
-    parts: list[str] = []
-    term = (q or "").strip()
-    if term:
-        parts.append(f"search={urlquote(term)}")
-    tag_v = (tag or "").strip()
-    if tag_v:
-        parts.append(f"tag={urlquote(tag_v)}")
-    qs = ("?" + "&".join(parts)) if parts else ""
-    return _html_response(
-        '<div class="find" data-view="search" data-title="Search"'
-        ' data-kick="query · facets">'
-        f'<div class="find__filters" id="filters" role="search"'
-        f' hx-get="/meta{qs}" hx-trigger="load"></div>'
-        f'<div class="find__list" id="list"'
-        f' hx-get="/query{qs}" hx-trigger="load"></div>'
-        "</div>"
-    )
+    # Map the canonical facets onto the control-name querystring the /meta +
+    # /query mounts speak, so a deep link / refresh prefills the strip AND
+    # reproduces the results (Slice 3a).
+    search = {
+        "q": q, "shape": shape, "engine": engine, "workspace": workspace,
+        "model": model, "tag": tag, "owner": owner, "since": since, "before": before,
+    }
+    return _html_response(_find_host(_search_control_qs(search)))
 
 
 @get("/auth/config", opt={"no_auth": True}, sync_to_thread=False)
@@ -877,6 +957,11 @@ def ui_meta(
     tag: str | None = Parameter(query="tag", default=None),
     view: str = Parameter(query="view", default="chunks"),
     mode: str = Parameter(query="mode", default="auto"),
+    workspace: str | None = Parameter(query="workspace", default=None),
+    model: str | None = Parameter(query="model", default=None),
+    owner: str | None = Parameter(query="owner", default=None),
+    since: str | None = Parameter(query="since", default=None),
+    before: str | None = Parameter(query="before", default=None),
 ) -> Response:
     """Return the find control strip: a content-search box + search/facet controls.
 
@@ -896,7 +981,13 @@ def ui_meta(
     *facet* dropdowns (workspace / model / tag / owner / since / before) filter
     which conversations the query (or the bare browse) draws from.
     """
-    red = _shell_redirect(request, "search", q=search, tag=tag)
+    red = _shell_redirect(
+        request, "search",
+        q=search, tag=tag,
+        shape=view if view != "chunks" else None,
+        engine=mode if mode != "auto" else None,
+        workspace=workspace, model=model, owner=owner, since=since, before=before,
+    )
     if red is not None:
         return red
 
@@ -908,6 +999,7 @@ def ui_meta(
     from siftd.api.tags import list_tags
     from siftd.paths import embeddings_db_path
 
+    owner_facet = owner or ""  # the user-supplied owner FACET (prefilled below)
     owner = _effective_owner(request, None)
     has_embed = embeddings_available() and embeddings_db_path().exists()
 
@@ -971,9 +1063,10 @@ def ui_meta(
     model_opts = [(m, m) for m in model_names]
     tag_opts = [(t, t) for t in tag_names]
 
-    def _date(name: str, label: str) -> str:
+    def _date(name: str, label: str, *, value: str = "") -> str:
+        val = f' value="{escape(value)}"' if value else ""
         return (
-            f'<input type="date" name="{name}" title="{label}"'
+            f'<input type="date" name="{name}" title="{label}"{val}'
             f' hx-get="/query" hx-target="#list" hx-trigger="change"'
             f' hx-include="#filters">'
         )
@@ -1006,8 +1099,9 @@ def ui_meta(
             )
         )
 
+    owner_val = f' value="{escape(owner_facet)}"' if owner_facet else ""
     owner_input = (
-        '<input type="text" name="owner" placeholder="Owner"'
+        f'<input type="text" name="owner" placeholder="Owner"{owner_val}'
         ' hx-get="/query" hx-target="#list" hx-trigger="change"'
         ' hx-include="#filters" class="filter-input">'
     )
@@ -1028,15 +1122,15 @@ def ui_meta(
         search_box,
         '<div class="find__toggles">' + "".join(search_toggles) + "</div>",
         '<div class="find__facets">'
-        + _select("workspace", "workspaces", ws_opts)
-        + _select("model", "models", model_opts)
+        + _select("workspace", "workspaces", ws_opts, selected=(workspace or ""))
+        + _select("model", "models", model_opts, selected=(model or ""))
         + _select("tag", "tags", tag_opts, selected=(tag or ""))
         + "</div>",
         '<details class="find__more"><summary>more filters</summary>'
         '<div class="find__morebody">'
         + owner_input
-        + _date("since", "Since")
-        + _date("before", "Before")
+        + _date("since", "Since", value=since or "")
+        + _date("before", "Before", value=before or "")
         + "</div></details>",
         '<label for="sx-expand" class="find__expand" title="Show all filters">'
         "filters</label>",
