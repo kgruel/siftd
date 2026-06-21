@@ -214,6 +214,9 @@ def test_dashboard_model_brushing_marks_active_and_links_rows():
     # only the two model names are click targets — the workspace account stays
     # non-brushable (its names are plain spans, not anchors).
     assert scoped.count('<a class="ledger__name"') == 2
+    # the brush is a transient lens, NOT a deep link: no hx-push-url, or a refresh
+    # on the pushed /dashboard?model= URL would load the bare (unstyled) fragment.
+    assert "hx-push-url" not in scoped
 
 
 def test_dashboard_headline_and_row_cost_when_priced():

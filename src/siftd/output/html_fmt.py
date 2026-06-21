@@ -1898,9 +1898,13 @@ def _reck_account(
 
         is_active = raw == active
         href = brush_base if is_active else f"{brush_base}?model={quote(raw)}"
+        # No hx-push-url: the brush is a transient lens (like the workspace sort
+        # / pin swaps), not a deep-linkable entity. Pushing the fragment URL
+        # (/dashboard?model=) would, on refresh, load the bare #main fragment
+        # with no page shell or CSS — so the URL stays "/".
         cell = (
             f'<a class="ledger__name" hx-get="{escape(href)}" hx-target="#main"'
-            f' hx-swap="innerHTML" hx-push-url="true">{escape(shown)}</a>'
+            f' hx-swap="innerHTML">{escape(shown)}</a>'
         )
         return (" is-current" if is_active else ""), cell
 
@@ -2131,7 +2135,7 @@ def render_dashboard(
     )
     clear = (
         f'<a class="reck__clear" hx-get="{escape(brush_base)}" hx-target="#main"'
-        ' hx-swap="innerHTML" hx-push-url="true">show all &times;</a>'
+        ' hx-swap="innerHTML">show all &times;</a>'
         if brushing
         else ""
     )
