@@ -9,6 +9,8 @@ import sys
 from importlib.metadata import distribution
 from pathlib import Path
 
+from siftd.output import status
+
 
 def _editable_source_url() -> str | None:
     """Return the file:// URL from direct_url.json if this is an editable install."""
@@ -144,7 +146,7 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
     method_label = METHOD_LABELS.get(method, method)
 
     if method == "unknown":
-        print("Could not detect installation method.")
+        status.error("Could not detect installation method.")
         print()
         print(f"Try: {install_hint(extra)}")
         return 1
@@ -161,7 +163,7 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
     if method == "editable":
         cwd = source_path
         if not cwd:
-            print("Detected editable install but could not find project root.")
+            status.error("Detected editable install but could not find project root.")
             print()
             print("Run from your project directory:")
             print(f"  pip install -e '.[{extra}]'")
@@ -186,12 +188,12 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
         result = subprocess.run(cmd, cwd=cwd, check=False)
         if result.returncode != 0:
             print()
-            print(f"Command failed with exit code {result.returncode}")
+            status.error(f"Command failed with exit code {result.returncode}")
             print(f"You may need to run manually: {cmd_str}")
             return result.returncode
     except FileNotFoundError:
         pkg_manager = cmd[0]
-        print(f"Error: '{pkg_manager}' not found in PATH")
+        status.error(f"'{pkg_manager}' not found in PATH")
         print()
         if pkg_manager == "uv":
             print("Install uv: https://docs.astral.sh/uv/getting-started/installation/")
@@ -204,8 +206,10 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
     if is_installed():
         print(success_msg)
     else:
-        print(f"Warning: Installation completed but [{extra}] dependencies not detected.", file=sys.stderr)
-        print("You may need to restart your shell or check for errors above.", file=sys.stderr)
+        status.warning(
+            f"Installation completed but [{extra}] dependencies not detected.",
+            hint="You may need to restart your shell or check for errors above.",
+        )
 
     return 0
 
@@ -299,20 +303,19 @@ def _install_skill(args) -> int:
 
     source_path = _find_plugin_source()
     if source_path is None:
-        print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
+        status.error("Bundled plugin files not found in this installation.")
         return 1
 
     skill_source = source_path / "skills" / "siftd"
     if not skill_source.is_dir():
-        print("Error: Skill directory not found in bundled plugin.", file=sys.stderr)
+        status.error("Skill directory not found in bundled plugin.")
         return 1
 
     harness = getattr(args, "harness", None) or "claude_code"
     scope = getattr(args, "scope", "user")
 
     if harness not in HARNESS_INFO:
-        print(f"Unknown harness: {harness}", file=sys.stderr)
-        print(f"Available: {', '.join(HARNESS_INFO)}", file=sys.stderr)
+        status.error(f"Unknown harness: {harness}", hint=f"Available: {', '.join(HARNESS_INFO)}")
         return 1
 
     info = HARNESS_INFO[harness]
@@ -324,7 +327,7 @@ def _install_skill(args) -> int:
 
     if scope not in scope_dirs:
         available = ", ".join(scope_dirs)
-        print(f"{info['display_name']} only supports scope: {available}", file=sys.stderr)
+        status.error(f"{info['display_name']} only supports scope: {available}")
         return 1
 
     raw_target = scope_dirs[scope]
@@ -361,7 +364,7 @@ def _install_skill(args) -> int:
         shutil.copytree(skill_source, target)
 
         if not (target / "SKILL.md").exists():
-            print("Warning: Skill copied but SKILL.md not found.", file=sys.stderr)
+            status.warning("Skill copied but SKILL.md not found.")
             return 1
 
         # Check for Claude Code plugin overlap
@@ -369,10 +372,12 @@ def _install_skill(args) -> int:
             plugin_user = Path.home() / ".claude" / "plugins" / "siftd"
             plugin_project = Path.cwd() / ".claude" / "plugins" / "siftd"
             if plugin_user.exists() or plugin_project.exists():
-                print("Note: the plugin is also installed and already includes this skill.", file=sys.stderr)
-                print("You may want to remove one to avoid duplicate /siftd skill entries.", file=sys.stderr)
+                status.info(
+                    "the plugin is also installed and already includes this skill.",
+                    hint="You may want to remove one to avoid duplicate /siftd skill entries.",
+                )
 
-        print(f"Installed skill to {target}")
+        status.confirm(f"Installed skill to {target}")
         print(f"Harness: {info['display_name']}")
 
     else:
@@ -393,7 +398,7 @@ def _install_skill(args) -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content)
 
-        print(f"Installed instructions to {target}")
+        status.confirm(f"Installed instructions to {target}")
         print(f"Harness: {info['display_name']}")
 
     return 0
@@ -403,7 +408,7 @@ def _install_plugin(args) -> int:
     """Install the bundled Claude Code plugin (hooks + commands + skill)."""
     source_path = _find_plugin_source()
     if source_path is None:
-        print("Error: Bundled plugin files not found in this installation.", file=sys.stderr)
+        status.error("Bundled plugin files not found in this installation.")
         return 1
 
     # Determine target directory
@@ -431,7 +436,7 @@ def _install_plugin(args) -> int:
     # Verify manifest exists
     manifest = target / ".claude-plugin" / "plugin.json"
     if not manifest.exists():
-        print("Warning: Plugin copied but plugin.json not found at expected location.", file=sys.stderr)
+        status.warning("Plugin copied but plugin.json not found at expected location.")
         return 1
 
     # Check if standalone skill is also installed and clean it up
@@ -440,12 +445,12 @@ def _install_plugin(args) -> int:
     for stale_skill in (skill_user, skill_project):
         if stale_skill.is_symlink():
             stale_skill.unlink()
-            print(f"Removed standalone skill symlink at {stale_skill} (plugin includes it)")
+            status.confirm(f"Removed standalone skill symlink at {stale_skill} (plugin includes it)")
         elif stale_skill.exists():
             shutil.rmtree(stale_skill)
-            print(f"Removed standalone skill at {stale_skill} (plugin includes it)")
+            status.confirm(f"Removed standalone skill at {stale_skill} (plugin includes it)")
 
-    print(f"Installed plugin to {target}")
+    status.confirm(f"Installed plugin to {target}")
     print(f"Scope: {scope}")
     return 0
 
@@ -482,7 +487,7 @@ def cmd_install(args) -> int:
         return _install_plugin(args)
 
     # argparse choices should prevent reaching here
-    print(f"Unknown extra: {args.extra}")
+    status.error(f"Unknown extra: {args.extra}")
     return 1
 
 
