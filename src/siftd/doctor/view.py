@@ -28,34 +28,37 @@ def _line_block(parts, width):
     return line.to_block(width)
 
 
-# Severity glyph vocabulary — the single source for both doctor render paths:
-# the painted path (TTY, Unicode) and the plain path (piped, or a terminal that
-# can't encode the Unicode glyphs). painted's IconSet only models check/cross
-# (pass/fail); siftd has four severities, so the table lives here.
-_SEVERITY_GLYPHS: dict[str | None, tuple[str, str, str]] = {
-    # severity: (unicode, ascii, palette-key)
-    "error": ("✗", "x", "error"),
-    "warning": ("⚠", "!", "warning"),
-    "info": ("ℹ", "i", "muted"),
-    None: ("✓", "+", "success"),  # pass / all-clear (no findings for a check)
+# Doctor's severity vocabulary mapped onto painted's IconSet slots + palette
+# roles. The glyph CHARACTERS live in painted's IconSet — one owner, its severity
+# ladder (ok/info/warn/error, Unicode + ASCII). Doctor owns only this mapping of
+# its four severities onto those slots and the role colors. painted has no glyph
+# for an unrecognized severity, so the neutral "?" fallback stays a literal here.
+_SEVERITY_ICON: dict[str | None, tuple[str, str]] = {
+    # severity: (IconSet glyph attribute, palette-key)
+    "error": ("error", "error"),
+    "warning": ("warn", "warning"),
+    "info": ("info", "muted"),
+    None: ("ok", "success"),  # pass / all-clear (no findings for a check)
 }
-
-# Neutral marker for an unrecognized severity — including the declared-but-unused
-# "hint" (no built-in check emits it today). Deliberately NOT the pass glyph, so
-# a non-pass finding never wears the all-clear mark.
-_UNKNOWN_GLYPH = ("?", "?", "muted")
 
 
 def severity_glyph(severity: str | None, *, as_ascii: bool = False) -> tuple[str, str]:
     """Return ``(glyph, palette-key)`` for a finding severity.
 
-    The single source for severity glyphs across both doctor render paths.
-    ``as_ascii=True`` yields the degraded glyph for non-Unicode terminals (the
-    plain path); the painted path uses the Unicode default. ``None`` is the
-    pass / all-clear glyph; an unrecognized severity yields a neutral ``?``.
+    The glyph character comes from painted's IconSet (the single source):
+    ``as_ascii=True`` reads ASCII_ICONS for the plain path (non-Unicode
+    terminals), otherwise the Unicode default. ``None`` is the pass / all-clear
+    glyph; an unrecognized severity — including the declared-but-unused "hint" —
+    yields a neutral ``?``, never the all-clear mark.
     """
-    uni, asc, key = _SEVERITY_GLYPHS.get(severity, _UNKNOWN_GLYPH)
-    return (asc if as_ascii else uni), key
+    mapping = _SEVERITY_ICON.get(severity)
+    if mapping is None:
+        return "?", "muted"
+    from painted import ASCII_ICONS, IconSet
+
+    icon_attr, key = mapping
+    icons = ASCII_ICONS if as_ascii else IconSet()
+    return getattr(icons, icon_attr), key
 
 
 def _max_severity(findings: list[Finding]) -> str | None:
