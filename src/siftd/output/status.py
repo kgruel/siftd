@@ -26,12 +26,14 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from siftd.output.common import supports_unicode
+from siftd.output.common import prefers_ascii
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from pathlib import Path
     from typing import TextIO
+
+    from painted import Style
 
 # siftd's severity literal -> painted callout severity. The "hint" level (a soft
 # advisory severity) presents as a neutral note.
@@ -42,6 +44,60 @@ _CALLOUT_SEVERITY: dict[str, str] = {
     "error": "error",
     "hint": "info",
 }
+
+# The other projection of the same severity vocabulary: severity -> a glyph + the
+# palette role that colours it. ``_CALLOUT_SEVERITY`` (above) drives the emitted
+# status lines; this drives surfaces that lay out the mark themselves (the doctor
+# progress/findings blocks, the db dry-run previews). The glyph CHARACTERS live
+# in painted's IconSet — one owner, its ok/info/warn/error ladder (Unicode +
+# ASCII); this owns only the mapping of siftd's severities onto those slots and
+# the role colours. ``None`` is the pass / all-clear state (a check with no
+# findings). painted has no glyph for an unrecognised severity — including the
+# declared-but-unused "hint" — so it falls back to a neutral ``?``, never the
+# all-clear mark. (This lives beside ``_CALLOUT_SEVERITY`` so the two projections
+# of one vocabulary stay together; the doctor consumed it from here to drop a
+# ``cli -> doctor`` import.)
+_SEVERITY_ICON: dict[str | None, tuple[str, str]] = {
+    # severity: (IconSet glyph attribute, palette-key)
+    "error": ("error", "error"),
+    "warning": ("warn", "warning"),
+    "info": ("info", "muted"),
+    None: ("ok", "success"),  # pass / all-clear (no findings for a check)
+}
+
+
+def severity_glyph(severity: str | None, *, as_ascii: bool = False) -> tuple[str, str]:
+    """Return ``(glyph, palette-key)`` for a finding severity.
+
+    The glyph character comes from painted's IconSet (the single source):
+    ``as_ascii=True`` reads ASCII_ICONS for the plain path (non-Unicode
+    terminals), otherwise the Unicode default. ``None`` is the pass / all-clear
+    glyph; an unrecognised severity — including the declared-but-unused "hint" —
+    yields a neutral ``?``, never the all-clear mark.
+    """
+    mapping = _SEVERITY_ICON.get(severity)
+    if mapping is None:
+        return "?", "muted"
+    from painted import ASCII_ICONS, IconSet
+
+    icon_attr, key = mapping
+    icons = ASCII_ICONS if as_ascii else IconSet()
+    return getattr(icons, icon_attr), key
+
+
+def severity_mark(severity: str | None, *, as_ascii: bool = False) -> tuple[str, Style]:
+    """Return ``(glyph, Style)`` — the glyph already resolved to its palette role.
+
+    The ``severity_glyph`` companion for callers that want to *style* the mark
+    inline (e.g. a coloured glyph inside a ``definitions`` value) rather than
+    drive a separate palette lookup. The palette role is read from the ambient
+    theme, so the colour tracks ``use_theme`` like every other surface.
+    """
+    from painted import Style, current_palette
+
+    glyph, key = severity_glyph(severity, as_ascii=as_ascii)
+    style = getattr(current_palette(), key, None)
+    return glyph, style if style is not None else Style()
 
 
 def _emit(
@@ -63,7 +119,7 @@ def _emit(
 
     out = stream if stream is not None else (sys.stdout if severity == "success" else sys.stderr)
     callout_severity = _CALLOUT_SEVERITY.get(severity, "info")
-    as_ascii = not (out.isatty() and supports_unicode())
+    as_ascii = prefers_ascii(out)
 
     if as_ascii:
         with use_icons(ASCII_ICONS):

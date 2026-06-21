@@ -7,6 +7,10 @@ import shutil
 import sys
 from datetime import datetime, tzinfo
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from typing import TextIO
 
 
 def supports_unicode() -> bool:
@@ -19,12 +23,27 @@ def supports_unicode() -> bool:
     """
     enc = getattr(sys.stdout, "encoding", None) or "ascii"
     try:
-        # The full glyph surface the painted doctor UI draws: severity marks,
-        # the progress bar fill, rounded box corners, separators, and rails.
-        "✓⚠ℹ✗─│█░╭╮╰╯↳·".encode(enc)
+        # The full glyph surface the painted UI draws: severity marks, the
+        # progress bar fill, rounded box corners, separators, rails, and the
+        # table's ``…`` truncation marker.
+        "✓⚠ℹ✗─│█░╭╮╰╯↳·…".encode(enc)
     except (UnicodeEncodeError, LookupError):
         return False
     return True
+
+
+def prefers_ascii(stream: "TextIO | None" = None) -> bool:
+    """Whether ``stream`` should get the plain ASCII glyph/rule forms.
+
+    The single capability gate behind ASCII degradation: a non-TTY (a pipe) or a
+    non-UTF-8 TTY (``LANG=C``) can't render — or shouldn't be sent — the painted
+    Unicode set (severity marks, the ``─`` rules, box corners), so it gets the
+    ``-``/``x``/``!`` forms instead. This is the ``not (isatty and
+    supports_unicode())`` couplet the status, doctor, and table surfaces each
+    used to compute by hand, named once. ``stream`` defaults to ``sys.stdout``.
+    """
+    out = stream if stream is not None else sys.stdout
+    return not (out.isatty() and supports_unicode())
 
 
 def term_width(fallback: int = 80) -> int:

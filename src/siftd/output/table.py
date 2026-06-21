@@ -31,7 +31,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from siftd.output.common import term_width
+from siftd.output.common import prefers_ascii, term_width
 
 if TYPE_CHECKING:
     from painted import Align, Block, Style
@@ -40,11 +40,15 @@ if TYPE_CHECKING:
 # A spaced-gutter separator (two columns of padding) plus a thin per-column
 # rule, instead of painted's default │/┼ box grid. ``crossing`` is a single
 # char — painted repeats it ``sep_width`` times under the header rule, so it
-# must stay one display column wide to line up with ``vertical``.
-def _gutter_borders():
+# must stay one display column wide to line up with ``vertical``. The rule
+# degrades ``─`` → ``-`` when ``as_ascii`` (a pipe or a non-UTF-8 TTY) — the only
+# Unicode glyph this BORDER draws. (The table's own ``…`` truncation marker is a
+# painted-owned glyph ``as_ascii`` can't reach; ``print_table`` sidesteps it by
+# not budgeting an incapable stream, so no ``…`` is ever drawn there.)
+def _gutter_borders(as_ascii: bool = False):
     from painted import BorderChars
 
-    return BorderChars("", "", "", "", "─", "  ", " ")
+    return BorderChars("", "", "", "", "-" if as_ascii else "─", "  ", " ")
 
 
 @dataclass(frozen=True)
@@ -67,7 +71,9 @@ class Col:
     ellipsis_left: bool = False
 
 
-def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
+def render_table(
+    cols: list[Col], items: list, *, width: int | None, as_ascii: bool = False
+) -> Block:
     """Render ``items`` as a width-honest painted table from ``Col`` specs.
 
     ``width`` is the terminal budget, or ``None`` for natural sizing (the piped /
@@ -77,7 +83,8 @@ def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
     and when the non-fill columns alone exceed the budget the table overflows at
     natural width rather than clipping — so no column or value is silently
     dropped. ``ellipsis_left`` keeps the tail (a workspace leaf survives);
-    otherwise the head is kept (prose).
+    otherwise the head is kept (prose). ``as_ascii`` degrades the header rule to
+    ``-`` for a non-Unicode target (``print_table`` decides it at the stream).
     """
     from painted import Align, Line, Span, Style
     from painted.views import AUTO, Column, Fill, Overflow, TableState, table
@@ -109,13 +116,13 @@ def render_table(cols: list[Col], items: list, *, width: int | None) -> Block:
         visible_height=len(rows),
         width=width,
         overflow=Overflow.FIT,
-        borders=_gutter_borders(),
+        borders=_gutter_borders(as_ascii),
         selected_style=Style(),
     )
 
 
 def render_string_table(
-    headers: list[str], rows: list[list[str]], *, width: int | None
+    headers: list[str], rows: list[list[str]], *, width: int | None, as_ascii: bool = False
 ) -> Block:
     """Render pre-stringified columns as a table, inferring the width policy.
 
@@ -151,7 +158,7 @@ def render_string_table(
         )
         for j in range(ncols)
     ]
-    return render_table(cols, rows, width=width)
+    return render_table(cols, rows, width=width, as_ascii=as_ascii)
 
 
 def print_table(columns: list[str], rows: list[list[str]]) -> None:
@@ -159,12 +166,24 @@ def print_table(columns: list[str], rows: list[list[str]]) -> None:
 
     The painted-backed replacement for the old ``len()``-based string table:
     same call shape, but wcwidth-correct, width-budgeted, and themed. Non-TTY
-    output keeps natural widths (no truncation) so pipes stay machine-readable.
+    output keeps natural widths (no truncation) so pipes stay machine-readable,
+    and the header rule degrades to ``-`` for a non-Unicode target.
+
+    A width budget makes painted ellipsize an over-budget column with ``…`` — a
+    Unicode glyph ``as_ascii`` can't reach (painted owns the marker, no ASCII
+    form). On an incapable stream (the ``prefers_ascii`` case: a pipe or a
+    non-UTF-8 ``LANG=C`` TTY) that ``…`` would garble — and *crash* a strict-ASCII
+    stream mid-table. So drop the budget there: the table sizes naturally (no
+    truncation, no ``…``) and only the degraded ``-`` rule is drawn. A capable
+    TTY keeps the budget and the ``…`` marker. (The three direct ``render_table``
+    callers — query/peek lists, the ingest summary — don't yet wire this; their
+    incapable-TTY degradation is a separate, pre-existing follow-up.)
     """
     from painted import print_block
 
-    budget = term_width() if sys.stdout.isatty() else None
-    block = render_string_table(columns, rows, width=budget)
+    ascii_mode = prefers_ascii()
+    budget = term_width() if (sys.stdout.isatty() and not ascii_mode) else None
+    block = render_string_table(columns, rows, width=budget, as_ascii=ascii_mode)
     print_block(block)
 
 
@@ -187,6 +206,7 @@ def _index_getter(j: int) -> Callable[[list[str]], str]:
 
 
 def _styled_line(text: str, style: Style):
-    from painted import Line, Span
+    # A single-segment row — the shared row atom (empty text → an empty Line).
+    from siftd.output.row import row_line
 
-    return Line(spans=(Span(text, style),)) if text else Line(spans=())
+    return row_line([(text, style)])

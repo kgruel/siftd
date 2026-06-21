@@ -85,10 +85,44 @@ def test_stream_override_redirects(capsys):
 
 def test_unicode_glyph_and_color_on_a_tty(monkeypatch):
     monkeypatch.delenv("NO_COLOR", raising=False)
-    monkeypatch.setattr(status, "supports_unicode", lambda: True)
+    # Force the Unicode path: status now gates on prefers_ascii (the named
+    # isatty+encoding couplet), not a bare supports_unicode call.
+    monkeypatch.setattr(status, "prefers_ascii", lambda stream=None: False)
     buf = _FakeTTY()
     status.confirm("ok", stream=buf)
     text = buf.getvalue()
     assert "✓" in text and "+" not in text  # Unicode glyph, not the ASCII fallback
     assert "ok" in text
     assert "\x1b[" in text  # color applied for a TTY stream
+
+
+# --- severity_glyph / severity_mark (the severity-vocabulary primitives) ---
+
+
+def test_severity_glyph_is_sourced_from_the_status_module():
+    # severity_glyph now lives beside the callout severity vocabulary (it used to
+    # live in doctor.view, forcing a cli -> doctor import). The contract holds.
+    from siftd.output.status import severity_glyph
+
+    assert severity_glyph("error") == ("✗", "error")
+    assert severity_glyph(None) == ("✓", "success")  # pass / all-clear
+    assert severity_glyph("error", as_ascii=True) == ("x", "error")
+    assert severity_glyph("nonsense") == ("?", "muted")  # unknown → neutral, never all-clear
+
+
+def test_severity_mark_resolves_the_glyph_to_a_palette_style():
+    from painted import Style, use_theme
+
+    from siftd.output.status import severity_mark
+    from siftd.output.theme import siftd_theme
+
+    with use_theme(siftd_theme):
+        warn_glyph, warn_style = severity_mark("warning")
+        ok_glyph, ok_style = severity_mark(None)
+    assert warn_glyph == "⚠" and ok_glyph == "✓"
+    assert isinstance(warn_style, Style) and isinstance(ok_style, Style)
+    # Distinct roles (warning vs success) → distinct styles, so a glyph dropped
+    # into a definitions value carries its own colour.
+    assert warn_style != ok_style
+    # ASCII degradation is forwarded to the glyph.
+    assert severity_mark("warning", as_ascii=True)[0] == "!"

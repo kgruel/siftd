@@ -1153,7 +1153,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
-    from siftd.doctor.view import severity_glyph
+    from siftd.output.status import severity_glyph
 
     for finding in findings:
         glyph, _ = severity_glyph(finding.severity, as_ascii=True)

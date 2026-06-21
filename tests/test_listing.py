@@ -114,3 +114,71 @@ def test_heading_is_accent_title_over_an_underline():
     assert set(lines[1]) == {"─"}  # an underline rule, nothing else
     assert len(lines[1]) == len(lines[0])  # spans the title width
     assert "\x1b[" in rendered  # accent escape present
+
+
+def test_heading_underline_degrades_to_ascii():
+    # On a non-Unicode target the ─ rule degrades to - (the same gate the table
+    # header rule uses); the title is untouched.
+    with use_theme(siftd_theme):
+        block = heading("title", as_ascii=True)
+    lines = _text(block).splitlines()
+    assert lines[0] == "title"
+    assert set(lines[1]) == {"-"}  # ASCII rule, not ─
+    assert len(lines[1]) == len("title")
+
+
+# --- rich (segmented) values --------------------------------------------------
+
+
+def test_value_may_be_styled_segments():
+    # A value can carry a styled run — e.g. a coloured severity glyph ahead of
+    # plain text — by passing (text, style) segments instead of a string. The
+    # rendered text is their concatenation; the colour rides ANSI, invisible here.
+    from painted import Style
+
+    block = definitions([("schema version", [("⚠", Style(fg=1)), (" v11 → v12", None)])])
+    assert "⚠ v11 → v12" in _text(block)
+
+
+def test_segmented_value_aligns_like_a_string_value():
+    # A segmented value and the equivalent string render to identical columns —
+    # the value's shape never perturbs label alignment.
+    plain = _text(definitions([("a", "x"), ("longer", "yy")]))
+    mixed = _text(definitions([("a", [("x", None)]), ("longer", "yy")]))
+    assert plain == mixed
+
+
+def test_segment_none_style_inherits_the_row_value_style():
+    # Within a segmented value a None style takes the row's value_style; an
+    # explicit style overrides. Two renders differing only in that override must
+    # differ in their ANSI — proof the glyph carries its own colour.
+    from painted import Style
+
+    with use_theme(siftd_theme):
+        inherit = _ansi(definitions([("k", [("v", None)])], value_style=Style(fg=2)))
+        override = _ansi(definitions([("k", [("v", Style(fg=5))])], value_style=Style(fg=2)))
+    assert inherit != override
+
+
+def test_string_value_path_is_byte_stable_including_empty_value():
+    # Pin the legacy string-value composition (the db/install/meta previews) so
+    # the row_line/_value_segments rewrite — which DROPS empty-text spans where
+    # the old fixed-4-span Line emitted them — stays byte-identical. An empty
+    # value contributes a label-only row (its dropped value span is a no-op).
+    with use_theme(siftd_theme):
+        block = definitions(
+            [("source", "/p"), ("schema version", "✓ v11 → v12"), ("empty", "")]
+        )
+    assert _text(block).splitlines() == [
+        "  source" + " " * 10 + "/p",
+        "  schema version  ✓ v11 → v12",
+        "  empty",
+    ]
+
+
+def test_non_segment_sequence_value_is_stringified_not_split():
+    # A value that is a sequence but NOT (text, style) segments — e.g. a tuple of
+    # strings — must stringify wholesale (the pre-segment total contract), never
+    # mis-split into per-character segments (text='a', style='b', ...).
+    block = definitions([("k", ("ab", "cd"))])
+    assert "('ab', 'cd')" in _text(block)

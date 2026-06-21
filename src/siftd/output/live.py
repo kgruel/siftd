@@ -241,19 +241,14 @@ def bar_row(
 def text_row(segments: list[tuple[str, Style | None]], *, indent: str = "") -> Block:
     """A single row of individually-styled segments → a one-line Block.
 
-    The atom of a status step-log (``doctor --fix``) and of footers: each
-    ``(text, style)`` pair becomes a span, empty texts dropped.
+    The block-returning convenience over ``output.row.row_line`` (the shared row
+    atom): the step-log of ``doctor --fix`` and assorted footers. Empty-text
+    segments drop and a ``None`` style is plain (row_line's contract); an empty
+    row collapses to a blank line.
     """
-    from painted import Line, Span, Style
+    from siftd.output.row import row_line
 
-    plain = Style()
-    spans: list[Span] = []
-    if indent:
-        spans.append(Span(indent, plain))
-    for text, style in segments:
-        if text:
-            spans.append(Span(text, style or plain))
-    line = Line(spans=tuple(spans))
+    line = row_line(segments, indent=indent)
     return line.to_block(line.width) if line.width > 0 else _blank()
 
 

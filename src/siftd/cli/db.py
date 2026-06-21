@@ -258,9 +258,9 @@ def cmd_db_restore(args) -> int:
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()
-        from siftd.doctor.view import severity_glyph
-        from siftd.output.common import supports_unicode
+        from siftd.output.common import prefers_ascii
         from siftd.output.listing import print_definitions, print_heading
+        from siftd.output.status import severity_mark
         from siftd.output.table import print_table
 
         downgrade = False
@@ -274,9 +274,9 @@ def cmd_db_restore(args) -> int:
             schema = f"v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)"
             downgrade = True
 
-        as_ascii = not (sys.stdout.isatty() and supports_unicode())
-        # None is severity_glyph's all-clear ✓; a downgrade earns the ⚠.
-        glyph, _ = severity_glyph("warning" if downgrade else None, as_ascii=as_ascii)
+        as_ascii = prefers_ascii()
+        # None is the all-clear ✓; a downgrade earns a warning-coloured ⚠.
+        glyph, glyph_style = severity_mark("warning" if downgrade else None, as_ascii=as_ascii)
         count_rows = [
             [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
             for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
@@ -285,7 +285,7 @@ def cmd_db_restore(args) -> int:
         print_definitions([
             ("source", str(source)),
             ("target", str(db)),
-            ("schema version", f"{glyph} {schema}"),
+            ("schema version", [(glyph, glyph_style), (f" {schema}", None)]),
         ])
         print()
         # The table's own header (table | source | target) is self-describing —
@@ -498,13 +498,13 @@ def cmd_db_receive(args) -> int:
                 finally:
                     target_conn.close()
 
-            from siftd.doctor.view import severity_glyph
-            from siftd.output.common import supports_unicode
+            from siftd.output.common import prefers_ascii
             from siftd.output.listing import print_definitions, print_heading
+            from siftd.output.status import severity_mark
             from siftd.output.table import print_table
 
-            as_ascii = not (sys.stdout.isatty() and supports_unicode())
-            ok_glyph, _ = severity_glyph(None, as_ascii=as_ascii)  # all-clear ✓
+            as_ascii = prefers_ascii()
+            ok_glyph, ok_style = severity_mark(None, as_ascii=as_ascii)  # all-clear ✓
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
             count_rows = [
                 [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
@@ -513,7 +513,7 @@ def cmd_db_receive(args) -> int:
             print_heading("[dry run] receive preview")
             print_definitions([
                 ("target", target_state),
-                ("preflight", f"{ok_glyph} ok"),
+                ("preflight", [(ok_glyph, ok_style), (" ok", None)]),
             ])
             print()
             # The table's own header (table | incoming | target) is self-describing.

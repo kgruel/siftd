@@ -734,7 +734,11 @@ class TestDbRestoreDryRun:
 
         rc = main(["--db", str(test_db), "db", "restore", str(backup), "--dry-run"])
         assert rc == 0
-        assert "DOWNGRADE" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "DOWNGRADE" in out
+        # The warning glyph sits flush before the schema (one space) — pins the
+        # debt-3 segmented-value spacing/order so only colour, not text, changed.
+        assert "! v" in out  # ascii warning glyph + space + version
 
 
 class TestDbReceiveDryRun:
@@ -764,6 +768,7 @@ class TestDbReceiveDryRun:
         out = capsys.readouterr().out
         assert "dry run" in out.lower()
         assert "preflight" in out
+        assert "+ ok" in out  # all-clear glyph + space + "ok" (debt-3 spacing pin)
         assert "conversations" in out
         assert "incoming" in out and "target" in out
 

@@ -11,6 +11,7 @@ from siftd.output.common import (
     fmt_workspace,
     format_refs_annotation,
     format_table,
+    prefers_ascii,
     print_indented,
     print_refs_content,
     supports_unicode,
@@ -125,6 +126,42 @@ def test_supports_unicode(monkeypatch):
     # Missing/None encoding degrades to the ASCII assumption (False).
     monkeypatch.setattr("sys.stdout", _Std(None))
     assert supports_unicode() is False
+
+
+# --- prefers_ascii ---
+
+
+def test_prefers_ascii(monkeypatch):
+    import io
+
+    class _Std:
+        def __init__(self, encoding, tty):
+            self.encoding = encoding
+            self._tty = tty
+
+        def isatty(self):
+            return self._tty
+
+    # A non-TTY (a pipe) always prefers ASCII, even with a UTF-8 encoding.
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", False))
+    assert prefers_ascii() is True
+
+    # A UTF-8 TTY is the one case that earns the Unicode forms.
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", True))
+    assert prefers_ascii() is False
+
+    # A non-UTF-8 TTY (LANG=C) is a TTY but can't encode the glyphs → ASCII.
+    monkeypatch.setattr("sys.stdout", _Std("ascii", True))
+    assert prefers_ascii() is True
+
+    # An explicit stream drives the isatty() check; encoding capability still
+    # tracks sys.stdout (the established couplet this names).
+    class _Pipe(io.StringIO):
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", True))
+    assert prefers_ascii(_Pipe()) is True
 
 
 # --- format_table ---

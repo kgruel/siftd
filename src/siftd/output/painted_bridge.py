@@ -63,9 +63,10 @@ def _styles() -> _RoleStyles:
 
 
 def _line(*parts: tuple[str, Style]) -> Line:
-    _, Line, Span, _, _, _, _ = _painted()
-    spans = tuple(Span(text, style) for text, style in parts if text)
-    return Line(spans=spans)
+    # The shared row atom — drops empty segments, identical span construction.
+    from siftd.output.row import row_line
+
+    return row_line(parts)
 
 
 def _blank_block() -> Block:

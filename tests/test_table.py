@@ -7,11 +7,14 @@ a table too wide for the terminal must render natural (lossless) rather than
 silently clipping columns.
 """
 
+import io
+
 import pytest
 
 from siftd.output.table import (
     Col,
     _is_numeric_col,
+    print_table,
     render_string_table,
     render_table,
 )
@@ -87,6 +90,69 @@ def test_too_many_columns_render_natural_not_clipped():
     header = _text(block).splitlines()[0]
     for h in ("aa", "bb", "cc", "dd"):
         assert h in header  # no column silently dropped
+
+
+# --- ASCII degradation of the header rule -----------------------------------
+
+
+def test_header_rule_degrades_to_ascii():
+    # The lone Unicode glyph the gutter border draws is the ─ header rule; on a
+    # non-Unicode target (print_table decides it at the stream) it becomes -.
+    uni = _text(render_string_table(["k", "n"], [["a", "1"]], width=None))
+    asc = _text(render_string_table(["k", "n"], [["a", "1"]], width=None, as_ascii=True))
+    assert "─" in uni and "─" not in asc
+    assert "-" in asc  # the rule is still drawn, just ASCII
+
+
+# --- print_table's stream-driven degradation decision -----------------------
+
+
+class _TTY(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+def test_print_table_never_emits_unicode_on_an_incapable_tty(monkeypatch):
+    # A non-UTF-8 TTY (LANG=C): print_table must emit NO Unicode. The rule
+    # degrades to '-', AND the budget is dropped so painted draws no '…'
+    # truncation marker (which as_ascii can't reach and would crash a strict
+    # ASCII stream). The over-budget value survives losslessly instead.
+    from siftd.output import table
+
+    buf = _TTY()
+    monkeypatch.setattr("sys.stdout", buf)
+    monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: True)
+    monkeypatch.setattr(table, "term_width", lambda *a, **k: 20)
+    table.print_table(["workspace", "n"], [["/a/very/deep/workspace/path/overflows", "1234"]])
+    out = buf.getvalue()
+    assert "…" not in out  # no painted ellipsis (no budget → no truncation)
+    assert "─" not in out  # rule degraded
+    assert "-" in out  # ...to ASCII
+    assert "overflows" in out  # natural sizing kept the value whole
+
+
+def test_print_table_keeps_budget_and_ellipsis_on_a_capable_tty(monkeypatch):
+    # The positive control: a UTF-8 TTY keeps the width budget, so an over-budget
+    # column ellipsizes (…) and the rule stays Unicode (─).
+    from siftd.output import table
+
+    buf = _TTY()
+    monkeypatch.setattr("sys.stdout", buf)
+    monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: False)
+    monkeypatch.setattr(table, "term_width", lambda *a, **k: 24)
+    table.print_table(["workspace", "n"], [["/a/very/deep/workspace/path/overflows", "1234"]])
+    out = buf.getvalue()
+    assert "─" in out  # Unicode rule kept
+    assert "…" in out  # budget engaged → truncation marker drawn
+
+
+def test_print_table_degrades_the_rule_when_piped(capsys):
+    # A pipe (capsys stdout is not a TTY) → prefers_ascii → '-' rule, never the
+    # Unicode '─'. Pins the deliberate piped-output change so a regression that
+    # reverted print_table to always-Unicode can't pass silently.
+    print_table(["k", "n"], [["a", "1"]])
+    out = capsys.readouterr().out
+    assert "─" not in out and "-" in out
 
 
 # --- left-ellipsis keeps the path leaf --------------------------------------
