@@ -640,16 +640,56 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 /* FIND — unified search: control strip (keyword + facets) over result list   */
 /* ========================================================================= */
 .find { height:100%; display:flex; flex-direction:column; min-height:0; background:var(--paper); }
-.find__filters { flex:0 0 auto; display:flex; flex-wrap:wrap; align-items:center; gap:8px;
-  padding:12px 18px; border-bottom:1px solid var(--hair); background:var(--panel); }
+
+/* Two-state control strip (Slice 2c), CSS-only via :has — the strip never
+   re-renders, so the search box keeps focus while typing.
+     BUILDER (default): nothing engaged (#list shows .find-prompt) OR the user
+       force-expanded (#sx-expand:checked). Column layout, prominent search box,
+       all facets shown, a "more filters" disclosure for the secondary ones.
+     COLLAPSED: a search/browse is showing and not force-expanded. Compact row;
+       inactive facet selects hidden, active ones styled as chips; secondary
+       filters tucked; an expand chevron toggles the builder back.
+   Primary facets (ws/model/tag) chip off a <select>'s checked non-"All" option;
+   owner/dates have no such signal, so they live in the disclosure both modes. */
+.find__filters { flex:0 0 auto; display:flex; flex-direction:column; align-items:stretch;
+  gap:10px; padding:14px 18px; border-bottom:1px solid var(--hair); background:var(--panel); }
 .find__filters select, .find__filters .filter-input {
   font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px); color:var(--ink);
   background:var(--paper); border:1px solid var(--hair); border-radius:var(--radius);
   padding:6px 8px; height:30px; }
 .find__filters select:focus, .find__filters .filter-input:focus {
   outline:none; border-color:var(--hair-strong); }
-/* The keyword box is the primary control — it grows to fill the strip. */
-.find__filters .filter-input--q { flex:1 1 220px; min-width:160px; }
+.find__filters .filter-input--q { width:100%; font-size:calc(var(--fs-base) + 1px); height:36px; }
+.find__toggles, .find__facets { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.find__more { font-family:var(--font-mono); font-size:calc(var(--fs-base) - 1px); }
+.find__more > summary { cursor:pointer; color:var(--faint); padding:2px 0; letter-spacing:.04em; }
+.find__more > summary:hover { color:var(--ink); }
+.find__morebody { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-top:8px; }
+.sx-expand { position:absolute; width:0; height:0; opacity:0; pointer-events:none; }
+.find__expand { display:none; }
+
+/* COLLAPSED overrides (search/browse showing, not force-expanded). */
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__filters {
+  flex-direction:row; flex-wrap:wrap; align-items:center; gap:8px; padding:10px 18px; }
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__filters .filter-input--q {
+  flex:1 1 200px; width:auto; height:30px; font-size:calc(var(--fs-base) - 0.5px); }
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__facets { display:contents; }
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__facets
+  select:not(:has(option:not([value='']):checked)) { display:none; }
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__facets
+  select:has(option:not([value='']):checked) {
+  border-color:var(--accent); color:var(--accent); background:var(--sel-bg);
+  font-weight:500; height:28px; padding:4px 8px; }
+.find:not(:has(.find-prompt)):not(:has(#sx-expand:checked)) .find__more { display:none; }
+/* The expand chevron shows whenever engaged (results/browse) so it toggles the
+   builder open AND closed; hidden only in the prompt state. */
+.find:not(:has(.find-prompt)) .find__expand {
+  display:inline-flex; align-items:center; cursor:pointer; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.12em; text-transform:uppercase;
+  color:var(--faint); border:1px solid var(--hair); border-radius:var(--radius);
+  padding:4px 8px; height:28px; }
+.find:not(:has(.find-prompt)) .find__expand:hover { color:var(--ink); border-color:var(--hair-strong); }
+
 .find__list { flex:1 1 auto; overflow-y:auto; min-height:0; }
 
 /* Find empty-state (Slice 2b): search-first prompt — shown when no content

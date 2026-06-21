@@ -330,6 +330,26 @@ async def flow(cdp, check, goto, code_conv):
     )
     check("search hit-meta gutter + score meter drawn under CSP", meter_drawn is True)
 
+    # Slice 2c: with results showing, the strip COLLAPSES (CSS :has) — the
+    # secondary "more filters" disclosure is hidden and the expand chevron shows.
+    collapsed = await cdp.eval(
+        "(function(){var more=document.querySelector('#filters .find__more');"
+        "var ex=document.querySelector('#filters .find__expand');"
+        "return getComputedStyle(more).display==='none'"
+        " && getComputedStyle(ex).display!=='none';})()"
+    )
+    check("control strip collapses to a refinement bar on search", collapsed is True)
+    # Clicking the chevron force-expands back to the builder (more filters shown).
+    await cdp.click('#filters .find__expand')
+    await cdp.drain(0.6)
+    reexpanded = await cdp.eval(
+        "getComputedStyle(document.querySelector('#filters .find__more')).display!=='none'"
+    )
+    check("expand chevron re-opens the builder", reexpanded is True)
+    # Collapse again so the view-toggle check below runs against the bar state.
+    await cdp.click('#filters .find__expand')
+    await cdp.drain(0.6)
+
     # view toggle: changing the result-shape <select> re-runs the query through
     # the same recipe server-side and swaps #list to the thread shape. Guards
     # the htmx wiring — the toggle must include into #filters and fire on change

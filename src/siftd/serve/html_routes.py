@@ -1006,19 +1006,40 @@ def ui_meta(
             )
         )
 
+    owner_input = (
+        '<input type="text" name="owner" placeholder="Owner"'
+        ' hx-get="/query" hx-target="#list" hx-trigger="change"'
+        ' hx-include="#filters" class="filter-input">'
+    )
+
+    # Two-state strip (Slice 2c), CSS-only via :has — the strip never re-renders,
+    # so the search box keeps focus while typing. Builder = nothing engaged
+    # (#list shows .find-prompt) OR force-expanded (#sx-expand:checked); collapsed
+    # = a search/browse is showing. In collapsed mode CSS hides inactive facet
+    # selects and styles the active ones as chips, tucks the secondary filters,
+    # and shows the expand chevron. Primary facets (ws/model/tag) chip cleanly off
+    # a <select>'s checked option; owner/dates (no such signal) live in the
+    # "more filters" disclosure in both modes.
     parts = [
+        # Force-expand checkbox: a sibling :has() target, visually removed; its
+        # label is the collapsed-mode chevron below.
+        '<input type="checkbox" id="sx-expand" class="sx-expand" tabindex="-1"'
+        ' aria-hidden="true">',
         search_box,
-        *search_toggles,
-        _select("workspace", "workspaces", ws_opts),
-        _select("model", "models", model_opts),
-        _select("tag", "tags", tag_opts, selected=(tag or "")),
-        (
-            '<input type="text" name="owner" placeholder="Owner"'
-            ' hx-get="/query" hx-target="#list" hx-trigger="change"'
-            ' hx-include="#filters" class="filter-input">'
-        ),
-        _date("since", "Since"),
-        _date("before", "Before"),
+        '<div class="find__toggles">' + "".join(search_toggles) + "</div>",
+        '<div class="find__facets">'
+        + _select("workspace", "workspaces", ws_opts)
+        + _select("model", "models", model_opts)
+        + _select("tag", "tags", tag_opts, selected=(tag or ""))
+        + "</div>",
+        '<details class="find__more"><summary>more filters</summary>'
+        '<div class="find__morebody">'
+        + owner_input
+        + _date("since", "Since")
+        + _date("before", "Before")
+        + "</div></details>",
+        '<label for="sx-expand" class="find__expand" title="Show all filters">'
+        "filters</label>",
     ]
     return _html_response("".join(parts))
 

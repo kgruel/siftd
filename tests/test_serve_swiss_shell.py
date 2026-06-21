@@ -332,6 +332,24 @@ def test_meta_has_content_search_box(ctx):
     assert 'value="needle"' in client.get("/meta", params={"search": "needle"}).text
 
 
+def test_meta_has_two_state_structure(ctx):
+    """Slice 2c: the strip carries the builder↔collapsed scaffolding — a force-
+    expand checkbox (#sx-expand), a primary-facet group (.find__facets), a
+    secondary "more filters" disclosure, and the collapsed-mode expand chevron.
+    The collapse itself is CSS-only (asserted in the browser smoke)."""
+    client, _cid = ctx
+    body = client.get("/meta").text
+    assert 'id="sx-expand"' in body
+    assert 'class="find__facets"' in body
+    assert 'class="find__more"' in body
+    assert 'class="find__expand"' in body
+    # Primary facets live in the group; secondary ones in the disclosure.
+    facets = body.split('class="find__facets"')[1].split("</div>")[0]
+    assert 'name="workspace"' in facets and 'name="model"' in facets and 'name="tag"' in facets
+    more = body.split('class="find__more"')[1]
+    assert 'name="owner"' in more and 'name="since"' in more and 'name="before"' in more
+
+
 def test_meta_has_view_toggle(ctx):
     """The control strip carries a view toggle (result shape) on every server —
     the chunks/thread/conversations shapes are post-processing, engine-agnostic."""
