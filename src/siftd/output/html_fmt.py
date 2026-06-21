@@ -305,6 +305,24 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
     return "\n".join(parts)
 
 
+def render_find_prompt() -> str:
+    """The Find empty-state: a search-first prompt (Slice 2b).
+
+    Shown when there is no content query AND no active facet — the state that
+    used to render a recency *list* (feedback #1: odd). Find now opens as a
+    search surface; a facet-only state still browses (the Tags/Workspaces
+    drill-downs), and a content term runs the engine.
+    """
+    return (
+        '<div class="find-prompt">'
+        '<p class="find-prompt__lead">Search the corpus</p>'
+        '<p class="find-prompt__hint">'
+        "Type to search content across your conversations, "
+        "or add a filter to browse."
+        "</p></div>"
+    )
+
+
 def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     """Render conversation list as an HTML table fragment.
 

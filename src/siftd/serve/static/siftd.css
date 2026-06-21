@@ -652,6 +652,14 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .find__filters .filter-input--q { flex:1 1 220px; min-width:160px; }
 .find__list { flex:1 1 auto; overflow-y:auto; min-height:0; }
 
+/* Find empty-state (Slice 2b): search-first prompt — shown when no content
+   query + no active facet (the dropped recency list). */
+.find-prompt { padding:64px 32px; max-width:48ch; }
+.find-prompt__lead { font-family:var(--font-mono); font-size:calc(var(--fs-base) + 2px);
+  color:var(--ink); margin:0 0 6px; }
+.find-prompt__hint { font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px);
+  color:var(--faint); line-height:1.5; margin:0; }
+
 /* The conversation list (render_list) — bare <table> until now; Swiss skin. */
 .conversation-list { width:100%; border-collapse:collapse;
   font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px); }

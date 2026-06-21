@@ -1185,8 +1185,13 @@ def ui_query(
     model = model or None
     since = since or None
     before = before or None
+    owner_filter = owner or None  # the user-supplied owner FACET (before resolution)
     owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None
+    # Active facets = the user narrowing the corpus (the owner facet is the raw
+    # user value, NOT the always-present effective owner). Drives the no-query
+    # branch: no term + no facet → the search prompt; no term + a facet → browse.
+    has_facets = bool(workspace or model or tag or since or before or owner_filter)
 
     # Clamp the result shape to the canonical vocabulary BEFORE delegating —
     # mirrors the control strip, which clamps the toggle's selected value. An
@@ -1216,6 +1221,12 @@ def ui_query(
                 workspace=workspace, model=model, tag=tag,
                 since=since, before=before, owner=owner, n=n, mode=mode, view=view,
             )
+
+    # No content term: Find is search-first (Slice 2b). With no active facet the
+    # bare recency list is dropped for a search prompt; with a facet active the
+    # facet-filtered browse stays (the Tags/Workspaces drill-downs land here).
+    if not has_facets:
+        return _html_response(fmt.render_find_prompt())
 
     from siftd.api.conversations import list_conversations
     from siftd.api.dispatch import Operation, dispatch

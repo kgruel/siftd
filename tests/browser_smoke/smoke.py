@@ -302,6 +302,13 @@ async def flow(cdp, check, goto, code_conv):
     # find box: real keystrokes -> htmx keyup trigger (350ms delay)
     await cdp.click('a[data-view="search"]')
     await cdp.drain(1.5)
+    # Slice 2b: bare Find (no term, no facet) opens as the search PROMPT, not a
+    # recency list.
+    prompt_shown = await cdp.eval(
+        "!!document.querySelector('#list .find-prompt') "
+        "&& !document.querySelector('#list .conversation-list')"
+    )
+    check("bare Find opens as the search prompt (no recency list)", prompt_shown is True)
     await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)

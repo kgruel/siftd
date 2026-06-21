@@ -237,7 +237,8 @@ def test_query_rows_mount_folio_in_main(ctx):
     #main (the only swap target in the Swiss shell) and mount the folio —
     the old #detail target matched nothing, so clicks were silent no-ops."""
     client, cid = ctx
-    body = client.get("/query").text
+    # A facet (workspace) browses the list (Slice 2b: bare /query is the prompt).
+    body = client.get("/query", params={"workspace": "/proj"}).text
     assert 'hx-get="/folio?id=' in body
     assert 'hx-target="#main"' in body
     assert 'hx-push-url="/?id=' in body
@@ -380,12 +381,23 @@ def test_find_box_punctuation_does_not_500(ctx):
         assert resp.status_code == 200, f"{raw!r} -> {resp.status_code}"
 
 
-def test_query_no_search_is_facet_list(ctx):
-    """Without a content query the Find list is the facet-filtered conversation
-    table (recency order) — the engine path only kicks in for a real query."""
+def test_query_no_search_no_facet_is_prompt(ctx):
+    """Slice 2b: bare Find (no content query, no facet) is the search PROMPT, not
+    the old recency list — Find opens as a search surface."""
     client, _cid = ctx
     body = client.get("/query").text
+    assert 'class="find-prompt"' in body
+    assert 'class="conversation-list"' not in body
+    assert "search-results" not in body
+
+
+def test_query_no_search_with_facet_is_browse_list(ctx):
+    """Slice 2b: a facet without a content query still browses — the facet-filtered
+    conversation table (the Tags/Workspaces drill-downs land here)."""
+    client, _cid = ctx
+    body = client.get("/query", params={"workspace": "/proj"}).text
     assert 'class="conversation-list"' in body
+    assert 'class="find-prompt"' not in body
     assert "search-results" not in body
 
 

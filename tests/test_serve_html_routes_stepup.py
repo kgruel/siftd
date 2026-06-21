@@ -34,7 +34,9 @@ class _Fmt:
 def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.output.format_registry.get_format", lambda _n: _Fmt())
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="", since=None, before=None, model="", tag=[""], search="", owner=None, n=5))
+    # A facet (workspace) with no content term takes the browse/dispatch path
+    # (Slice 2b: bare no-facet/no-term renders the prompt instead).
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="/proj", since=None, before=None, model="", tag=[""], search="", owner=None, n=5))
     assert "<list/>" in out.content
 
 
