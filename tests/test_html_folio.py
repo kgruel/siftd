@@ -324,18 +324,18 @@ def test_folio_unknown_mode_falls_back_to_reading():
     assert "tool-call" not in html
 
 
-def test_search_context_unfold_renders_the_trace():
-    # The unfold IS the trace (Q2): it inlines tool I/O rather than reusing the
-    # folio's prose-only body. The matched exchange is flagged is-anchor.
+def test_search_context_unfold_renders_reading_preview():
+    # Slice 2a: the unfold is a READING preview (prose around the match), not the
+    # trace — tool I/O is NOT inlined (it's the chip/ledger's job); the matched
+    # exchange is flagged is-anchor.
     detail = _trace_detail()
     html = render_search_context(
         detail, _FID_TRACE,
         conv_id="01TRACE00000000000", at=0, w=2, anchor_pos=0,
     )
     assert 'class="hit-context__slice"' in html
-    assert 'class="tool-call"' in html
     assert "is-anchor" in html
-    assert "turn__tools" not in html
+    assert 'class="tool-call"' not in html  # reading body: tools not inlined
 
 
 def _xss_trace_detail() -> ConversationDetail:
