@@ -2069,6 +2069,36 @@ def render_dashboard(
         '</div></section>'
     )
 
+    # --- input economy: the cache lever (unique to LLM usage) -----------------
+    # input_tokens is the TRUE TOTAL (uncached + cache_read + cache_creation),
+    # so the cache reads are input we DIDN'T pay full freight for — the single
+    # biggest cost lever, and otherwise invisible. Only shown when the corpus
+    # actually reports cache tokens (many providers don't); honest absence.
+    cread = getattr(usage, "total_cache_read_tokens", 0) or 0
+    ccreate = getattr(usage, "total_cache_creation_tokens", 0) or 0
+    economy = ""
+    if in_tok > 0 and (cread + ccreate) > 0:
+        uncached = max(0, in_tok - cread - ccreate)
+        import math as _math
+
+        hit = _math.floor((cread / in_tok) * 1000) / 10  # 1dp, never rounds up
+        economy = (
+            '<div class="reck__sechead"><span class="micro">Input economy</span>'
+            '<span class="zone__rule"></span><span class="reck__ctl">'
+            f'<span class="trend__peak">{hit:.1f}% of input served from cache</span>'
+            '</span></div>'
+            '<section class="reck__econ">'
+            '<div class="standing__ratio reck__econbar">'
+            f'<i class="seg-in" style="flex:{uncached or 1}"></i>'
+            f'<i class="seg-cache" style="flex:{cread or 1}"></i>'
+            f'<i class="seg-fresh" style="flex:{ccreate or 1}"></i></div>'
+            '<span class="standing__legend">'
+            f'<span><i class="seg-in"></i>{escape(fmt_tokens(uncached))} uncached</span>'
+            f'<span><i class="seg-cache"></i>{escape(fmt_tokens(cread))} cache reads</span>'
+            f'<span><i class="seg-fresh"></i>{escape(fmt_tokens(ccreate))} cache writes</span>'
+            '</span></section>'
+        )
+
     # --- activity over the period + the hour/weekday rhythm ---
     by_day = getattr(distributions, "by_day", []) or []
     by_hour = getattr(distributions, "by_hour", []) or []
@@ -2147,6 +2177,17 @@ def render_dashboard(
         _cell("Workspaces", f"{counts.workspaces:,}")
         _cell("Harnesses", f"{counts.harnesses:,}")
         _cell("Tools", f"{counts.tools:,}")
+    # Rhythm: how concentrated the work is over the period — derived from the
+    # same daily series the trend draws (active = a day with any tokens; streak
+    # = the longest unbroken run of active days). Zero new query.
+    if by_day:
+        active = sum(1 for b in by_day if b.tokens > 0)
+        streak = best = 0
+        for b in by_day:
+            streak = streak + 1 if b.tokens > 0 else 0
+            best = max(best, streak)
+        _cell("Active days", f"{active:,}/{len(by_day):,}")
+        _cell("Longest streak", f"{best:,} day" + ("" if best == 1 else "s"))
     note_bits: list[str] = []
     if tok_pct is not None:
         note_bits.append(
@@ -2174,7 +2215,7 @@ def render_dashboard(
     return (
         '<article class="reck by-tokens" data-view="stats" data-title="Stats"'
         f' data-count="{convs}" data-kick="{kick}">'
-        f'{standing}{trend}{rhythm}{books}{colophon}</article>'
+        f'{standing}{economy}{trend}{rhythm}{books}{colophon}</article>'
     )
 
 

@@ -117,6 +117,51 @@ def test_dashboard_trend_bars_carry_tokens_cost_and_cost_honesty():
     assert 'data-tokens="0" data-cost=""' in html
 
 
+def test_dashboard_input_economy_strip_when_cache_present():
+    """The cache lever: when the corpus reports cache tokens, the standing block
+    is followed by an Input economy strip splitting input into uncached / cache
+    reads / cache writes, with the cache-hit headline (floored, never rounds up)."""
+    html = _render(
+        usage=UsageSummary(
+            2, 1_000_000, 0, 12.5,
+            total_cache_read_tokens=700_000, total_cache_creation_tokens=100_000,
+        ),
+        by_model=[GroupUsage("claude-x", 2, 1_000_000, 0, 12.5)],
+        by_workspace=[GroupUsage("/proj", 2, 1_000_000, 0, 12.5)],
+        distributions=_dist(),
+    )
+    assert "Input economy" in html
+    assert 'class="seg-cache"' in html and 'class="seg-fresh"' in html
+    assert "70.0% of input served from cache" in html  # 700k / 1.0M, floored
+    # uncached = 1.0M - 700k - 100k = 200k
+    assert "200.0k uncached" in html
+    assert "700.0k cache reads" in html and "100.0k cache writes" in html
+
+
+def test_dashboard_no_economy_strip_without_cache_tokens():
+    """A corpus that reports no cache tokens (default UsageSummary) shows no
+    Input economy strip — honest absence, not a fabricated 0% cache row."""
+    html = _render(
+        usage=UsageSummary(2, 1_000_000, 500_000, 12.5),
+        by_model=[GroupUsage("claude-x", 2, 1_000_000, 500_000, 12.5)],
+        by_workspace=[GroupUsage("/proj", 2, 1_000_000, 500_000, 12.5)],
+    )
+    assert "Input economy" not in html
+
+
+def test_dashboard_rhythm_active_days_and_streak():
+    """The colophon rhythm is derived from the daily series: active days over the
+    span + the longest unbroken streak. _dist() = active, idle, active → 2/3, 1d."""
+    html = _render(
+        usage=UsageSummary(2, 3_000_000, 0, 36.5),
+        by_model=[GroupUsage("claude-x", 2, 3_000_000, 0, 36.5)],
+        by_workspace=[GroupUsage("/proj", 2, 3_000_000, 0, 36.5)],
+        distributions=_dist(),
+    )
+    assert "Active days" in html and "2/3" in html
+    assert "Longest streak" in html and "1 day" in html
+
+
 def test_dashboard_headline_and_row_cost_when_priced():
     html = _render(
         usage=UsageSummary(2, 1_000_000, 500_000, 12.5),

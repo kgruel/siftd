@@ -626,12 +626,22 @@ def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> Datab
 
 @dataclass
 class UsageSummary:
-    """Aggregated token/cost stats."""
+    """Aggregated token/cost stats.
+
+    ``total_input_tokens`` is the TRUE TOTAL input (uncached + cache_read +
+    cache_creation — the rollup's normalized convention). The two cache
+    components are broken out so the input economy (how much of the input was
+    served cheaply from cache vs. paid fresh) is derivable:
+    ``uncached = total_input - cache_read - cache_creation``. Defaults keep the
+    pre-cache 4-arg constructors valid.
+    """
 
     total_conversations: int
     total_input_tokens: int
     total_output_tokens: int
     total_cost: float
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
 
 
 @dataclass
@@ -676,7 +686,9 @@ def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) 
         row = conn.execute(
             "SELECT COUNT(DISTINCT c.id) AS n,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(u.output_tokens), 0) AS out"
+            " COALESCE(SUM(u.output_tokens), 0) AS out,"
+            " COALESCE(SUM(u.cache_read_tokens), 0) AS cread,"
+            " COALESCE(SUM(u.cache_creation_tokens), 0) AS ccreate"
             " FROM conversations c"
             " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
             f"{conv_where}",
@@ -702,6 +714,8 @@ def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) 
             total_input_tokens=row["inp"],
             total_output_tokens=row["out"],
             total_cost=total_cost,
+            total_cache_read_tokens=row["cread"],
+            total_cache_creation_tokens=row["ccreate"],
         )
     finally:
         conn.close()

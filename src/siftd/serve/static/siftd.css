@@ -1148,6 +1148,11 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .standing__ratio i { display:block; }
 .seg-in { background:var(--ink); opacity:.32; }
 .seg-out { background:var(--accent); opacity:.78; }
+/* input-economy segments: uncached (seg-in) · cache reads (cheap) · cache writes */
+.seg-cache { background:var(--accent); opacity:.42; }
+.seg-fresh { background:var(--ink); opacity:.62; }
+.reck__econ { padding:16px 26px 22px; display:flex; flex-direction:column; gap:10px; }
+.reck__econbar { height:10px; }
 .standing__legend { display:flex; gap:16px; font-family:var(--font-mono);
   font-size:var(--fs-micro); letter-spacing:.04em; color:var(--faint); }
 .standing__legend span { display:inline-flex; align-items:center; gap:6px; }

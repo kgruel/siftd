@@ -133,3 +133,17 @@ def test_usage_distributions_shape_totals_and_scoping(tmp_path):
     # Owner-scoped to alice: cA1 (150 in ws_a) + cB1 (10 in ws_b) = 160.
     alice = get_usage_distributions(db_path=db, owner="alice")
     assert sum(b.tokens for b in alice.by_day) == 160
+
+
+def test_usage_summary_carries_cache_totals(tmp_path):
+    """get_usage_summary sums the rollup's broken-out cache components (the
+    input-economy source). This fixture seeds no cache tokens, so they're 0 —
+    proving the columns resolve and default honestly, not that cache is absent."""
+    from siftd.api.stats import get_usage_summary
+
+    db = tmp_path / "d.db"
+    _build(db)
+    u = get_usage_summary(db_path=db)
+    assert u.total_cache_read_tokens == 0
+    assert u.total_cache_creation_tokens == 0
+    assert u.total_input_tokens == 1107  # 100 + 1000 + 7
