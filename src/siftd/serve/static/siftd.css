@@ -946,9 +946,93 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
   letter-spacing:.04em; color:var(--faint); margin-right:auto; }
 .hit-unfold--folio { text-decoration:none; }
 
-/* SLICE-A: the SEARCH · EDITORIAL FOLIO LAYOUT block (new-markup grid) is
-   deferred to Slice A.2 with render_search; the old search layout lives in the
-   SLICE-A COMPAT block at the end of this file. */
+/* ===========================================================================
+   SLICE A.2 — SEARCH · EDITORIAL FOLIO LAYOUT: the manuscript treatment
+   (leading-zero folio numbers, a hanging meta gutter, typeset hierarchy) applied
+   to all three result shapes. Results are a SCANNING surface, so the content
+   column runs the FULL width of the list (no narrow reading measure). The folio
+   number is a CSS counter on .search-hit, so a facet-hidden hit drops out and the
+   visible set renumbers 01..n with no JS. Adapted from the mock for siftd's htmx
+   unfold (the open state keys on the fetched .hit-context__slice, not a static
+   <details open>) + the .search-hit__main nav block in the body column.
+   ========================================================================= */
+.search-results.chunks, .search-results.thread { counter-reset:hit; }
+.search-results.chunks .search-hit,
+.search-results.thread .search-hit.expanded {
+  display:grid; grid-template-columns:170px minmax(0,1fr); column-gap:36px;
+  align-items:start; padding:20px 22px; cursor:default; border-bottom:0; }
+.search-results.chunks .search-hit:hover,
+.search-results.thread .search-hit.expanded:hover {
+  background:transparent; box-shadow:none; }
+.search-hit { counter-increment:hit; }
+
+/* the gutter — folio number stacked over the match's identity (mono, quiet) */
+.hit-meta { display:flex; flex-direction:column; gap:7px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); line-height:1.3; }
+.hit-num::before { content:counter(hit, decimal-leading-zero); font-size:29px;
+  font-weight:700; line-height:.85; letter-spacing:-.03em; color:var(--accent);
+  opacity:.85; }
+.hit-score { display:flex; align-items:center; gap:7px; margin-top:1px; }
+.hit-meta .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
+.hit-meta .identifier { color:var(--accent); letter-spacing:.04em; }
+.hit-meta .workspace { color:var(--mid); }
+.hit-src { display:flex; flex-wrap:wrap; gap:8px; color:var(--faint); }
+.hit-src .adapter { letter-spacing:.06em; text-transform:uppercase; }
+.hit-src .temporal { color:var(--mid); }
+
+/* the body — full-width for scanning, with typeset hierarchy per shape. The
+   excerpt nav (.search-hit__main, the folio jump) + the unfold are stacked
+   siblings in the body column, so an unfold click never bubbles to the jump. */
+.hit-body { min-width:0; }
+.search-hit__main { cursor:pointer; }
+.search-results.chunks .excerpt { margin:0; color:var(--ink); font-size:15px;
+  line-height:1.62; white-space:pre-wrap; overflow-wrap:anywhere; }
+.search-results.thread .prompt { margin:0 0 12px; padding:0; border:0;
+  background:transparent; font-size:16.5px; font-weight:500; letter-spacing:-.012em;
+  line-height:1.5; color:var(--ink); white-space:pre-wrap; overflow-wrap:anywhere; }
+.search-results.thread .assistant { margin:0; padding:0; font-size:15px;
+  line-height:1.7; color:var(--mid); white-space:pre-wrap; overflow-wrap:anywhere; }
+
+/* in-place context unfold — full-width in the body column; the open-state
+   highlight keys on the fetched slice's presence (htmx, not <details open>). */
+.hit-context { padding:0; margin-top:12px; }
+.search-results.chunks .search-hit:has(.hit-context__slice) {
+  background:var(--panel); box-shadow:inset 3px 0 0 var(--accent); }
+.search-results.chunks .search-hit:has(.hit-context__slice) .search-hit__main:hover {
+  background:transparent; box-shadow:none; }
+
+/* a hairline between editorial entries (first needs none) */
+.search-results.chunks .search-hit + .search-hit,
+.search-results.thread .search-hit.expanded + .search-hit.expanded {
+  border-top:1px solid var(--hair); }
+
+/* Thread tier-2 "more results" — a compact numbered list continuing the gutter
+   alignment (number in the gutter track, summary full-width). */
+.search-more { border-top:1px solid var(--hair-strong); margin-top:4px; }
+.search-more h3 { margin:0; padding:14px 22px 8px; font-family:var(--font-ui);
+  font-size:var(--fs-micro); font-weight:600; letter-spacing:.12em;
+  text-transform:uppercase; color:var(--faint); }
+.search-hit.compact { display:grid; grid-template-columns:170px minmax(0,1fr);
+  column-gap:36px; align-items:baseline; padding:9px 22px; cursor:pointer;
+  border-bottom:0; }
+.search-hit.compact:hover { background:var(--sel-bg); }
+.search-hit.compact .hit-meta { flex-direction:row; align-items:baseline; gap:10px; }
+.search-hit.compact .hit-num::before { font-size:var(--fs-micro); font-weight:600;
+  letter-spacing:.04em; }
+.search-hit.compact .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
+.search-hit.compact .hit-body { display:flex; flex-wrap:wrap; align-items:baseline;
+  gap:6px 12px; }
+.search-hit.compact .summary { color:var(--ink); font-family:var(--font-ui);
+  font-size:13px; }
+.search-hit.compact .compact-meta { display:flex; flex-wrap:wrap; gap:10px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
+
+/* Conversations table — keeps its table but gains the folio numbering (conv-num
+   CSS counter, matching the gutter number on Excerpts/Thread). */
+.search-results.conversations tbody { counter-reset:conv; }
+.search-results.conversations tbody tr { counter-increment:conv; }
+.conv-num::before { content:counter(conv, decimal-leading-zero); color:var(--accent);
+  opacity:.85; font-variant-numeric:tabular-nums; font-size:var(--fs-micro); }
 /* facet filtering hides rows client-side (enhance.js .hidden writes); a class
    selector outranks the UA [hidden] rule for the table rows + flex compact hits,
    so re-assert — same fix the workspace ledger + sub-agent rows needed. */
@@ -1552,30 +1636,10 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
   .ro__panes, .ro__foil { transition:none; }
 }
 
-/* ========================================================================= */
-/* SLICE-A COMPAT: old search-markup layout (render_search still emits the   */
-/* .search-hit__main + div .hit-context structure). The refined search       */
-/* markup + its CSS land in Slice A.2; this block keeps the current search    */
-/* view laid out until then and is removed when render_search is re-expressed.*/
-/* ========================================================================= */
-/* Chunks hit unfold: the article is a container; .search-hit__main carries the
-   folio jump (the deliberate act) and the row treatment, while .hit-context
-   below unfolds surrounding exchanges in place. Scoped to the chunks view so the
-   thread/conversations hits (which have no __main) keep the base treatment. */
-.search-results.chunks .search-hit { padding:0; cursor:default; }
-.search-results.chunks .search-hit:hover { background:transparent; box-shadow:none; }
-.search-hit__main { padding:11px 18px; cursor:pointer; }
-.search-hit__main:hover { background:var(--sel-bg); box-shadow:var(--row-marker); }
-
-/* A chunk seeds a window of surrounding exchanges that widens through stepped
-   rings (the same get_conversation the folio uses). :has() restyles the whole
-   hit while unfolded so it stands out from its neighbours — an accent rail +
-   panel ground — with no JS class toggle (CSP-clean). */
-.hit-context { padding:0 18px 11px; }
-.search-hit:has(.hit-context__slice) { background:var(--panel);
-  box-shadow:inset 3px 0 0 var(--accent); }
-.search-hit:has(.hit-context__slice) .search-hit__main:hover {
-  background:transparent; box-shadow:none; }
+/* The unfolded context slice (htmx-fetched into .hit-context) — a panel of
+   surrounding exchanges with the matched turn marked. The layout/open-state
+   highlight live in the SLICE A.2 editorial block above; these are the slice's
+   own box + turn treatment, shared by every shape. */
 .hit-context__slice { margin:2px 0 10px; padding:12px 16px; background:var(--paper);
   border:1px solid var(--hair); border-radius:var(--radius); }
 .hit-context__slice .turn { margin-bottom:18px; max-width:none; }
@@ -1583,43 +1647,9 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .hit-context__slice .turn.is-anchor { background:var(--sel-bg);
   box-shadow:var(--row-marker); padding:8px 12px; border-radius:var(--radius); }
 .hit-context__controls { display:flex; flex-wrap:wrap; gap:8px; }
-.hit-unfold { appearance:none; cursor:pointer; background:transparent;
-  border:1px solid var(--hair); border-radius:var(--radius); color:var(--mid);
-  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.04em;
-  padding:3px 9px; }
-.hit-unfold:hover { border-color:var(--accent); color:var(--accent); }
-.hit-unfold--folio { border-color:var(--accent); color:var(--accent); }
 
 /* Search toggles (view shape + engine) sit in the filter strip but modify the
    query rather than narrow it — an accent underline sets them apart from the
-   neutral facet dropdowns. */
+   neutral facet dropdowns. (The mock's radio find-toggles are styled above and
+   adopted when the control strip is ported; the selects keep this cue.) */
 .find__filters .search-toggle { border-bottom:2px solid var(--accent); }
-
-/* Thread view (render_search, thread) — tier1 renders full prompt/response
-   exchanges; tier2 is a compact "more results" list. Chunks + conversations
-   are skinned above (.search-hit / .conversation-list). */
-.search-results.thread .search-hit.expanded { cursor:default; }
-.search-results.thread .search-hit.expanded:hover {
-  background:transparent; box-shadow:none; }
-.search-hit.expanded header { margin-bottom:8px; }
-.search-hit.expanded .prompt { margin:0 0 8px; padding:8px 12px;
-  border-left:2px solid var(--accent); background:var(--panel); color:var(--ink);
-  white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
-.search-hit.expanded .assistant { margin:0 0 10px; padding:0 0 0 12px;
-  color:var(--mid); white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.5; }
-.search-more { border-top:1px solid var(--hair-strong); }
-.search-more h3 { margin:0; padding:11px 18px 5px; font-family:var(--font-ui);
-  font-size:var(--fs-micro); font-weight:600; letter-spacing:.12em;
-  text-transform:uppercase; color:var(--faint); }
-.search-hit.compact { display:flex; flex-wrap:wrap; align-items:baseline; gap:10px;
-  font-size:var(--fs-micro); padding:8px 18px; }
-.search-hit.compact .identifier { color:var(--accent); }
-.search-hit.compact .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
-.search-hit.compact .workspace, .search-hit.compact .temporal { color:var(--mid); }
-.search-hit.compact .summary { flex:1 1 100%; color:var(--ink); }
-
-/* SLICE-A COMPAT (cont.): neutralise the mock new-markup grid so the old   */
-/* .search-hit__main / .hit-body-less markup flows as a normal block.       */
-.search-results.chunks .search-hit,
-.search-results.thread .search-hit.expanded { display:block; column-gap:0; }
-.search-results.thread .search-hit.expanded { padding:11px 18px; }

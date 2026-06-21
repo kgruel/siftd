@@ -294,6 +294,13 @@ async def flow(cdp, check, goto, code_conv):
         "/\\[(fts|hybrid|semantic)\\]/.test(document.getElementById('list').textContent)"
     )
     check("find search names the engine that ran", bool(engine_named))
+    # editorial hit markup: a hanging meta gutter + a score meter that
+    # drawHitMeters scales under CSP (--w set from data-n). Guards the new JS.
+    meter_drawn = await cdp.eval(
+        "(function(){var m=document.querySelector('#list .search-hit .hit-meta .hit-meter');"
+        "return !!m && !!m.style.getPropertyValue('--w');})()"
+    )
+    check("search hit-meta gutter + score meter drawn under CSP", meter_drawn is True)
 
     # view toggle: changing the result-shape <select> re-runs the query through
     # the same recipe server-side and swaps #list to the thread shape. Guards

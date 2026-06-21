@@ -149,6 +149,16 @@
     recut(checked && checked.id === 'm-cost' ? 'cost' : 'tokens');
   }
 
+  // --- search hit score meters (data-n -> width) ----------------------------
+  // Each .hit-meter[data-n] carries score×1000; width is n/10 % (a 0..1 score
+  // → 0..100%). CSSOM .style only (CSP), the same data-n→bar idiom as ledgers.
+  function drawHitMeters(root) {
+    (root || document).querySelectorAll('.hit-meter[data-n]').forEach(function (m) {
+      var n = +m.dataset.n || 0;
+      m.style.setProperty('--w', Math.max(0, Math.min(100, n / 10)) + '%');
+    });
+  }
+
   // --- chrome head + active nav from the mounted fragment -------------------
   function syncChrome() {
     var v = document.querySelector('#main [data-view]');
@@ -339,7 +349,7 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
+  function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

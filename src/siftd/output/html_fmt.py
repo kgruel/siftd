@@ -368,6 +368,37 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     return "\n".join(parts)
 
 
+def _hit_data(r: Any) -> str:
+    """The hit's data-* facet attributes (workspace · adapter), so the editorial
+    CSS counter renumbers cleanly and a future client filter has hooks. Cheap +
+    matches the mock; our facets filter server-side, so these are advisory."""
+    ws = escape(r.get("_workspace", "") or "")
+    label = escape(r.get("display_label", "") or "")
+    return f' data-workspace="{ws}" data-adapter="{label}"'
+
+
+def _hit_meta(
+    *, score: float, conv_id: str, ws: str, label: str, started: str, meter: bool = True
+) -> str:
+    """The hanging meta gutter of a search hit — a folio number (CSS counter)
+    stacked over the match's identity: score + a meter bar, the short id, the
+    workspace, and the source (adapter · date). Shared by Excerpts + Thread
+    tier-1. The meter's ``data-n`` is score×1000; enhance.js ``drawHitMeters``
+    scales it (n/10 %). ``started`` is the already-display-formatted timestamp the
+    SearchView carries (``_started_at``)."""
+    bar = f'<span class="hit-meter" data-n="{round(score * 1000)}"></span>' if meter else ""
+    return (
+        '<aside class="hit-meta">'
+        '<span class="hit-num"></span>'
+        f'<span class="hit-score"><span class="metric">{score:.3f}</span>{bar}</span>'
+        f'<span class="identifier">{escape(short_id(conv_id))}</span>'
+        f'<span class="workspace">{escape(ws)}</span>'
+        f'<span class="hit-src"><span class="adapter">{escape(label)}</span>'
+        f'<span class="temporal">{escape(started)}</span></span>'
+        '</aside>'
+    )
+
+
 def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
     """Render a :class:`SearchView` as HTML fragments.
 
@@ -397,6 +428,8 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
     parts: list[str] = []
 
     if view == "conversations":
+        # Recency/score table the facets browse — folio-numbered (conv-num CSS
+        # counter), lean editorial columns: id · when · workspace · hits · score.
         parts.append('<section class="search-results conversations">')
         parts.append(f"<h2>Conversations for: {escape(query)}{engine_tag}</h2>")
         if not results:
@@ -404,22 +437,21 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         else:
             parts.append('<table class="conversation-list">')
             parts.append(
-                "<thead><tr>"
+                "<thead><tr><th class=\"conv-num\"></th>"
                 '<th class="identifier">ID</th>'
-                '<th class="metric">Max</th><th class="metric">Mean</th>'
-                '<th class="metric">Chunks</th>'
-                '<th class="temporal">Started</th><th class="workspace">Workspace</th>'
+                '<th class="temporal">When</th><th class="workspace">Workspace</th>'
+                '<th class="metric">Hits</th><th class="metric">Score</th>'
                 "</tr></thead><tbody>"
             )
             for r in results:
                 conv_id = r.get("conversation_id", "")
                 parts.append(f"<tr{_hx_detail(detail_base, conv_id, shell_base)}>")
+                parts.append('<td class="conv-num"></td>')
                 parts.append(f'<td class="identifier">{escape(short_id(conv_id))}</td>')
-                parts.append(f'<td class="metric">{r.get("max_score", 0.0):.3f}</td>')
-                parts.append(f'<td class="metric">{r.get("mean_score", 0.0):.3f}</td>')
-                parts.append(f'<td class="metric">{r.get("chunk_count", 0)}</td>')
                 parts.append(f'<td class="temporal">{escape(r.get("_started_at", ""))}</td>')
                 parts.append(f'<td class="workspace">{escape(r.get("_workspace", ""))}</td>')
+                parts.append(f'<td class="metric">{r.get("chunk_count", 0)}</td>')
+                parts.append(f'<td class="metric">{r.get("max_score", 0.0):.3f}</td>')
                 parts.append("</tr>")
             parts.append("</tbody></table>")
         parts.append("</section>")
@@ -435,11 +467,16 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         for r in tier1:
             ws = r.get("_workspace", "")
             started = r.get("_started_at", "")
-            parts.append('<article class="search-hit expanded">')
+            score = r.get("score", 0.0)
+            conv_id = r.get("conversation_id", "")
+            label = r.get("display_label", "") or ""
+            # Expanded exchange in the editorial gutter frame: hit-meta gutter
+            # beside the prompt/response body, set full-width for scanning.
+            parts.append(f'<article class="search-hit expanded"{_hit_data(r)}>')
             parts.append(
-                f'<header><span class="workspace">{escape(ws)}</span>'
-                f' <span class="temporal">{escape(started)}</span></header>'
+                _hit_meta(score=score, conv_id=conv_id, ws=ws, label=label, started=started)
             )
+            parts.append('<div class="hit-body">')
             exchanges = r.get("_exchanges")
             if exchanges:
                 for _pid, prompt_text, response_text in exchanges:
@@ -452,10 +489,12 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             else:
                 text = r.get("text", "").strip()
                 if text:
-                    parts.append(f"<p>{escape(text)}</p>")
-            parts.append("</article>")
+                    parts.append(f'<p class="assistant">{escape(text)}</p>')
+            parts.append("</div></article>")
 
         if tier2:
+            # Compact tier-2 list — continues the gutter numbering (number in the
+            # gutter track, summary full-width), each a folio-jump to the match.
             parts.append('<div class="search-more">')
             parts.append("<h3>More results</h3>")
             for r in tier2:
@@ -465,21 +504,23 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 score = r.get("score", 0.0)
                 snippet = truncate_text(r.get("text", ""), 120).replace("\n", " ")
                 parts.append(
-                    f'<div class="search-hit compact"'
+                    f'<div class="search-hit compact"{_hit_data(r)}'
                     f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=r.get("event_id"))}>'
-                    f'<span class="identifier">{escape(short_id(conv_id))}</span>'
-                    f' <span class="metric">{score:.3f}</span>'
-                    f' <span class="workspace">{escape(ws)}</span>'
-                    f' <span class="temporal">{escape(started)}</span>'
-                    f' <span class="summary">{escape(snippet)}</span>'
-                    f"</div>"
+                    '<aside class="hit-meta"><span class="hit-num"></span>'
+                    f'<span class="metric">{score:.3f}</span></aside>'
+                    f'<div class="hit-body"><span class="summary">{escape(snippet)}</span>'
+                    f'<span class="compact-meta"><span class="identifier">{escape(short_id(conv_id))}</span>'
+                    f'<span class="workspace">{escape(ws)}</span>'
+                    f'<span class="temporal">{escape(started)}</span></span></div>'
+                    "</div>"
                 )
             parts.append("</div>")
 
         parts.append("</section>")
 
     else:
-        # Chunks view
+        # Chunks (Excerpts) — ranked excerpt hits in the editorial folio form: a
+        # hanging meta gutter beside the full-width excerpt, each unfoldable.
         parts.append('<section class="search-results chunks">')
         parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
         if not results:
@@ -493,25 +534,19 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             turn_index = r.get("turn_index")
             event_id = r.get("event_id")
 
-            # The hit splits into two siblings: __main carries the folio nav (the
-            # deliberate jump); .hit-context holds the inline unfold control. They
-            # are siblings — not nested — so an unfold click never bubbles to the
-            # folio-navigable block (no stopPropagation / JS needed, CSP-clean).
-            # The jump opens the trace anchored at the matched event (search →
-            # trace; lands on the match, not the folio top).
-            parts.append('<article class="search-hit">')
+            # hit-meta gutter + hit-body. Inside the body, the excerpt nav block
+            # (search-hit__main, the folio jump) and the .hit-context unfold are
+            # SIBLINGS — not nested — so an unfold click never bubbles to the jump
+            # (no stopPropagation / JS, CSP-clean). The jump opens the trace
+            # anchored at the matched event (lands on the match, not the top).
+            parts.append(f'<article class="search-hit"{_hit_data(r)}>')
+            parts.append(
+                _hit_meta(score=score, conv_id=conv_id, ws=ws, label=display_label, started=started)
+            )
+            parts.append('<div class="hit-body">')
             parts.append(
                 f'<div class="search-hit__main"'
                 f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=event_id)}>'
-            )
-            parts.append(
-                f'<header>'
-                f'<span class="identifier">{escape(short_id(conv_id))}</span>'
-                f' <span class="metric">{score:.3f}</span>'
-                f' <span class="adapter">[{escape(display_label)}]</span>'
-                f' <span class="temporal">{escape(started)}</span>'
-                f' <span class="workspace">{escape(ws)}</span>'
-                f"</header>"
             )
 
             chars = fidelity.chars
@@ -531,7 +566,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                     f'<div class="hit-context">'
                     f'{_unfold_trigger(conv_id, int(turn_index), event_id)}</div>'
                 )
-            parts.append("</article>")
+            parts.append("</div></article>")  # .hit-body, article
 
         parts.append("</section>")
 

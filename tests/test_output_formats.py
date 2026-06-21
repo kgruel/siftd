@@ -709,6 +709,12 @@ class TestHtmlRenderSearch:
         assert 'class="search-results chunks"' in output
         assert "01ABC123" in output
         assert "0.850" in output
+        # editorial folio markup: a hanging meta gutter (folio number + score
+        # meter) beside the excerpt body, the nav block a sibling of the unfold.
+        assert 'class="hit-meta"' in output and 'class="hit-num"' in output
+        assert 'class="hit-meter" data-n="850"' in output  # score×1000 for drawHitMeters
+        assert 'class="hit-body"' in output and 'class="excerpt"' in output
+        assert 'class="search-hit__main"' in output
 
     def test_conversations_mode_smoke(self):
         from siftd.output.html_fmt import render_search
@@ -718,6 +724,7 @@ class TestHtmlRenderSearch:
         )
         assert 'class="search-results conversations"' in output
         assert "0.920" in output
+        assert 'class="conv-num"' in output  # folio-numbered table
 
     def test_thread_mode_smoke(self):
         from siftd.output.html_fmt import render_search
@@ -729,6 +736,9 @@ class TestHtmlRenderSearch:
         )
         assert 'class="search-results thread"' in output
         assert "What?" in output
+        # expanded thread hit gains the shared gutter + a typeset prompt/assistant body
+        assert 'class="search-hit expanded"' in output and 'class="hit-meta"' in output
+        assert 'class="prompt"' in output and 'class="assistant"' in output
 
     def test_caveats_aside_appended(self):
         from siftd.doctor.checks import Finding
