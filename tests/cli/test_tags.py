@@ -67,8 +67,8 @@ class TestCmdTag:
     def test_tag_missing_db(self, tmp_path, capsys):
         rc = main(["--db", str(tmp_path / "missing.db"), "tag", "abc", "foo"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "not found" in out.lower() or "Database" in out
+        err = capsys.readouterr().err
+        assert "not found" in err.lower() or "Database" in err
 
     def test_tag_no_args_shows_usage(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag"])
@@ -99,7 +99,7 @@ class TestCmdTag:
     def test_tag_nonexistent_id(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "nonexistent_id_xyz", "foo"])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
     def test_tag_last_applies_to_recent(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "--last", "--", "recent-tag"])
@@ -123,7 +123,7 @@ class TestCmdTag:
     def test_tag_last_remove_nonexistent(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "--remove", "--last", "--", "no-such-tag"])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
     def test_tag_last_without_separator(self, test_db, capsys):
         """--last directly followed by tag name (no -- separator, no N)."""
@@ -191,7 +191,7 @@ class TestCmdTag:
         capsys.readouterr()
         rc = main(["--db", str(test_db), "tag", conv_id, "dupe"])
         assert rc == 0
-        assert "already applied" in capsys.readouterr().out
+        assert "already applied" in capsys.readouterr().err
 
     def test_tag_exchange_without_session_warns(self, test_db, capsys):
         conn = open_database(test_db)
@@ -387,7 +387,7 @@ class TestCmdTagApplyRemoveSubcommands:
 
         rc = main(["--db", str(test_db), "tag", "apply", conv_id, "dupe-apply"])
         assert rc == 0
-        assert "already applied" in capsys.readouterr().out
+        assert "already applied" in capsys.readouterr().err
 
     def test_remove_subcommand_nonexistent_tag(self, test_db, capsys):
         conn = open_database(test_db)
@@ -396,8 +396,8 @@ class TestCmdTagApplyRemoveSubcommands:
 
         rc = main(["--db", str(test_db), "tag", "remove", conv_id, "never-existed"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "not found" in out.lower() or "not applied" in out.lower()
+        err = capsys.readouterr().err
+        assert "not found" in err.lower() or "not applied" in err.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +445,8 @@ class TestCmdTagList:
 
         rc = main(["--db", str(test_db), "tag", "list", "--prefix", "zzz:"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "No tags found" in out
+        err = capsys.readouterr().err
+        assert "No tags found" in err
 
     def test_list_missing_db(self, tmp_path, capsys):
         rc = main(["--db", str(tmp_path / "missing.db"), "tag", "list"])
@@ -467,7 +467,7 @@ class TestCmdTagList:
     def test_drill_down_no_match(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "list", "nonexistent-tag"])
         assert rc == 0
-        assert "No conversations found" in capsys.readouterr().out
+        assert "No conversations found" in capsys.readouterr().err
 
 
 class TestCmdTagRename:
@@ -486,7 +486,7 @@ class TestCmdTagRename:
     def test_rename_nonexistent(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "rename", "no-such", "new"])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
     def test_rename_missing_args(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "rename", "only-one"])
@@ -516,8 +516,8 @@ class TestCmdTagDelete:
 
         rc = main(["--db", str(test_db), "tag", "delete", "in-use"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "--force" in out
+        err = capsys.readouterr().err
+        assert "--force" in err
 
     def test_delete_force(self, test_db, capsys):
         conn = open_database(test_db)
@@ -533,7 +533,7 @@ class TestCmdTagDelete:
     def test_delete_nonexistent(self, test_db, capsys):
         rc = main(["--db", str(test_db), "tag", "delete", "no-such-tag"])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -608,7 +608,7 @@ class TestTagsEdgeBranches:
         args = SimpleNamespace(remove=False, positional=["t1"], exchange=2)
         capsys.readouterr()
         assert tags_cli._tag_session(args, Path(test_db), "sess") == 0
-        assert "already queued" in capsys.readouterr().out
+        assert "already queued" in capsys.readouterr().err
 
         # _cmd_tag_list temporal/prefix no matches via direct call
         list_args = SimpleNamespace(positional=["list"], since="2024-01-01", before=None, prefix=None)
@@ -642,7 +642,9 @@ class TestTagsEdgeBranches:
         conn.close()
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
         assert main(["--db", str(test_db), "tag", "--remove", conv_id, "never-tagged"]) == 0
-        assert "not found" in capsys.readouterr().out.lower() or "not applied" in capsys.readouterr().out.lower()
+        captured = capsys.readouterr()
+        text = (captured.out + captured.err).lower()
+        assert "not found" in text or "not applied" in text
 
     def test_remaining_list_rename_delete_and_cmd_tag_branches(self, test_db, monkeypatch, capsys):
         # _detect_current_session line 59: fallback active-session return
@@ -756,7 +758,7 @@ class TestCmdTagListByWorkspace:
     def test_missing_db(self, tmp_path, capsys):
         rc = main(["--db", str(tmp_path / "missing.db"), "tag", "list", "--by-workspace"])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
     def test_json_output(self, test_db_with_tool_tags, capsys):
         import json
@@ -799,7 +801,7 @@ class TestCmdTagListByWorkspace:
     def test_compose_prefix_no_match(self, test_db_with_tool_tags, capsys):
         rc = main(["--db", str(test_db_with_tool_tags), "tag", "list", "--by-workspace", "--prefix", "zzz:"])
         assert rc == 0
-        assert "No tag data found" in capsys.readouterr().out
+        assert "No tag data found" in capsys.readouterr().err
 
     def test_compose_on_and_prefix(self, test_db_with_tool_tags, capsys):
         rc = main([
@@ -878,7 +880,7 @@ class TestCmdTagListByWorkspace:
         ])
         assert rc == 0
         # No tool_call carries both tags in fixture.
-        assert "No tag data found" in capsys.readouterr().out
+        assert "No tag data found" in capsys.readouterr().err
 
     @pytest.mark.parametrize(
         "extra_args",

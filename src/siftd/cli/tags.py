@@ -16,6 +16,7 @@ from siftd.api import (
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli._common import print_ambiguous_error, resolve_db
+from siftd.output import status
 from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
@@ -90,8 +91,10 @@ def _tag_session(args, db: Path, session_id: str) -> int:
 
     # Check if --remove was specified (not supported for --session)
     if args.remove:
-        print("Error: --remove not supported with --session")
-        print("Use 'siftd doctor fix --pending-tags' to clear pending tags")
+        status.error(
+            "--remove not supported with --session",
+            hint="Use 'siftd doctor fix --pending-tags' to clear pending tags",
+        )
         conn.close()
         return 1
 
@@ -106,7 +109,7 @@ def _tag_session(args, db: Path, session_id: str) -> int:
 
     # Check if session is registered (warn but proceed)
     if not is_session_registered(conn, session_id):
-        print(f"Warning: Session {short_id(session_id)}... not registered", file=sys.stderr)
+        status.warning(f"Session {short_id(session_id)}... not registered")
 
     # Argparse's mutually-exclusive group already enforced "at most one of
     # --exchange / --last-*"; this just maps the flag to (entity_type,
@@ -127,20 +130,20 @@ def _tag_session(args, db: Path, session_id: str) -> int:
                 commit=False,
             )
         except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
+            status.error(str(e))
             conn.close()
             return 1
         if result:
             queued += 1
             if last_marker:
                 pretty = last_marker.replace("last_", "last ")
-                print(f"Queued tag '{tag_name}' for {pretty} of session {short_id(session_id)}...")
+                status.confirm(f"Queued tag '{tag_name}' for {pretty} of session {short_id(session_id)}...")
             elif exchange_index is not None:
-                print(f"Queued tag '{tag_name}' for exchange {exchange_index}")
+                status.confirm(f"Queued tag '{tag_name}' for exchange {exchange_index}")
             else:
-                print(f"Queued tag '{tag_name}' for session {short_id(session_id)}...")
+                status.confirm(f"Queued tag '{tag_name}' for session {short_id(session_id)}...")
         else:
-            print(f"Tag '{tag_name}' already queued")
+            status.info(f"Tag '{tag_name}' already queued")
 
     conn.commit()
     conn.close()
@@ -175,8 +178,7 @@ def _session_targeting(args) -> tuple[str, int | None, str | None]:
 def _cmd_tag_list(args, db: Path) -> int:
     """List tags, or drill down into a specific tag's conversations."""
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
@@ -214,11 +216,11 @@ def _cmd_tag_list(args, db: Path) -> int:
                 fidelity=fidelity, db_path=db, tag=filters.tag, n=limit, **filter_kwargs,
             )
         except FileNotFoundError as e:
-            print(str(e))
+            status.error(str(e))
             return 1
 
         if not conversations:
-            print(f"No conversations found for tag: {tag_name}")
+            status.info(f"No conversations found for tag: {tag_name}")
             return 0
 
         from siftd.output.format_registry import select_format
@@ -234,7 +236,7 @@ def _cmd_tag_list(args, db: Path) -> int:
         emit_output(output)
 
         if limit > 0 and len(conversations) >= limit:
-            print(f"\nTip: show more with `siftd query -l {tag_name} -n 0`", file=sys.stderr)
+            status.info(f"show more with `siftd query -l {tag_name} -n 0`")
         return 0
 
     # --by-workspace: group tag counts by workspace
@@ -282,9 +284,9 @@ def _cmd_tag_list(args, db: Path) -> int:
 
     if not tags:
         if since or before:
-            print("No tags found in the specified time range.")
+            status.info("No tags found in the specified time range.")
         else:
-            print("No tags defined.")
+            status.info("No tags defined.")
         return 0
 
     # When filtering temporally, hide tags with zero counts in the window
@@ -294,14 +296,14 @@ def _cmd_tag_list(args, db: Path) -> int:
             or t.exchange_count or t.prompt_count or t.response_count
         )]
         if not tags:
-            print("No tags found in the specified time range.")
+            status.info("No tags found in the specified time range.")
             return 0
 
     prefix = getattr(args, "prefix", None)
     if prefix:
         tags = [t for t in tags if t.name.startswith(prefix)]
         if not tags:
-            print(f"No tags found with prefix: {prefix}")
+            status.info(f"No tags found with prefix: {prefix}")
             return 0
 
     for tag in tags:
@@ -347,17 +349,14 @@ def _cmd_tag_list_by_workspace(args, db: Path) -> int:
         if getattr(args, attr, None)
     ]
     if rejected:
-        print(
-            f"Error: --by-workspace does not support: {', '.join(rejected)}.\n"
-            "Supported filters: --on, --prefix, -w/--workspace, --owner, "
-            "--all-tags, --limit.",
-            file=sys.stderr,
+        status.error(
+            f"--by-workspace does not support: {', '.join(rejected)}.",
+            hint="Supported filters: --on, --prefix, -w/--workspace, --owner, --all-tags, --limit.",
         )
         return 2
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db, read_only=True)
@@ -381,7 +380,7 @@ def _cmd_tag_list_by_workspace(args, db: Path) -> int:
     conn.close()
 
     if not workspaces:
-        print("No tag data found for the given filters.")
+        status.info("No tag data found for the given filters.")
         return 0
 
     if getattr(args, "json", False):
@@ -435,25 +434,24 @@ def _cmd_tag_rename(args, db: Path) -> int:
         print_serve_4xx(e)
         return 1
     if result is not None and isinstance(result, dict) and result.get("status") == "renamed":
-        print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+        status.confirm(f"Renamed '{old_name}' \u2192 '{new_name}'")
         return 0
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     # Local execution
     try:
         rename_tag_safe(db_path=db, old_name=old_name, new_name=new_name)
     except FileNotFoundError:
-        print(f"Tag not found: {old_name}")
+        status.error(f"Tag not found: {old_name}")
         return 1
     except ValueError as e:
-        print(f"Error: {e}")
+        status.error(str(e))
         return 1
 
-    print(f"Renamed '{old_name}' \u2192 '{new_name}'")
+    status.confirm(f"Renamed '{old_name}' \u2192 '{new_name}'")
     return 0
 
 
@@ -500,12 +498,11 @@ def _cmd_tag_delete(args, db: Path) -> int:
             print_serve_4xx(e)
             return 1
         if result is not None and isinstance(result, dict) and result.get("status") == "deleted":
-            print(f"Deleted tag '{tag_name}'")
+            status.confirm(f"Deleted tag '{tag_name}'")
             return 0
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
@@ -514,7 +511,7 @@ def _cmd_tag_delete(args, db: Path) -> int:
     tags = list_tags(conn=conn)
     tag_info = next((t for t in tags if t.name == tag_name), None)
     if not tag_info:
-        print(f"Tag not found: {tag_name}")
+        status.error(f"Tag not found: {tag_name}")
         conn.close()
         return 1
 
@@ -542,7 +539,10 @@ def _cmd_tag_delete(args, db: Path) -> int:
             parts.append(f"{tag_info.prompt_count} prompts")
         if tag_info.response_count:
             parts.append(f"{tag_info.response_count} responses")
-        print(f"Tag '{tag_name}' is applied to {', '.join(parts)}. Use --force to delete.")
+        status.error(
+            f"Tag '{tag_name}' is applied to {', '.join(parts)}.",
+            hint="Use --force to delete.",
+        )
         conn.close()
         return 1
 
@@ -550,10 +550,10 @@ def _cmd_tag_delete(args, db: Path) -> int:
     try:
         delete_tag_safe(db_path=db, tag_name=tag_name)
     except FileNotFoundError:
-        print(f"Tag not found: {tag_name}")
+        status.error(f"Tag not found: {tag_name}")
         return 1
     except ValueError as e:
-        print(f"Error: {e}")
+        status.error(str(e))
         return 1
     parts = []
     if tag_info.conversation_count:
@@ -569,9 +569,9 @@ def _cmd_tag_delete(args, db: Path) -> int:
     if tag_info.response_count:
         parts.append(f"{tag_info.response_count} responses")
     if parts:
-        print(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
+        status.confirm(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
     else:
-        print(f"Deleted tag '{tag_name}'")
+        status.confirm(f"Deleted tag '{tag_name}'")
     return 0
 
 
@@ -605,34 +605,33 @@ def cmd_tag(args) -> int:
     if getattr(args, "current", False) and not session_id:
         session_id = _detect_current_session()
         if session_id:
-            print(f"Detected session: {session_id[:20]}...", file=sys.stderr)
+            status.info(f"Detected session: {session_id[:20]}...")
         else:
             # No active session — fall back to --last 1
-            print("No active session detected, falling back to --last 1", file=sys.stderr)
+            status.info("No active session detected, falling back to --last 1")
             if args.last is None:
                 args.last = 1
 
     # Warn about silently ignored flag combinations
     exchange_index = getattr(args, "exchange", None)
     if exchange_index is not None and not session_id:
-        print("Note: --exchange ignored without --session", file=sys.stderr)
+        status.info("--exchange ignored without --session")
     if args.last is not None and session_id:
-        print("Note: --last ignored with --session", file=sys.stderr)
+        status.info("--last ignored with --session")
     last_marker_flags = [
         flag for flag in ("last_prompt", "last_response", "last_exchange", "last_tool_call")
         if getattr(args, flag, False)
     ]
     if last_marker_flags and not session_id:
         names = ", ".join("--" + f.replace("_", "-") for f in last_marker_flags)
-        print(f"Note: {names} ignored without --session/--current", file=sys.stderr)
+        status.info(f"{names} ignored without --session/--current")
 
     # Handle --session mode (queue pending tags)
     if session_id:
         return _tag_session(args, db, session_id)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     removing = args.remove
@@ -649,7 +648,7 @@ def cmd_tag(args) -> int:
                 print("Usage: siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
                 return 1
             if _kind not in GRANULAR_KINDS:
-                print(f"Error: Unknown target kind {_kind!r}. Valid: {', '.join(sorted(GRANULAR_KINDS))}")
+                status.error(f"Unknown target kind {_kind!r}. Valid: {', '.join(sorted(GRANULAR_KINDS))}")
                 return 1
             _conn = open_database(db)
             try:
@@ -660,12 +659,12 @@ def cmd_tag(args) -> int:
                     print_ambiguous_error(_exc)
                     return 2
                 if _conv_id is None:
-                    print(f"conversation not found: {_conv_ref}")
+                    status.error(f"conversation not found: {_conv_ref}")
                     return 1
                 try:
                     _target_kind, _target_id = resolve_colon_target(_conn, _conv_id, _kind, _n)
                 except (ValueError, IndexError) as e:
-                    print(f"Error: {e}")
+                    status.error(str(e))
                     return 1
             finally:
                 _conn.close()
@@ -678,26 +677,26 @@ def cmd_tag(args) -> int:
                     remove=removing,
                 )
             except FileNotFoundError:
-                print(f"{_target_kind} not found: {short_id(_target_id)}")
+                status.error(f"{_target_kind} not found: {short_id(_target_id)}")
                 return 1
             except ValueError as e:
-                print(f"Error: {e}")
+                status.error(str(e))
                 return 1
             _resolved_id = _result.resolved_entity_id or _target_id
             if removing:
                 for _row in _result.results:
                     if _row.status == "not_found":
-                        print(f"Tag '{_row.tag}' not found")
+                        status.error(f"Tag '{_row.tag}' not found")
                     elif _row.status == "removed":
-                        print(f"Removed tag '{_row.tag}' from {_target_kind} {short_id(_resolved_id)}")
+                        status.confirm(f"Removed tag '{_row.tag}' from {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' not applied to {_target_kind} {short_id(_resolved_id)}")
+                        status.info(f"Tag '{_row.tag}' not applied to {_target_kind} {short_id(_resolved_id)}")
             else:
                 for _row in _result.results:
                     if _row.status == "applied":
-                        print(f"Applied tag '{_row.tag}' to {_target_kind} {short_id(_resolved_id)}")
+                        status.confirm(f"Applied tag '{_row.tag}' to {_target_kind} {short_id(_resolved_id)}")
                     else:
-                        print(f"Tag '{_row.tag}' already applied to {_target_kind} {short_id(_resolved_id)}")
+                        status.info(f"Tag '{_row.tag}' already applied to {_target_kind} {short_id(_resolved_id)}")
             return 0
 
     # Normalize args into a POST body for delegation
@@ -745,14 +744,14 @@ def cmd_tag(args) -> int:
         if result is not None and isinstance(result, dict) and "error" not in result:
             for r in result.get("results", []):
                 tag = r["tag"]
-                status = r["status"]
+                row_status = r["status"]
                 count = r.get("count", 0)
-                if status == "not_found":
-                    print(f"Tag '{tag}' not found")
-                elif status == "applied":
-                    print(f"Applied tag '{tag}' to {count} conversation(s)")
-                elif status == "removed":
-                    print(f"Removed tag '{tag}' from {count} conversation(s)")
+                if row_status == "not_found":
+                    status.error(f"Tag '{tag}' not found")
+                elif row_status == "applied":
+                    status.confirm(f"Applied tag '{tag}' to {count} conversation(s)")
+                elif row_status == "removed":
+                    status.confirm(f"Removed tag '{tag}' from {count} conversation(s)")
             return 0
 
     # Handle --last mode
@@ -774,7 +773,7 @@ def cmd_tag(args) -> int:
 
         tag_names: list[str] = [str(t) for t in positional]
         if n < 1:
-            print("--last requires a positive number")
+            status.error("--last requires a positive number")
             return 1
 
         try:
@@ -785,34 +784,34 @@ def cmd_tag(args) -> int:
                 remove=removing,
             )
         except FileNotFoundError:
-            print("No conversations found.")
+            status.error("No conversations found.")
             return 1
         except ValueError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
         errors = 0
         if removing:
             for row in result_local.results:
                 tag_name = row.tag
-                status = row.status
+                row_status = row.status
                 count = row.count
-                if status == "not_found":
-                    print(f"Tag '{tag_name}' not found")
+                if row_status == "not_found":
+                    status.error(f"Tag '{tag_name}' not found")
                     errors += 1
-                elif status == "removed":
-                    print(f"Removed tag '{tag_name}' from {count} conversation(s)")
+                elif row_status == "removed":
+                    status.confirm(f"Removed tag '{tag_name}' from {count} conversation(s)")
                 else:
-                    print(f"Tag '{tag_name}' not applied to any of {result_local.target_count} conversation(s)")
+                    status.info(f"Tag '{tag_name}' not applied to any of {result_local.target_count} conversation(s)")
         else:
             for row in result_local.results:
                 tag_name = row.tag
-                status = row.status
+                row_status = row.status
                 count = row.count
-                if status == "applied":
-                    print(f"Applied tag '{tag_name}' to {count} conversation(s)")
+                if row_status == "applied":
+                    status.confirm(f"Applied tag '{tag_name}' to {count} conversation(s)")
                 else:
-                    print(f"Tag '{tag_name}' already applied to all {result_local.target_count} conversation(s)")
+                    status.info(f"Tag '{tag_name}' already applied to all {result_local.target_count} conversation(s)")
 
         return 1 if errors == len(tag_names) else 0
 
@@ -848,10 +847,10 @@ def cmd_tag(args) -> int:
         print_ambiguous_error(exc)
         return 2
     except FileNotFoundError:
-        print(f"{entity_type} not found: {entity_id}")
+        status.error(f"{entity_type} not found: {entity_id}")
         return 1
     except ValueError as e:
-        print(f"Error: {e}")
+        status.error(str(e))
         return 1
 
     resolved_id = result_local.resolved_entity_id or entity_id
@@ -859,21 +858,21 @@ def cmd_tag(args) -> int:
     if removing:
         for row in result_local.results:
             tag_name = row.tag
-            status = row.status
-            if status == "not_found":
-                print(f"Tag '{tag_name}' not found")
-            elif status == "removed":
-                print(f"Removed tag '{tag_name}' from {entity_type} {short_id(resolved_id)}")
+            row_status = row.status
+            if row_status == "not_found":
+                status.error(f"Tag '{tag_name}' not found")
+            elif row_status == "removed":
+                status.confirm(f"Removed tag '{tag_name}' from {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' not applied to {entity_type} {short_id(resolved_id)}")
+                status.info(f"Tag '{tag_name}' not applied to {entity_type} {short_id(resolved_id)}")
     else:
         for row in result_local.results:
             tag_name = row.tag
-            status = row.status
-            if status == "applied":
-                print(f"Applied tag '{tag_name}' to {entity_type} {short_id(resolved_id)}")
+            row_status = row.status
+            if row_status == "applied":
+                status.confirm(f"Applied tag '{tag_name}' to {entity_type} {short_id(resolved_id)}")
             else:
-                print(f"Tag '{tag_name}' already applied to {entity_type} {short_id(resolved_id)}")
+                status.info(f"Tag '{tag_name}' already applied to {entity_type} {short_id(resolved_id)}")
     return 0
 
 
