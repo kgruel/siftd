@@ -209,8 +209,10 @@ class _IngestTextRenderer:
         from siftd.output.common import term_width
         from siftd.output.live import text_row
         from siftd.output.table import Col, render_table
+        from siftd.output.theme import domain_styles
 
         pal = current_palette()
+        ds = domain_styles()
         # Per-adapter content from stats.by_harness — only adapters that actually
         # yielded something (an all-skip adapter contributes no rows here).
         yielded = [
@@ -219,14 +221,19 @@ class _IngestTextRenderer:
             if h.get("conversations") or h.get("prompts")
             or h.get("responses") or h.get("tool_calls")
         ]
+        # The per-adapter counts join the amber metric thread, consistent with the
+        # query/peek lists; the ADAPTER name stays plain (the row label) and the
+        # totals recap below stays muted (a sentence, not a single headline figure).
         cols = [
             Col("ADAPTER", lambda it: it[0], fill=True, min_width=10),
             Col("CONVERSATIONS", lambda it: str(it[1].get("conversations", 0)),
-                align=Align.END, style=pal.accent),
-            Col("PROMPTS", lambda it: str(it[1].get("prompts", 0)), align=Align.END),
-            Col("RESPONSES", lambda it: str(it[1].get("responses", 0)), align=Align.END),
+                align=Align.END, style=ds.metric),
+            Col("PROMPTS", lambda it: str(it[1].get("prompts", 0)),
+                align=Align.END, style=ds.metric),
+            Col("RESPONSES", lambda it: str(it[1].get("responses", 0)),
+                align=Align.END, style=ds.metric),
             Col("TOOL_CALLS", lambda it: str(it[1].get("tool_calls", 0)),
-                align=Align.END, style=pal.muted),
+                align=Align.END, style=ds.metric),
         ]
 
         budget = term_width() if sys.stdout.isatty() else None
