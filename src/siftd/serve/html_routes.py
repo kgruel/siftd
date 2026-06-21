@@ -1275,7 +1275,7 @@ def ui_find_context(
         return red
 
     from siftd.output.format_registry import get_format
-    from siftd.output.html_fmt import SEARCH_CONTEXT_RINGS
+    from siftd.output.html_fmt import SEARCH_CONTEXT_RINGS, SEARCH_PREVIEW_CHARS
 
     fmt = get_format("html")
     # Clamp untrusted inputs: w to the allowed rings (else collapsed), at >= 0.
@@ -1297,10 +1297,11 @@ def ui_find_context(
     )
 
     owner = _effective_owner(request, None)
-    # The unfold IS the trace (render_search_context renders mode="trace"), so
-    # fetch tool I/O + thinking — get_conversation populates them only at a
-    # tools/thinking-visible fidelity. depth=1: no tags/cost needed in a slice.
-    fidelity = _fidelity(depth=1, chars=0, tools=True, thinking=True)
+    # The unfold is a reading preview (render_search_context renders mode="reading"):
+    # prose + thinking only, char-capped so each turn is a scannable excerpt.
+    # tools=False — tool I/O isn't inlined here (it's the chip/ledger's job), and
+    # not fetching it keeps the slice read light. depth=1: no tags/cost in a slice.
+    fidelity = _fidelity(depth=1, chars=SEARCH_PREVIEW_CHARS, tools=False, thinking=True)
     try:
         detail = get_conversation(
             conv_id, fidelity=fidelity, db_path=db_path, owner=owner,

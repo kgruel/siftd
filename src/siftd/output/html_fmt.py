@@ -583,6 +583,10 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
 # offsets) the inline context widens through before deferring to the full folio.
 SEARCH_CONTEXT_RINGS: tuple[int, ...] = (2, 5, 10)
 
+# Per-turn char cap for the unfold's reading preview: long prompts/responses are
+# truncated to a scannable excerpt (the full text is one "open in folio" away).
+SEARCH_PREVIEW_CHARS: int = 280
+
 
 def _unfold_button(label: str, attrs: str, *, classes: str = "") -> str:
     """One shape for every context control — the single place the unfold
@@ -640,11 +644,13 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
         return _unfold_trigger(conv_id, at, event)
 
     turns = getattr(detail, "turns", []) or []
-    # The unfold IS the trace: it answers "what did the agent actually do here",
-    # so it inlines tool I/O in sequence rather than the folio's prose-only body.
-    # The route fetches it with a tools/thinking-visible fidelity to match.
+    # The unfold is a READING preview: it lets you read the prose around the
+    # match, not replay the agent's tool I/O. So it uses the folio's reading
+    # emitter (prose + thinking, tools to the chip/ledger, not inline) and the
+    # route fetches it at a char-capped fidelity — each turn renders as a
+    # scannable preview; "open in folio" (the last ring) gives the full thing.
     body, _rail, _n, _tc, _seq = _render_turn_blocks(
-        turns, fidelity, id_prefix=None, anchor_pos=anchor_pos, mode="trace"
+        turns, fidelity, id_prefix=None, anchor_pos=anchor_pos, mode="reading"
     )
     if not body:
         # Same collapsed-trigger fallback as the w<=0 path above — must thread

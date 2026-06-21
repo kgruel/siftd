@@ -186,14 +186,50 @@ def test_folio_mode_toggle_offers_both_modes(ctx):
     assert "mode=trace" in body and "mode=reading" in body
 
 
-def test_find_context_unfold_renders_trace(ctx):
-    # The unfold route fetches with a tools/thinking-visible fidelity, so the
-    # in-place context slice IS the trace (inline tool I/O), not prose-only.
+def test_find_context_unfold_renders_reading_preview(ctx):
+    # Slice 2a: the unfold is a READING preview (prose around the match), not the
+    # trace — so it renders the .turn prose and keeps tool I/O OUT of the slice
+    # body (tools belong to the chip/ledger, and the full thing is one
+    # "open in folio" away). The fixture has a tool call in turn 0; it must not
+    # appear inline in the unfold.
     client, cid = ctx
     r = client.get("/find/context", params={"id": cid, "at": 0, "w": 2})
     assert r.status_code == 200
     assert 'class="hit-context__slice"' in r.text
-    assert 'class="tool-call"' in r.text
+    assert 'class="turn' in r.text          # prose turns rendered
+    assert "reply number" in r.text          # real assistant prose in the preview
+    assert 'class="tool-call"' not in r.text  # tool I/O is not inlined (reading)
+
+
+def test_find_context_unfold_truncates_long_turns(tmp_path):
+    # Slice 2a (#3): a giant turn is capped to a scannable preview (the full text
+    # is one "open in folio" away). Assert the truncation marker appears.
+    from siftd.output.html_fmt import SEARCH_PREVIEW_CHARS
+
+    db = tmp_path / "long.db"
+    conn = create_database(db)
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    w = get_or_create_workspace(conn, "/proj", "2026-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "claude-opus")
+    p = get_or_create_provider(conn, "anthropic")
+    cid = insert_conversation(
+        conn, external_id="c-long", harness_id=h, workspace_id=w,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    long_text = "lorem ipsum dolor sit amet " * 40  # well over the preview cap
+    ts = "2026-01-15T10:00:00Z"
+    pid = insert_prompt(conn, cid, "p-0", ts)
+    insert_prompt_content(conn, pid, 0, "text", '{"text": "a short question"}')
+    rid = insert_response(conn, cid, pid, m, p, "r-0", ts, input_tokens=10, output_tokens=5)
+    insert_response_content(conn, rid, 0, "text", '{"text": "%s"}' % long_text)
+    conn.commit()
+    conn.close()
+
+    assert len(long_text) > SEARCH_PREVIEW_CHARS
+    with _hx_client(create_app(db_path=db, auth_config=None)) as c:
+        body = c.get("/find/context", params={"id": cid, "at": 0, "w": 2}).text
+    assert "..." in body                      # the preview is truncated
+    assert long_text not in body              # the full giant turn is NOT inlined
 
 
 def test_query_rows_mount_folio_in_main(ctx):
