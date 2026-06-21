@@ -241,7 +241,7 @@ class TestIngestCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "No adapters matched" in captured.out
+        assert "No adapters matched" in captured.err
 
 
 class TestBackfillCommand:
@@ -269,7 +269,7 @@ class TestBackfillCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "not found" in captured.out.lower() or "Database" in captured.out
+        assert "not found" in captured.err.lower() or "Database" in captured.err
 
 
 class TestQuerySqlCommand:

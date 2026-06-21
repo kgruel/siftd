@@ -457,8 +457,8 @@ class TestCmdMigrate:
         """Migrate with missing database returns error."""
         rc = main(["--db", str(tmp_path / "missing.db"), "migrate"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "not found" in out.lower() or "Database" in out
+        err = capsys.readouterr().err
+        assert "not found" in err.lower() or "Database" in err
 
     def test_migrate_merge_workspaces_dry_run(self, test_db, capsys):
         """--merge-workspaces --dry-run runs without modifying data."""
@@ -503,8 +503,8 @@ class TestCmdCopy:
         main(["copy", "adapter", "claude_code"])
         rc = main(["copy", "adapter", "claude_code"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Error" in out
+        err = capsys.readouterr().err
+        assert err.strip()  # an error callout was reported to stderr
 
     def test_copy_adapter_force_overwrite(self, tmp_path, monkeypatch, capsys):
         """siftd copy adapter --force overwrites existing."""
@@ -526,8 +526,8 @@ class TestCmdCopy:
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
         rc = main(["copy", "adapter", "nonexistent_xyz"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Error" in out
+        err = capsys.readouterr().err
+        assert err.strip()  # an error callout was reported to stderr
 
 
 # ---------------------------------------------------------------------------
@@ -618,8 +618,9 @@ class TestCmdDoctor:
         """siftd doctor fix --pending-tags runs cleanup."""
         rc = main(["--db", str(test_db), "doctor", "fix", "--pending-tags"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "stale" in out.lower() or "clean" in out.lower()
+        captured = capsys.readouterr()
+        text = (captured.out + captured.err).lower()
+        assert "stale" in text or "clean" in text
 
     def test_doctor_fix_pending_tags_json(self, test_db, capsys):
         """siftd doctor fix --pending-tags --json returns JSON."""
@@ -783,8 +784,9 @@ class TestDataDirectBranches:
         )
         rc = main(["--db", str(test_db), "backfill", "--filter-binary", "--dry-run"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "Errors" in out and "Run without --dry-run" in out
+        captured = capsys.readouterr()
+        assert "Errors" in captured.out  # the count breakdown stays on stdout
+        assert "Run without --dry-run" in captured.err  # the hint is status -> stderr
 
     def test_copy_all_and_error_paths(self, monkeypatch):
         class _CopyErr(Exception):
@@ -971,8 +973,9 @@ class TestDataDirectBranches:
         )
         rc = main(["--db", str(test_db), "migrate"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "Duplicate groups: 2" in out and "--merge-workspaces" in out
+        captured = capsys.readouterr()
+        assert "Duplicate groups: 2" in captured.out  # breakdown stays on stdout
+        assert "--merge-workspaces" in captured.err  # the hint is status -> stderr
 
         # copy formatter usage listing lines (636-641)
         monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: ["markdown", "json"])

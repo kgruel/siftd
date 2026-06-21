@@ -154,9 +154,9 @@ class TestAdapterHealthRendering:
 
         rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "--verbose"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "aider" in out
-        assert "found nothing to ingest" in out
+        err = capsys.readouterr().err
+        assert "aider" in err
+        assert "found nothing to ingest" in err
 
     def test_zero_discovery_suppressed_in_quiet_mode(self, tmp_path, capsys, monkeypatch):
         result = _make_result(
@@ -188,9 +188,9 @@ class TestAdapterHealthRendering:
 
         rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "-q"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "bad.py" in out
-        assert "failed to load" in out
+        err = capsys.readouterr().err
+        assert "bad.py" in err
+        assert "failed to load" in err
 
     def test_no_zero_discovery_when_adapter_has_files(self, tmp_path, capsys, monkeypatch):
         result = _make_result(

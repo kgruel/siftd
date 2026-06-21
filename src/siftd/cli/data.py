@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from siftd.api import open_database
 from siftd.cli._common import resolve_db
-from siftd.output import fmt_model, fmt_workspace
+from siftd.output import fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
@@ -326,10 +326,9 @@ def cmd_ingest(args) -> int:
                 print(f"Using database: {db}")
 
     if not json_mode and auto_quiet:
-        print(
-            "Note: ingest output quieted (not a TTY). "
-            "Pass -v to force verbose output, or -q to silence this hint.",
-            file=sys.stderr,
+        status.info(
+            "ingest output quieted (not a TTY). "
+            "Pass -v to force verbose output, or -q to silence this hint."
         )
 
     # Handle --rebuild-fts flag
@@ -368,7 +367,7 @@ def cmd_ingest(args) -> int:
         if json_mode:
             renderer._emit({"type": "error", "message": message})
         else:
-            print(message)
+            status.error(message)
         return 1
 
     stats = result.stats
@@ -399,9 +398,9 @@ def cmd_ingest(args) -> int:
     else:
         if not quiet:
             for name in zero_discovery:
-                print(f"  note: Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+                status.info(f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
         for path, error in result.dropin_failures:
-            print(f"  warning: Drop-in adapter at '{path}' failed to load: {error}")
+            status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
     return 0
 
@@ -416,11 +415,10 @@ def cmd_backfill(args) -> int:
     if getattr(args, "dry_run", False) and not (
         getattr(args, "filter_binary", False) or getattr(args, "git_remote", False)
     ):
-        print("Note: --dry-run ignored without --filter-binary or --git-remote", file=sys.stderr)
+        status.info("--dry-run ignored without --filter-binary or --git-remote")
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     if args.shell_tags:
@@ -433,27 +431,27 @@ def cmd_backfill(args) -> int:
             for category, count in sorted(counts.items(), key=lambda x: -x[1]):
                 print(f"  shell:{category}: {count}")
         else:
-            print("No untagged shell commands found.")
+            status.info("No untagged shell commands found.")
     elif args.derivative_tags:
         print("Backfilling derivative conversation tags...")
         result = run_backfill(db_path=db, operation="derivative_tags")
         count = result.tagged_conversations
         if count:
-            print(f"Tagged {count} conversations as siftd:derivative.")
+            status.confirm(f"Tagged {count} conversations as siftd:derivative.")
         else:
-            print("No untagged derivative conversations found.")
+            status.info("No untagged derivative conversations found.")
     elif getattr(args, "models", False):
         print("Re-parsing model names to canonical form...")
         result = run_backfill(db_path=db, operation="models")
         if result.updated_models:
-            print(f"Canonicalized {result.updated_models} model name(s).")
-            print("Prices reproject on next open; cost refreshes on next ingest.")
+            status.confirm(f"Canonicalized {result.updated_models} model name(s).")
+            status.info("Prices reproject on next open; cost refreshes on next ingest.")
         else:
-            print("No model names needed canonicalizing.")
+            status.info("No model names needed canonicalizing.")
     elif getattr(args, "pricing", False):
         print("Repricing from the pricing reference (reproject + rebuild rollup)...")
         result = run_backfill(db_path=db, operation="pricing")
-        print(f"Repriced {result.repriced_rows} usage rows from the reference.")
+        status.confirm(f"Repriced {result.repriced_rows} usage rows from the reference.")
     elif args.filter_binary:
         dry_run = getattr(args, "dry_run", False)
         if dry_run:
@@ -466,7 +464,7 @@ def cmd_backfill(args) -> int:
         if result.errors:
             print(f"  Errors: {result.errors}")
         if dry_run and result.filtered:
-            print("\nRun without --dry-run to apply changes.")
+            status.info("Run without --dry-run to apply changes.")
     elif args.git_remote:
         from siftd.api.migrations import backfill_git_remotes
 
@@ -488,7 +486,7 @@ def cmd_backfill(args) -> int:
             print(f"  Skipped (path missing): {stats['skipped_missing']}")
             print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
             if dry_run and stats["updated"]:
-                print("\nRun without --dry-run to apply changes.")
+                status.info("Run without --dry-run to apply changes.")
         finally:
             conn.close()
     else:
@@ -496,7 +494,7 @@ def cmd_backfill(args) -> int:
         print("Backfilling response attributes (cache tokens)...")
         result = run_backfill(db_path=db, operation="response_attributes")
         count = result.inserted_attributes
-        print(f"Done. Inserted {count} attributes.")
+        status.confirm(f"Done. Inserted {count} attributes.")
 
     return 0
 
@@ -512,8 +510,7 @@ def cmd_migrate(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
@@ -534,15 +531,16 @@ def cmd_migrate(args) -> int:
 
         # Step 2: Find and optionally merge duplicates
         print("\nStep 2: Finding duplicate workspaces...")
-        status = verify_workspace_identity(conn)
+        ws_status = verify_workspace_identity(conn)
 
-        if status["duplicate_groups"] == 0:
-            print("  No duplicate workspaces found.")
+        if ws_status["duplicate_groups"] == 0:
+            status.info("No duplicate workspaces found.")
             conn.close()
             return 0
 
-        print(
-            f"  Found {status['duplicate_groups']} groups with {status['duplicate_workspaces']} workspaces sharing git remotes."
+        status.info(
+            f"Found {ws_status['duplicate_groups']} groups with "
+            f"{ws_status['duplicate_workspaces']} workspaces sharing git remotes."
         )
 
         if args.dry_run:
@@ -556,23 +554,23 @@ def cmd_migrate(args) -> int:
         )
 
         if args.dry_run:
-            print(f"\n[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
-            print("Run without --dry-run to apply changes.")
+            status.info(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+            status.info("Run without --dry-run to apply changes.")
         else:
-            print(f"\nMerged {merge_stats['workspaces_merged']} workspaces.")
-            print(f"Moved {merge_stats['conversations_moved']} conversations.")
+            status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
+            status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
     else:
         # Show current status
-        status = verify_workspace_identity(conn)
+        ws_status = verify_workspace_identity(conn)
         print("Workspace identity status:")
-        print(f"  Total workspaces: {status['total']}")
-        print(f"  With git remote: {status['with_remote']}")
-        print(f"  Without git remote: {status['without_remote']}")
-        if status["duplicate_groups"] > 0:
+        print(f"  Total workspaces: {ws_status['total']}")
+        print(f"  With git remote: {ws_status['with_remote']}")
+        print(f"  Without git remote: {ws_status['without_remote']}")
+        if ws_status["duplicate_groups"] > 0:
             print(
-                f"  Duplicate groups: {status['duplicate_groups']} ({status['duplicate_workspaces']} workspaces)"
+                f"  Duplicate groups: {ws_status['duplicate_groups']} ({ws_status['duplicate_workspaces']} workspaces)"
             )
-            print("\nRun 'siftd migrate --merge-workspaces' to merge duplicates.")
+            status.info("Run 'siftd migrate --merge-workspaces' to merge duplicates.")
 
     conn.close()
     return 0
@@ -600,7 +598,7 @@ def cmd_copy(args) -> int:
             # Copy all built-in adapters
             names = list_builtin_adapters()
             if not names:
-                print("No built-in adapters available.")
+                status.error("No built-in adapters available.")
                 return 1
             copied = []
             for n in names:
@@ -608,7 +606,7 @@ def cmd_copy(args) -> int:
                     dest = copy_adapter(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
                 print("Copied adapters:")
                 for n, dest in copied:
@@ -625,17 +623,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_adapter(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     elif resource_type == "query":
         if copy_all:
             names = list_builtin_queries()
             if not names:
-                print("No built-in queries available.")
+                status.error("No built-in queries available.")
                 return 1
             copied = []
             for n in names:
@@ -643,7 +641,7 @@ def cmd_copy(args) -> int:
                     dest = copy_query(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
                 print("Copied queries:")
                 for n, dest in copied:
@@ -664,17 +662,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_query(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     elif resource_type == "formatter":
         if copy_all:
             names = list_builtin_formatters()
             if not names:
-                print("No built-in formatters available.")
+                status.error("No built-in formatters available.")
                 return 1
             copied = []
             for n in names:
@@ -682,7 +680,7 @@ def cmd_copy(args) -> int:
                     dest = copy_formatter(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
                 print("Copied formatters:")
                 for n, dest in copied:
@@ -699,15 +697,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_formatter(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     else:
-        print(f"Unknown resource type: {resource_type}")
-        print("Supported: adapter, query, formatter")
+        status.error(
+            f"Unknown resource type: {resource_type}",
+            hint="Supported: adapter, query, formatter",
+        )
         return 1
 
 
@@ -718,8 +718,7 @@ def _doctor_fix_pending_tags(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
@@ -734,9 +733,9 @@ def _doctor_fix_pending_tags(args) -> int:
         print(json.dumps(out, indent=2))
     else:
         if sessions_deleted or tags_deleted:
-            print(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
+            status.confirm(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
         else:
-            print("No stale sessions or orphaned tags to clean up")
+            status.info("No stale sessions or orphaned tags to clean up")
 
     conn.close()
     return 0
@@ -770,12 +769,12 @@ def _doctor_fix(args) -> int:
 
     cached = load_findings_cache()
     if not cached:
-        print("No pending fixes. Run 'siftd doctor' first to detect issues.", file=sys.stderr)
+        status.error("No pending fixes.", hint="Run 'siftd doctor' first to detect issues.")
         return 1
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     conn = open_database(db)
@@ -783,7 +782,7 @@ def _doctor_fix(args) -> int:
     # Filter to fixes we know how to execute
     actionable = [entry for entry in cached if entry["fix_command"] in _FIX_REGISTRY]
     if not actionable:
-        print("No actionable fixes found in cache.")
+        status.info("No actionable fixes found in cache.")
         clear_findings_cache()
         conn.close()
         return 0
@@ -807,9 +806,9 @@ def _doctor_fix(args) -> int:
 
     print()
     if errors:
-        print(f"Done with {errors} error(s). Run 'siftd doctor' to verify.")
+        status.error(f"Done with {errors} error(s).", hint="Run 'siftd doctor' to verify.")
         return 1
-    print("All fixes applied. Run 'siftd doctor' to verify.")
+    status.confirm("All fixes applied.", hint="Run 'siftd doctor' to verify.")
     return 0
 
 
@@ -817,7 +816,7 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
     """Run a specific fix directly by fix_command key (flag-discriminated form)."""
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     conn = open_database(db)
@@ -1123,10 +1122,7 @@ def cmd_doctor(args) -> int:
             ("triggers", "--triggers"),
         ):
             if getattr(args, flag, False):
-                print(
-                    f"Note: {name} ignored without 'fix' subcommand",
-                    file=sys.stderr,
-                )
+                status.info(f"{name} ignored without 'fix' subcommand")
 
     # New subcommands: list, run, fix
     if action == "list":
