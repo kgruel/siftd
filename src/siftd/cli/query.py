@@ -13,7 +13,7 @@ from siftd.cli._common import (
     print_ambiguous_error,
     resolve_db,
 )
-from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace
+from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, status
 from siftd.output.painted_bridge import emit_output
 
 
@@ -93,12 +93,11 @@ def _query_event_detail(args, *, conn=None) -> int:
             include_neighbors=include_neighbors,
         )
     except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
+        status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
 
     if not detail:
-        print(f"Event not found: {args.conversation_id}")
+        status.error(f"Event not found: {args.conversation_id}")
         return 1
 
     if getattr(args, "json", False):
@@ -289,8 +288,7 @@ def _query_detail(args) -> int:
         try:
             detail = execute(op)
         except FileNotFoundError as e:
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
         except AnchorOutOfRange as e:
             print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
@@ -308,7 +306,7 @@ def _query_detail(args) -> int:
             sys.exit(2)
 
     if not detail:
-        print(f"Conversation not found: {args.conversation_id}")
+        status.error(f"Conversation not found: {args.conversation_id}")
         return 1
 
     # Summary mode: just metadata, no turns.
@@ -432,19 +430,16 @@ def cmd_query(args) -> int:
         try:
             conversations, caveats = execute_for_render(op)
         except FileNotFoundError as e:
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
         except sqlite3.OperationalError as e:
             err_msg = str(e).lower()
             if "no such table" in err_msg and "fts" in err_msg:
-                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+                status.error("FTS index not found.", hint="Run 'siftd ingest' first.")
             elif "fts5" in err_msg or "syntax" in err_msg:
-                print(f"Invalid search query: {e}", file=sys.stderr)
-                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+                status.error(f"Invalid search query: {e}", hint="Check your search query for syntax errors.")
             else:
-                print(f"Database error: {e}", file=sys.stderr)
-                print("Tip: Run 'siftd doctor' to check database health.", file=sys.stderr)
+                status.error(f"Database error: {e}", hint="Run 'siftd doctor' to check database health.")
             return 1
 
     view_convs = len(conversations)
@@ -467,10 +462,8 @@ def cmd_query(args) -> int:
             json_caveats = [asdict(c) for c in caveats if c.channel != "text"]
             print(_json.dumps({"result": [], "caveats": json_caveats}, indent=2))
         else:
-            print("No conversations found.")
-            for c in caveats:
-                if c.channel != "json":
-                    print(f"note: {c.message}")
+            status.info("No conversations found.")
+            status.caveats([c for c in caveats if c.channel != "json"])
         if args.stats and corpus is not None:
             print()
             print(

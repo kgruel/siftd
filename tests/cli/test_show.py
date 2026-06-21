@@ -45,7 +45,7 @@ class TestShow:
         absent = cid[:-6] + "ZZZZZZ"  # same length/charset, guaranteed absent
         rc = main(["--db", str(test_db), "show", absent])
         assert rc == 1
-        assert "not found" in capsys.readouterr().out.lower()
+        assert "not found" in capsys.readouterr().err.lower()
 
     def test_show_requires_id(self, test_db):
         """`show` with no ID is a usage error (unlike query, which lists)."""

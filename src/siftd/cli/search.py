@@ -14,6 +14,7 @@ from typing import Any
 
 from siftd.cli._common import _parse_turns_range, add_anchor_window_args, resolve_db
 from siftd.cli._filters import extract_filter_args
+from siftd.output import status
 from siftd.paths import embeddings_db_path
 
 
@@ -126,8 +127,7 @@ def cmd_search(args) -> int:
     embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     # Index or rebuild mode — requires embeddings
@@ -156,12 +156,12 @@ def cmd_search(args) -> int:
 
     # --refs with --json is not supported (refs dump would break JSON validity)
     if args.json and args.refs:
-        print("Error: --refs is not supported with --json", file=sys.stderr)
+        status.error("--refs is not supported with --json")
         return 1
 
     # --mode=thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
     if args.json and args.mode == "thread":
-        print("Note: --mode=thread is ignored with --json output", file=sys.stderr)
+        status.info("--mode=thread is ignored with --json output")
 
     # Extract standard filters once for delegation and candidate resolution
     filters = extract_filter_args(args)
@@ -172,7 +172,7 @@ def cmd_search(args) -> int:
 
     # Mutual exclusivity check
     if use_fts and use_semantic:
-        print("Error: --fts and --semantic are mutually exclusive", file=sys.stderr)
+        status.error("--fts and --semantic are mutually exclusive")
         return 1
 
     # --fts mode: pure FTS5, no embeddings required
@@ -296,10 +296,10 @@ def cmd_search(args) -> int:
         try:
             raw_results, caveats = execute_for_render(op)
         except RuntimeError as e:
-            print(f"Error: {e}", file=sys.stderr)
+            status.error(str(e))
             return 1
         except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
+            status.error(str(e))
             return 1
 
     if isinstance(raw_results, dict):
@@ -313,9 +313,8 @@ def cmd_search(args) -> int:
         if args.json:
             _print_empty_json_results(args, query, db, caveats=caveats)
         else:
-            print(f"No results for: {query}")
-            for c in caveats:
-                print(f"note: {c.message}")
+            status.info(f"No results for: {query}")
+            status.caveats(caveats)
         return 0
 
     # Apply threshold filter if specified
@@ -325,9 +324,8 @@ def cmd_search(args) -> int:
             if args.json:
                 _print_empty_json_results(args, query, db, caveats=caveats)
             else:
-                print(f"No results above threshold {args.threshold} for: {query}")
-                for c in caveats:
-                    print(f"note: {c.message}")
+                status.info(f"No results above threshold {args.threshold} for: {query}")
+                status.caveats(caveats)
             return 0
 
     # Post-processing: --select=first (earliest match above threshold)
@@ -339,9 +337,8 @@ def cmd_search(args) -> int:
             if args.json:
                 _print_empty_json_results(args, query, db, caveats=caveats)
             else:
-                print(f"No results above relevance threshold for: {query}")
-                for c in caveats:
-                    print(f"note: {c.message}")
+                status.info(f"No results above relevance threshold for: {query}")
+                status.caveats(caveats)
             return 0
         chunks = _chunks_from_rows([earliest])
 
@@ -364,7 +361,7 @@ def cmd_search(args) -> int:
 
     # Privacy warning for full content display
     if args.full or args.refs:
-        print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
+        status.info("Showing full content which may contain sensitive information.")
 
     # Select output format and determine mode
 
@@ -379,7 +376,7 @@ def cmd_search(args) -> int:
         )
     except ValueError as e:
         main_conn.close()
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     mode = args.mode
@@ -419,7 +416,7 @@ def cmd_search(args) -> int:
             from siftd.api.search import enrich_around_window
             around_chunks, n_skipped = enrich_around_window(main_conn, around_chunks, args.around, window_start, window_end)
             if n_skipped > 0:
-                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
+                status.info(f"filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation")
             results = _rows_from_chunks(around_chunks)
             render_results = results
 
@@ -535,12 +532,11 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         except sqlite3.OperationalError as e:
             err_msg = str(e).lower()
             if "no such table" in err_msg and "fts" in err_msg:
-                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+                status.error("FTS index not found.", hint="Run 'siftd ingest' first.")
             elif "fts5" in err_msg or "syntax" in err_msg:
-                print(f"Invalid search query: {e}", file=sys.stderr)
-                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+                status.error(f"Invalid search query: {e}", hint="Check your search query for syntax errors.")
             else:
-                print(f"Database error: {e}", file=sys.stderr)
+                status.error(f"Database error: {e}")
             return 1
 
     # Limit results — serve returns {results: [...]}, local returns list
@@ -566,9 +562,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 ]
             print(json.dumps(out, indent=2))
         else:
-            print(f"No results for: {query}")
-            for c in caveats:
-                print(f"note: {c.message}")
+            status.info(f"No results for: {query}")
+            status.caveats(caveats)
         return 0
 
     # Enrich with metadata and render via unified formatter system
@@ -586,7 +581,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             from siftd.api.search import enrich_around_window
             around_chunks, n_skipped = enrich_around_window(conn, around_chunks, args.around, window_start, window_end)
             if n_skipped > 0:
-                print(f"note: filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation", file=sys.stderr)
+                status.info(f"filtered {n_skipped} result(s) without --around phrase '{args.around}' in conversation")
             results = _rows_from_chunks(around_chunks)
     finally:
         conn.close()
@@ -634,18 +629,17 @@ def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name
             verbose=verbose,
         )
     except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
+        status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
     except IncrementalCompatError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
     except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     if result["chunks_added"] == 0 and verbose:
-        print(f"Index is up to date. ({result['total_chunks']} chunks)")
+        status.confirm(f"Index is up to date. ({result['total_chunks']} chunks)")
 
     return 0
 

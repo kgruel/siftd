@@ -68,7 +68,7 @@ def make_args(**kwargs):
 def test_search_missing_db(tmp_path, capsys):
     args = make_args(query=["hi"], db=str(tmp_path / "missing.db"))
     assert cmd_search(args) == 1
-    assert "Database not found" in capsys.readouterr().out
+    assert "Database not found" in capsys.readouterr().err
 
 
 def test_search_empty_query_shows_usage(test_db, capsys):
@@ -260,11 +260,11 @@ def test_cmd_search_execute_error_paths(test_db, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (_ for _ in ()).throw(RuntimeError("boom")))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed))) == 1
-    assert "Error: boom" in capsys.readouterr().err
+    assert "boom" in capsys.readouterr().err
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: (_ for _ in ()).throw(ValueError("bad")))
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed))) == 1
-    assert "Error: bad" in capsys.readouterr().err
+    assert "bad" in capsys.readouterr().err
 
 
 def test_cmd_search_threshold_and_first_json_empty(test_db, tmp_path, monkeypatch):
@@ -368,11 +368,11 @@ def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypat
     embed.write_text("x")
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"conversation_id": "c1", "score": 0.1, "source_ids": []}])
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), threshold=0.9)) == 0
-    assert "No results above threshold" in capsys.readouterr().out
+    assert "No results above threshold" in capsys.readouterr().err
 
     monkeypatch.setattr("siftd.api.first_mention", lambda *a, **k: None)
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), select="first")) == 0
-    assert "No results above relevance threshold" in capsys.readouterr().out
+    assert "No results above relevance threshold" in capsys.readouterr().err
 
 
 def test_cmd_search_delegate_and_format_error(test_db, tmp_path, monkeypatch, capsys):
@@ -528,8 +528,8 @@ def test_empty_search_text_results_with_caveats(test_db, monkeypatch, capsys):
     assert cmd_search(args) == 0
 
     captured = capsys.readouterr()
-    assert "No results for: nonexistent" in captured.out
-    assert "note: Index is stale" in captured.out
+    assert "No results for: nonexistent" in captured.err
+    assert "Index is stale" in captured.err
 
 
 def test_fts_only_empty_results_with_caveats(test_db, monkeypatch, capsys):

@@ -284,10 +284,10 @@ def test_stats_corpus_aware_empty_view_shows_stats(monkeypatch, capsys, tmp_path
     rc = cmd_query(_args(stats=True, workspace="/w", db=str(tmp_path / "db.sqlite")))
     assert rc == 0
 
-    out = capsys.readouterr().out
-    assert "No conversations found." in out
-    assert "View: 0 / 12,438 corpus" in out
-    assert "view tokens: 0 /" in out
+    captured = capsys.readouterr()
+    assert "No conversations found." in captured.err  # empty-state note -> stderr
+    assert "View: 0 / 12,438 corpus" in captured.out  # --stats result -> stdout
+    assert "view tokens: 0 /" in captured.out
 
 
 def test_no_hints_suppresses_hint_caveats(monkeypatch, capsys, tmp_path):

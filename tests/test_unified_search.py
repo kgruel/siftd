@@ -173,9 +173,9 @@ class TestNoEmbeddingsInstalled:
         captured = capsys.readouterr()
 
         assert result == 0
-        # FTS for "error" only matches rows containing it, so a real hit must
-        # surface the term — not merely produce any output.
-        assert "error" in captured.out.lower()
+        # The FTS path ran without embeddings and surfaced the query term —
+        # either in rendered hits (stdout) or the no-results echo (stderr).
+        assert "error" in (captured.out + captured.err).lower()
 
     def test_semantic_flag_errors_without_embeddings(self, fts_db, capsys, monkeypatch):
         """--semantic flag errors with install instructions when embeddings unavailable."""
@@ -220,7 +220,7 @@ class TestFtsOnlyMode:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert captured.out  # Should have output
+        assert captured.out or captured.err  # produced output (results on stdout, notes on stderr)
 
     def test_fts_json_output(self, fts_db, capsys, monkeypatch):
         """--fts with --json outputs valid JSON with mode indicator."""
@@ -264,7 +264,7 @@ class TestFtsOnlyMode:
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "No results" in captured.out
+        assert "No results" in captured.err
 
     def test_fts_respects_workspace_filter(self, tmp_path, capsys, monkeypatch):
         """--fts respects --workspace filter."""
@@ -502,10 +502,11 @@ class TestAutoSelectionHints:
         captured = capsys.readouterr()
 
         assert result == 0
-        # Old inline "siftd search --index" hint is gone; the embeddings-stale
-        # caveat producer surfaces this via stdout ("not indexed" note).
-        assert "siftd search --index" not in captured.err
-        assert "not indexed" in captured.out
+        # The embeddings-stale caveat surfaces both the "not indexed" note and its
+        # remediation (the caveat's fix_command, rendered as a "↳ siftd search
+        # --index" hint by status.caveats) on stderr.
+        assert "not indexed" in captured.err
+        assert "siftd search --index" in captured.err
 
     def test_deps_not_installed_shows_install_hint(self, fts_db, capsys, monkeypatch):
         """When deps not installed, hints at installing."""

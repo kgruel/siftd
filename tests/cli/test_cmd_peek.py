@@ -107,37 +107,37 @@ class TestPeekValidation:
     def test_last_response_and_last_prompt_exclusive(self, capsys):
         rc = main(["peek", "--last-response", "--last-prompt"])
         assert rc == 1
-        assert "mutually exclusive" in capsys.readouterr().out
+        assert "mutually exclusive" in capsys.readouterr().err
 
     def test_follow_with_tail_exclusive(self, capsys):
         rc = main(["peek", "--follow", "--tail", "abc"])
         assert rc == 1
-        assert "mutually exclusive" in capsys.readouterr().out
+        assert "mutually exclusive" in capsys.readouterr().err
 
     def test_follow_with_last_response_exclusive(self, capsys):
         rc = main(["peek", "--follow", "--last-response"])
         assert rc == 1
-        assert "mutually exclusive" in capsys.readouterr().out
+        assert "mutually exclusive" in capsys.readouterr().err
 
     def test_follow_with_last_prompt_exclusive(self, capsys):
         rc = main(["peek", "--follow", "--last-prompt"])
         assert rc == 1
-        assert "mutually exclusive" in capsys.readouterr().out
+        assert "mutually exclusive" in capsys.readouterr().err
 
     def test_last_response_with_json_exclusive(self, capsys):
         rc = main(["peek", "--last-response", "--json"])
         assert rc == 1
-        assert "mutually exclusive" in capsys.readouterr().out
+        assert "mutually exclusive" in capsys.readouterr().err
 
     def test_limit_zero_rejected(self, capsys):
         rc = main(["peek", "-n", "0"])
         assert rc == 1
-        assert "--limit must be at least 1" in capsys.readouterr().out
+        assert "--limit must be at least 1" in capsys.readouterr().err
 
     def test_exchanges_zero_rejected(self, capsys):
         rc = main(["peek", "--exchanges", "0"])
         assert rc == 1
-        assert "--exchanges must be at least 1" in capsys.readouterr().out
+        assert "--exchanges must be at least 1" in capsys.readouterr().err
 
 
 class TestPeekDetailMode:
@@ -338,7 +338,7 @@ class TestPeekListMode:
         mock_list.return_value = []
         rc = main(["peek"])
         assert rc == 0
-        assert "No active sessions" in capsys.readouterr().out
+        assert "No active sessions" in capsys.readouterr().err
 
     @patch("siftd.api.list_active_sessions")
     def test_no_sessions_json(self, mock_list, capsys):

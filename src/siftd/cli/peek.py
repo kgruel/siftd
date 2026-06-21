@@ -15,6 +15,7 @@ def cmd_peek(args) -> int:
         tail_session,
     )
     from siftd.cli._common import fidelity_from_args, tool_chars_from_args
+    from siftd.output import status
     from siftd.output.painted_bridge import emit_output, render_follow_event_block, render_peek_detail_block
     from siftd.output.painted_bridge import print_block as print_painted_block
     from siftd.peek import AmbiguousSessionError
@@ -28,7 +29,7 @@ def cmd_peek(args) -> int:
 
     # Validate mutual exclusivity
     if last_response and last_prompt:
-        print("Error: --last-response and --last-prompt are mutually exclusive")
+        status.error("--last-response and --last-prompt are mutually exclusive")
         return 1
 
     # --follow is mutually exclusive with --tail, --last-response, --last-prompt
@@ -40,26 +41,26 @@ def cmd_peek(args) -> int:
             conflicting.append("--last-response")
         if last_prompt:
             conflicting.append("--last-prompt")
-        print(f"Error: --follow is mutually exclusive with {', '.join(conflicting)}")
+        status.error(f"--follow is mutually exclusive with {', '.join(conflicting)}")
         return 1
 
     # --last-response/--last-prompt are mutually exclusive with formatting flags
     if (last_response or last_prompt) and (args.json or getattr(args, "tail", False)):
         conflicting = "--json" if args.json else "--tail"
         flag = "--last-response" if last_response else "--last-prompt"
-        print(f"Error: {flag} is mutually exclusive with {conflicting}")
+        status.error(f"{flag} is mutually exclusive with {conflicting}")
         return 1
 
     # Validate --limit
     if args.limit is not None and args.limit < 1:
-        print("Error: --limit must be at least 1")
+        status.error("--limit must be at least 1")
         return 1
 
     # Validate --exchanges
     exchanges_n = getattr(args, "exchanges", None)
 
     if exchanges_n is not None and exchanges_n < 1:
-        print("Error: --exchanges must be at least 1")
+        status.error("--exchanges must be at least 1")
         return 1
 
     fidelity = fidelity_from_args(args)
@@ -72,10 +73,10 @@ def cmd_peek(args) -> int:
             try:
                 path = find_session_file(args.session_id)
             except AmbiguousSessionError as e:
-                print(f"Error: {e}", file=sys.stderr)
+                status.error(str(e))
                 return 1
             if path is None:
-                print(f"Session not found: {args.session_id}", file=sys.stderr)
+                status.error(f"Session not found: {args.session_id}")
                 return 1
         else:
             # Default to most recent active session
@@ -85,31 +86,33 @@ def cmd_peek(args) -> int:
                 branch=getattr(args, "branch", None),
             )
             if not sessions:
-                print("No active sessions found.", file=sys.stderr)
-                print("Tip: Use 'siftd query' to search ingested conversations.", file=sys.stderr)
+                status.info(
+                    "No active sessions found.",
+                    hint="Use 'siftd query' to search ingested conversations.",
+                )
                 return 1
             path = sessions[0].file_path
 
         # Read just the last exchange
         detail = read_session_detail(path, last_n=1, include_thinking=include_thinking)
         if detail is None:
-            print(f"Could not read session: {path}", file=sys.stderr)
+            status.error(f"Could not read session: {path}")
             return 1
 
         if not detail.exchanges:
-            print("No exchanges found in session.", file=sys.stderr)
+            status.error("No exchanges found in session.")
             return 1
 
         last_exchange = detail.exchanges[-1]
         if last_response:
             text = last_exchange.response_text
             if not text:
-                print("No response text found in last exchange.", file=sys.stderr)
+                status.error("No response text found in last exchange.")
                 return 1
         else:  # last_prompt
             text = last_exchange.prompt_text
             if not text:
-                print("No prompt text found in last exchange.", file=sys.stderr)
+                status.error("No prompt text found in last exchange.")
                 return 1
 
         # Output raw text (no formatting, suitable for piping)
@@ -128,10 +131,10 @@ def cmd_peek(args) -> int:
             try:
                 path = find_session_file(args.session_id)
             except AmbiguousSessionError as e:
-                print(f"Error: {e}", file=sys.stderr)
+                status.error(str(e))
                 return 1
             if path is None:
-                print(f"Session not found: {args.session_id}", file=sys.stderr)
+                status.error(f"Session not found: {args.session_id}")
                 return 1
         else:
             sessions = list_active_sessions(
@@ -140,7 +143,7 @@ def cmd_peek(args) -> int:
                 branch=getattr(args, "branch", None),
             )
             if not sessions:
-                print("No active sessions found.", file=sys.stderr)
+                status.info("No active sessions found.")
                 return 1
             path = sessions[0].file_path
 
@@ -298,7 +301,7 @@ def cmd_peek(args) -> int:
     if getattr(args, "tools", False):
         ignored.append("--tools")
     if ignored:
-        print(f"Note: {', '.join(ignored)} ignored in list mode (requires session ID)", file=sys.stderr)
+        status.info(f"{', '.join(ignored)} ignored in list mode (requires session ID)")
 
     # Use --limit if provided, otherwise default to 10
     limit = args.limit if args.limit is not None else 10
@@ -322,8 +325,10 @@ def cmd_peek(args) -> int:
         if args.json:
             print("[]")
         else:
-            print("No active sessions found.")
-            print("Tip: Use 'siftd query' to search ingested conversations.", file=sys.stderr)
+            status.info(
+                "No active sessions found.",
+                hint="Use 'siftd query' to search ingested conversations.",
+            )
         return 0
 
     if args.json:
