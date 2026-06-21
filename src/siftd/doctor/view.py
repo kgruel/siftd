@@ -28,14 +28,34 @@ def _line_block(parts, width):
     return line.to_block(width)
 
 
-def _severity_icon(severity: str | None) -> tuple[str, str]:
-    if severity == "error":
-        return "✗", "error"
-    if severity == "warning":
-        return "⚠", "warning"
-    if severity == "info":
-        return "ℹ", "muted"
-    return "✓", "success"
+# Severity glyph vocabulary — the single source for both doctor render paths:
+# the painted path (TTY, Unicode) and the plain path (piped, or a terminal that
+# can't encode the Unicode glyphs). painted's IconSet only models check/cross
+# (pass/fail); siftd has four severities, so the table lives here.
+_SEVERITY_GLYPHS: dict[str | None, tuple[str, str, str]] = {
+    # severity: (unicode, ascii, palette-key)
+    "error": ("✗", "x", "error"),
+    "warning": ("⚠", "!", "warning"),
+    "info": ("ℹ", "i", "muted"),
+    None: ("✓", "+", "success"),  # pass / all-clear (no findings for a check)
+}
+
+# Neutral marker for an unrecognized severity — including the declared-but-unused
+# "hint" (no built-in check emits it today). Deliberately NOT the pass glyph, so
+# a non-pass finding never wears the all-clear mark.
+_UNKNOWN_GLYPH = ("?", "?", "muted")
+
+
+def severity_glyph(severity: str | None, *, as_ascii: bool = False) -> tuple[str, str]:
+    """Return ``(glyph, palette-key)`` for a finding severity.
+
+    The single source for severity glyphs across both doctor render paths.
+    ``as_ascii=True`` yields the degraded glyph for non-Unicode terminals (the
+    plain path); the painted path uses the Unicode default. ``None`` is the
+    pass / all-clear glyph; an unrecognized severity yields a neutral ``?``.
+    """
+    uni, asc, key = _SEVERITY_GLYPHS.get(severity, _UNKNOWN_GLYPH)
+    return (asc if as_ascii else uni), key
 
 
 def _max_severity(findings: list[Finding]) -> str | None:
@@ -126,7 +146,7 @@ def render_progress_block(
     # --- Build left column (issues) ---
     left_blocks = []
     for name, findings, sev in issues:
-        icon, key = _severity_icon(sev)
+        icon, key = severity_glyph(sev)
         style = _style_for(key)
         left_blocks.append(_line_block([(f" {icon} ", style), (name, Style(bold=True))], left_width))
         if findings:
@@ -138,8 +158,9 @@ def render_progress_block(
     # --- Build right column (passed + pending, bordered) ---
     right_lines = []
     ok_style = _style_for("success")
+    pass_glyph = severity_glyph(None)[0]
     for name in passed:
-        right_lines.append(_line_block([(" ✓ ", ok_style), (name, ok_style)], right_inner))
+        right_lines.append(_line_block([(f" {pass_glyph} ", ok_style), (name, ok_style)], right_inner))
     for name in pending:
         dim = Style(dim=True)
         right_lines.append(_line_block([(" · ", dim), (name, dim)], right_inner))
@@ -198,7 +219,7 @@ def render_findings_block(
 
     if not findings:
         ok_style = _style_for("success")
-        line = _line((" ✓ ", ok_style), ("All checks passed.", ok_style))
+        line = _line((f" {severity_glyph(None)[0]} ", ok_style), ("All checks passed.", ok_style))
         summary = _render_summary(findings, total_checks)
         return join_vertical(line.to_block(line.width), summary)
 
@@ -207,7 +228,7 @@ def render_findings_block(
 
     lines = []
     for f in sorted_findings:
-        icon, key = _severity_icon(f.severity)
+        icon, key = severity_glyph(f.severity)
         icon_style = _style_for(key)
         lines.append(_line(
             (f" {icon} ", icon_style),
@@ -247,13 +268,13 @@ def _render_summary(findings: list[Finding], total_checks: int):
 
     parts = [Span(" ", Style())]
     if error_count > 0:
-        parts.append(Span(f"✗ {error_count} error  ", _style_for("error")))
+        parts.append(Span(f"{severity_glyph('error')[0]} {error_count} error  ", _style_for("error")))
     if warning_count > 0:
-        parts.append(Span(f"⚠ {warning_count} warning  ", _style_for("warning")))
+        parts.append(Span(f"{severity_glyph('warning')[0]} {warning_count} warning  ", _style_for("warning")))
     if info_count > 0:
-        parts.append(Span(f"ℹ {info_count} info  ", _style_for("muted")))
+        parts.append(Span(f"{severity_glyph('info')[0]} {info_count} info  ", _style_for("muted")))
     if passed > 0:
-        parts.append(Span(f"✓ {passed} passed", _style_for("success")))
+        parts.append(Span(f"{severity_glyph(None)[0]} {passed} passed", _style_for("success")))
 
     line = Line(spans=tuple(parts))
     return line.to_block(line.width)

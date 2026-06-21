@@ -13,6 +13,7 @@ from siftd.output.common import (
     format_table,
     print_indented,
     print_refs_content,
+    supports_unicode,
     truncate_text,
 )
 
@@ -105,6 +106,25 @@ def test_truncate_text():
     assert truncate_text("hi", 10) == "hi"
     assert truncate_text("hello", 0) == "hello"  # 0 means no truncation
     assert truncate_text("hello world", 5, suffix="~") == "hello~"
+
+
+# --- supports_unicode ---
+
+
+def test_supports_unicode(monkeypatch):
+    class _Std:
+        def __init__(self, encoding):
+            self.encoding = encoding
+
+    monkeypatch.setattr("sys.stdout", _Std("utf-8"))
+    assert supports_unicode() is True
+
+    monkeypatch.setattr("sys.stdout", _Std("ascii"))
+    assert supports_unicode() is False
+
+    # Missing/None encoding degrades to the ASCII assumption (False).
+    monkeypatch.setattr("sys.stdout", _Std(None))
+    assert supports_unicode() is False
 
 
 # --- format_table ---

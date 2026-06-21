@@ -881,11 +881,27 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.cli.data._doctor_run_painted", lambda *a, **k: 7)
 
         class _Std:
+            encoding = "utf-8"  # a Unicode-capable TTY routes to painted
+
             def isatty(self):
                 return True
 
         monkeypatch.setattr(data_cli.sys, "stdout", _Std())
         assert data_cli._doctor_run(SimpleNamespace(db=str(test_db), json=False), None, False) == 7
+
+        # An ASCII-only TTY (e.g. a non-UTF-8 locale) degrades to the plain path
+        # rather than rendering garbled box-drawing glyphs.
+        monkeypatch.setattr("siftd.cli.data._doctor_run_plain", lambda *a, **k: 9)
+
+        class _AsciiStd:
+            encoding = "ascii"
+
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(data_cli.sys, "stdout", _AsciiStd())
+        assert data_cli._doctor_run(SimpleNamespace(db=str(test_db), json=False), None, False) == 9
+
         monkeypatch.setattr("siftd.cli.data._doctor_run_painted", real_painted)
         monkeypatch.setattr(data_cli.sys, "stdout", real_stdout)
 

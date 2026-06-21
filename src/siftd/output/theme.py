@@ -68,14 +68,16 @@ class DomainStyles:
 
 
 def _make_theme():
-    from painted import LIGHT, ROUNDED, Palette, Style, Theme
+    import dataclasses
 
-    palette = Palette(
-        accent=Style(fg=110, bold=True),   # soft blue — identifiers, prompts
-        muted=Style(fg=60),                # grey — timestamps, metrics, structure
-        success=Style(fg=72),              # teal — tags, positive status
-        warning=Style(fg=180),             # amber
-        error=Style(fg=167),               # soft red
+    from painted import LIGHT, NORD_PALETTE, ROUNDED, Style, Theme
+
+    # The palette rides painted's canonical Nord values rather than hand-tuning
+    # its own near-Nord codes. The single deliberate deviation: a bold accent —
+    # identifiers and prompts are copy-paste targets and should stay loud (Nord's
+    # accent is the same hue, 110, just not bold).
+    palette = dataclasses.replace(
+        NORD_PALETTE, accent=NORD_PALETTE.accent.merge(Style(bold=True))
     )
     return Theme(palette=palette, borders=LIGHT), ROUNDED
 

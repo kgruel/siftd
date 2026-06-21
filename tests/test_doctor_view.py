@@ -10,9 +10,32 @@ so the layout stays coherent and never crashes.
 import pytest
 
 from siftd.doctor.checks import Finding
-from siftd.doctor.view import render_progress_block
+from siftd.doctor.view import render_progress_block, severity_glyph
 
 pytest.importorskip("painted")
+
+
+def test_severity_glyph_contract():
+    """The single severity-glyph source: Unicode by default, ASCII on request.
+
+    Pins the four severities, the pass/all-clear (None) glyph, and the neutral
+    marker for an unrecognized severity (e.g. the declared-but-unused "hint") —
+    which must NOT alias onto the pass glyph.
+    """
+    assert severity_glyph("error") == ("✗", "error")
+    assert severity_glyph("warning") == ("⚠", "warning")
+    assert severity_glyph("info") == ("ℹ", "muted")
+    assert severity_glyph(None) == ("✓", "success")  # pass / all-clear
+
+    assert severity_glyph("error", as_ascii=True) == ("x", "error")
+    assert severity_glyph("warning", as_ascii=True) == ("!", "warning")
+    assert severity_glyph("info", as_ascii=True) == ("i", "muted")
+    assert severity_glyph(None, as_ascii=True) == ("+", "success")
+
+    # Unknown / "hint" -> neutral marker, never the pass glyph (regression guard).
+    assert severity_glyph("hint") == ("?", "muted")
+    assert severity_glyph("hint", as_ascii=True) == ("?", "muted")
+    assert severity_glyph("nonsense", as_ascii=True) == ("?", "muted")
 
 
 def _findings():

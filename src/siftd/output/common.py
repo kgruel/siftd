@@ -4,8 +4,27 @@ Shared by peek, query, search, and export commands.
 """
 
 import shutil
+import sys
 from datetime import datetime, tzinfo
 from pathlib import Path
+
+
+def supports_unicode() -> bool:
+    """Whether stdout can encode the Unicode glyphs the painted UI draws.
+
+    A terminal under a non-UTF-8 locale (e.g. ``LANG=C``) is a TTY but can't
+    render box-drawing/check glyphs; callers route it to a plain ASCII path
+    instead of crashing or garbling. Evaluated against the live ``sys.stdout``
+    (not cached) so redirected/captured streams are respected.
+    """
+    enc = getattr(sys.stdout, "encoding", None) or "ascii"
+    try:
+        # The full glyph surface the painted doctor UI draws: severity marks,
+        # the progress bar fill, rounded box corners, separators, and rails.
+        "✓⚠ℹ✗─│█░╭╮╰╯↳·".encode(enc)
+    except (UnicodeEncodeError, LookupError):
+        return False
+    return True
 
 
 def term_width(fallback: int = 80) -> int:

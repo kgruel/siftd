@@ -934,11 +934,13 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
     if args.json:
         return _doctor_run_json(args, check_names, show_fixes, db, deep, fast)
 
-    # TTY — painted progress + themed findings
-    if sys.stdout.isatty():
+    # TTY with Unicode support — painted progress + themed findings
+    from siftd.output.common import supports_unicode
+
+    if sys.stdout.isatty() and supports_unicode():
         return _doctor_run_painted(args, check_names, show_fixes, db, deep, fast)
 
-    # Non-TTY (piped) — plain text, no progress
+    # Piped, or a terminal that can't render the Unicode glyphs — plain ASCII.
     return _doctor_run_plain(args, check_names, show_fixes, db, deep, fast)
 
 
@@ -1013,10 +1015,11 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     severity_order = {"error": 0, "warning": 1, "info": 2}
     findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
 
-    icons = {"info": "i", "warning": "!", "error": "x"}
+    from siftd.doctor.view import severity_glyph
+
     for finding in findings:
-        icon = icons.get(finding.severity, "?")
-        print(f"[{icon}] {finding.check}: {finding.message}")
+        glyph, _ = severity_glyph(finding.severity, as_ascii=True)
+        print(f"[{glyph}] {finding.check}: {finding.message}")
         if finding.fix_command and not show_fixes:
             print(f"    Fix: {finding.fix_command}")
 
