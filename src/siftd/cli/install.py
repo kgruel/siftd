@@ -458,17 +458,19 @@ def _install_plugin(args) -> int:
 def cmd_install(args) -> int:
     """Install optional dependencies or bundled components."""
     if not args.extra:
+        from siftd.output.listing import print_definitions
         from siftd.skill_gen import HARNESS_INFO
 
         print("Available components:\n")
-        print("  skill    Teach your agent to use siftd (supports multiple harnesses)")
-        print("  plugin   Full Claude Code plugin: skill + hooks + commands")
-        print("  embed    Semantic search dependencies")
-        print("  serve    HTTP server dependencies")
+        print_definitions([
+            ("skill", "Teach your agent to use siftd (supports multiple harnesses)"),
+            ("plugin", "Full Claude Code plugin: skill + hooks + commands"),
+            ("embed", "Semantic search dependencies"),
+            ("serve", "HTTP server dependencies"),
+        ])
         print()
         print("Supported harnesses for 'skill':")
-        for key, info in HARNESS_INFO.items():
-            print(f"  {key:<14} {info['display_name']}")
+        print_definitions([(key, info["display_name"]) for key, info in HARNESS_INFO.items()])
         print()
         print("Usage:")
         print("  siftd install skill                          # Claude Code (default)")

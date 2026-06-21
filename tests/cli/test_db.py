@@ -540,7 +540,11 @@ class TestDbErrorPaths:
         rc = main(["--db", str(test_db), "db", "merge", str(src)])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "replaced" in out and "Tags:" in out and "Workspaces:" in out
+        # Guard the values, not just the labels: conversation breakdown,
+        # tag count, and the workspace match note all render.
+        assert "replaced" in out
+        assert re.search(r"Tags\s+8 new", out)
+        assert "matched by git remote" in out
 
     def test_vacuum_saved_branch(self, monkeypatch, capsys):
         class _FakePath:
@@ -686,7 +690,7 @@ class TestDbRestoreDryRun:
         out = capsys.readouterr().out
         assert str(backup) in out
         assert str(new_db) in out
-        assert "schema version: v" in out
+        assert re.search(r"schema version\s+v", out)
         assert "target does not exist" in out
         assert "conversations" in out
 
@@ -703,7 +707,7 @@ class TestDbRestoreDryRun:
 
         out = capsys.readouterr().out
         assert str(test_db) in out
-        assert "schema version: v" in out
+        assert re.search(r"schema version\s+v", out)
         assert "(no change)" in out
         assert "conversations" in out
 
@@ -761,7 +765,7 @@ class TestDbReceiveDryRun:
         assert "dry run" in out.lower()
         assert "preflight: ok" in out
         assert "conversations" in out
-        assert "(target:" in out
+        assert "incoming" in out and "target" in out
 
     def test_dry_run_target_unchanged(self, test_db, tmp_path, monkeypatch, capsys):
         import hashlib
@@ -792,7 +796,8 @@ class TestDbReceiveDryRun:
 
         out = capsys.readouterr().out
         # test_db fixture has 2 conversations; empty slice has 0.
-        assert re.search(r"conversations\s+0\s+\(target:\s+2\)", out)
+        # Table columns: table | incoming | target  ->  "conversations  0  2".
+        assert re.search(r"conversations\s+0\s+2", out)
 
     def test_dry_run_preflight_failure_exits_1_json_stderr(self, test_db, tmp_path, monkeypatch, capsys):
         from siftd.api.database import PreflightError

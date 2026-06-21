@@ -320,10 +320,10 @@ def cmd_config(args) -> int:
         if not prefixes:
             status.info("No tag prefixes defined.")
             return 0
-        # Sorted name → prefix mapping; one per line.
-        width = max(len(name) for name in prefixes)
-        for name in sorted(prefixes):
-            print(f"  {name:<{width}}  {prefixes[name]}")
+        from siftd.output.listing import print_definitions
+
+        # Sorted name → prefix mapping, one aligned pair per line.
+        print_definitions([(name, prefixes[name]) for name in sorted(prefixes)])
         return 0
 
     # siftd config get <key>

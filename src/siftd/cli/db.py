@@ -258,22 +258,30 @@ def cmd_db_restore(args) -> int:
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()
-        print(f"[dry run] source:         {source}")
-        print(f"[dry run] target:         {db}")
+        from siftd.output.listing import print_definitions
+        from siftd.output.table import print_table
+
         if tgt_schema_ver is None:
-            print(f"[dry run] schema version: v{src_schema_ver} (target does not exist)")
+            schema = f"v{src_schema_ver} (target does not exist)"
         elif tgt_schema_ver == src_schema_ver:
-            print(f"[dry run] schema version: v{src_schema_ver} (no change)")
+            schema = f"v{src_schema_ver} (no change)"
         elif src_schema_ver > tgt_schema_ver:
-            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (upgrade)")
+            schema = f"v{tgt_schema_ver} → v{src_schema_ver} (upgrade)"
         else:
-            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)")
-        print("[dry run] row counts (source  →  target):")
-        all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
-        for table in all_tables:
-            src_n = src_counts.get(table, 0)
-            tgt_n = tgt_counts.get(table, 0)
-            print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+            schema = f"v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)"
+
+        print("[dry run] restore preview:")
+        print_definitions([
+            ("source", str(source)),
+            ("target", str(db)),
+            ("schema version", schema),
+        ])
+        print("[dry run] row counts:")
+        count_rows = [
+            [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+            for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
+        ]
+        print_table(["table", "source", "target"], count_rows)
         return 0
 
     if db.exists() and not args.force:
@@ -385,13 +393,17 @@ def cmd_db_merge(args) -> int:
     if result["replaced_conversations"]:
         conv_parts.append(f"{result['replaced_conversations']} replaced")
     conv_parts.append(f"{result['skipped_conversations']} skipped")
-    print(f"  Conversations: {', '.join(conv_parts)}")
-    print(f"  Content blobs: {result['content_blobs']}")
+    fields = [
+        ("Conversations", ", ".join(conv_parts)),
+        ("Content blobs", str(result["content_blobs"])),
+    ]
     if result["tags"]:
-        print(f"  Tags:          {result['tags']} new")
+        fields.append(("Tags", f"{result['tags']} new"))
     if result["workspaces_matched"]:
-        print(f"  Workspaces:    {result['workspaces_matched']} matched by git remote")
+        fields.append(("Workspaces", f"{result['workspaces_matched']} matched by git remote"))
+    from siftd.output.listing import print_definitions
 
+    print_definitions(fields)
     return 0
 
 
@@ -474,15 +486,17 @@ def cmd_db_receive(args) -> int:
                 finally:
                     target_conn.close()
 
+            from siftd.output.table import print_table
+
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
             print(f"[dry run] {target_state}")
             print("[dry run] preflight: ok")
-            print("[dry run] incoming rows (source  →  target):")
-            all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
-            for table in all_tables:
-                src_n = src_counts.get(table, 0)
-                tgt_n = tgt_counts.get(table, 0)
-                print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+            print("[dry run] incoming rows:")
+            count_rows = [
+                [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+                for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
+            ]
+            print_table(["table", "incoming", "target"], count_rows)
             return 0
 
         if getattr(args, "stage", False):
