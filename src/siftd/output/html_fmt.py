@@ -608,7 +608,7 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
     # The unfold IS the trace: it answers "what did the agent actually do here",
     # so it inlines tool I/O in sequence rather than the folio's prose-only body.
     # The route fetches it with a tools/thinking-visible fidelity to match.
-    body, _rail, _n, _tc = _render_turn_blocks(
+    body, _rail, _n, _tc, _seq = _render_turn_blocks(
         turns, fidelity, id_prefix=None, anchor_pos=anchor_pos, mode="trace"
     )
     if not body:
@@ -903,7 +903,7 @@ def _render_turn_blocks(
     anchor_pos: int | None = None,
     mode: str = "reading",
     target_event_id: str | None = None,
-) -> tuple[list[str], list[str], int, Counter[str]]:
+) -> tuple[list[str], list[str], int, Counter[str], list[dict]]:
     """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
     body and the search context slice (the unfold view).
 
@@ -928,9 +928,11 @@ def _render_turn_blocks(
       ``get_conversation`` only populates tool input/result when it does), so
       ``mode`` and ``fidelity`` are resolved together at the route.
 
-    Returns ``(body, rail, n, tool_counter)``: the body divs, the rail items
-    (empty unless ``id_prefix``), the rail-item count (= the folio's "Turns N"),
-    and the tool-call ``Counter`` (the folio's ledger).
+    Returns ``(body, rail, n, tool_counter, tool_seq)``: the body divs, the rail
+    items (empty unless ``id_prefix``), the rail-item count (= the folio's
+    "Turns N"), the tool-call ``Counter`` (the reading-mode aggregate ledger),
+    and ``tool_seq`` — the chronological Activity registry (trace mode only;
+    each entry {id, name, target, status, turn} anchors a body ``.tool-call``).
     """
     from siftd.output.common import fmt_timestamp
     from siftd.output.narrative import HtmlEmitter, walk_narrative
@@ -940,6 +942,7 @@ def _render_turn_blocks(
     body: list[str] = []
     rail: list[str] = []
     tool_counter: Counter[str] = Counter()
+    tool_seq: list[dict] = []
     n = 0
 
     for i, turn in enumerate(turns):
@@ -988,7 +991,18 @@ def _render_turn_blocks(
                 anchor = f"{id_prefix}-{n}"
                 idattr = f' id="{anchor}"'
                 rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
-            emitter = HtmlEmitter(target_event_id) if trace else _FolioEmitter()
+            # Only the folio (id_prefix set) collects the Activity registry +
+            # emits evt-N ids: the inline search-context slice has no aside and
+            # can coexist with other slices, so it must not mint colliding ids.
+            collect = trace and id_prefix is not None
+            emitter = (
+                HtmlEmitter(
+                    target_event_id,
+                    tool_seq=tool_seq if collect else None,
+                    turn_no=n,
+                )
+                if trace else _FolioEmitter()
+            )
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
             body.append(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
@@ -998,7 +1012,7 @@ def _render_turn_blocks(
                 f"</div>"
             )
 
-    return body, rail, n, tool_counter
+    return body, rail, n, tool_counter, tool_seq
 
 
 def folio_detail_from_session(detail: Any) -> Any:
@@ -1097,31 +1111,55 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
 
     # Turn blocks (body + rail) are shared with the search context slice; the
     # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.
-    body, rail, n, tool_counter = _render_turn_blocks(
+    body, rail, n, tool_counter, tool_seq = _render_turn_blocks(
         turns, fidelity, id_prefix="t", mode=mode, target_event_id=target_event_id
     )
 
     total_tokens = (
         getattr(detail, "total_input_tokens", 0) + getattr(detail, "total_output_tokens", 0)
     )
-    total_tools = sum(tool_counter.values())
     # Cost is the rollup's canonical per-conversation value, fetched at depth>=3.
     # None means no priced usage — render an em dash, never a fabricated $0.
     cost = getattr(detail, "cost", None)
     cost_str = f"${cost:.4f}" if cost is not None else "&mdash;"
 
-    ledger_rows: list[str] = []
-    for name, cnt in tool_counter.most_common():
-        ledger_rows.append(
-            f'<li class="ledger__row"><span class="ledger__name">{escape(name)}</span>'
-            f'<span class="ledger__bar" data-n="{cnt}"></span>'
-            f'<span class="ledger__n">{cnt}</span></li>'
-        )
-    if not ledger_rows:
-        ledger_rows.append(
-            '<li class="ledger__row ledger__empty">'
-            '<span class="ledger__name">no tool calls</span></li>'
-        )
+    # The folio aside is the conversation's tool record, shown two ways:
+    #   trace   → Activity: the chronological run (.tool-seq), each row a link to
+    #             the matching inline .tool-call[id] (enhance.js mirrors scroll).
+    #   reading → Tool ledger: the frequency aggregate (no inline tools to anchor).
+    if mode == "trace":
+        seq_rows: list[str] = []
+        for it in tool_seq:
+            err = " is-error" if it["status"] and it["status"] != "success" else ""
+            turn_lbl = f'{it["turn"]:02d}' if it["turn"] else ""
+            seq_rows.append(
+                f'<a class="tool-seq__row{err}" href="#{it["id"]}">'
+                f'<span class="tool-seq__n">{turn_lbl}</span>'
+                f'<span class="tool-seq__name">{escape(it["name"])}</span>'
+                f'<span class="tool-seq__target">{escape(it["target"])}</span></a>'
+            )
+        if not seq_rows:
+            seq_rows.append(
+                '<span class="tool-seq__row tool-seq__empty">'
+                '<span class="tool-seq__name">no tool calls</span></span>'
+            )
+        aside_label, aside_count = "Activity", len(tool_seq)
+        aside_body = f'<ol class="tool-seq">{"".join(seq_rows)}</ol>'
+    else:
+        ledger_rows: list[str] = []
+        for name, cnt in tool_counter.most_common():
+            ledger_rows.append(
+                f'<li class="ledger__row"><span class="ledger__name">{escape(name)}</span>'
+                f'<span class="ledger__bar" data-n="{cnt}"></span>'
+                f'<span class="ledger__n">{cnt}</span></li>'
+            )
+        if not ledger_rows:
+            ledger_rows.append(
+                '<li class="ledger__row ledger__empty">'
+                '<span class="ledger__name">no tool calls</span></li>'
+            )
+        aside_label, aside_count = "Tool ledger", sum(tool_counter.values())
+        aside_body = f'<ul class="ledger">{"".join(ledger_rows)}</ul>'
 
     # The count is rail items (each User / Assistant message is a turn), so the
     # "Turns N" header matches the rail length — not the exchange count, which
@@ -1132,8 +1170,9 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     title = context.get("title", "Transcript")
     live_poll_url = context.get("live_poll_url", "")
 
-    # Curation: tags + export, hosted in the folio foot. The /tag route
-    # swaps the same stable #tags-<id> section render_tag_section returns.
+    # Curation: tags + export, hosted in the command bar's actions group. The
+    # /tag route swaps the same stable #tags-<id> section render_tag_section
+    # returns. Suppressed on a live folio (no ingest yet → nothing to curate).
     curation = ""
     if conv_id and not live_poll_url:
         tags = getattr(detail, "tags", None) or []
@@ -1143,7 +1182,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
             tag_suggest_url=context.get("tag_suggest_url", ""),
         )
         export_html = _render_export_links(context.get("export_base_url", ""), conv_id)
-        curation = f'<div class="ledger__curation">{tag_html}{export_html}</div>'
+        curation = f'{tag_html}{export_html}'
 
     live_attrs = (
         f' hx-get="{escape(live_poll_url)}" hx-trigger="every 2s"'
@@ -1158,27 +1197,41 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     mode_toggle = (
         _folio_mode_toggle(conv_id, mode) if conv_id and not live_poll_url else ""
     )
+    # Manuscript is the folio's permanent reading style (a pure-CSS treatment of
+    # the .turn DOM; no variant picker). The Reading/Trace toggle stays — trace
+    # is the same manuscript styling with the tool I/O inlined.
+    bar = ""
+    if mode_toggle or curation:
+        bar = (
+            '<div class="folio__bar">'
+            f'<div class="folio__bargroup">{mode_toggle}</div>'
+            + (
+                f'<div class="folio__bargroup folio__bargroup--actions">{curation}</div>'
+                if curation else ""
+            )
+            + '</div>'
+        )
     parts: list[str] = [
         f'<article class="{folio_cls}" data-view="{escape(view)}"'
         f' data-title="{escape(title)}" data-mode="{escape(mode)}"'
         f' data-count="{turn_count}" data-kick="{kick}"{scroll_attr}{live_attrs}>',
+        bar,
         '<nav class="folio__nav" aria-label="Turns">',
         '<div class="folio__navhead"><span class="micro">Turns</span>'
         f'<span class="folio__navmeta">{turn_count}</span></div>',
-        mode_toggle,
         f'<div class="turns">{"".join(rail)}</div>',
         "</nav>",
         '<div class="folio__body">',
         "".join(body) or '<p class="empty">This conversation has no turns.</p>',
         "</div>",
-        '<aside class="folio__ledger" aria-label="Tool ledger">',
-        '<div class="folio__navhead"><span class="micro">Tool ledger</span>'
-        f'<span class="folio__navmeta">{total_tools}</span></div>',
-        f'<ul class="ledger">{"".join(ledger_rows)}</ul>',
+        f'<aside class="folio__ledger" aria-label="{aside_label}">',
+        f'<div class="folio__navhead"><span class="micro">{aside_label}</span>'
+        f'<span class="folio__navmeta">{aside_count}</span></div>',
+        aside_body,
         "</aside>",
-        # Foot is its own grid area, not part of the ledger aside: wide layouts
-        # pin it under the ledger column; narrow ones reflow it into the footer
-        # band (nav · ledger · foot) so the conversation stays front and center.
+        # Foot is its own grid area: tokens + cost only now (tags/export moved to
+        # the command bar). Wide layouts pin it under the ledger column; narrow
+        # ones reflow it into the footer band.
         '<footer class="folio__foot">',
         '<div class="folio__stats">',
         '<div class="ledger__stat"><span class="micro">Tokens</span>'
@@ -1186,7 +1239,6 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         '<div class="ledger__stat"><span class="micro">Cost</span>'
         f'<span class="ledger__statn">{cost_str}</span></div>',
         "</div>",
-        curation,
         "</footer>",
         "</article>",
     ]
@@ -1266,6 +1318,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
     live_enabled = context.get("live_enabled", False)
 
     parts: list[str] = []
+    live_section = ""
 
     # --- live zone ---------------------------------------------------------
     if live_enabled:
@@ -1307,7 +1360,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
             if cards
             else '<p class="zone__empty">no live sessions on this host</p>'
         )
-        parts.append(
+        live_section = (
             '<section class="zone zone--live" aria-label="Live sessions">'
             '<div class="zone__head"><span class="micro">Live</span>'
             f'<span class="zone__count">{len(cards)} active</span>'
@@ -1345,49 +1398,63 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         ws = getattr(c, "workspace_path", None)
         ws_name = ws.rstrip("/").rsplit("/", 1)[-1] if ws else "?"
         row_cost = getattr(c, "cost", None)
-        row_cost_str = f"${row_cost:,.2f}" if row_cost is not None else "&mdash;"
+        row_cost_str = f"${row_cost:,.4f}" if row_cost is not None else "&mdash;"
         is_sub = parent_id is not None or flagged
+        # Spawn/start clock-time rides the gutter for every entry (it orders
+        # siblings and gives the daybook its diary rhythm).
+        e = _iso_epoch(getattr(c, "started_at", None))
+        when = datetime.fromtimestamp(e).strftime("%H:%M") if e is not None else ""
         if is_sub:
             # Children inherit the parent's workspace, so repeating its name on
             # every sibling is pure noise. Identify a child by what differs: its
-            # agent type (when captured from the sidecar) and its spawn
-            # clock-time (always present — distinguishes siblings, adds order).
+            # agent type (when captured from the sidecar); the spawn time lives
+            # in the gutter alongside every other entry.
             atype = (getattr(c, "agent_type", None) or "").strip()
             if ":" in atype:  # feature-dev:code-reviewer -> code-reviewer
                 atype = atype.rsplit(":", 1)[-1]
-            e = _iso_epoch(getattr(c, "started_at", None))
-            when = datetime.fromtimestamp(e).strftime("%H:%M") if e is not None else ""
-            time_html = f'<span class="row__when">{when}</span>' if when else ""
-            label = escape(atype)
-            name_html = f"{label} {time_html}".strip() if label else (time_html or "sub-agent")
+            name_html = escape(atype) if atype else "sub-agent"
         else:
             name_html = escape(ws_name)
-        cls = "row row--sub" if is_sub else "row"
+        # entry--sub / row--sub: the new daybook class plus the legacy hook the
+        # disclosure CSS + enhance.js toggle still key off.
+        cls = "entry entry--sub row--sub" if is_sub else "entry"
         attrs = _hx_detail(detail_base, c.id, shell_base)
         if parent_id is not None:
             attrs += f' data-parent="{escape(parent_id)}" hidden'
         if group_id is not None:
-            disc = (
-                f'<button class="row__toggle" type="button" data-group="{escape(group_id)}"'
-                f' aria-expanded="false" aria-label="Toggle sub-agents"></button>'
+            gutter_mark = '<span class="entry__n" aria-hidden="true"></span>'
+            toggle = (
+                f'<button class="entry__toggle row__toggle" type="button"'
+                f' data-group="{escape(group_id)}" aria-expanded="false"'
+                f' aria-label="Toggle sub-agents"></button>'
             )
         elif is_sub:
-            disc = '<span class="row__caret" aria-hidden="true">&#8627;</span>'
+            gutter_mark = '<span class="entry__caret" aria-hidden="true">&#8627;</span>'
+            toggle = ""
         else:
-            disc = '<span class="row__caret row__caret--none" aria-hidden="true"></span>'
+            gutter_mark = '<span class="entry__n" aria-hidden="true"></span>'
+            toggle = ""
         chip = (
-            f'<span class="row__agents">{agents} agent{"" if agents == 1 else "s"}</span>'
+            f'<span class="entry__chip">{agents} agent{"" if agents == 1 else "s"}</span>'
             if agents else ""
         )
+        tok = fmt_tokens(getattr(c, "total_tokens", 0) or 0)
         return (
             f'<li class="{cls}"{attrs}>'
-            f'<span class="row__ws">{disc}'
-            f'<span class="row__name">{name_html}</span>{chip}</span>'
-            f'<span class="row__model">{escape(model)}</span>'
-            f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
-            f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
-            f'<span class="cost">{row_cost_str}</span>'
-            f"</li>"
+            f'<div class="entry__gutter">{gutter_mark}'
+            f'<span class="entry__time">{escape(when)}</span></div>'
+            f'<div class="entry__body">'
+            f'<div class="entry__title">{toggle}'
+            f'<span class="entry__name">{name_html}</span>{chip}</div>'
+            f'<div class="entry__meta">{escape(model)}</div></div>'
+            f'<div class="entry__figures">'
+            f'<span class="figure"><span class="figure__n figure__n--dim">'
+            f'{getattr(c, "prompt_count", 0)}</span><span class="figure__k">turns</span></span>'
+            f'<span class="figure"><span class="figure__n">{escape(tok)}</span>'
+            f'<span class="figure__k">tok</span></span>'
+            f'<span class="figure"><span class="figure__n">{row_cost_str}</span>'
+            f'<span class="figure__k">cost</span></span>'
+            f"</div></li>"
         )
 
     days: OrderedDict[str, list] = OrderedDict()
@@ -1408,10 +1475,20 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         in_day = convs + day_kids
 
         if key == "unknown":
-            label = "undated"
+            aria = "undated"
+            dateline = (
+                '<div class="dateline"><span class="dateline__day">&mdash;</span></div>'
+            )
             hist = ""
         else:
-            label = datetime.strptime(key, "%Y-%m-%d").strftime("%a %d %b")
+            d = datetime.strptime(key, "%Y-%m-%d")
+            aria = d.strftime("%a %d %b")
+            day_num = d.strftime("%d").lstrip("0") or "0"
+            dateline = (
+                f'<div class="dateline"><span class="dateline__day">{day_num}</span>'
+                f'<span class="dateline__cal"><span class="dateline__wk">{d.strftime("%a")}</span>'
+                f'<span class="dateline__mo">{d.strftime("%b")}</span></span></div>'
+            )
             hours = []
             for c in convs:
                 e = _iso_epoch(c.started_at)
@@ -1421,10 +1498,21 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         tok = sum(getattr(c, "total_tokens", 0) or 0 for c in in_day)
         priced = [c.cost for c in in_day if getattr(c, "cost", None) is not None]
         cost_str = f"${sum(priced):,.2f}" if priced else "&mdash;"
-        sub = f"{len(convs)} sessions"
-        if day_kids:
-            sub += f" &middot; {len(day_kids)} sub-agents"
-        sub += f" &middot; {fmt_tokens(tok)} tok &middot; {cost_str}"
+        totals = (
+            '<div class="leaf__totals">'
+            f'<span class="total"><span class="total__k">Sessions</span>'
+            f'<span class="total__n">{len(convs)}</span></span>'
+            + (
+                f'<span class="total"><span class="total__k">Sub-agents</span>'
+                f'<span class="total__n">{len(day_kids)}</span></span>'
+                if day_kids else ""
+            )
+            + f'<span class="total"><span class="total__k">Tokens</span>'
+            f'<span class="total__n">{fmt_tokens(tok)}</span></span>'
+            f'<span class="total"><span class="total__k">Cost</span>'
+            f'<span class="total__n">{cost_str}</span></span>'
+            "</div>"
+        )
 
         rows: list[str] = []
         for c in convs:
@@ -1440,10 +1528,10 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
                     _session_row(c, flagged=bool(getattr(c, "parent_external_id", None)))
                 )
         day_parts.append(
-            f'<div class="day"><div class="day__head">'
-            f'<span class="day__date">{escape(label)}</span>'
-            f'<span class="day__sub">{sub}</span>{hist}</div>'
-            f'<ul class="rows">{"".join(rows)}</ul></div>'
+            f'<section class="leaf" aria-label="{escape(aria)}">'
+            f'<div class="leaf__head">{dateline}'
+            f'<div class="leaf__aside">{hist}{totals}</div></div>'
+            f'<ul class="entries">{"".join(rows)}</ul></section>'
         )
 
     ingested = (
@@ -1451,13 +1539,9 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         if day_parts
         else '<p class="empty">No ingested sessions yet.</p>'
     )
-    parts.append(
-        '<section class="zone zone--ingested" aria-label="Ingested sessions">'
-        '<div class="zone__head"><span class="micro">Ingested</span>'
-        f'<span class="zone__count">{len(summaries)} sessions</span>'
-        '<span class="zone__rule"></span></div></section>'
-        f"{ingested}"
-    )
+    # The daybook is the column: the live zone (and, in a later slice, the
+    # Oculus) enter at the crown, the dated leaves descend below it.
+    parts.append(f'<div class="daybook">{live_section}{ingested}</div>')
 
     kick = "live · ingested" if live_enabled else "ingested"
     return (
@@ -1515,63 +1599,80 @@ def _tag_weight(t: Any) -> tuple[int, str]:
     return best_n, best_u
 
 
-def _tag_row(
-    t: Any, *, display: str, list_base: str, shell_base: str, pin_action_url: str
-) -> str:
-    """One tag as a ``.ledger__row``: pin toggle · name (drills to Find) · bar · count.
-
-    The drill mounts Find pre-filtered by this tag into ``#main`` (so the chrome
-    + filter strip come along and the user can refine); the pin toggle posts and
-    swaps the whole view back so the pinned zone updates in place. Both use the
-    full tag ``name``; ``display`` is only the visible label (a leaf in the tree).
-    """
+def _idx_pin_button(name: str, pinned: bool, pin_action_url: str) -> str:
+    """The pin/unpin toggle shared by index entries (the star before the name)."""
+    if not pin_action_url:
+        return ""
     import json as _json
 
+    vals = _json.dumps({"action": "unpin" if pinned else "pin", "tag": name})
+    star = "★" if pinned else "☆"
+    pin_cls = "pin pin--on" if pinned else "pin"
+    verb = "unpin" if pinned else "pin"
+    pressed = "true" if pinned else "false"
+    return (
+        f'<button class="{pin_cls}" type="button"'
+        f' hx-post="{escape(pin_action_url)}" hx-vals="{escape(vals)}"'
+        f' hx-target="#main" hx-swap="innerHTML"'
+        f' aria-pressed="{pressed}" aria-label="{verb}"'
+        f' title="{verb.title()} {escape(name)}">{star}</button>'
+    )
+
+
+def _idx_entry(
+    t: Any, *, display: str, list_base: str, shell_base: str, pin_action_url: str
+) -> str:
+    """One tag as an ``.idx-entry``: pin · name (drills to Find) · dots · locator.
+
+    ``display`` is the visible label (a leaf inside its namespace group); the
+    pin + drill always use the full ``t.name``.
+    """
     name = t.name
     pinned = bool(getattr(t, "pinned", False))
     weight, unit = _tag_weight(t)
-
-    # Drill into Find pre-filtered by this tag — reuses the shared #main-mount
-    # primitive (same contract as the folio rows), keyed on ``tag``.
     drill = _hx_detail(list_base, name, shell_base, key="tag")
-
-    pin_btn = ""
-    if pin_action_url:
-        vals = _json.dumps({"action": "unpin" if pinned else "pin", "tag": name})
-        star = "★" if pinned else "☆"
-        pin_cls = "pin pin--on" if pinned else "pin"
-        verb = "Unpin" if pinned else "Pin"
-        pressed = "true" if pinned else "false"
-        pin_btn = (
-            f'<button class="{pin_cls}" type="button"'
-            f' hx-post="{escape(pin_action_url)}" hx-vals="{escape(vals)}"'
-            f' hx-target="#main" hx-swap="innerHTML"'
-            f' aria-pressed="{pressed}" title="{verb} {escape(name)}">{star}</button>'
-        )
-
+    li_cls = "idx-entry is-pinned" if pinned else "idx-entry"
     return (
-        f'<li class="ledger__row">'
-        f"{pin_btn}"
-        f'<a class="ledger__name"{drill}>{escape(display)}</a>'
-        f'<span class="ledger__bar" data-n="{weight}"></span>'
-        f'<span class="ledger__n">{weight}'
-        f'<span class="ledger__unit"> {escape(unit)}</span></span>'
-        f"</li>"
+        f'<li class="{li_cls}">{_idx_pin_button(name, pinned, pin_action_url)}'
+        f'<a class="idx-name"{drill}>{escape(display)}</a>'
+        f'<span class="idx-dots" aria-hidden="true"></span>'
+        f'<span class="idx-loc"><b class="idx-loc__n">{weight:,}</b>'
+        f'<i>{escape(unit)}</i></span></li>'
+    )
+
+
+def _marked_entry(t: Any, *, list_base: str, shell_base: str) -> str:
+    """A pinned tag in the Marked section — full name, fixed star, locator."""
+    name = t.name
+    weight, unit = _tag_weight(t)
+    drill = _hx_detail(list_base, name, shell_base, key="tag")
+    return (
+        '<li class="marked__entry">'
+        '<span class="marked__star" aria-hidden="true">★</span>'
+        f'<a class="idx-name"{drill}>{escape(name)}</a>'
+        '<span class="idx-dots" aria-hidden="true"></span>'
+        f'<span class="idx-loc"><b class="idx-loc__n">{weight:,}</b>'
+        f'<i>{escape(unit)}</i></span></li>'
     )
 
 
 def render_tags(tags: list, **context: Any) -> str:
-    """Render the Swiss 'Tags' view: a pinned zone + most-used zone over a
-    namespace tree.
+    """Render the Swiss 'Tags' view as an index: a Marked section over two books
+    — the hand-applied Subject index and the auto-assigned Machine vocabulary —
+    each a namespace tree.
 
     Composition over data: every number comes from owner-scoped
-    ``api.tags.list_tags``. 'pinned' is the only stored state; the 'tree' is
+    ``api.tags.list_tags``. 'pinned' is the only stored state; the tree is
     synthesized by splitting flat names on ``:`` (sibling magnitudes normalise
-    within each namespace ledger, which is the meaningful comparison). Rows
-    pin/unpin in place and drill into Find pre-filtered by the tag.
+    within each namespace). The Subject/Machine split rides ``TagInfo.auto`` —
+    machine vocabulary (shell:* tool families, siftd:derivative) is counted on
+    its own grain (calls) and kept out of the subject headline, where it would
+    swamp the hand-applied conversation tags. Entries pin/unpin in place and
+    drill into Find pre-filtered by the tag.
 
     Context keys: ``list_base`` (drill target, e.g. ``/find``), ``shell_base``
-    (deep-link push prefix), ``pin_action_url`` (pin/unpin POST).
+    (deep-link push prefix), ``pin_action_url`` (pin/unpin POST),
+    ``total_conversations`` (optional — the apparatus corpus figure).
     """
     from collections import OrderedDict
 
@@ -1584,70 +1685,103 @@ def render_tags(tags: list, **context: Any) -> str:
         "pin_action_url": pin_action_url,
     }
 
-    def _ledger(rows: list[str]) -> str:
-        return f'<ul class="ledger ledger--tags">{"".join(rows)}</ul>'
-
-    def _zone(label: str, count_txt: str, body: str, *, mod: str = "") -> str:
-        zcls = f"zone {mod}" if mod else "zone"
-        return (
-            f'<section class="{zcls}"><div class="zone__head">'
-            f'<span class="micro">{escape(label)}</span>'
-            f'<span class="zone__count">{escape(count_txt)}</span>'
-            f'<span class="zone__rule"></span></div>{body}</section>'
-        )
-
     if not tags:
         return (
-            '<section class="tags" data-view="tags" data-title="Tags"'
+            '<article class="index" data-view="tags" data-title="Tags"'
             ' data-count="0" data-kick="">'
-            '<p class="empty">No tags yet.</p></section>'
+            '<p class="empty">No tags yet.</p></article>'
         )
+
+    def _book(tag_list: list) -> tuple[int, str]:
+        """Group a tag list into ``.idx-group`` namespace sections; return
+        ``(n_headings, html)``. Namespaces alphabetical, the ungrouped bucket
+        last; leaf labels inside a namespace, full names when ungrouped."""
+        groups: OrderedDict[str, list] = OrderedDict()
+        for t in tag_list:
+            ns, _leaf = _tag_namespace(t.name)
+            groups.setdefault(ns, []).append(t)
+        ordered_ns = sorted(k for k in groups if k) + ([""] if "" in groups else [])
+        secs: list[str] = []
+        for ns in ordered_ns:
+            members = sorted(groups[ns], key=lambda t: _tag_weight(t)[0], reverse=True)
+            entries = [
+                _idx_entry(t, display=(_tag_namespace(t.name)[1] if ns else t.name), **row_kw)
+                for t in members
+            ]
+            head_label = escape(ns) if ns else "ungrouped"
+            secs.append(
+                f'<section class="idx-group"><div class="idx-head">{head_label}'
+                f'<span class="idx-head__count">{len(members)}</span></div>'
+                f'<ul class="idx-entries">{"".join(entries)}</ul></section>'
+            )
+        return len(ordered_ns), "".join(secs)
+
+    subject = [t for t in tags if not getattr(t, "auto", False)]
+    machine = [t for t in tags if getattr(t, "auto", False)]
+    marked = [t for t in tags if getattr(t, "pinned", False)]
+
+    n_subj, subj_html = _book(subject)
+    n_mach, mach_html = _book(machine)
+    total_headings = n_subj + n_mach
 
     parts: list[str] = []
 
-    # pinned zone (full names) — only when something is pinned
-    pinned = [t for t in tags if getattr(t, "pinned", False)]
-    if pinned:
-        rows = [_tag_row(t, display=t.name, **row_kw) for t in pinned]
-        parts.append(_zone("Pinned", str(len(pinned)), _ledger(rows), mod="zone--pinned"))
+    # head — kicker + apparatus (the corpus figure only when the route threads it)
+    total_conv = context.get("total_conversations")
+    drawn = f"Drawn from <b>{total_conv:,}</b> conversations. " if total_conv else ""
+    apparatus = (
+        f"{drawn}Subject tags are applied by hand and counted by conversation; "
+        "machine vocabulary is assigned at ingest and counted on its own grain. "
+        "A locator opens Find scoped to that tag."
+    )
+    parts.append(
+        '<section class="index__head"><div class="index__kicker">'
+        '<span class="micro">Index</span>'
+        f'<span class="index__count">{len(tags):,} entries · {total_headings} headings</span>'
+        f'</div><p class="index__apparatus">{apparatus}</p></section>'
+    )
 
-    # most-used zone — top non-pinned tags by dominant count (skip zero-count).
-    # "Most used" is a curation headline, so auto-applied vocabulary (shell:*
-    # categories + siftd:derivative, flagged ``auto`` by list_tags) is demoted:
-    # its tool-call grain counts in the thousands would structurally swamp the
-    # tens of hand-applied conversation tags. The auto names still appear in the
-    # namespace tree below — demoted from the headline, not lost.
-    unpinned = [t for t in tags if not getattr(t, "pinned", False)]
-    curated = [t for t in unpinned if not getattr(t, "auto", False)]
-    top = [t for t in sorted(curated, key=lambda t: _tag_weight(t)[0], reverse=True)[:8]
-           if _tag_weight(t)[0] > 0]
-    if top:
-        rows = [_tag_row(t, display=t.name, **row_kw) for t in top]
-        parts.append(_zone("Most used", str(len(top)), _ledger(rows)))
+    # marked — the pinned tags, principal references (full names)
+    if marked:
+        rows = "".join(
+            _marked_entry(t, list_base=list_base, shell_base=shell_base) for t in marked
+        )
+        parts.append(
+            '<section class="index__marked zone--pinned"><div class="zone__head">'
+            '<span class="micro">Marked</span>'
+            f'<span class="zone__count">{len(marked)}</span>'
+            f'<span class="zone__rule"></span></div><ul class="marked">{rows}</ul></section>'
+        )
 
-    # namespace tree — every tag grouped by ':' prefix; namespaces alphabetical,
-    # the ungrouped bucket last. Leaf labels in groups, full names ungrouped.
-    groups: OrderedDict[str, list] = OrderedDict()
-    for t in tags:
-        ns, _leaf = _tag_namespace(t.name)
-        groups.setdefault(ns, []).append(t)
-    ordered_ns = sorted(k for k in groups if k) + ([""] if "" in groups else [])
-    for ns in ordered_ns:
-        members = sorted(groups[ns], key=lambda t: _tag_weight(t)[0], reverse=True)
-        rows = [
-            _tag_row(t, display=(_tag_namespace(t.name)[1] if ns else t.name), **row_kw)
-            for t in members
-        ]
-        label = f"{ns}:" if ns else "ungrouped"
-        parts.append(_zone(label, f"{len(members)} tags", _ledger(rows)))
+    # subject index — the hand-applied vocabulary
+    if subject:
+        parts.append(
+            '<section class="index__book"><div class="zone__head">'
+            '<span class="micro">Subject index</span>'
+            f'<span class="zone__count">{len(subject):,} entries · {n_subj} headings</span>'
+            f'<span class="zone__rule"></span></div>'
+            f'<div class="index__cols">{subj_html}</div></section>'
+        )
 
-    # kick tracks what actually rendered (mirrors render_sessions): "pinned"
-    # only appears when a Pinned zone does.
-    kick = " · ".join(filter(None, ["pinned" if pinned else "", "tree"]))
+    # machine vocabulary — the auto-assigned categories, a quieter concordance
+    if machine:
+        parts.append(
+            '<section class="index__book index__machine"><div class="zone__head">'
+            '<span class="micro">Machine vocabulary</span>'
+            f'<span class="zone__count">{len(machine):,} entries · auto-applied</span>'
+            '<span class="zone__rule"></span></div>'
+            '<p class="index__gloss">Categories assigned automatically at ingest — tool '
+            'families counted by call, <code>siftd:derivative</code> marking a '
+            "sub-agent's own conversation. Kept out of the subject headline, where "
+            'their grain would swamp the hand-applied tags.</p>'
+            f'<div class="index__cols">{mach_html}</div></section>'
+        )
+
+    kick = " · ".join(filter(None, ["pinned" if marked else "", "tree"]))
     return (
-        f'<section class="tags" data-view="tags" data-title="Tags"'
+        f'<article class="index" data-view="tags" data-title="Tags"'
         f' data-count="{len(tags):,}" data-kick="{kick}">'
-        f'{"".join(parts)}</section>'
+        f'{"".join(parts)}</article>'
     )
 
 

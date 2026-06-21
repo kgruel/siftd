@@ -99,8 +99,8 @@ body { margin: 0; }
 /* ========================================================================= */
 .folio { display:grid; height:100%; min-height:0;
   grid-template-columns:204px minmax(0,1fr) 248px;
-  grid-template-rows:minmax(0,1fr) auto;
-  grid-template-areas:"nav body ledger" "nav body foot"; background:var(--paper); }
+  grid-template-rows:auto minmax(0,1fr) auto;
+  grid-template-areas:"bar bar bar" "nav body ledger" "nav body foot"; background:var(--paper); }
 .folio__nav { grid-area:nav; border-right:1px solid var(--hair); overflow-y:auto; min-height:0; }
 .folio__body { grid-area:body; overflow-y:auto; min-height:0; padding:30px 44px 64px; }
 .folio__ledger { grid-area:ledger; border-left:1px solid var(--hair); overflow-y:auto; min-height:0; }
@@ -110,8 +110,8 @@ body { margin: 0; }
    foot reflow into a three-column footer band beneath it. Same markup. */
 @container main (max-width: 760px) {
   .folio { grid-template-columns:5fr 4fr 5fr;
-    grid-template-rows:minmax(0,1fr) auto;
-    grid-template-areas:"body body body" "nav ledger foot"; }
+    grid-template-rows:auto minmax(0,1fr) auto;
+    grid-template-areas:"bar bar bar" "body body body" "nav ledger foot"; }
   .folio__nav, .folio__ledger, .folio__foot {
     border-top:2px solid var(--hair-strong); border-left:0; border-right:0;
     max-height:218px; overflow-y:auto; }
@@ -519,6 +519,113 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .ws-detail__recent .zone__head { padding:14px 32px 8px; margin:0; }
 
 /* ========================================================================= */
+/* WORKSPACES · PROJECT DOSSIER — picker rail + per-workspace dossier         */
+/* Detail-first: the rail is a compact way to choose a project (pinned +      */
+/* filterable list, place-hygiene caveat at its foot); the dossier recomposes */
+/* every other lens around one repo (provenance · cadence · tags · models ·   */
+/* recent). Ranking lives in Stats, so the list doesn't compete on it.        */
+/* ========================================================================= */
+.workspaces:has(.ws-rail2) { display:grid; grid-template-columns:286px minmax(0,1fr);
+  height:100%; min-height:0; overflow:hidden; padding:0; background:var(--paper); }
+
+/* the picker rail */
+.ws-rail2 { border-right:2px solid var(--hair-strong); display:flex; flex-direction:column;
+  min-height:0; }
+.ws-rail2__head { padding:18px 20px 14px; border-bottom:1px solid var(--hair);
+  display:flex; flex-direction:column; gap:12px; }
+.ws-rail2__head .register__kicker { display:flex; align-items:baseline; gap:10px; }
+.ws-rail2__head .register__kicker .micro { color:var(--ink); }
+.register__count { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--faint); }
+.ws-rail2 .ws-filter { width:100%; margin:0; }
+.ws-rail2__scroll { flex:1; min-height:0; overflow-y:auto; }
+.ws-rail2__group { padding:4px 0 10px; }
+.ws-rail2__group .folio__navhead { padding:13px 20px 9px; border-bottom:0; }
+.ws-rail2__foot { border-top:1px solid var(--hair); padding:12px; }
+.ws-rail2__foot .ws-caveat { margin:0; }
+
+/* pick rows — pin · name/meta · thin magnitude bar (reuse .ledger--ws hooks
+   so the filter, the data-n bars, and the pin logic keep working) */
+.ws-picks { padding:0; }
+.ws-picks .ledger__row { grid-template-columns:auto minmax(0,1fr) 32px; gap:11px;
+  align-items:center; padding:8px 20px; cursor:pointer; }
+.ws-picks .ledger__name { display:flex; flex-direction:column; gap:2px; min-width:0; cursor:pointer; }
+.ws-picks .ws__name { font-family:var(--font-ui); font-weight:500;
+  font-size:calc(var(--fs-base) + 0.5px); letter-spacing:-.01em;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.ws-picks .ws__sub { font-family:var(--font-mono); }
+.ws-picks .ledger__bar { height:5px; }
+.ws-picks .ledger__row:hover { background:var(--sel-bg); }
+.ws-picks .ledger__row.is-current { background:var(--sel-bg); box-shadow:var(--row-marker); }
+.ws-picks .ledger__row.is-current .ws__name { color:var(--accent); }
+.ws-picks__more { padding:10px 20px 4px; font-family:var(--font-mono); font-size:var(--fs-micro);
+  color:var(--faint); letter-spacing:.04em; cursor:pointer; }
+.ws-picks__more:hover { color:var(--accent); }
+
+/* the dossier */
+.ws-dossier { min-width:0; overflow-y:auto; min-height:0; background:var(--paper);
+  padding-bottom:56px; }
+.dossier__head { padding:24px 32px 20px; border-bottom:2px solid var(--hair-strong);
+  display:flex; flex-direction:column; gap:9px; }
+.dossier__title { display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+.dossier__title h2 { margin:0; font-size:30px; font-weight:700; letter-spacing:-.03em; }
+.dossier__live { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; color:var(--accent);
+  display:inline-flex; align-items:center; gap:7px; }
+.dossier__live::before { content:''; width:7px; height:7px; background:var(--accent);
+  border-radius:50%; animation:pulse 1.6s ease-in-out infinite; }
+.dossier__find { margin-left:auto; font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; color:var(--accent); cursor:pointer; white-space:nowrap; }
+.dossier__find:hover { text-decoration:underline; }
+.dossier__prov { display:flex; gap:14px; flex-wrap:wrap; font-family:var(--font-mono);
+  font-size:var(--fs-micro); }
+.dossier__path { color:var(--ink); }
+.dossier__remote { color:var(--faint); }
+
+/* scoped standing balance — reuses the Reckoning standing primitives */
+.dossier__standing { display:grid; grid-template-columns:repeat(3,1fr);
+  border-bottom:1px solid var(--hair); }
+.dossier__standing .standing__fig { padding:20px 26px; }
+.dossier__standing .standing__fign { font-size:calc(var(--fs-base) + 15px); }
+
+/* cadence — the Reckoning trend, scoped to one workspace's span */
+.dossier__cad { padding:18px 32px 14px; border-bottom:1px solid var(--hair); }
+.dossier__cad .zone__head { margin-bottom:14px; }
+.dossier__cadplot { height:74px; }
+.dossier__cad .chart__unit { margin-top:9px; }
+
+/* subjects — the Tags index scoped to this workspace */
+.dossier__tags { padding:18px 32px; border-bottom:1px solid var(--hair); }
+.dossier__tags .zone__head { margin-bottom:14px; }
+.dossier__chips { display:flex; flex-wrap:wrap; gap:8px; }
+.dossier__tag { display:inline-flex; align-items:center; gap:8px; padding:5px 11px;
+  border:1px solid var(--hair); text-decoration:none; color:var(--ink); white-space:nowrap;
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 1px); cursor:pointer; }
+.dossier__tag:hover { border-color:var(--accent); color:var(--accent); }
+.dossier__tagn { color:var(--faint); font-variant-numeric:tabular-nums; }
+
+/* scoped model account (reuses .account / .ledger--account / .account__foot) */
+.ws-dossier .account { border-right:0; }
+.ws-dossier .ledger--account .ledger__row[data-find-ws] { cursor:pointer; }
+.ws-dossier .ledger--account .ledger__row[data-find-ws]:hover { background:var(--sel-bg);
+  box-shadow:var(--row-marker); }
+.ws-dossier .ledger--account .ledger__row[data-find-ws]:hover .ledger__name { color:var(--accent); }
+.ws-dossier .ledger--account .ledger__row[data-find-ws]:hover .account__rank { color:var(--accent); }
+
+/* recent conversations — folio-drilling rows (the daybook, scoped) */
+.dossier__recent .zone__head { padding:16px 32px 8px; margin:0; }
+.ws-dossier .row__ws { flex:0 0 auto; white-space:nowrap; }
+.ws-dossier .row__model { flex:1; width:auto; min-width:0; color:var(--mid);
+  font-family:var(--font-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+@container main (max-width:780px) {
+  .workspaces:has(.ws-rail2) { grid-template-columns:1fr; grid-template-rows:auto minmax(0,1fr); }
+  .ws-rail2 { border-right:0; border-bottom:2px solid var(--hair-strong); max-height:42vh; }
+  .dossier__standing { grid-template-columns:1fr; }
+  .dossier__standing .standing__fig { border-right:0; border-bottom:1px solid var(--hair); }
+}
+
+/* ========================================================================= */
 /* STUB — views not yet authored in this slice                              */
 /* ========================================================================= */
 .stub { height:100%; display:flex; flex-direction:column; align-items:center;
@@ -580,9 +687,853 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .search-hit .metric { color:var(--ink); font-variant-numeric:tabular-nums; }
 .search-hit .adapter { color:var(--faint); letter-spacing:.06em; text-transform:uppercase; }
 .search-hit .temporal, .search-hit .workspace { color:var(--mid); }
-.search-hit .excerpt { color:var(--ink); line-height:1.5; white-space:pre-wrap;
-  overflow-wrap:anywhere; }
 
+/* The "open in folio" / unfold trigger buttons — base chip styling reused by
+   the editorial layout's context controls (the layout itself is defined in the
+   SEARCH · EDITORIAL FOLIO LAYOUT block below). */
+.hit-unfold { appearance:none; cursor:pointer; background:transparent;
+  border:1px solid var(--hair); border-radius:var(--radius); color:var(--mid);
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.04em;
+  padding:3px 9px; }
+.hit-unfold:hover { border-color:var(--accent); color:var(--accent); }
+.hit-unfold--folio { border-color:var(--accent); color:var(--accent); }
+
+/* ========================================================================= */
+/* AUTH — sign-out (rail foot) + login overlay (mounted in #main)            */
+/* ========================================================================= */
+.nav-auth-btn { appearance:none; margin-top:10px; width:100%; cursor:pointer;
+  background:transparent; border:1px solid var(--hair); color:var(--mid);
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.1em;
+  text-transform:uppercase; padding:6px 0; }
+.nav-auth-btn:hover { border-color:var(--accent); color:var(--accent); }
+
+#siftd-login { max-width:360px; margin:14vh auto 0; display:flex; flex-direction:column;
+  align-items:stretch; gap:14px; padding:36px 32px; border:1px solid var(--hair);
+  background:var(--panel); text-align:center; }
+#siftd-login .login-icon { font-size:30px; }
+#siftd-login h3 { margin:0; font-size:20px; font-weight:700; letter-spacing:-.02em;
+  color:var(--ink); }
+#siftd-login .login-or { margin:6px 0 0; font-family:var(--font-mono); font-size:11px;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
+#siftd-login .login-error { margin:0; color:var(--warn); font-family:var(--font-mono);
+  font-size:11px; line-height:1.5; }
+#siftd-login form { display:flex; flex-direction:column; gap:10px; }
+.login-input { border:1px solid var(--hair-strong); background:var(--paper); color:var(--ink);
+  font-family:var(--font-mono); font-size:13px; padding:10px 12px; outline:none; }
+.login-input:focus { border-color:var(--accent); }
+.login-btn { appearance:none; cursor:pointer; background:var(--accent); color:var(--paper);
+  border:none; font-family:var(--font-mono); font-size:12px; letter-spacing:.06em;
+  text-transform:uppercase; font-weight:600; padding:11px 0; }
+.login-btn:hover { opacity:.9; }
+
+/* =========================================================================
+   REFINEMENT PASS — craft polish over Phase B. Purely additive overrides;
+   delete this block to revert exactly to baseline. Theme-agnostic (same
+   --vars, no new colours). Intent: protect the primary labels a row exists to
+   show, and stop spurious text wrapping, so the grid reads cleanly at every
+   column width.
+   ========================================================================= */
+
+/* 1 · The view-header kick is a terse descriptor — keep it on one line
+   ("live · ingested", not "live ·" / "ingested"). It already sits hard-right
+   via margin-left:auto; nowrap stops the mid-phrase break on a tight head. */
+.sw-head .kick { white-space:nowrap; }
+
+/* 2 · Ledger counts carry a trailing unit ("847 calls", "3 conv"); without
+   nowrap the unit wrapped under the number in the Tags ledger. Pin number +
+   unit together so the right edge stays a clean numeric column. */
+.ledger__n { white-space:nowrap; }
+
+/* 3 · Usage ledgers (Stats model/workspace mix + the workspace-detail panel)
+   render inside a half-width column, so the 1fr name was clipping the exact
+   identity the row is about — "claude-opus-4-5" → "claude…". Tighten the three
+   numeric tracks and the gap to hand that width back to the label; the counts
+   are ≤4 digits and "$NN.NN" fits 72px, so nothing else loses out. */
+.ledger--usage .ledger__row { grid-template-columns:1fr 34px 60px 72px; gap:12px; }
+
+/* 4 · Session / workspace rows: let the workspace name keep its room on a
+   narrow surface by trimming the (always-truncatable) model column a touch,
+   so identity survives before the model string does. */
+.row__model { width:13ch; }
+
+/* =========================================================================
+   FOLIO MANUSCRIPT STYLE — the transcript as a typeset interview, applied to
+   EVERY folio (no variant picker). Operates on the .turn > .turn__head +
+   .turn__text DOM the htmx emitter already produces; trace inlines its
+   .tool-call elements into the same column. CSS-only, no product JS.
+   ========================================================================= */
+
+
+/* gutter folio-number counter (inert until the manuscript ::before renders) */
+.folio__body { counter-reset:folio-turn; }
+
+/* ======================= VARIANT · MANUSCRIPT =========================== */
+/* The transcript as a typeset interview. Base layout (robust at any width):
+   the meta sits above a measured reading column, led by a large folio number;
+   each User turn opens an exchange as a weighted question. On a wide-enough
+   surface it UPGRADES (container query) to a hanging meta gutter beside the
+   text — the editorial folio. Tools drop their signal rails to neutral notes
+   so prose dominates; red is kept for genuine errors. Same emitter DOM. */
+.folio .folio__body { padding:34px 48px 76px; }
+.folio .turn { max-width:64ch; margin-bottom:28px; }
+.folio .turn[data-role="user"] {
+  border-top:2px solid var(--hair-strong); padding-top:26px; margin-top:8px; }
+.folio .turn:first-child { border-top:0; padding-top:0; margin-top:0; }
+.folio .turn__head { align-items:baseline; gap:11px; margin-bottom:12px; }
+.folio .turn__head::before { counter-increment:folio-turn;
+  content:counter(folio-turn, decimal-leading-zero); font-family:var(--font-mono);
+  font-size:22px; font-weight:700; line-height:1; letter-spacing:-.03em;
+  color:var(--faint); }
+.folio .turn[data-role="assistant"] .turn__head::before {
+  color:var(--accent); opacity:.85; }
+.folio .turn__tools { margin:0; }
+.folio .turn__text { border-left:0; padding-left:0;
+  max-width:none; font-size:15px; line-height:1.72; }
+.folio .turn[data-role="user"] .turn__text { font-size:16.5px;
+  font-weight:500; letter-spacing:-.012em; color:var(--ink); }
+.folio .narrative-text { max-width:none; }
+.folio .tool-call { margin:14px 0; }
+.folio .tool-call > summary { background:transparent;
+  border-left:2px solid var(--hair); }
+.folio .tool-name { color:var(--mid); }
+.folio .tool-call .tool-result,
+.folio .tool-call .tool-diff { border-left:2px solid var(--hair); }
+.folio .tool-call.tool-error > summary { border-left-color:var(--accent); }
+.folio .tool-call.tool-error .tool-name { color:var(--accent); }
+.folio .tool-call.tool-error .tool-result { border-left-color:var(--accent); }
+
+/* upgrade to the hanging folio gutter only when the body column can hold it */
+@container main (min-width:1060px) {
+  .folio .folio__body { padding:40px 64px 84px; }
+  .folio .turn { display:grid;
+    grid-template-columns:104px minmax(0,60ch); column-gap:40px;
+    align-items:start; max-width:none; margin-bottom:32px; }
+  .folio .turn__head { flex-direction:column;
+    align-items:flex-start; gap:6px; margin:0; }
+  .folio .turn__head::before { font-size:30px;
+    line-height:.85; margin-bottom:8px; }
+}
+
+
+/* ===================== FOLIO ACTIVITY INDEX (right column) ===============
+   The right column mirrors the left turns rail: the left indexes what was
+   SAID, the right what was DONE. A compact overview of tool kinds (the legend)
+   sits over the calls in CALL ORDER — each row anchored to its event in the
+   body, so the column NAVIGATES the transcript instead of ranking by
+   frequency. The turn number on each row ties an action back to the exchange
+   it came from (same numbering as the turns rail). Magnitude ("most used") is
+   demoted to the legend, where it's a glance rather than a whole column.
+   Ships on the same data the emitter already walks to build the counter;
+   render it as an ordered list of <a href="#event-id"> instead of a table.
+   ===================================================================== */
+/* Folio toolbar — every control + conversation action lives here as a top
+   band, so the Turns and Activity rails stay pure header+list indexes (per
+   review: rails clean below; tags + export out of the right column; tags will
+   multiply once elements/tool-calls are taggable, so they don't belong as a
+   fixed rail block). Left group: detail level + reading style; right group:
+   conversation tags + export, split by a hairline. */
+.folio__bar { grid-area:bar; display:flex; flex-wrap:wrap; align-items:center;
+  gap:10px 18px; padding:11px 20px;
+  border-bottom:1px solid var(--hair); background:var(--paper); }
+.folio__bargroup { display:flex; align-items:center; gap:16px; flex-wrap:wrap; }
+.folio__bargroup--actions { gap:14px; margin-left:auto; flex-wrap:nowrap; }
+.folio__bar .folio-mode { padding:0; border-bottom:0; }
+.export-actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; }
+.folio__bar .tag-section { flex-wrap:nowrap; }
+.folio__bar .export-actions { flex:none; flex-wrap:nowrap; padding-left:14px;
+  border-left:1px solid var(--hair); }
+
+.tool-seq { list-style:none; margin:0; padding:6px 0 0; }
+.tool-seq__row { display:grid; grid-template-columns:2.4ch auto minmax(0,1fr);
+  align-items:baseline; gap:9px; padding:7px 18px; text-decoration:none;
+  color:inherit; font-family:var(--font-mono); }
+.tool-seq__row:hover { background:var(--sel-bg); }
+/* keep the picked row marked after the jump — :focus, no JS (the anchor holds
+   focus until you click elsewhere); .is-current is reserved for an optional
+   enhance.js scroll-spy that would mirror the turns-rail observer. */
+.tool-seq__row:focus, .tool-seq__row.is-current { background:var(--sel-bg);
+  box-shadow:var(--row-marker); outline:none; }
+.tool-seq__n { color:var(--faint); font-size:var(--fs-micro);
+  font-variant-numeric:tabular-nums; }
+.tool-seq__name { color:var(--info); font-size:calc(var(--fs-base) - 1px);
+  letter-spacing:.03em; }
+.tool-seq__target { color:var(--mid); font-size:calc(var(--fs-base) - 1.5px);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.tool-seq__row.is-error .tool-seq__name { color:var(--accent); }
+
+/* the body call you jumped to lights up — CSP-clean :target, no JS */
+.folio__body .tool-call { scroll-margin-top:20px; }
+.folio__body .tool-call:target { outline:2px solid var(--accent);
+  outline-offset:3px; }
+.folio__body .tool-call:target > summary { background:var(--sel-bg); }
+
+/* tie-back: each body tool card carries its turn number, matching the Activity
+   row's left column — read the card, know its exchange; scan Activity, find the
+   card. A faint hairline chip, not a shout. */
+.tool-call__turn { font-family:var(--font-mono); font-size:var(--fs-micro);
+  font-variant-numeric:tabular-nums; color:var(--faint);
+  border:1px solid var(--hair); padding:0 5px; line-height:1.7; flex:none; }
+.tool-call.tool-error .tool-call__turn { color:var(--accent);
+  border-color:var(--accent); }
+
+/* =========================================================================
+   FIND REFINEMENT — realize the full search surface the routes + skin already
+   scaffold but the static slice never showed: a CSS-only result-SHAPE switch
+   (Excerpts / Thread / Conversations), score METERS on every hit, an in-place
+   context UNFOLD, and live FACET filtering. Mirrors the folio reading-variant
+   pattern exactly — a radio group + :has() swaps shapes with zero added JS;
+   meters + facets are enhance.js DOM glue (CSP-safe, same idiom as the ledger
+   bars + workspace filter). SHIPPING keeps the server-emitted view= shape:
+       .find:has(#sv-thread:checked)  ->  .find[data-shape="thread"]
+   identical to the folio note above — same #list DOM the emitter produces.
+   ========================================================================= */
+
+/* result-shape + engine segmented toggles — folio-variants vocabulary (mono
+   micro caps, hairline box, accent on hover/checked; the hidden radio carries
+   state, the label is the control). */
+.find-toggle { display:flex; align-items:center; gap:4px; }
+.find-toggle input { position:absolute; width:1px; height:1px; opacity:0;
+  pointer-events:none; }
+.find-toggle label { display:inline-block; cursor:pointer; border:1px solid var(--hair);
+  border-radius:0; color:var(--mid); font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.08em; text-transform:uppercase;
+  padding:6px 9px; height:30px; line-height:18px; transition:border-color .12s, color .12s; }
+.find-toggle label:hover { border-color:var(--accent); color:var(--accent); }
+.find-toggle input:checked + label { border-color:var(--accent);
+  color:var(--accent); background:var(--sel-bg); }
+.find-toggle input:focus-visible + label { outline:2px solid var(--accent);
+  outline-offset:1px; }
+/* the engine toggle modifies how the query RUNS (not what it shows) — keep the
+   old .search-toggle's accent underline cue as a group rule under the labels. */
+.find-toggle--engine { padding-bottom:2px; box-shadow:inset 0 -2px 0 var(--accent); }
+.find-toggle--engine label { letter-spacing:.05em; }
+
+/* shape switch (CSS-only) — only the selected result section renders. Deferred
+   to Slice A.2 with the find control strip (the #sv-* shape radios): until those
+   exist, gating visibility on :has(#sv-*:checked) would hide every result, so the
+   current single-shape #list render stays visible by default. */
+
+/* score meter — the ranking metric made legible beside its number (enhance.js
+   sets --w from data-n, the same data-n→bar idiom as the ledgers). */
+.hit-meter { display:inline-block; width:54px; height:5px; background:var(--hair);
+  position:relative; vertical-align:middle; }
+.hit-meter::before { content:''; position:absolute; inset:0 auto 0 0;
+  width:var(--w,0%); background:var(--accent); opacity:.7; }
+
+/* in-place context unfold — a CSS-only <details> reusing the tool-call caret
+   idiom (folded ▸ → open ▾). The slice + controls already have skin above;
+   these add the trigger and gate the unfolded restyle on [open] (in a static
+   <details> the slice is always in the DOM, so the existing
+   :has(.hit-context__slice) rule is neutralised and re-keyed to [open]). */
+details.hit-context { padding:0; }
+details.hit-context > summary { list-style:none; display:inline-flex;
+  align-items:center; gap:6px; cursor:pointer; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--mid); border:1px solid var(--hair); padding:3px 10px; }
+details.hit-context > summary::-webkit-details-marker { display:none; }
+details.hit-context > summary::before { content:'\25B8'; color:var(--faint);
+  font-size:.85em; line-height:1; }
+details.hit-context[open] > summary { color:var(--accent); border-color:var(--accent); }
+details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accent); }
+.search-results.chunks .search-hit:has(.hit-context__slice) { background:transparent;
+  box-shadow:none; }
+.search-results.chunks .search-hit:has(details.hit-context[open]) {
+  background:var(--panel); box-shadow:inset 3px 0 0 var(--accent); }
+.search-results.chunks .search-hit:has(details.hit-context[open]) .search-hit__main:hover {
+  background:transparent; box-shadow:none; }
+.hit-context__controls { align-items:center; margin-top:2px; }
+.hit-context__anchor { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--faint); margin-right:auto; }
+.hit-unfold--folio { text-decoration:none; }
+
+/* SLICE-A: the SEARCH · EDITORIAL FOLIO LAYOUT block (new-markup grid) is
+   deferred to Slice A.2 with render_search; the old search layout lives in the
+   SLICE-A COMPAT block at the end of this file. */
+/* facet filtering hides rows client-side (enhance.js .hidden writes); a class
+   selector outranks the UA [hidden] rule for the table rows + flex compact hits,
+   so re-assert — same fix the workspace ledger + sub-agent rows needed. */
+.search-hit[hidden], .conversation-list tr[hidden] { display:none; }
+
+/* =========================================================================
+   SESSIONS · EDITORIAL DAYBOOK — the manuscript treatment (leading-zero folio
+   numbers, a hanging gutter, typeset hierarchy, hairline rules) carried from
+   the transcript reading variant + the search editorial layout onto the
+   Sessions timeline. The day-grouped log reads as a bound daybook: each day is
+   a LEAF led by a hanging dateline (the day-of-month set large over weekday/
+   month, with the hour histogram + day totals in the margin); each session is a
+   numbered ENTRY in the gutter grid (folio number over start time | workspace +
+   model | the turns/tokens/cost figures as a ledger money column). Sub-agents
+   nest as indented annotations under their parent, revealed by the parent's
+   disclosure (the SAME enhance.js .row__toggle / .row--sub[data-parent] hooks
+   the baseline used). The live zone is the OPEN leaf still being written — a
+   pulse pip in place of the folio number, a follow affordance in the figures.
+   Operates on the SAME render_sessions data surface; SHIPPING is this markup
+   keyed on a server-emitted class, no new JS, no new query.
+   ========================================================================= */
+.sessions:has(.daybook) { padding:0 0 56px; }
+.daybook { counter-reset:daybook-entry; }
+
+/* a leaf = one day. The head is a hanging dateline gutter + a margin aside. */
+.leaf__head { display:grid; grid-template-columns:150px minmax(0,1fr);
+  column-gap:36px; align-items:end; padding:30px 32px 14px;
+  border-bottom:2px solid var(--hair-strong); }
+.daybook .leaf:first-child .leaf__head { padding-top:24px; }
+
+.dateline { display:flex; align-items:baseline; gap:11px; }
+.dateline__day { font-family:var(--font-mono); font-size:40px; font-weight:700;
+  letter-spacing:-.045em; line-height:.78; color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+.dateline__cal { display:flex; flex-direction:column; line-height:1.05; }
+.dateline__wk { font-size:13px; font-weight:700; letter-spacing:-.01em; color:var(--ink); }
+.dateline__mo { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.16em; text-transform:uppercase; color:var(--mid); }
+
+/* the open (live) leaf — accent the dateline rule + a pulse for the day number */
+.leaf--live .leaf__head { border-bottom-color:var(--accent); }
+.dateline--live { gap:13px; }
+.dateline--live .dateline__pip { width:13px; height:13px; border-radius:999px;
+  background:var(--accent); align-self:center; animation:pulse 1.6s ease-in-out infinite; }
+.dateline__live { font-family:var(--font-mono); font-size:19px; font-weight:700;
+  letter-spacing:.06em; text-transform:uppercase; color:var(--accent); }
+
+/* margin aside — the hour histogram over the day totals, hard right */
+.leaf__aside { display:flex; flex-direction:column; align-items:flex-end; gap:13px; }
+.leaf__note { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.06em; color:var(--faint); }
+.leaf__aside .hist { margin:0; height:18px; gap:1px; }
+.leaf__aside .hist span { width:3px; background:var(--accent); opacity:.4; }
+.leaf__totals { display:flex; gap:22px; }
+.total { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.total__k { font-size:var(--fs-micro); letter-spacing:.14em; text-transform:uppercase;
+  color:var(--faint); font-weight:600; }
+.total__n { font-family:var(--font-mono); font-size:13px; font-weight:600; color:var(--ink);
+  font-variant-numeric:tabular-nums; }
+
+/* entries — the numbered editorial ledger rows under each dateline */
+.entries { list-style:none; margin:0; padding:0; }
+.entry { display:grid; grid-template-columns:118px minmax(0,1fr) auto;
+  column-gap:26px; align-items:baseline; padding:15px 32px;
+  border-bottom:1px solid var(--hair); cursor:pointer; }
+.entry[hidden] { display:none; }
+.entry:hover { background:var(--sel-bg); box-shadow:var(--row-marker); }
+.entry:not(.entry--sub):not(.entry--live) { counter-increment:daybook-entry; }
+
+/* the gutter — folio number stacked over the session start time (mono, quiet) */
+.entry__gutter { display:flex; flex-direction:column; gap:4px; font-family:var(--font-mono); }
+.entry__n::before { content:counter(daybook-entry, decimal-leading-zero);
+  font-size:25px; font-weight:700; line-height:.82; letter-spacing:-.03em;
+  color:var(--accent); opacity:.85; font-variant-numeric:tabular-nums; }
+.entry__time { font-size:var(--fs-micro); letter-spacing:.06em; color:var(--faint);
+  font-variant-numeric:tabular-nums; }
+
+/* the body — workspace name (entry title) over a model/adapter caption */
+.entry__body { min-width:0; }
+/* Reserve the chevron slot on every entry so workspace names align whether or
+   not the entry has sub-agents — the toggle hangs back into the reserved indent
+   (negative margin); childless entries leave it empty but keep the same name x. */
+.entry__title { display:flex; align-items:center; gap:9px; padding-left:23px; }
+.entry__name { font-size:15px; font-weight:600; letter-spacing:-.01em; color:var(--ink);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.entry__chip { flex:none; padding:1px 7px; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.04em; color:var(--faint);
+  border:1px solid var(--hair); }
+.entry__branch { flex:none; padding:1px 7px; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.04em; color:var(--mid);
+  border:1px solid var(--hair); }
+.entry__meta { margin-top:5px; font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.05em; color:var(--mid); }
+
+/* disclosure toggle — reuses the baseline .row__toggle (enhance.js wires it +
+   draws the ›→▾ caret), restyled to sit at the head of the entry title. */
+.entry__toggle.row__toggle { width:14px; font-size:13px; color:var(--faint);
+  margin-left:-23px; }
+
+/* the figures — turns/tokens/cost as a right-hung ledger money column */
+.entry__figures { display:flex; gap:24px; align-items:baseline; justify-self:end; }
+.figure { display:flex; flex-direction:column; align-items:flex-end; gap:3px; }
+.figure__n { font-family:var(--font-mono); font-size:13.5px; color:var(--ink);
+  font-variant-numeric:tabular-nums; white-space:nowrap; }
+.figure__n--dim { color:var(--faint); }
+.figure__k { font-size:var(--fs-micro); letter-spacing:.12em; text-transform:uppercase;
+  color:var(--faint); }
+
+/* sub-agent entries — indented annotations, hung off a ↳ caret, on --panel */
+.entry--sub { background:var(--panel); }
+.entry--sub:hover { background:var(--sel-bg); }
+.entry--sub .entry__gutter { padding-left:22px; }
+.entry__caret { color:var(--faint); font-size:14px; line-height:.9; }
+.entry--sub .entry__name { font-family:var(--font-mono); font-size:13px;
+  font-weight:500; color:var(--mid); }
+.entry--sub .figure__n { color:var(--mid); }
+
+/* the live (open) entries — a pulse pip for the number, a follow affordance */
+.entry--live .entry__pip { display:inline-block; width:8px; height:8px;
+  border-radius:999px; background:var(--accent); animation:pulse 1.6s ease-in-out infinite; }
+.entry--live .entry__age { margin-top:6px; }
+.entry__follow { flex:none; font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; text-decoration:none;
+  color:var(--accent); border:1px solid var(--hair); padding:5px 11px; align-self:center; }
+.entry__follow:hover { border-color:var(--accent); background:var(--sel-bg); }
+
+/* mid surface — tighten the folio-number gutter before it folds, so the number
+   and time sit closer to the entry rather than across a wide editorial margin */
+@container main (max-width:1000px) {
+  .entry { grid-template-columns:84px minmax(0,1fr) auto; column-gap:18px; }
+}
+
+/* narrow surface — the hanging gutter folds to a meta row above the body, the
+   figures drop full width below (same fold the search editorial layout uses) */
+@container main (max-width:760px) {
+  .leaf__head { grid-template-columns:1fr; row-gap:14px; }
+  .leaf__aside { align-items:flex-start; }
+  .entry { grid-template-columns:1fr; row-gap:10px; padding:14px 24px; }
+  .entry__gutter { flex-direction:row; align-items:baseline; gap:11px; }
+  .entry__n::before { font-size:17px; line-height:1; }
+  .entry--sub .entry__gutter { padding-left:0; }
+  .entry__figures { justify-self:start; gap:22px; }
+}
+
+/* =========================================================================
+   STATS · THE RECKONING — the manuscript treatment (mono running figures, a
+   hanging gutter of leading-zero numerals, hairline + double rules, a hand-set
+   colophon) carried from the folio reading variant + the sessions daybook onto
+   the dashboard. The corpus accounts for itself as a double-entry book:
+
+     · STANDING BALANCE — the statement head. A period dateline (the activity
+       window) beside the three running figures; the Tokens figure carries an
+       in/out ratio rule (the real input/output split), Cost is the accent hero
+       and notes its priced share.
+     · THE BOOKS — model mix + workspace mix as two FOOTED account columns.
+       A leading-zero rank hangs in the gutter, a magnitude bar sizes by tokens
+       (enhance.js draws .ledger__bar[data-n], the same idiom as everywhere),
+       and a right-hung money column carries the honest per-row cost (an unpriced
+       row shows — , never $0). Each column foots a double-ruled TOTAL; the
+       workspace book, showing only its top leaves, carries the remainder
+       forward as a muted line so the foot still reconciles to the grand total.
+     · COLOPHON — the production facts in manuscript voice. A struck-from lead
+       (the corpus counts), then the two coverage statements that surface the
+       renderer's real honesty: token coverage is FLOORED not rounded (99.9% is
+       not 100%), and cost coverage explains the — convention. A ruled count
+       grid + a signature line (struck date · version · on-disk) close it.
+
+   Operates on the SAME render_dashboard reads (usage · by_model · by_workspace
+   · coverage · stats); SHIPPING is this markup keyed on a server-emitted class,
+   no new query, the bars + (in real life) the meters drawn by enhance.js.
+   ========================================================================= */
+.reck { height:100%; overflow-y:auto; min-height:0; background:var(--paper);
+  padding-bottom:72px; }
+
+/* — standing balance — period dateline | three running figures ----------- */
+.reck__standing { display:grid; grid-template-columns:236px minmax(0,1fr);
+  border-bottom:2px solid var(--hair-strong); }
+.standing__period { padding:24px 26px; border-right:1px solid var(--hair);
+  display:flex; flex-direction:column; gap:11px; justify-content:center; }
+.standing__dates { font-family:var(--font-mono); color:var(--ink); line-height:1.3; }
+.standing__dates b { display:block; font-size:calc(var(--fs-base) + 4px);
+  font-weight:600; letter-spacing:-.01em; font-variant-numeric:tabular-nums; }
+.standing__dates span { display:block; margin:3px 0; font-size:var(--fs-micro);
+  letter-spacing:.16em; text-transform:uppercase; color:var(--faint); }
+.standing__gathered { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--faint); }
+.standing__figs { display:grid; grid-template-columns:repeat(3,1fr); }
+.standing__fig { padding:22px 26px; border-right:1px solid var(--hair);
+  display:flex; flex-direction:column; gap:12px; min-width:0; }
+.standing__fig:last-child { border-right:0; }
+.standing__fign { font-family:var(--font-mono); font-weight:600; color:var(--ink);
+  font-size:calc(var(--fs-base) + 22px); letter-spacing:-.02em; line-height:1; }
+.standing__fig--hero .standing__fign { color:var(--accent); }
+/* the in/out token split — a two-segment ratio rule (input recessed, output
+   accent); flex weights are the real token counts (renderer sets them). */
+.standing__ratio { display:flex; height:7px; gap:2px; margin-top:2px; }
+.standing__ratio i { display:block; }
+.seg-in { background:var(--ink); opacity:.32; }
+.seg-out { background:var(--accent); opacity:.78; }
+.standing__legend { display:flex; gap:16px; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.04em; color:var(--faint); }
+.standing__legend span { display:inline-flex; align-items:center; gap:6px; }
+.standing__legend i { width:8px; height:8px; flex:none; }
+
+/* — the books — model mix + workspace mix, footed account columns --------- */
+.reck__books { display:grid; grid-template-columns:1fr 1fr; }
+.account { display:flex; flex-direction:column; min-width:0;
+  border-right:1px solid var(--hair); border-bottom:1px solid var(--hair); }
+.account:last-child { border-right:0; }
+.account__head { display:grid; grid-template-columns:2ch 1fr 58px 76px;
+  gap:14px; align-items:baseline; padding:16px 20px 11px;
+  border-bottom:1px solid var(--hair-strong); }
+.account__title { grid-column:1 / 3; display:flex; align-items:baseline; gap:9px;
+  min-width:0; }
+.account__title .micro { white-space:nowrap; }
+.account__hcount { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--faint); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; }
+.account__hk { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; color:var(--faint); text-align:right; }
+
+/* the books foot their figures with no inline bars — a column of reckoned
+   numbers under a leading-zero rank, the authentic account-book shape (the
+   one magnitude rule lives up in the standing's in/out split). */
+.ledger--account { padding:6px 0 0; counter-reset:acct; }
+.ledger--account .ledger__row { grid-template-columns:2ch 1fr 58px 76px;
+  gap:14px; padding:8px 20px; }
+/* drillable account rows — the Reckoning is a navigable index: a model row
+   opens Search scoped to that model, a workspace row opens its detail page.
+   Same drill cue the whole app uses (sel-bg + row marker + pointer), so it
+   reads as "this navigates" with no extra glyphs. Foot + remainder are inert. */
+.ledger--account .ledger__row[data-goto-view] { cursor:pointer; }
+.ledger--account .ledger__row[data-goto-view]:hover { background:var(--sel-bg);
+  box-shadow:var(--row-marker); }
+.ledger--account .ledger__row[data-goto-view]:hover .account__rank { color:var(--accent); }
+.ledger--account .ledger__row[data-goto-view]:hover .ledger__name { color:var(--accent); }
+.account__rank { counter-increment:acct; color:var(--faint);
+  font-size:var(--fs-micro); font-variant-numeric:tabular-nums; }
+.account__rank::before { content:counter(acct, decimal-leading-zero); }
+.account__tok { text-align:right; color:var(--mid); font-variant-numeric:tabular-nums; }
+.account__cost { text-align:right; color:var(--ink); font-variant-numeric:tabular-nums;
+  white-space:nowrap; }
+.account__cost--none { color:var(--faint); }
+/* carried-forward remainder — the leaves not shown, kept in the books so the
+   foot still reconciles. Name spans the rank-bar tracks, all muted. */
+.account__row--rest .ledger__name { color:var(--faint); }
+.account__row--rest .account__tok, .account__row--rest .account__cost { color:var(--faint); }
+
+/* the footed total — a double rule above (the account-book sum), pushed to the
+   column foot so both books' totals align however many rows each holds. */
+.account__foot { display:grid; grid-template-columns:2ch 1fr 58px 76px;
+  gap:14px; align-items:baseline; margin-top:auto; padding:12px 20px 14px;
+  border-top:3px double var(--hair-strong); font-family:var(--font-mono);
+  font-size:calc(var(--fs-base) - 0.5px); }
+.account__flabel { grid-column:1 / 3; align-self:center; font-size:var(--fs-micro);
+  letter-spacing:.12em; text-transform:uppercase; color:var(--mid); }
+.account__foot .account__tok, .account__foot .account__cost {
+  color:var(--ink); font-weight:600; }
+
+/* — section heads with a right-aligned control (the measure toggle) ------- */
+.reck__sechead { display:flex; align-items:center; gap:14px; padding:22px 32px 0; }
+.reck__sechead .zone__rule { flex:1; height:1px; background:var(--hair); }
+.reck__ctl { display:flex; align-items:center; gap:16px; }
+.trend__peak { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--mid); white-space:nowrap; }
+
+/* the measure toggle — recuts the trend, the rhythm + the book ranking
+   (Tokens / Cost). folio-variants vocabulary, one page-wide control. */
+.measure { display:flex; align-items:center; gap:4px; }
+.measure input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.measure label { cursor:pointer; border:1px solid var(--hair); color:var(--mid);
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.08em;
+  text-transform:uppercase; padding:5px 10px; }
+.measure label:hover { border-color:var(--accent); color:var(--accent); }
+.measure input:checked + label { border-color:var(--accent); color:var(--accent);
+  background:var(--sel-bg); }
+
+/* — the daily trend over the period — thin bars on a baseline ----------- */
+.trend { padding:18px 32px 10px; }
+.trend__plot { display:flex; align-items:flex-end; gap:2px; height:104px;
+  border-bottom:1px solid var(--hair-strong); }
+.trend__bar { flex:1 1 0; min-width:2px; align-self:flex-end; height:var(--h,2px);
+  background:var(--accent); opacity:.6; transition:height .2s ease; }
+.trend__bar:hover { opacity:1; }
+.trend__bar.is-peak { opacity:1; background:var(--ink); }
+.trend__axis { display:flex; justify-content:space-between; margin-top:9px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint);
+  letter-spacing:.06em; }
+
+/* — rhythm — hour-of-day + day-of-week distributions ------------------- */
+.reck__rhythm { display:grid; grid-template-columns:1.8fr 1fr;
+  border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); }
+.dist { padding:16px 28px 16px 32px; }
+.dist + .dist { border-left:1px solid var(--hair); padding-left:28px; }
+.dist .zone__head { margin-bottom:14px; }
+.dist__plot { display:flex; align-items:flex-end; gap:2px; height:62px; }
+.dist__plot--dow { gap:6px; }
+.dist__bar { flex:1 1 0; align-self:flex-end; height:var(--h,2px);
+  background:var(--accent); opacity:.5; transition:height .2s ease; }
+.dist__bar:hover { opacity:.85; }
+.dist__axis { display:flex; justify-content:space-between; margin-top:8px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint);
+  letter-spacing:.04em; }
+.dist__plot--dow + .dist__axis { justify-content:space-around; }
+
+/* a quiet y-scale (max at top, 0 at the baseline) + a unit caption, so every
+   plot reads as a measured chart, not just bars. Both update with the toggle. */
+.chart { display:grid; grid-template-columns:auto minmax(0,1fr); gap:12px; align-items:start; }
+.chart__y { display:flex; flex-direction:column; justify-content:space-between;
+  align-items:flex-end; height:104px; font-family:var(--font-mono);
+  font-size:var(--fs-micro); color:var(--faint); font-variant-numeric:tabular-nums; }
+.chart__y--sm { height:62px; }
+.chart__y0 { opacity:.6; }
+.chart__main { min-width:0; }
+.chart__unit { margin-top:9px; font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+
+/* — book measure emphasis — the active measure column reads ink, the other
+   recedes; the toggle also re-sorts the rows by the active measure. */
+.reck.by-tokens .account__cost, .reck.by-cost .account__tok { color:var(--faint); }
+.reck.by-cost .account__cost, .reck.by-tokens .account__tok { color:var(--ink); }
+.reck .account__cost--none { color:var(--faint); }
+
+/* — colophon — the production facts, kept quiet ------------------------- */
+.reck__colophon { padding:24px 32px 8px; }
+.colophon__grid { display:grid; grid-template-columns:repeat(4,1fr); gap:20px 0;
+  margin:18px 0 0; }
+.colophon__cell { display:flex; flex-direction:column; gap:7px; padding-right:20px; }
+.colophon__celln { font-family:var(--font-mono); font-weight:600; color:var(--ink);
+  font-size:calc(var(--fs-base) + 5px); letter-spacing:-.01em;
+  font-variant-numeric:tabular-nums; }
+/* the coverage honesty as one terse footnote, not a ruled block */
+.colophon__note { max-width:86ch; margin:24px 0 0; color:var(--faint);
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 1px);
+  line-height:1.65; letter-spacing:.01em; }
+.colophon__note b { color:var(--mid); font-weight:600; }
+.colophon__sign { display:flex; flex-wrap:wrap; gap:26px; padding:20px 2px 0;
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.05em;
+  color:var(--faint); }
+.colophon__sign b { color:var(--mid); font-weight:600; }
+
+/* narrow surface — figures + books stack, the count grid halves, coverage
+   notes drop to their own line (mirrors the daybook / search folds) */
+@container main (max-width:760px) {
+  .reck__standing { grid-template-columns:1fr; }
+  .standing__period { border-right:0; border-bottom:1px solid var(--hair); }
+  .reck__books { grid-template-columns:1fr; }
+  .account { border-right:0; }
+  .reck__rhythm { grid-template-columns:1fr; }
+  .dist + .dist { border-left:0; border-top:1px solid var(--hair); padding-left:32px; }
+  .colophon__grid { grid-template-columns:repeat(2,1fr); }
+}
+
+/* =========================================================================
+   TAGS · THE INDEX — the manuscript treatment (leading rules, hanging headings,
+   leader dots to a locator) carried from the folio / daybook / reckoning onto
+   the Tags view. Tags ARE the corpus's index, so the view is set as a
+   back-of-book index: subject entries gathered under their namespace heading,
+   each leaf carrying a dotted leader out to its LOCATOR — the dominant count
+   with its true grain ("3 conv", "847 calls"), exactly what _tag_weight already
+   resolves from the six per-grain counts. A namespace ('decision', 'pattern')
+   is a MAIN HEADING; its leaves ('auth', 'caching') are the sub-entries beneath,
+   sorted by the same weight 'most used' ranks by. A locator drills into Find
+   scoped to its tag (the existing #main-mount, keyed on ``tag=``).
+
+   Two books, on the renderer's own ``auto`` axis:
+     · SUBJECT INDEX — the hand-applied vocabulary (decision/pattern/research/
+       review), counted by conversation. The work the curator did.
+     · MACHINE VOCABULARY — the auto-assigned categories list_tags flags
+       ``auto`` (shell:* tool families by call, siftd:derivative marking a
+       sub-agent's own conversation). Demoted from the subject headline — its
+       tool-call grain runs in the thousands and would swamp the tens of hand
+       tags — but kept in full as a quieter concordance, each on its own grain.
+   A MARKED headnote lifts the pinned entries (the only stored state) up top as
+   the index's principal references. Consolidates the renderer's pinned +
+   most-used + tree zones into one index that never repeats an entry. Operates
+   on the SAME list_tags read; SHIPPING is this markup keyed on a server-emitted
+   class, the namespace tree synthesized by splitting names on ':' as today.
+   ========================================================================= */
+.index { height:100%; overflow-y:auto; min-height:0; background:var(--paper);
+  padding:0 0 64px; }
+
+/* headnote — the index apparatus line */
+.index__head { padding:26px 32px 20px; border-bottom:2px solid var(--hair-strong); }
+.index__kicker { display:flex; align-items:baseline; gap:12px; }
+.index__kicker .micro { color:var(--ink); }
+.index__count { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.04em; color:var(--faint); }
+.index__apparatus { margin:13px 0 0; max-width:92ch; color:var(--mid);
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px);
+  line-height:1.62; letter-spacing:.01em; }
+.index__apparatus b { color:var(--ink); font-weight:600; }
+
+/* marked (pinned) — the principal references, set apart full-width on --panel */
+.index__marked { padding:20px 32px 8px; }
+.index__marked .zone__head { margin-bottom:13px; }
+.marked { list-style:none; margin:0; padding:0;
+  display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+  gap:0 48px; }
+.marked__entry { display:flex; align-items:baseline; gap:0; padding:9px 0;
+  border-bottom:1px solid var(--hair); font-family:var(--font-mono); }
+.marked__entry .idx-name { font-size:calc(var(--fs-base) + 1px); font-weight:600;
+  color:var(--ink); }
+.marked__entry .idx-name:hover { color:var(--accent); }
+.marked__star { flex:none; margin-right:9px; color:var(--accent);
+  font-size:calc(var(--fs-base) + 2px); line-height:1; }
+
+/* a book — a labelled zone holding the columnar index */
+.index__book { padding:24px 32px 8px; }
+.index__book .zone__head { margin-bottom:18px; }
+.index__machine { border-top:1px solid var(--hair); margin-top:6px; }
+.index__gloss { margin:-8px 0 20px; max-width:90ch; color:var(--faint);
+  font-family:var(--font-mono); font-size:var(--fs-micro); line-height:1.62;
+  letter-spacing:.02em; }
+
+/* the columns — a back-of-book index flows its headings into columns */
+.index__cols { columns:2; column-gap:56px; }
+@container main (max-width:720px) { .index__cols { columns:1; } }
+
+/* a heading group — never split across a column break */
+.idx-group { break-inside:avoid; -webkit-column-break-inside:avoid;
+  margin:0 0 24px; }
+.idx-head { display:flex; align-items:center; gap:10px; padding-bottom:8px;
+  margin-bottom:7px; border-bottom:1px solid var(--hair-strong);
+  font-family:var(--font-ui); font-size:calc(var(--fs-base) + 3px);
+  font-weight:700; letter-spacing:-.01em; color:var(--ink); }
+.idx-head::before { content:''; flex:none; width:18px; height:2px;
+  background:var(--accent); opacity:.85; }
+.idx-head__count { margin-left:auto; font-family:var(--font-mono); font-weight:400;
+  font-size:var(--fs-micro); letter-spacing:.06em; text-transform:uppercase;
+  color:var(--faint); }
+.index__machine .idx-head { font-family:var(--font-mono);
+  font-size:calc(var(--fs-base) + 1px); letter-spacing:.02em; }
+
+/* an entry — pin · name · dotted leader · locator */
+.idx-entries { list-style:none; margin:0; padding:0; }
+.idx-entry { display:flex; align-items:baseline; gap:0; padding:5px 0;
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px);
+  line-height:1.2; }
+.idx-entry .pin { flex:none; margin-right:6px; font-size:var(--fs-base);
+  visibility:hidden; }
+.idx-entry:hover .pin { visibility:visible; }
+.idx-entry .pin.pin--on { visibility:visible; }
+.idx-name { color:var(--ink); white-space:nowrap; text-decoration:none;
+  cursor:pointer; }
+.idx-name:hover { color:var(--accent); }
+.idx-entry.is-pinned .idx-name { color:var(--accent); }
+.index__machine .idx-name { color:var(--mid); }
+.index__machine .idx-name:hover { color:var(--accent); }
+/* the leader — sparse, dim periods filling to the locator, clipped to the gap.
+   Kept quieter than a typeset book leader (smaller, sparser, low opacity) so it
+   reads as a faint guide, not a busy dotted rule. */
+.idx-dots { flex:1 1 auto; min-width:16px; overflow:hidden; white-space:nowrap;
+  color:var(--faint); opacity:.4; margin:0 11px; font-size:.78em; }
+.idx-dots::before { content:"....................................................................";
+  letter-spacing:.46em; }
+/* the locator — a number right-aligned in a fixed cell over its grain unit, so
+   the figures form a clean column and the units line up however wide the count
+   (single-digit conv vs 1,204 calls). */
+.idx-loc { flex:none; display:inline-grid; grid-template-columns:var(--locw,2ch) auto;
+  column-gap:6px; align-items:baseline; font-variant-numeric:tabular-nums; }
+.idx-loc__n { text-align:right; color:var(--mid); }
+.idx-loc i { font-style:normal; color:var(--faint); font-size:var(--fs-micro);
+  letter-spacing:.04em; }
+.index__machine .idx-loc { --locw:5ch; }
+
+/* narrow surface — the headnote + books keep their inset, columns collapse to
+   one (handled above); the marked grid is already auto-fill responsive. */
+@container main (max-width:720px) {
+  .index__head, .index__marked, .index__book { padding-left:24px; padding-right:24px; }
+}
+
+/* =========================================================================
+   SESSIONS · THE OCULUS — the rose window. Every other surface holds the
+   left-aligned column grid; this one, and only this one, breaks it for radial
+   symmetry. The live zone is rendered as cathedral tracery lit from within:
+   concentric rings of glass over a soft accent glow, radial mullions, a fine
+   rim of ticks. Each live session is a ring; each exchange a foil of glass,
+   lit from twelve o'clock clockwise, graded in intensity so the rose reads as
+   light rather than data — the newest pane breathing at the crown. But the
+   glass is STAINED: each pane is coloured by what happened in that exchange —
+   model work (blue), your turns (neutral), a passed test (green), an error
+   (red) — so the window is a readable instrument, not an ornament. Read a ring
+   at a glance: a blue-heavy arc is the agent grinding tools, a red pane is a
+   stumble, a green one a test that went over. The centre counts the one figure
+   the rest of the app never bills: presence. You enter the Sessions view
+   through the rose, then descend into the dated daybook — rose above, nave
+   beneath. The hues are the app's own semantics (--info/--ok/--accent), so the
+   glass speaks the same language as the tool calls below. Pure SVG + CSS. */
+.oculus { display:flex; flex-direction:column; align-items:center; gap:22px;
+  padding:46px 32px 44px; border-bottom:1px solid var(--hair); }
+.ro { width:min(300px, 54vw); height:auto; display:block; overflow:visible; }
+.ro__g0 { stop-color:var(--accent); stop-opacity:.17; }
+.ro__g1 { stop-color:var(--accent); stop-opacity:.045; }
+.ro__g2 { stop-color:var(--accent); stop-opacity:0; }
+.ro__ring { fill:none; stroke:var(--hair); stroke-width:1; }
+.ro__ring--rim { stroke:var(--hair); }
+.ro__ring--inner { stroke:var(--hair-strong); stroke-opacity:.22; }
+.ro__tick { stroke:var(--hair); stroke-width:1; }
+.ro__mull { stroke:var(--hair); stroke-width:1; stroke-opacity:.55; }
+.ro__foil { fill:none; }
+.ro__foil--off { stroke:var(--hair); stroke-width:1.2; }
+/* the stained glass — each pane's hue carries what happened that exchange */
+.ro__pane--tool { fill:var(--info); }   /* model acting — a tool call */
+.ro__pane--user { fill:var(--ink); }    /* your turn */
+.ro__pane--asst { fill:var(--mid); }    /* the model's prose reply */
+.ro__pane--pass { fill:var(--ok); }     /* a test that passed */
+.ro__pane--err  { fill:var(--accent); } /* an error */
+.ro__foil--lead { animation:roBreath 2.6s ease-in-out infinite; }  /* "now" — keeps its pane hue */
+/* the live wheel — each session's pane-group rotates a notch as it emits; panes
+   fade as they age. oculus.js writes the rotation (CSSOM transform); CSS eases it. */
+.ro__panes { transition:transform .9s cubic-bezier(.45,0,.2,1); }
+.ro__foil { transition:opacity .9s ease; }
+.ro__ring--guide { stroke:var(--hair); }
+.ro.ro-noanim .ro__panes, .ro.ro-noanim .ro__foil { transition:none; }
+.ro__pip { fill:var(--accent); transform-box:fill-box; transform-origin:center;
+  animation:pulse 1.6s ease-in-out infinite; }
+.ro__big { fill:var(--ink); font-family:var(--font-mono); font-weight:700;
+  font-size:42px; text-anchor:middle; letter-spacing:-.02em;
+  font-variant-numeric:tabular-nums; }
+.ro__lab { fill:var(--accent); font-family:var(--font-mono); font-size:9px;
+  text-anchor:middle; letter-spacing:.24em; }
+@keyframes roBreath { 0%,100% { opacity:1; } 50% { opacity:.38; } }
+
+/* the glass key — a tiny legend so the hues are learnable at first read */
+.ro__key { list-style:none; margin:0; padding:0; display:flex; flex-wrap:wrap;
+  justify-content:center; gap:6px 18px; font-family:var(--font-mono);
+  font-size:var(--fs-micro); letter-spacing:.1em; text-transform:uppercase;
+  color:var(--mid); }
+.ro__key li { display:inline-flex; align-items:center; }
+.dot { display:inline-block; width:7px; height:7px; border-radius:999px;
+  margin-right:6px; flex:none; }
+.dot--tool { background:var(--info); }
+.dot--user { background:var(--ink); }
+.dot--pass { background:var(--ok); }
+.dot--err  { background:var(--accent); }
+.dot--asst { background:var(--mid); }
+
+/* caption — the rose self-labels below: a headnote over a two-line legend that
+   keeps each session identifiable + followable AND names what it's doing now. */
+.oculus__cap { display:flex; flex-direction:column; align-items:center; gap:13px;
+  width:min(540px, 100%); }
+.oculus__title { font-family:var(--font-mono); font-size:var(--fs-micro);
+  letter-spacing:.14em; text-transform:uppercase; color:var(--mid); }
+.oculus__title span { color:var(--faint); }
+.oculus__legend { list-style:none; margin:0; padding:0; display:flex;
+  flex-direction:column; width:100%; }
+.oculus__leg { display:grid; grid-template-columns:auto 1fr auto;
+  column-gap:12px; row-gap:6px; align-items:baseline; padding:12px 0;
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 0.5px);
+  border-top:1px solid var(--hair); }
+.oculus__leg:first-child { border-top:0; }
+.oculus__swatch { grid-column:1; grid-row:1; width:10px; height:10px; flex:none;
+  align-self:center; border-radius:999px; box-sizing:border-box; }
+.oculus__swatch--a { background:var(--accent); }
+.oculus__swatch--b { border:1.5px solid var(--accent); }
+/* legend ring-locator — a mini stack of concentric rings, this session's accented,
+   so each row maps unambiguously to its wheel in the rose (inner=oldest … outer=newest) */
+.oculus__ring { grid-column:1; grid-row:1; align-self:center; display:block; }
+.ro-mini__on  { fill:none; stroke:var(--accent); stroke-width:1.4; }
+.ro-mini__off { fill:none; stroke:var(--hair); stroke-width:1.2; }
+.oculus__legname { grid-column:2; grid-row:1; color:var(--ink); font-weight:600; }
+.oculus__leg .entry__follow { grid-column:3; grid-row:1; align-self:center; flex:none; }
+.oculus__legsub { grid-column:2 / 4; grid-row:2; display:flex; flex-wrap:wrap;
+  align-items:baseline; gap:4px 16px; }
+.oculus__doing { color:var(--ink); display:inline-flex; align-items:center; }
+.oculus__doing b { font-weight:600; margin-left:.4ch; }
+.oculus__caret { display:inline-block; width:6px; height:1.05em; margin-left:5px;
+  background:var(--accent); transform:translateY(2px);
+  animation:roCaret 1.1s steps(1) infinite; }
+.oculus__legmeta { margin-left:auto; color:var(--faint);
+  font-variant-numeric:tabular-nums; }
+@keyframes roCaret { 0%,49% { opacity:1; } 50%,100% { opacity:0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .ro__foil--lead, .ro__pip, .oculus__caret { animation:none; }
+  .ro__panes, .ro__foil { transition:none; }
+}
+
+/* ========================================================================= */
+/* SLICE-A COMPAT: old search-markup layout (render_search still emits the   */
+/* .search-hit__main + div .hit-context structure). The refined search       */
+/* markup + its CSS land in Slice A.2; this block keeps the current search    */
+/* view laid out until then and is removed when render_search is re-expressed.*/
+/* ========================================================================= */
 /* Chunks hit unfold: the article is a container; .search-hit__main carries the
    folio jump (the deliberate act) and the row treatment, while .hit-context
    below unfolds surrounding exchanges in place. Scoped to the chunks view so the
@@ -643,30 +1594,8 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .search-hit.compact .workspace, .search-hit.compact .temporal { color:var(--mid); }
 .search-hit.compact .summary { flex:1 1 100%; color:var(--ink); }
 
-/* ========================================================================= */
-/* AUTH — sign-out (rail foot) + login overlay (mounted in #main)            */
-/* ========================================================================= */
-.nav-auth-btn { appearance:none; margin-top:10px; width:100%; cursor:pointer;
-  background:transparent; border:1px solid var(--hair); color:var(--mid);
-  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.1em;
-  text-transform:uppercase; padding:6px 0; }
-.nav-auth-btn:hover { border-color:var(--accent); color:var(--accent); }
-
-#siftd-login { max-width:360px; margin:14vh auto 0; display:flex; flex-direction:column;
-  align-items:stretch; gap:14px; padding:36px 32px; border:1px solid var(--hair);
-  background:var(--panel); text-align:center; }
-#siftd-login .login-icon { font-size:30px; }
-#siftd-login h3 { margin:0; font-size:20px; font-weight:700; letter-spacing:-.02em;
-  color:var(--ink); }
-#siftd-login .login-or { margin:6px 0 0; font-family:var(--font-mono); font-size:11px;
-  letter-spacing:.06em; text-transform:uppercase; color:var(--faint); }
-#siftd-login .login-error { margin:0; color:var(--warn); font-family:var(--font-mono);
-  font-size:11px; line-height:1.5; }
-#siftd-login form { display:flex; flex-direction:column; gap:10px; }
-.login-input { border:1px solid var(--hair-strong); background:var(--paper); color:var(--ink);
-  font-family:var(--font-mono); font-size:13px; padding:10px 12px; outline:none; }
-.login-input:focus { border-color:var(--accent); }
-.login-btn { appearance:none; cursor:pointer; background:var(--accent); color:var(--paper);
-  border:none; font-family:var(--font-mono); font-size:12px; letter-spacing:.06em;
-  text-transform:uppercase; font-weight:600; padding:11px 0; }
-.login-btn:hover { opacity:.9; }
+/* SLICE-A COMPAT (cont.): neutralise the mock new-markup grid so the old   */
+/* .search-hit__main / .hit-body-less markup flows as a normal block.       */
+.search-results.chunks .search-hit,
+.search-results.thread .search-hit.expanded { display:block; column-gap:0; }
+.search-results.thread .search-hit.expanded { padding:11px 18px; }

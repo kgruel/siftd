@@ -387,9 +387,9 @@ async def flow(cdp, check, goto, code_conv):
     await cdp.drain(1.5)
     zones = await cdp.eval(
         "!!document.querySelector('#main .zone--live')"
-        " && !!document.querySelector('#main .day__head')"
+        " && !!document.querySelector('#main .leaf__head')"
     )
-    check("sessions view renders live zone + day groups", bool(zones))
+    check("sessions view renders live zone + daybook leaves", bool(zones))
     hist_drawn = await cdp.eval(
         "(function(){var s=document.querySelector('#main .hist span[data-n]');"
         "return s ? s.style.height !== '' : false;})()"
@@ -416,7 +416,7 @@ async def flow(cdp, check, goto, code_conv):
     check("chevron expands sub-agents", sub_shown is True, f"shown={sub_shown}")
     check("chevron toggle does not navigate away", bool(still_sessions))
 
-    await cdp.click("#main .rows .row")
+    await cdp.click("#main .entries .entry")
     await cdp.drain(1.5)
     srow = await cdp.eval("!!document.querySelector('#main .folio')")
     check("sessions row click mounts folio", bool(srow))

@@ -169,6 +169,6 @@ def test_render_tags_dominant_unit_per_grain():
     html = render_tags(
         [calls, prompts, tie], list_base="/find", shell_base="/", pin_action_url="/tag/pin"
     )
-    assert '>198<span class="ledger__unit"> calls' in html
-    assert '>40<span class="ledger__unit"> prompts' in html
-    assert '>5<span class="ledger__unit"> conv' in html
+    assert '<b class="idx-loc__n">198</b><i>calls</i>' in html
+    assert '<b class="idx-loc__n">40</b><i>prompts</i>' in html
+    assert '<b class="idx-loc__n">5</b><i>conv</i>' in html

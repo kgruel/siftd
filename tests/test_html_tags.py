@@ -1,10 +1,10 @@
 """Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags).
 
 Base lane (no litestar): renders real TagInfo dataclasses. Focus is the
-curation contract — the "Most used" headline demotes auto-applied vocabulary
-(``auto=True``: shell:* categories + siftd:derivative) so it can't swamp
-hand-applied tags by tool-call grain count, while the namespace tree below
-still lists every tag.
+index contract — auto-applied vocabulary (``auto=True``: shell:* categories +
+siftd:derivative) lives in its own Machine vocabulary book, kept out of the
+hand-applied Subject index where its tool-call grain would swamp the
+conversation tags; pinned tags surface in the Marked section.
 """
 
 from __future__ import annotations
@@ -31,45 +31,48 @@ def _tag(name, *, convs=0, calls=0, pinned=False, auto=False):
     )
 
 
-def _zone_body(html: str, label: str) -> str:
-    """Return the HTML of the zone whose head micro-label is ``label``.
+def _book_body(html: str, label: str) -> str:
+    """Return the HTML of the index book/section whose head micro-label is
+    ``label`` (Marked / Subject index / Machine vocabulary).
 
-    Zones are ``<section class="zone ...">`` siblings; slice from this zone's
-    head marker to the next section boundary.
+    Top-level sections are ``<section class="index__...">`` siblings; slice from
+    this section's head marker to the next index__ section boundary (idx-group
+    sections inside a book use ``class="idx-group"``, so they don't split it).
     """
     marker = f">{label}</span>"
     start = html.index(marker)
     rest = html[start:]
-    nxt = rest.find('<section class="zone', 1)
+    nxt = rest.find('<section class="index__', 1)
     return rest if nxt == -1 else rest[:nxt]
 
 
-def test_most_used_demotes_auto_vocabulary():
+def test_machine_vocab_kept_out_of_subject_index():
     # An auto shell tag dwarfs a hand tag by raw count, yet must not appear in
-    # the headline; the hand tag (far smaller) does.
+    # the Subject index; the hand tag does. The auto tag lives in its own book.
     shell = _tag("shell:vcs", calls=5000, auto=True)
     hand = _tag("topic:refactor", convs=12)
     html = render_tags([shell, hand], **_CTX)
 
-    most_used = _zone_body(html, "Most used")
-    assert "topic:refactor" in most_used
-    assert "shell:vcs" not in most_used
+    subject = _book_body(html, "Subject index")
+    assert "refactor" in subject
+    assert "shell:vcs" not in subject
 
-    # But the auto tag is still present below, in its namespace tree zone.
-    shell_zone = _zone_body(html, "shell:")
-    assert "vcs" in shell_zone
+    # The auto tag is present in the Machine vocabulary book.
+    machine = _book_body(html, "Machine vocabulary")
+    assert "vcs" in machine
 
 
-def test_most_used_absent_when_only_auto_tags():
-    # If every unpinned tag is auto vocabulary, there is no curation headline.
+def test_subject_index_absent_when_only_auto_tags():
+    # If every tag is auto vocabulary, there is no Subject index book.
     html = render_tags([_tag("shell:test", calls=900, auto=True)], **_CTX)
-    assert ">Most used</span>" not in html
-    # ...but the tree still renders it.
-    assert "test" in _zone_body(html, "shell:")
+    assert ">Subject index</span>" not in html
+    # ...but the Machine vocabulary book still renders it.
+    assert "test" in _book_body(html, "Machine vocabulary")
 
 
-def test_pinned_auto_tag_still_pins():
-    # auto only governs the "Most used" demotion; a user can still pin one.
+def test_pinned_auto_tag_surfaces_in_marked():
+    # auto governs the Subject/Machine split; a user can still pin one, and it
+    # surfaces (by full name) in the Marked section.
     html = render_tags([_tag("shell:vcs", calls=5000, pinned=True, auto=True)], **_CTX)
-    pinned = _zone_body(html, "Pinned")
-    assert "shell:vcs" in pinned
+    marked = _book_body(html, "Marked")
+    assert "shell:vcs" in marked

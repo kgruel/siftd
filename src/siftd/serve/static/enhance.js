@@ -123,6 +123,43 @@
     turns.forEach(function (t) { spyObserver.observe(t); });
   }
 
+  // --- activity scroll-spy (the trace's Activity rail mirrors the body) ------
+  // Reverse of the click-to-jump anchors: as the trace body scrolls, mark the
+  // Activity row (.tool-seq__row) for the topmost visible tool call .is-current
+  // — the same IntersectionObserver idiom as the turns rail above, so the two
+  // rails move together. CSP-safe: observer + classList only, no new dep. The
+  // rows link to .tool-call[id="evt-N"] (render_folio's Activity registry); a
+  // reading-mode folio has no .tool-call[id], so this no-ops there.
+  var toolSpyObserver = null;
+  function initToolSpy() {
+    if (toolSpyObserver) { toolSpyObserver.disconnect(); toolSpyObserver = null; }
+    var body = document.querySelector('#main .folio__body');
+    if (!body || !('IntersectionObserver' in window)) return;
+    var calls = body.querySelectorAll('.tool-call[id]');
+    if (!calls.length) return;
+    var visible = {};
+    function refresh() {
+      var bestId = null, bestTop = Infinity;
+      calls.forEach(function (c) {
+        if (!visible[c.id]) return;
+        var top = c.getBoundingClientRect().top;
+        if (top < bestTop) { bestTop = top; bestId = c.id; }
+      });
+      document.querySelectorAll('.tool-seq__row.is-current').forEach(function (r) {
+        r.classList.remove('is-current');
+      });
+      if (bestId) {
+        var row = document.querySelector('.tool-seq__row[href="#' + bestId + '"]');
+        if (row) row.classList.add('is-current');
+      }
+    }
+    toolSpyObserver = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting; });
+      refresh();
+    }, { root: body, rootMargin: '0px 0px -55% 0px', threshold: 0 });
+    calls.forEach(function (c) { toolSpyObserver.observe(c); });
+  }
+
   // --- search → folio jump: land on the matched event ----------------------
   // A folio mounted from a search hit carries data-scroll-to=<event ULID> on its
   // root; scroll that event's element into view once, then consume the hint so
@@ -213,7 +250,7 @@
     });
   }
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
+  function enhance() { wireTone(); drawLedgers(); drawHists(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();

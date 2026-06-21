@@ -205,10 +205,11 @@ def test_folio_empty_conversation_renders_without_crash():
     assert "no tool calls" in html  # ledger empty-state, not a crash
 
 
-def test_folio_curation_foot_hosts_tags_and_export():
+def test_folio_curation_bar_hosts_tags_and_export():
     """The folio is the single detail surface, so it carries the tag/export
-    affordances the two-pane detail used to own. The tag section keeps the
-    stable #tags-<id> the /tag route swaps via outerHTML."""
+    affordances the two-pane detail used to own — now in the command bar's
+    actions group. The tag section keeps the stable #tags-<id> the /tag route
+    swaps via outerHTML."""
     detail = _detail()
     detail.tags = ["shell:file", "decision"]
     html = render_folio(
@@ -219,7 +220,8 @@ def test_folio_curation_foot_hosts_tags_and_export():
         tag_suggest_url="/tags/suggest",
         export_base_url="/export",
     )
-    assert 'class="ledger__curation"' in html
+    assert 'class="folio__bar"' in html
+    assert "folio__bargroup--actions" in html  # tags/export live in the bar now
     assert 'id="tags-' in html  # stable swap target for the /tag route
     assert 'hx-post="/tag"' in html  # remove buttons + add form
     assert "format=md" in html and "format=json" in html  # export links
@@ -277,7 +279,7 @@ def test_reading_emitter_drops_present_tools_independent_of_fidelity():
     # not emit the trace's inline classes.
     from siftd.output.html_fmt import _render_turn_blocks
 
-    body, _rail, _n, _counter = _render_turn_blocks(
+    body, _rail, _n, _counter, _seq = _render_turn_blocks(
         _trace_detail().turns, _FID_TRACE, id_prefix="t", mode="reading",
     )
     html = "".join(body)
@@ -286,12 +288,16 @@ def test_reading_emitter_drops_present_tools_independent_of_fidelity():
     assert '<details class="thinking">' not in html  # HtmlEmitter's class, not used
 
 
-def test_folio_trace_mode_keeps_the_ledger():
-    # The ledger is a different lens (frequency) than the inline trace
-    # (sequence); it stays in trace mode.
+def test_folio_trace_mode_shows_activity_sequence():
+    # Trace replaces the frequency ledger with the chronological Activity run:
+    # one row per tool call, in order, each linking to its inline .tool-call[id]
+    # (enhance.js scroll-spy mirrors the reading position off those ids).
     html = render_folio(_trace_detail(), _FID_TRACE, mode="trace")
     assert 'class="folio__ledger"' in html
-    assert 'class="ledger__name">Read' in html
+    assert 'class="tool-seq"' in html
+    assert 'class="tool-seq__name">Read' in html
+    # The row anchors the inline tool-call by a folio-unique id.
+    assert 'href="#evt-1"' in html and 'id="evt-1"' in html
 
 
 def test_folio_mode_toggle_marks_the_active_mode():

@@ -36,18 +36,19 @@ def test_sessions_nests_subagents_under_parent():
     k1 = _summary("c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1")
     k2 = _summary("c-a2", "claude_code::r1::agent::a2", parent="claude_code::r1")
     html = render_sessions([], [parent, k1, k2], **_CTX)
-    # One top-level row (exact class="row"); two nested sub rows.
-    assert html.count('class="row"') == 1
-    assert html.count("row--sub") == 2
+    # One top-level entry (exact class="entry"); two nested sub entries.
+    assert html.count('class="entry"') == 1
+    assert html.count("entry--sub") == 2
+    assert html.count("row--sub") == 2  # legacy hook retained for the toggle CSS
     # Parent carries an agent-count chip in its own cell (not jammed into name).
     assert "2 agents</span>" in html
     # Parent is an expandable group; children collapse under it by default.
-    assert 'class="row__toggle"' in html
+    assert "row__toggle" in html  # legacy hook beside the new entry__toggle class
     assert 'data-group="c-root"' in html
     assert html.count('data-parent="c-root" hidden') == 2
-    # Day head counts roots as sessions, sub-agents separately.
-    assert "1 sessions" in html
-    assert "2 sub-agents" in html
+    # Leaf totals count roots as sessions, sub-agents separately.
+    assert '<span class="total__k">Sessions</span><span class="total__n">1</span>' in html
+    assert '<span class="total__k">Sub-agents</span><span class="total__n">2</span>' in html
     # All three remain reachable detail rows (children not dropped).
     assert "c-root" in html and "c-a1" in html and "c-a2" in html
 
@@ -59,12 +60,12 @@ def test_sessions_orphan_subagent_flagged_at_top_level():
         "c-orphan", "claude_code::r9::agent::a9", parent="claude_code::r9"
     )
     html = render_sessions([], [orphan], **_CTX)
-    assert "row--sub" in html
+    assert "entry--sub" in html
     assert "c-orphan" in html
     # Orphan stays visible (no parent row to nest under) — not collapsed, not a child.
     assert " hidden>" not in html
     assert "data-parent" not in html
-    assert 'class="row__toggle"' not in html
+    assert "row__toggle" not in html
 
 
 def test_sessions_day_totals_fold_in_subagents():
@@ -83,9 +84,9 @@ def test_sessions_flat_without_subagents():
     a = _summary("c-1", "claude_code::r1")
     b = _summary("c-2", "claude_code::r2")
     html = render_sessions([], [a, b], **_CTX)
-    assert "row--sub" not in html
-    assert "sub-agents" not in html
-    assert html.count('class="row"') == 2
+    assert "entry--sub" not in html
+    assert "Sub-agents" not in html
+    assert html.count('class="entry"') == 2
 
 
 def test_sessions_child_shows_agent_type_not_workspace():
@@ -98,7 +99,7 @@ def test_sessions_child_shows_agent_type_not_workspace():
     )
     html = render_sessions([], [parent, kid], **_CTX)
     assert "Explore" in html
-    assert 'class="row__when">' in html  # spawn-time disambiguator rendered
+    assert 'class="entry__time">' in html  # spawn-time rides the gutter
     # Workspace basename appears once — on the parent, never echoed onto the child.
     assert html.count(">proj<") == 1
 
@@ -120,5 +121,5 @@ def test_sessions_child_falls_back_to_time_without_agent_type():
     parent = _summary("c-root", "claude_code::r1")
     kid = _summary("c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1")
     html = render_sessions([], [parent, kid], **_CTX)
-    assert 'class="row__when">' in html
+    assert 'class="entry__time">' in html
     assert html.count(">proj<") == 1

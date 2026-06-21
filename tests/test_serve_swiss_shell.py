@@ -196,7 +196,7 @@ def test_folio_hosts_tag_and_export_curation(ctx):
     affordances the deleted /query?id= detail mode used to carry."""
     client, cid = ctx
     body = client.get("/folio", params={"id": cid}).text
-    assert 'class="ledger__curation"' in body
+    assert "folio__bargroup--actions" in body  # tags/export ride the command bar
     assert 'hx-post="/tag"' in body          # interactive tag add/remove
     assert 'id="tags-' in body               # stable swap target for /tag
     assert "format=md" in body and "format=json" in body  # export links
@@ -232,7 +232,7 @@ def test_sessions_view_is_live(ctx):
     assert 'class="stub"' not in body
     assert 'data-view="sessions"' in body and 'data-title="Sessions"' in body
     assert 'class="zone zone--live"' in body      # ctx app: live endpoints on
-    assert 'class="day__head"' in body            # day grouping over real rows
+    assert 'class="leaf__head"' in body           # daybook leaf per day over real rows
     assert 'class="hist"' in body                 # hour-of-day buckets
     assert 'hx-get="/folio?id=' in body and 'hx-target="#main"' in body
 
@@ -795,13 +795,12 @@ def test_tags_view_is_live_not_stub(tags_ctx):
     assert 'class="stub"' not in body
     assert 'data-view="tags"' in body and 'data-title="Tags"' in body
     assert 'data-count="3"' in body
-    assert 'class="ledger ledger--tags"' in body
-    # namespace tree: a research: band groups its two leaves; bug is ungrouped
-    assert "research:</span>" in body
-    assert "2 tags" in body
+    assert 'class="index"' in body and 'class="idx-entries"' in body
+    # subject namespace tree: a research band groups its two leaves; bug is ungrouped
+    assert '>research<span class="idx-head__count"' in body
     assert ">ungrouped<" in body
-    # derived zones
-    assert "Most used" in body
+    # the hand-applied subject index book
+    assert "Subject index" in body
 
 
 def test_tags_rows_drill_into_find(tags_ctx):
