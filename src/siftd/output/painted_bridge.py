@@ -268,10 +268,6 @@ class PaintedEmitter:
         width: int | None = None,
         ascii_mode: bool = False,
     ) -> None:
-        from painted import border, pad
-
-        self._border = border
-        self._pad = pad
         self._ds = ds
         self._tool_chars = tool_chars
         self._width = width
@@ -315,22 +311,22 @@ class PaintedEmitter:
 
     def thinking(self, content: str, *, event_id: str | None = None) -> None:
         del event_id
-        self._flush_lines()
-        think_lines: list[Line] = []
-        _append_multiline(think_lines, "", self._ds.thinking, content, self._ds.thinking, 0)
-        inner = _lines_to_block(think_lines)
-        title_text = "thinking"
-        min_inner_width = len(title_text) + 5
-        if inner.width + 2 < min_inner_width:
-            inner = self._pad(inner, right=min_inner_width - inner.width - 2)
-        bordered = self._border(
-            self._pad(inner, left=1, right=1),
-            chars=self._ds.thinking_border,
-            style=self._ds.separator,
-            title=title_text,
-            title_style=self._ds.thinking,
+        # No box — a dim `thinking` label over the reasoning, italic via
+        # ds.thinking and indented, word-wrapped to the width. Typography over
+        # chrome: a transcript is a feed, and a box rule fights a variable-width
+        # body (it spanned the terminal and the content overflowed it anyway).
+        _, Line, Span, _, _, _, _ = _painted()
+        indent = "      "
+        avail = max((self._width or term_width()) - len(indent), 20)
+        self._pending.append(
+            _line(("    ", self._ds.separator), ("thinking", self._ds.summary))
         )
-        self._parts.append(self._pad(bordered, left=4))
+        for para in content.strip().split("\n"):
+            if not para.strip():
+                self._pending.append(_line())
+                continue
+            for wl in _wrap_spans([Span(para.strip(), self._ds.thinking)], avail):
+                self._pending.append(Line(spans=(Span(indent, self._ds.separator), *wl.spans)))
 
     def thinking_placeholder(self, *, event_id: str | None = None) -> None:
         del event_id
@@ -351,31 +347,22 @@ class PaintedEmitter:
         tool_call_id: str | None = None,
     ) -> None:
         del event_id, tool_call_id
-        title = name
+        # A header line — the `→ name` idiom the collapsed tool summary already
+        # uses — over the input/result indented beneath. No box (typography over
+        # chrome); the call now reads the same expanded or collapsed.
+        title_style = self._ds.tool_error if status == "error" else self._ds.tool_name
+        header: list[tuple[str, Style]] = [("    → ", self._ds.separator), (name, title_style)]
         if count > 1:
-            title += f" ×{count}"
+            header.append((f" ×{count}", self._ds.separator))
         if status and status != "success":
-            title += f" ({status})"
-
-        tool_lines = _render_tool_content_lines(
-            name, raw_input, raw_result, status,
-            self._role_styles, self._tool_chars,
-        )
-        if tool_lines:
-            self._flush_lines()
-            inner = _lines_to_block(tool_lines)
-            title_style = self._ds.tool_error if status == "error" else self._ds.tool_name
-            min_inner_width = len(title) + 5
-            if inner.width + 2 < min_inner_width:
-                inner = self._pad(inner, right=min_inner_width - inner.width - 2)
-            bordered = self._border(
-                self._pad(inner, left=1, right=1),
-                chars=self._ds.tool_border,
-                style=self._ds.separator,
-                title=title,
-                title_style=title_style,
+            status_style = self._ds.tool_error if status == "error" else self._ds.separator
+            header.append((f" ({status})", status_style))
+        self._pending.append(_line(*header))
+        self._pending.extend(
+            _render_tool_content_lines(
+                name, raw_input, raw_result, status, self._role_styles, self._tool_chars
             )
-            self._parts.append(self._pad(bordered, left=4))
+        )
 
     def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
         del event_id

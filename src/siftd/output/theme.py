@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from painted import BorderChars, Fidelity, Style, Theme
+    from painted import Fidelity, Style, Theme
 
 
 @dataclass(frozen=True)
@@ -67,10 +67,6 @@ class DomainStyles:
     label: Style         # section headers, field labels
     summary: Style       # summary hints, overflow indicators
     separator: Style     # visual dividers
-
-    # --- Borders ---
-    tool_border: BorderChars   # box around tool I/O content
-    thinking_border: BorderChars  # box around thinking blocks
 
 
 # Cream — the warm body foreground. The one identity tone with two homes: the
@@ -150,7 +146,7 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
         - thinking: italic dim at default, bordered at --thinking
         - tool content: density-aware
     """
-    from painted import LIGHT, ROUNDED, Style, current_palette
+    from painted import Style, current_palette
 
     p = current_palette()
 
@@ -212,8 +208,4 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
         label=secondary,
         summary=secondary,
         separator=p.muted,
-
-        # Borders — tool I/O gets LIGHT, thinking gets ROUNDED
-        tool_border=LIGHT,
-        thinking_border=ROUNDED,
     )
