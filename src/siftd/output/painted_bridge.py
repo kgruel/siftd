@@ -268,9 +268,13 @@ class PaintedEmitter:
         width: int | None = None,
         ascii_mode: bool = False,
     ) -> None:
+        from siftd.output.gutter import GUTTER_COLS
+
         self._ds = ds
         self._tool_chars = tool_chars
-        self._width = width
+        # Content wraps to width − the gutter rail, so a rail-prefixed line lands
+        # at exactly the requested width (natural sizing keeps None).
+        self._width = (width - GUTTER_COLS) if width else width
         self._ascii = ascii_mode
         self._role_styles = _RoleStyles(
             heading=ds.label,
@@ -286,16 +290,43 @@ class PaintedEmitter:
         )
         self._parts: list[Block] = []
         self._pending: list[Line] = []
+        # The grain-gutter key for the current pending run — (kind, status); a
+        # kind change banks the run so the rail switches mark at block boundaries.
+        self._pending_kind: tuple[str, str | None] | None = None
+        self._content_since_break = False
 
     def _flush_lines(self) -> None:
+        """Bank the current run as one gutter-railed Block."""
         if self._pending:
-            self._parts.append(_lines_to_block(self._pending))
+            from siftd.output.gutter import apply_event_gutter
+
+            block = _lines_to_block(self._pending)
+            if self._pending_kind is not None:
+                kind, status = self._pending_kind
+                block = apply_event_gutter(block, kind, status=status, ascii_mode=self._ascii)
+            self._parts.append(block)
             self._pending = []
+            self._content_since_break = True
+
+    def _set_kind(self, kind: str, status: str | None = None) -> None:
+        """Switch the pending run's gutter kind, banking the run if it changes."""
+        key = (kind, status)
+        if self._pending and key != self._pending_kind:
+            self._flush_lines()
+        self._pending_kind = key
+
+    def _gutter_block(self, block: Block, kind: str, status: str | None = None) -> Block:
+        from siftd.output.gutter import apply_event_gutter
+
+        return apply_event_gutter(block, kind, status=status, ascii_mode=self._ascii)
 
     def _block_break(self) -> None:
-        """A blank line between narrative blocks — never leading, never doubled."""
-        if self._pending and self._pending[-1].spans:
-            self._pending.append(_line())
+        """An ungutterred blank line between blocks — breaks the rail, never doubled."""
+        self._flush_lines()
+        if self._content_since_break:
+            self._parts.append(_blank_block())
+            self._content_since_break = False
+        self._pending_kind = None
 
     # -- NarrativeEmitter interface --
 
@@ -308,12 +339,14 @@ class PaintedEmitter:
 
         _, Line, _, _, _, _, _ = _painted()
         self._block_break()
+        self._set_kind("assistant")
         for item in render_markdown(content, self._ds, self._width, ascii_mode=self._ascii):
             if isinstance(item, Line):
                 self._pending.append(item)
             else:
                 self._flush_lines()
-                self._parts.append(item)
+                self._parts.append(self._gutter_block(item, "assistant"))
+                self._content_since_break = True
 
     def thinking(self, content: str, *, event_id: str | None = None) -> None:
         del event_id
@@ -328,6 +361,7 @@ class PaintedEmitter:
         # in bold, over the dim italic reasoning. Glyph degrades to * for ASCII.
         glyph = "* " if self._ascii else "✻ "
         self._block_break()
+        self._set_kind("thinking")
         self._pending.append(
             _line(
                 ("    ", self._ds.separator),
@@ -345,6 +379,7 @@ class PaintedEmitter:
     def thinking_placeholder(self, *, event_id: str | None = None) -> None:
         del event_id
         self._block_break()
+        self._set_kind("thinking")
         glyph = "* " if self._ascii else "✻ "
         self._pending.append(
             _line(
@@ -356,7 +391,11 @@ class PaintedEmitter:
 
     def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
         self._block_break()
-        self._pending.extend(_tool_summary_lines_styled(tools, self._ds))
+        # Each tool line takes its own outcome in the rail — _set_kind banks the
+        # run when the status changes, so a failed call shows ✗ amid the ✓s.
+        for name, count, status in tools:
+            self._set_kind("tool", status)
+            self._pending.extend(_tool_summary_lines_styled([(name, count, status)], self._ds))
 
     def tool_content(
         self,
@@ -374,6 +413,7 @@ class PaintedEmitter:
         # uses — over the input/result indented beneath. No box (typography over
         # chrome); the call now reads the same expanded or collapsed.
         self._block_break()
+        self._set_kind("tool", status)
         title_style = self._ds.tool_error if status == "error" else self._ds.tool_name
         header: list[tuple[str, Style]] = [("    → ", self._ds.separator), (name, title_style)]
         if count > 1:
@@ -391,6 +431,7 @@ class PaintedEmitter:
     def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
         del event_id
         self._block_break()
+        self._set_kind("tool")
         _append_multiline(
             self._pending,
             f"  [{block_type}] ",
@@ -475,6 +516,24 @@ def _fmt_last_activity(epoch_seconds: float | None) -> str:
     return datetime.fromtimestamp(epoch_seconds).strftime("%Y-%m-%d %H:%M")
 
 
+def _gutter_ctx(width: int | None, ascii_mode: bool):
+    """``(body_width, gut)`` for guttering a detail view's turn blocks.
+
+    The grain gutter takes 2 columns, so a turn's bodies render at
+    ``width − GUTTER_COLS`` and the rail prefix brings them back to ``width``;
+    ``gut(block, kind, status=None)`` prepends that kind's rail (user / assistant
+    / tool) so the prompt + role headers carry the rail like the narrative does.
+    """
+    from siftd.output.gutter import GUTTER_COLS, apply_event_gutter
+
+    body_width = (width - GUTTER_COLS) if width else width
+
+    def gut(block, kind, status=None):
+        return apply_event_gutter(block, kind, status=status, ascii_mode=ascii_mode)
+
+    return body_width, gut
+
+
 def render_query_detail_block(
     detail,
     *,
@@ -518,14 +577,15 @@ def render_query_detail_block(
     parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
+    body_width, gut = _gutter_ctx(width, ascii_mode)
     for turn in turns:
         ts = fmt_timestamp(turn.timestamp, time_only=True)
         prompt_role_label = getattr(turn, "PROMPT_ROLE_LABEL", ROLE_USER)
         response_role_label = getattr(turn, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if turn.prompt_text:
-            parts.append(_line_block(_line(*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal))))
-            parts.extend(_body_parts(turn.prompt_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.append(gut(_line_block(_line(*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal))), "user"))
+            parts.extend(gut(p, "user") for p in _body_parts(turn.prompt_text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
             parts.append(_blank_block())
 
         tool_summaries = turn.tool_call_summaries
@@ -535,12 +595,15 @@ def render_query_detail_block(
 
         tok = turn.total_input_tokens + turn.total_output_tokens
         parts.append(
-            _line_block(
-                _line(
-                    *_role_prefix(response_role_label, ds, abbrev=False),
-                    (ts, ds.temporal),
-                    (f" ({fmt_tokens(tok)} tok)", ds.metric),
-                )
+            gut(
+                _line_block(
+                    _line(
+                        *_role_prefix(response_role_label, ds, abbrev=False),
+                        (ts, ds.temporal),
+                        (f" ({fmt_tokens(tok)} tok)", ds.metric),
+                    )
+                ),
+                "assistant",
             )
         )
 
@@ -551,9 +614,9 @@ def render_query_detail_block(
                 tool_chars=tool_chars,
             ))
         elif tool_summaries:
-            parts.append(_lines_to_block(_tool_summary_lines(
+            parts.append(gut(_lines_to_block(_tool_summary_lines(
                 [(tc.tool_name, tc.count, tc.status) for tc in tool_summaries]
-            )))
+            )), "tool"))
 
         parts.append(_blank_block())
 
@@ -607,14 +670,15 @@ def render_peek_detail_block(
     parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
+    body_width, gut = _gutter_ctx(width, ascii_mode)
     for exchange in exchanges:
         ts = fmt_timestamp(exchange.timestamp, time_only=True)
         prompt_role_label = getattr(exchange, "PROMPT_ROLE_LABEL", ROLE_USER)
         response_role_label = getattr(exchange, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if exchange.prompt_text:
-            parts.append(_line_block(_line(*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal))))
-            parts.extend(_body_parts(exchange.prompt_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.append(gut(_line_block(_line(*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal))), "user"))
+            parts.extend(gut(p, "user") for p in _body_parts(exchange.prompt_text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
             parts.append(_blank_block())
 
         has_response = bool(
@@ -629,12 +693,15 @@ def render_peek_detail_block(
 
         total_tokens = exchange.input_tokens + exchange.output_tokens
         parts.append(
-            _line_block(
-                _line(
-                    *_role_prefix(response_role_label, ds, abbrev=False),
-                    (ts, ds.temporal),
-                    (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
-                )
+            gut(
+                _line_block(
+                    _line(
+                        *_role_prefix(response_role_label, ds, abbrev=False),
+                        (ts, ds.temporal),
+                        (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
+                    )
+                ),
+                "assistant",
             )
         )
 
@@ -645,12 +712,12 @@ def render_peek_detail_block(
                 tool_chars=tool_chars,
             ))
         elif exchange.response_text:
-            parts.extend(_body_parts(exchange.response_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.extend(gut(p, "assistant") for p in _body_parts(exchange.response_text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
 
         if not exchange.narrative and exchange.tool_calls:
-            parts.append(_lines_to_block(_tool_summary_lines(
+            parts.append(gut(_lines_to_block(_tool_summary_lines(
                 [(name, count, None) for name, count in exchange.tool_calls]
-            )))
+            )), "tool"))
 
         parts.append(_blank_block())
 
@@ -673,12 +740,13 @@ def render_follow_event_block(
     ds = domain_styles(fidelity)
     ts = fmt_timestamp(getattr(event, "timestamp", None), time_only=True)
     width, ascii_mode = _body_render_ctx()
+    body_width, gut = _gutter_ctx(width, ascii_mode)
 
     if getattr(event, "is_user", False):
-        parts: list[Block] = [_line_block(_line(*_role_prefix(ROLE_USER, ds, abbrev=False), (ts, ds.temporal)))]
+        parts: list[Block] = [gut(_line_block(_line(*_role_prefix(ROLE_USER, ds, abbrev=False), (ts, ds.temporal))), "user")]
         text = getattr(event, "text", None)
         if text:
-            parts.extend(_body_parts(text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.extend(gut(p, "user") for p in _body_parts(text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
         return parts[0] if len(parts) == 1 else join_vertical(*parts)
 
     total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
@@ -689,7 +757,7 @@ def render_follow_event_block(
     if total_tokens:
         header_parts.append((f" ({fmt_tokens(total_tokens)} tok)", ds.metric))
 
-    parts = [_line_block(_line(*header_parts))]
+    parts = [gut(_line_block(_line(*header_parts)), "assistant")]
 
     narrative = getattr(event, "narrative", [])
     if narrative:
@@ -701,12 +769,12 @@ def render_follow_event_block(
     else:
         text = getattr(event, "text", None)
         if text:
-            parts.extend(_body_parts(text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.extend(gut(p, "assistant") for p in _body_parts(text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
         tool_calls = getattr(event, "tool_calls", [])
         if tool_calls:
-            parts.append(_lines_to_block(_tool_summary_lines(
+            parts.append(gut(_lines_to_block(_tool_summary_lines(
                 [(name, count, None) for name, count, *_ in tool_calls]
-            )))
+            )), "tool"))
 
     if len(parts) == 1:
         return parts[0]
