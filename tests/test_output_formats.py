@@ -124,6 +124,41 @@ class TestTerminalRenderList:
         assert "-" in lines[1]
         assert "review, bug" in lines[2]
 
+    def test_render_list_is_langc_tty_safe(self, monkeypatch):
+        # A non-UTF-8 LANG=C TTY: the block-returning list renderer rides the
+        # shared table_budget() (like print_table), so it must drop the width
+        # budget — painted draws no … to crash a strict-ASCII stream — and degrade
+        # the rule ─→-. The representative end-to-end guard for the three direct
+        # render_table callers (query/peek lists, ingest summary), which their own
+        # non-TTY capsys tests never exercise (they only hit the isatty=False arm).
+        import io
+
+        from siftd.output import table
+        from siftd.output.terminal_fmt import render_list
+
+        class _TTY(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        monkeypatch.setattr("sys.stdout", _TTY())
+        monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: True)
+        monkeypatch.setattr(table, "term_width", lambda *a, **k: 20)
+        deep = FakeSummary(
+            id="01ABCDEF123456",
+            workspace_path="/a/very/deep/workspace/path/that/would/overflow",
+            model="claude-opus-4-5",
+            started_at="2026-03-15T10:30:00Z",
+            prompt_count=3,
+            response_count=5,
+            total_tokens=1234,
+            cost=0.034,
+            tags=["x"],
+        )
+        out = self._block_to_text(render_list([deep], Fidelity(depth=3)))
+        assert "…" not in out  # budget dropped → no painted ellipsis to crash
+        assert "─" not in out  # rule degraded...
+        assert "-" in out  # ...to ASCII
+
     def test_empty_list_returns_none(self):
         from siftd.output.terminal_fmt import render_list
 
@@ -1287,6 +1322,7 @@ class TestRenderQueryDetailBlock:
         # nearby tests read cell.char only, so a swap or collapse to one tier passes
         # them; this reads cell.style.fg, the only place the mapping is pinned.
         from painted import use_theme
+
         from siftd.output.painted_bridge import render_query_detail_block
         from siftd.output.theme import siftd_theme
 
