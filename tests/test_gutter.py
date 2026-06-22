@@ -106,3 +106,110 @@ def test_narrative_rail_switches_mark_by_kind():
     assert "." in lead  # thinking
     assert "+" in lead  # tool success
     assert "x" in lead  # tool error
+
+
+def test_railed_lines_never_overflow_the_width(monkeypatch):
+    # The rail prefix is reserved out of the content width, so no line exceeds the
+    # requested width — content wraps to width − GUTTER_COLS and the rail adds it
+    # back. A long unbroken prompt + reasoning would overflow if the reservation
+    # were missing.
+    import siftd.output.painted_bridge as pb
+    from siftd.output.painted_bridge import render_narrative_block
+
+    monkeypatch.setattr(pb, "term_width", lambda *a, **k: 50)
+    monkeypatch.setattr(pb, "prefers_ascii", lambda *a, **k: True)
+    long_prose = "the quick brown fox jumps over the lazy dog " * 4
+    # The wrapped paths (prose + reasoning) reserve the rail out of the width;
+    # tool I/O renders at natural width (unwrapped, pre-existing) so it isn't part
+    # of this contract — keep its lines short here.
+    blocks = [
+        _NB("text", long_prose),
+        _NB("thinking", long_prose),
+        _NB("tool_calls", tool_calls=[_TC("Bash", input="pytest", result="ok", status="error")]),
+    ]
+    with use_theme(siftd_theme):
+        block = render_narrative_block(
+            blocks, fidelity=Fidelity(visible=frozenset({"text", "thinking", "tools"}), depth=3)
+        )
+    assert block.width <= 50  # the rail prefix never pushes a wrapped line past the width
+
+
+def test_detail_view_rails_user_and_assistant_distinctly(monkeypatch):
+    # The whole turn carries the rail: the prompt takes the bright user mark, the
+    # response takes the recessed assistant mark — distinct gutter colours even
+    # though both glyphs are ▪ (a non-TTY render keeps the style, drops the ANSI).
+    import siftd.output.painted_bridge as pb
+    from siftd.output.painted_bridge import render_query_detail_block
+
+    monkeypatch.setattr(pb, "term_width", lambda *a, **k: 80)
+    monkeypatch.setattr(pb, "prefers_ascii", lambda *a, **k: True)
+
+    @dataclass
+    class _Turn:
+        timestamp: str
+        prompt_text: str
+        narrative: list
+        total_input_tokens: int = 10
+        total_output_tokens: int = 20
+        tool_call_summaries: list = field(default_factory=list)
+
+    @dataclass
+    class _Detail:
+        id: str = "01ABC"
+        workspace_path: str = "/w"
+        started_at: str = "2026-06-22T14:32:00"
+        total_input_tokens: int = 10
+        total_output_tokens: int = 20
+        model: str = "m"
+        tags: list = field(default_factory=list)
+
+    turn = _Turn("2026-06-22T14:32:10", "the user prompt", [_NB("text", "the assistant reply")])
+    with use_theme(siftd_theme):
+        block = render_query_detail_block(
+            _Detail(), turns=[turn], fidelity=Fidelity(visible=frozenset({"text"}), depth=1)
+        )
+
+    def gutter_fg(needle: str):
+        for y in range(block.height):
+            row = block.row(y)
+            line = "".join(c.char for c in row)
+            if needle in line and row and row[0].char == "*":
+                return getattr(row[0].style, "fg", None)
+        return None
+
+    user_fg = gutter_fg("the user prompt")
+    asst_fg = gutter_fg("the assistant reply")
+    assert user_fg is not None and asst_fg is not None
+    assert user_fg != asst_fg  # bright user vs recessed assistant
+
+
+def test_block_break_never_leads_or_doubles_blanks():
+    from siftd.output.painted_bridge import PaintedEmitter
+    from siftd.output.theme import domain_styles
+
+    with use_theme(siftd_theme):
+        e = PaintedEmitter(domain_styles(), 0, width=80, ascii_mode=True)
+        e.text("first")
+        e._block_break()
+        e._block_break()  # a second break must not add a second blank
+        e.text("second")
+        block = e.result()
+    lines = ["".join(c.char for c in block.row(y)).rstrip() for y in range(block.height)]
+    assert lines[0] != ""  # no leading blank
+    assert lines[-1] != ""  # no trailing blank
+    assert not any(lines[i] == "" and lines[i + 1] == "" for i in range(len(lines) - 1))  # no doubles
+
+
+def test_tool_summary_rails_each_call_by_its_own_status():
+    from siftd.output.painted_bridge import PaintedEmitter
+    from siftd.output.theme import domain_styles
+
+    with use_theme(siftd_theme):
+        e = PaintedEmitter(domain_styles(), 0, width=80, ascii_mode=True)
+        e.tool_summary([("Read", 1, "success"), ("Bash", 1, "error")])
+        block = e.result()
+    rows = [("".join(c.char for c in block.row(y)), block.row(y)) for y in range(block.height)]
+    read_lead = next(r[0] for r, _ in rows if "Read" in r)
+    bash_lead = next(r[0] for r, _ in rows if "Bash" in r)
+    assert read_lead == "+"  # ✓ pass
+    assert bash_lead == "x"  # ✗ fail

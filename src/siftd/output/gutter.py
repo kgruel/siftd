@@ -48,10 +48,12 @@ def gutter_event_kind(kind: str, payload: dict) -> tuple[str, Style]:
     p = current_palette()
     a = bool(payload.get("ascii"))
 
+    # ds.assistant is the bright body cream; ds.label/ds.summary the recessed
+    # secondary — so the user mark reads brightest and assistant/thinking recede.
     if kind == "user":
         return ("*" if a else "▪"), ds.assistant
     if kind == "thinking":
-        return ("." if a else "·"), ds.label
+        return ("." if a else "·"), ds.summary
     if kind == "tool":
         status = str(payload.get("status") or "").lower()
         if status in _ERROR_STATUSES:

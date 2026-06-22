@@ -298,12 +298,9 @@ class PaintedEmitter:
     def _flush_lines(self) -> None:
         """Bank the current run as one gutter-railed Block."""
         if self._pending:
-            from siftd.output.gutter import apply_event_gutter
-
             block = _lines_to_block(self._pending)
             if self._pending_kind is not None:
-                kind, status = self._pending_kind
-                block = apply_event_gutter(block, kind, status=status, ascii_mode=self._ascii)
+                block = self._gutter_block(block, *self._pending_kind)
             self._parts.append(block)
             self._pending = []
             self._content_since_break = True
