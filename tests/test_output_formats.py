@@ -1086,6 +1086,20 @@ class TestRenderNarrativeBlock:
         text = _block_to_text(result)
         assert "result content" in text
 
+    def test_markdown_heading_and_table_via_emitter(self):
+        # Exercises PaintedEmitter.text flush ordering: a heading + prose + table in
+        # one narrative body must emit prose Lines then a real table Block, in order.
+        from siftd.output.painted_bridge import render_narrative_block
+
+        blocks = [FakeNarrativeBlock(
+            "text", "## Heading\n\nprose line\n\n| A | B |\n|---|---|\n| x | y |"
+        )]
+        text = _block_to_text(render_narrative_block(blocks, fidelity=Fidelity(depth=1)))
+        assert "Heading" in text and "prose line" in text
+        assert "A" in text and "B" in text and "x" in text and "y" in text
+        assert "|---|" not in text
+        assert text.index("Heading") < text.index("prose line") < text.index("x")
+
     def test_empty_blocks(self):
         from siftd.output.painted_bridge import render_narrative_block
 
@@ -1249,8 +1263,8 @@ class TestRenderQueryDetailBlock:
         assert tokens_row_fgs is not None, "no Tokens: row rendered"
         # Both tiers present, and the loud grand-total precedes the quiet breakdown.
         assert "#c9a84c" in tokens_row_fgs  # metric_strong — the grand total
-        assert "#8a7a3a" in tokens_row_fgs  # metric — the input/output breakdown
-        assert tokens_row_fgs.index("#c9a84c") < tokens_row_fgs.index("#8a7a3a")
+        assert "#a8884a" in tokens_row_fgs  # metric — the input/output breakdown
+        assert tokens_row_fgs.index("#c9a84c") < tokens_row_fgs.index("#a8884a")
 
     def test_turn_with_tool_summaries(self):
         from siftd.output.painted_bridge import render_query_detail_block
@@ -1279,6 +1293,23 @@ class TestRenderQueryDetailBlock:
         )
         text = _block_to_text(result)
         assert "AI response text" in text
+
+    def test_prompt_markdown_table_renders_as_real_table(self):
+        # Pins the slice's Line/Block routing through _body_parts: a markdown table
+        # in a prompt body must surface prose as Lines AND a real table Block (not
+        # raw pipe source), in order — the contract plain-content tests can't catch.
+        from siftd.output.painted_bridge import render_query_detail_block
+
+        detail = FakeDetail()
+        turn = FakeTurn(
+            prompt_text="here is a table:\n\n| Slice | What |\n|---|---|\n| 1 | bump |\n| 2 | rail |",
+            narrative=[FakeNarrativeBlock("text", "ok")],
+        )
+        text = _block_to_text(render_query_detail_block(detail, turns=[turn], fidelity=Fidelity(depth=1)))
+        assert "here is a table" in text  # prose run survives
+        assert "Slice" in text and "What" in text and "bump" in text and "rail" in text
+        assert "|---|" not in text  # markdown source delimiter gone
+        assert text.index("here is a table") < text.index("Slice")  # prose before the table
 
     def test_prompt_only_turn_no_response(self):
         from siftd.output.painted_bridge import render_query_detail_block

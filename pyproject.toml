@@ -29,6 +29,12 @@ dependencies = [
     # talking to a remote siftd-serve works without the server stack. Pure-Python
     # dependency chain (httpcore/h11/certifi/idna/sniffio) — no compiled deps.
     "httpx",
+    # Markdown parsing for transcript bodies. In base (not [serve]) because the
+    # terminal query/peek/show views render markdown too, not just the HTML serve
+    # UI — both human-facing surfaces share this one parser (output/markdown_render
+    # for the terminal, output/narrative HtmlEmitter for serve). Pure-Python, no
+    # compiled deps (same philosophy as httpx above).
+    "mistune>=3.0",
 ]
 
 [project.scripts]
@@ -50,7 +56,6 @@ serve = [
     # exp claim with a hand-rolled base64 parse, no PyJWT), so the cryptography
     # chain stays out of the base install. httpx moved to base deps.
     "PyJWT[crypto]",
-    "mistune>=3.0",
 ]
 dev = [
     "pytest>=8.0",

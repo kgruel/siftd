@@ -14,6 +14,7 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
+    prefers_ascii,
     term_width,
     truncate_text,
 )
@@ -128,6 +129,47 @@ def _append_multiline(
         lines.append(_line((continuation, prefix_style), (part, text_style)))
 
 
+def _body_render_ctx() -> tuple[int, bool]:
+    """(width, ascii_mode) for rendering a markdown body to the current stream.
+
+    Bodies word-wrap to the terminal width (the content budget is a *separate*
+    axis, applied upstream by the walker / ``truncate_text``); ``ascii_mode``
+    degrades the markdown glyphs (bullets/rules/quote gutters) on a non-Unicode
+    stream, the same gate the table/listing/status surfaces use.
+    """
+    return term_width(), prefers_ascii()
+
+
+def _body_parts(text: str, ds: DomainStyles, *, width: int, ascii_mode: bool, limit: int) -> list:
+    """Render a (markdown) body of text into a list of Blocks.
+
+    Caps the text to the content budget, parses markdown, then groups the
+    resulting Lines into Blocks (tables pass through as their own Block). The
+    shared body renderer for user prompts, response-text fallbacks, and follow
+    text; the assistant narrative routes the same ``render_markdown`` through
+    ``PaintedEmitter.text`` so every body speaks one renderer.
+    """
+    from siftd.output.markdown_render import render_markdown
+
+    _, Line, _, _, _, _, _ = _painted()
+    rendered = truncate_text(text.strip(), limit)
+    if not rendered:
+        return []
+    parts: list = []
+    run: list = []
+    for item in render_markdown(rendered, ds, width, ascii_mode=ascii_mode):
+        if isinstance(item, Line):
+            run.append(item)
+        else:
+            if run:
+                parts.append(_lines_to_block(run))
+                run = []
+            parts.append(item)
+    if run:
+        parts.append(_lines_to_block(run))
+    return parts
+
+
 # ---------------------------------------------------------------------------
 # Tool content → painted lines (via format-neutral ToolPresentation)
 # ---------------------------------------------------------------------------
@@ -214,13 +256,22 @@ class PaintedEmitter:
     After walk_narrative() returns, call .result() to get the composed Block.
     """
 
-    def __init__(self, ds: DomainStyles, tool_chars: int) -> None:
+    def __init__(
+        self,
+        ds: DomainStyles,
+        tool_chars: int,
+        *,
+        width: int | None = None,
+        ascii_mode: bool = False,
+    ) -> None:
         from painted import border, pad
 
         self._border = border
         self._pad = pad
         self._ds = ds
         self._tool_chars = tool_chars
+        self._width = width
+        self._ascii = ascii_mode
         self._role_styles = _RoleStyles(
             heading=ds.label,
             meta=ds.separator,
@@ -245,8 +296,18 @@ class PaintedEmitter:
 
     def text(self, content: str, *, event_id: str | None = None) -> None:
         del event_id
-        # Walker already truncated; limit=0 avoids double truncation
-        _append_multiline(self._pending, "  ", self._ds.assistant, content, self._ds.assistant, 0)
+        # Walker already truncated; render markdown structure onto painted spans.
+        # Line-shaped elements join the pending run; a table flushes and lands as
+        # its own Block — same interleaving discipline as tool_content.
+        from siftd.output.markdown_render import render_markdown
+
+        _, Line, _, _, _, _, _ = _painted()
+        for item in render_markdown(content, self._ds, self._width, ascii_mode=self._ascii):
+            if isinstance(item, Line):
+                self._pending.append(item)
+            else:
+                self._flush_lines()
+                self._parts.append(item)
 
     def thinking(self, content: str, *, event_id: str | None = None) -> None:
         del event_id
@@ -349,7 +410,8 @@ def render_narrative_block(
 
     ds = domain_styles(fidelity)
     effective_tool_chars = tool_chars or _tool_density(fidelity)
-    emitter = PaintedEmitter(ds, effective_tool_chars)
+    width, ascii_mode = _body_render_ctx()
+    emitter = PaintedEmitter(ds, effective_tool_chars, width=width, ascii_mode=ascii_mode)
     walk_narrative(blocks, emitter, fidelity=fidelity, tool_chars=effective_tool_chars)
     return emitter.result()
 
@@ -437,35 +499,32 @@ def render_query_detail_block(
     header_lines.append(_line())
     parts.append(_lines_to_block(header_lines))
 
+    width, ascii_mode = _body_render_ctx()
     for turn in turns:
         ts = fmt_timestamp(turn.timestamp, time_only=True)
-        turn_lines: list[Line] = []
         prompt_role_label = getattr(turn, "PROMPT_ROLE_LABEL", ROLE_USER)
         response_role_label = getattr(turn, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if turn.prompt_text:
-            turn_lines.append(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal)))
-            _append_multiline(turn_lines, "  ", ds.assistant, turn.prompt_text, ds.assistant, fidelity.chars)
-            turn_lines.append(_line())
+            parts.append(_line_block(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal))))
+            parts.extend(_body_parts(turn.prompt_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.append(_blank_block())
 
         tool_summaries = turn.tool_call_summaries
         has_response = bool(turn.narrative) or turn.total_input_tokens or turn.total_output_tokens or tool_summaries
         if not has_response:
-            if turn_lines:
-                parts.append(_lines_to_block(turn_lines))
             continue
 
         tok = turn.total_input_tokens + turn.total_output_tokens
-        turn_lines.append(
-            _line(
-                (f"[{response_role_label}] ", ds.prompt),
-                (ts, ds.temporal),
-                (f" ({fmt_tokens(tok)} tok)", ds.metric),
+        parts.append(
+            _line_block(
+                _line(
+                    (f"[{response_role_label}] ", ds.prompt),
+                    (ts, ds.temporal),
+                    (f" ({fmt_tokens(tok)} tok)", ds.metric),
+                )
             )
         )
-
-        if turn_lines:
-            parts.append(_lines_to_block(turn_lines))
 
         if turn.narrative:
             parts.append(render_narrative_block(
@@ -527,16 +586,16 @@ def render_peek_detail_block(
     header_lines.append(_line())
     parts.append(_lines_to_block(header_lines))
 
+    width, ascii_mode = _body_render_ctx()
     for exchange in exchanges:
         ts = fmt_timestamp(exchange.timestamp, time_only=True)
-        ex_lines: list[Line] = []
         prompt_role_label = getattr(exchange, "PROMPT_ROLE_LABEL", ROLE_USER)
         response_role_label = getattr(exchange, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if exchange.prompt_text:
-            ex_lines.append(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal)))
-            _append_multiline(ex_lines, "  ", ds.assistant, exchange.prompt_text, ds.assistant, fidelity.chars)
-            ex_lines.append(_line())
+            parts.append(_line_block(_line((f"[{prompt_role_label}] ", ds.prompt), (ts, ds.temporal))))
+            parts.extend(_body_parts(exchange.prompt_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+            parts.append(_blank_block())
 
         has_response = bool(
             exchange.narrative
@@ -546,21 +605,18 @@ def render_peek_detail_block(
             or exchange.output_tokens
         )
         if not has_response:
-            if ex_lines:
-                parts.append(_lines_to_block(ex_lines))
             continue
 
         total_tokens = exchange.input_tokens + exchange.output_tokens
-        ex_lines.append(
-            _line(
-                (f"[{response_role_label}] ", ds.prompt),
-                (ts, ds.temporal),
-                (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
+        parts.append(
+            _line_block(
+                _line(
+                    (f"[{response_role_label}] ", ds.prompt),
+                    (ts, ds.temporal),
+                    (f" ({fmt_tokens(total_tokens)} tok)", ds.metric),
+                )
             )
         )
-
-        if ex_lines:
-            parts.append(_lines_to_block(ex_lines))
 
         if exchange.narrative:
             parts.append(render_narrative_block(
@@ -569,10 +625,7 @@ def render_peek_detail_block(
                 tool_chars=tool_chars,
             ))
         elif exchange.response_text:
-            resp_lines: list[Line] = []
-            _append_multiline(resp_lines, "  ", ds.assistant, exchange.response_text, ds.assistant, fidelity.chars)
-            if resp_lines:
-                parts.append(_lines_to_block(resp_lines))
+            parts.extend(_body_parts(exchange.response_text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
 
         if not exchange.narrative and exchange.tool_calls:
             parts.append(_lines_to_block(_tool_summary_lines(
@@ -599,14 +652,14 @@ def render_follow_event_block(
 
     ds = domain_styles(fidelity)
     ts = fmt_timestamp(getattr(event, "timestamp", None), time_only=True)
+    width, ascii_mode = _body_render_ctx()
 
     if getattr(event, "is_user", False):
-        lines: list[Line] = []
-        lines.append(_line((f"[{ROLE_USER}] ", ds.prompt), (ts, ds.temporal)))
+        parts: list[Block] = [_line_block(_line((f"[{ROLE_USER}] ", ds.prompt), (ts, ds.temporal)))]
         text = getattr(event, "text", None)
         if text:
-            _append_multiline(lines, "  ", ds.assistant, text, ds.assistant, fidelity.chars)
-        return _lines_to_block(lines)
+            parts.extend(_body_parts(text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
+        return parts[0] if len(parts) == 1 else join_vertical(*parts)
 
     total_tokens = getattr(event, "input_tokens", 0) + getattr(event, "output_tokens", 0)
     header_parts: list[tuple[str, Style]] = [
@@ -616,7 +669,7 @@ def render_follow_event_block(
     if total_tokens:
         header_parts.append((f" ({fmt_tokens(total_tokens)} tok)", ds.metric))
 
-    parts: list[Block] = [_line_block(_line(*header_parts))]
+    parts = [_line_block(_line(*header_parts))]
 
     narrative = getattr(event, "narrative", [])
     if narrative:
@@ -628,10 +681,7 @@ def render_follow_event_block(
     else:
         text = getattr(event, "text", None)
         if text:
-            text_lines: list[Line] = []
-            _append_multiline(text_lines, "  ", ds.assistant, text, ds.assistant, fidelity.chars)
-            if text_lines:
-                parts.append(_lines_to_block(text_lines))
+            parts.extend(_body_parts(text, ds, width=width, ascii_mode=ascii_mode, limit=fidelity.chars))
         tool_calls = getattr(event, "tool_calls", [])
         if tool_calls:
             parts.append(_lines_to_block(_tool_summary_lines(

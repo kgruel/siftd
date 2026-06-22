@@ -354,12 +354,25 @@ class TestFidelityIntegration:
         assert "$ ls" not in text
 
     def test_density_truncates_text(self):
-        text_block = NarrativeBlock(block_type="text", content="A" * 200)
+        # Representative prose (words, not one giant token) so the content-budget
+        # "..." marker lands at a word boundary and survives the body word-wrap.
+        text_block = NarrativeBlock(block_type="text", content="word " * 60)
         fidelity = Fidelity(depth=1, chars=80)
         lines = _render([text_block], fidelity=fidelity)
         text = "\n".join(lines)
         assert "..." in text
-        assert len(text) < 200
+        assert len(text) < 300
+
+    def test_density_truncates_over_width_single_token(self, monkeypatch):
+        # The case that forced the test above to use prose: a single unbroken token
+        # wider than the wrap width. The content budget still caps it, but the "..."
+        # marker straddles the hard-split boundary — so undo the wrap before checking.
+        monkeypatch.setenv("COLUMNS", "80")
+        text_block = NarrativeBlock(block_type="text", content="A" * 200)
+        lines = _render([text_block], fidelity=Fidelity(depth=1, chars=80))
+        flat = "\n".join(lines).replace("\n", "").replace(" ", "")
+        assert "..." in flat  # marker present once the wrap is undone
+        assert flat.count("A") == 77  # capped to chars - len(suffix), not 200
 
     def test_density_zero_no_truncation(self):
         text_block = NarrativeBlock(block_type="text", content="A" * 200)

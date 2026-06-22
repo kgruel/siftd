@@ -42,6 +42,10 @@ class DomainStyles:
     prompt: Style        # user prompt label + text
     assistant: Style     # assistant response text
     thinking: Style      # model thinking/reasoning — depth-gated prominence
+    code: Style          # inline/fenced code in narrative bodies — readable, not
+                         # dimmed (the web keeps code at full fg + a bg chip; the
+                         # terminal can't chip, so it recedes by weight, not by
+                         # going unreadable). Distinct from tool_input (tool I/O).
 
     # --- Tool rendering ---
     tool_name: Style     # tool call header (shell.execute, file.read, etc.)
@@ -98,7 +102,12 @@ def _make_theme():
         warning=Style(fg="#d4a843"),   # gold
         error=Style(fg="#c85050"),     # soft red
         accent=Style(bold=True),       # no hue — structure pops by weight, not colour
-        muted=Style(fg="#505862"),     # slate
+        # The dim FLOOR for peripheral chrome (timestamps, tool-status, arrows,
+        # separators). Warmed + raised from the old cool slate #505862 (≈2.5:1,
+        # which made dense surfaces read as a low-contrast wash): a warm grey-gold
+        # that recedes but stays legible. Single point of control — every muted
+        # consumer lifts at once.
+        muted=Style(fg="#8f836a"),     # warm dim — the chrome floor
         # Categorical ramp in the identity hues (error/warning/success + the bright
         # amber). Unused today (no flame surface) but kept blue-free so a future
         # chart inherits the warm identity rather than reviving the dropped accent.
@@ -131,30 +140,43 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
     # siftd-identity tones the painted role vocabulary can't name (see _make_theme):
     # the amber "sifting for gold" thread at two weights, a third text weight, and
     # the teal used for tags/agents. Hex renders truecolor and downsamples.
+    # The warm rebalance (eyeball-driven): differentiation was almost all brightness
+    # (accent=weight, gold the only hue) over a COOL grey ramp, and primary content
+    # (code/identifiers) was dimmed — dense surfaces read as a low-contrast wash. So
+    # body text is an explicit warm CREAM (the theme now owns the foreground on its
+    # dark substrate), the literal-token family (code + identifiers) gets a warm
+    # TERRACOTTA hue instead of grey, and the grey ramp itself warms. Gold (metrics)
+    # and teal (tags) stay the semantic anchors. (Light-terminal caveat per
+    # _make_theme still applies — more so now that the body fg is explicit.)
+    cream = Style(fg="#e4d9bf")        # body text — warm + bright, the new default fg
+    terracotta = Style(fg="#d69a58")   # code + identifiers — the warm literal hue
     amber = Style(fg="#c9a84c")        # bright — headline figures (the loud tier)
-    amber_dim = Style(fg="#8a7a3a")    # dim — inline metrics (tokens/cost/counts)
-    secondary = Style(fg="#8a8a9a")    # third text weight, between fg and muted
+    amber_dim = Style(fg="#a8884a")    # inline metrics — warmed+raised from #8a7a3a
+    secondary = Style(fg="#a89a82")    # third weight (fg→muted) — warmed from cool grey
     teal = Style(fg="#5ba8a0")         # tags, agents
 
-    # Thinking prominence: secondary italic by default, brighter when explicitly shown
+    # Thinking prominence: secondary italic by default, cream when explicitly shown
     thinking_visible = fidelity is not None and fidelity.shows("thinking")
     if thinking_visible:
-        thinking = Style(italic=True)
+        thinking = cream.merge(Style(italic=True))
     else:
         thinking = secondary.merge(Style(italic=True))
 
     return DomainStyles(
-        # Identifiers & labels
-        identifier=p.accent,
+        # Identifiers & labels — ids get the warm literal hue + bold (copy-paste
+        # targets keep their weight). The palette `accent` role stays hue-less, so
+        # pure-structural accents (search rank rail, match highlight) stay weight-only.
+        identifier=terracotta.merge(Style(bold=True)),
         tag=teal,
 
-        # Narrative roles
-        prompt=p.accent,
-        assistant=Style(),
+        # Narrative roles — body cream; prompt/role labels cream + weight.
+        prompt=cream.merge(Style(bold=True)),
+        assistant=cream,
         thinking=thinking,
+        code=terracotta,  # the warm literal hue — readable, distinct from prose
 
         # Tool rendering
-        tool_name=p.accent,
+        tool_name=cream.merge(Style(bold=True)),
         tool_input=p.muted,
         tool_result=Style(),
         tool_error=p.error,

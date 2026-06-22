@@ -1468,6 +1468,7 @@ source = { editable = "." }
 dependencies = [
     { name = "asyncssh" },
     { name = "httpx" },
+    { name = "mistune" },
     { name = "painted" },
     { name = "tomlkit" },
 ]
@@ -1494,7 +1495,6 @@ embed = [
 ]
 serve = [
     { name = "litestar", extra = ["standard"] },
-    { name = "mistune" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "uvicorn" },
 ]
@@ -1508,7 +1508,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "litestar", extras = ["standard"], marker = "extra == 'serve'" },
-    { name = "mistune", marker = "extra == 'serve'", specifier = ">=3.0" },
+    { name = "mistune", specifier = ">=3.0" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
     { name = "painted", editable = "../painted" },
