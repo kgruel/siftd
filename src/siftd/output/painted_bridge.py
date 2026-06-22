@@ -774,12 +774,10 @@ def render_list_block(
     if not summaries:
         return None
 
-    import sys
-
     from painted import Align, join_vertical
 
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
-    from siftd.output.table import Col, render_table
+    from siftd.output.table import Col, render_table, table_budget
     from siftd.output.theme import domain_styles
 
     ds = domain_styles(fidelity)
@@ -811,8 +809,8 @@ def render_list_block(
             Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=ds.tag),
         ])
 
-    width = term_width() if sys.stdout.isatty() else None
-    table_block = render_table(cols, summaries, width=width)
+    width, as_ascii = table_budget()
+    table_block = render_table(cols, summaries, width=width, as_ascii=as_ascii)
     footer = _caveat_footer_block(caveats or [], fidelity)
     if footer is None:
         return table_block
@@ -830,11 +828,10 @@ def render_peek_list_block(
     if not sessions:
         return None
 
-    import sys
     import time
 
     from siftd.output import fmt_ago, fmt_model
-    from siftd.output.table import Col, render_table
+    from siftd.output.table import Col, render_table, table_budget
     from siftd.output.theme import domain_styles
 
     ds = domain_styles()
@@ -865,8 +862,8 @@ def render_peek_list_block(
         Col("agents", _suffix, style=ds.agent),
     ]
 
-    width = term_width() if sys.stdout.isatty() else None
-    return render_table(cols, sessions, width=width)
+    width, as_ascii = table_budget()
+    return render_table(cols, sessions, width=width, as_ascii=as_ascii)
 
 
 # ---------------------------------------------------------------------------

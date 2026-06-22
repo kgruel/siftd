@@ -206,9 +206,8 @@ class _IngestTextRenderer:
     def _print_summary_table(self, stats: IngestStats) -> None:
         from painted import Align, current_palette, join_vertical, print_block
 
-        from siftd.output.common import term_width
         from siftd.output.live import text_row
-        from siftd.output.table import Col, render_table
+        from siftd.output.table import Col, render_table, table_budget
         from siftd.output.theme import domain_styles
 
         pal = current_palette()
@@ -236,8 +235,8 @@ class _IngestTextRenderer:
                 align=Align.END, style=ds.metric),
         ]
 
-        budget = term_width() if sys.stdout.isatty() else None
-        table_block = render_table(cols, yielded, width=budget)
+        budget, as_ascii = table_budget()
+        table_block = render_table(cols, yielded, width=budget, as_ascii=as_ascii)
         totals = text_row([("  " + self._format_totals_line(stats), pal.muted)])
         parts = [table_block, totals]
         if self.verbose:

@@ -155,6 +155,29 @@ def test_print_table_degrades_the_rule_when_piped(capsys):
     assert "─" not in out and "-" in out
 
 
+def test_table_budget_drops_budget_on_an_incapable_tty(monkeypatch):
+    # The single decision behind print_table AND the block-returning render_table
+    # callers (query/peek lists, ingest summary): a non-UTF-8 LANG=C TTY drops the
+    # width budget to None — so painted draws no '…' to crash a strict-ASCII
+    # stream — and asks for the ASCII rule.
+    from siftd.output import table
+
+    monkeypatch.setattr("sys.stdout", _TTY())
+    monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: True)
+    monkeypatch.setattr(table, "term_width", lambda *a, **k: 20)
+    assert table.table_budget() == (None, True)
+
+
+def test_table_budget_keeps_budget_on_a_capable_tty(monkeypatch):
+    # A UTF-8 TTY keeps the terminal width budget and the Unicode rule.
+    from siftd.output import table
+
+    monkeypatch.setattr("sys.stdout", _TTY())
+    monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: False)
+    monkeypatch.setattr(table, "term_width", lambda *a, **k: 80)
+    assert table.table_budget() == (80, False)
+
+
 # --- left-ellipsis keeps the path leaf --------------------------------------
 
 

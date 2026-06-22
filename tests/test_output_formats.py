@@ -70,7 +70,9 @@ class TestTerminalRenderList:
         # header + separator + 2 data rows
         assert len(lines) == 4
         assert "id" in lines[0]
-        assert "─" in lines[1]
+        # Non-TTY (this capture, and real pipes) degrades the header rule ─→-,
+        # consistent with print_table — the list now wires as_ascii like it.
+        assert "-" in lines[1]
 
         # Data row: only id, timestamp, workspace
         assert "01ABCDEF" in lines[2]
@@ -118,7 +120,8 @@ class TestTerminalRenderList:
         assert len(lines) == 4
         assert "id" in lines[0]
         assert "tags" in lines[0]
-        assert "─" in lines[1]
+        # Non-TTY degrades the header rule ─→- (consistent with print_table).
+        assert "-" in lines[1]
         assert "review, bug" in lines[2]
 
     def test_empty_list_returns_none(self):

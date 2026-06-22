@@ -161,29 +161,36 @@ def render_string_table(
     return render_table(cols, rows, width=width, as_ascii=as_ascii)
 
 
+def table_budget() -> tuple[int | None, bool]:
+    """The ``(width, as_ascii)`` a painted table should render at for stdout.
+
+    The single point of control for the table layout decision, shared by
+    ``print_table`` and the block-returning ``render_table`` callers (the
+    ``query``/``peek`` lists and the ``ingest`` summary). A capable TTY keeps the
+    terminal width budget — painted may ellipsize an over-budget column with the
+    painted-owned ``…`` marker. An incapable stream (the ``prefers_ascii`` case:
+    a pipe, or a non-UTF-8 ``LANG=C`` TTY) drops the budget to natural sizing, so
+    nothing truncates — no ``…`` to garble, or to *crash* a strict-ASCII stream
+    mid-table — and the header rule degrades to ``-`` via ``as_ascii``.
+    """
+    ascii_mode = prefers_ascii()
+    width = term_width() if (sys.stdout.isatty() and not ascii_mode) else None
+    return width, ascii_mode
+
+
 def print_table(columns: list[str], rows: list[list[str]]) -> None:
     """Render and print a string table, budgeted to the terminal on a TTY.
 
     The painted-backed replacement for the old ``len()``-based string table:
-    same call shape, but wcwidth-correct, width-budgeted, and themed. Non-TTY
-    output keeps natural widths (no truncation) so pipes stay machine-readable,
-    and the header rule degrades to ``-`` for a non-Unicode target.
-
-    A width budget makes painted ellipsize an over-budget column with ``…`` — a
-    Unicode glyph ``as_ascii`` can't reach (painted owns the marker, no ASCII
-    form). On an incapable stream (the ``prefers_ascii`` case: a pipe or a
-    non-UTF-8 ``LANG=C`` TTY) that ``…`` would garble — and *crash* a strict-ASCII
-    stream mid-table. So drop the budget there: the table sizes naturally (no
-    truncation, no ``…``) and only the degraded ``-`` rule is drawn. A capable
-    TTY keeps the budget and the ``…`` marker. (The three direct ``render_table``
-    callers — query/peek lists, the ingest summary — don't yet wire this; their
-    incapable-TTY degradation is a separate, pre-existing follow-up.)
+    same call shape, but wcwidth-correct, width-budgeted (via ``table_budget``),
+    and themed. Non-TTY / non-Unicode output keeps natural widths (no truncation,
+    so pipes stay machine-readable and no ``…`` crashes a strict-ASCII stream)
+    and the header rule degrades to ``-``.
     """
     from painted import print_block
 
-    ascii_mode = prefers_ascii()
-    budget = term_width() if (sys.stdout.isatty() and not ascii_mode) else None
-    block = render_string_table(columns, rows, width=budget, as_ascii=ascii_mode)
+    width, ascii_mode = table_budget()
+    block = render_string_table(columns, rows, width=width, as_ascii=ascii_mode)
     print_block(block)
 
 
