@@ -186,9 +186,14 @@ class TestRenderSearchBlock:
             }
             for i in range(8)
         ]
-        text = _block_text(
-            render_search_block(results, Fidelity(), query="snippet", mode="conversations")
-        )
+        from painted import ASCII_ICONS, use_icons
+
+        # The rail glyphs degrade via the ambient IconSet — the lever main() sets
+        # for a non-Unicode stream; the snippet ellipsis still degrades per-call.
+        with use_icons(ASCII_ICONS):
+            text = _block_text(
+                render_search_block(results, Fidelity(), query="snippet", mode="conversations")
+            )
         for glyph in ("◆", "│", "·", "…"):
             assert glyph not in text
         text.encode("ascii")  # raises if any Unicode glyph leaked through
@@ -199,9 +204,12 @@ class TestRenderSearchBlock:
         # Thread: tier1 heading carries the ── separator; tier2 carries the rail.
         tier1 = [{"_workspace": "w", "_started_at": "2026-01-01", "display_label": "USER", "text": "x"}]
         tier2 = [{"conversation_id": "01T", "_workspace": "w", "_started_at": "2026-01-02", "score": 3.0, "text": "y"}]
-        thread = _block_text(
-            render_search_block([], Fidelity(), query="x", mode="thread", tier1=tier1, tier2=tier2)
-        )
+        from painted import ASCII_ICONS, use_icons
+
+        with use_icons(ASCII_ICONS):
+            thread = _block_text(
+                render_search_block([], Fidelity(), query="x", mode="thread", tier1=tier1, tier2=tier2)
+            )
         assert "─" not in thread and "·" not in thread
         thread.encode("ascii")
 
@@ -211,6 +219,7 @@ class TestRenderSearchBlock:
             "_workspace": "w", "_started_at": "2026-01-01",
             "_context": [("p0", "before", "b", False), ("p1", "match", "m", True)],
         }]
-        chunks = _block_text(render_search_block(ctx, Fidelity(), query="match", mode="chunks"))
+        with use_icons(ASCII_ICONS):
+            chunks = _block_text(render_search_block(ctx, Fidelity(), query="match", mode="chunks"))
         assert "▸" not in chunks
         chunks.encode("ascii")

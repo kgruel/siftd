@@ -27,6 +27,27 @@ def test_query_with_db(test_db):
     assert rc == 0
 
 
+def test_main_installs_ascii_icons_on_nonunicode_stream(test_db, monkeypatch):
+    """main() drives the icon lever: when stdout can't render Unicode (a pipe or a
+    LANG=C TTY) the ambient IconSet becomes ASCII process-wide, so every glyph
+    consumer degrades from one control point."""
+    from painted import ASCII_ICONS, current_icons
+
+    monkeypatch.setattr("siftd.output.common.prefers_ascii", lambda *a, **k: True)
+    main(["--db", str(test_db), "query"])
+    assert current_icons() is ASCII_ICONS
+
+
+def test_main_keeps_unicode_icons_on_capable_tty(test_db, monkeypatch):
+    """On a Unicode-capable stream the lever doesn't fire — the ambient set stays
+    the default Unicode IconSet that use_theme installed (the rail keeps ◆/│/·)."""
+    from painted import IconSet, current_icons
+
+    monkeypatch.setattr("siftd.output.common.prefers_ascii", lambda *a, **k: False)
+    main(["--db", str(test_db), "query"])
+    assert current_icons() == IconSet()
+
+
 def test_unknown_subcommand():
     """Unknown subcommand prints help and exits non-zero."""
     with pytest.raises(SystemExit) as exc_info:

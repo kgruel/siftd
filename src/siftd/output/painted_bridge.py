@@ -885,13 +885,6 @@ def render_peek_list_block(
 _EXPAND_HEAD = 3       # full-snippet head once the result set is "large"
 _EXPAND_ALL_MAX = 5    # at or below this many results, expand every hit
 
-# Rank-rail glyphs as (unicode, ascii): the ascii forms degrade on a LANG=C TTY
-# (the rail is otherwise un-gated unicode — the one read surface that never
-# consulted prefers_ascii). ◆ is in the supports_unicode probe so the gate fires.
-_RAIL_TOP = ("◆ ", "* ")
-_RAIL_MID = ("│ ", "| ")
-_RAIL_TAIL = ("· ", ". ")
-
 
 def _expand_count(n: int) -> int:
     """How many top hits render the full snippet (the rest collapse to one line).
@@ -1043,36 +1036,39 @@ def _snippet_block(
 
 
 def _relevance_rail(
-    rank: int, height: int, expand: int, *, force_tail: bool = False, ascii_mode: bool = False
+    rank: int, height: int, expand: int, *, force_tail: bool = False
 ) -> Block:
     """Left rail encoding relevance rank: top hit promoted, tail dim.
 
     The glyph carries the rank even when color is stripped (NO_COLOR), matching
-    doctor's severity glyphs, and degrades to an ASCII form on a non-Unicode TTY.
-    ``expand`` is the disclosure-head size (the rail tier boundary, from
-    ``_expand_count``); ``force_tail`` marks an always-collapsed row (the thread
-    "more results" tier).
+    doctor's severity glyphs. The glyph vocabulary is the ambient IconSet's rank
+    ladder (``rank_top``/``rank_mid``/``rank_tail``), so it ASCII-degrades via the
+    one icon lever set at ``main()`` rather than a threaded flag. ``expand`` is the
+    disclosure-head size (the rail tier boundary, from ``_expand_count``);
+    ``force_tail`` marks an always-collapsed row (the thread "more results" tier).
     """
     Block, _, _, Style, current_palette, _, _ = _painted()
+    from painted import current_icons
+
     p = current_palette()
+    ic = current_icons()
     if force_tail or rank >= expand:
-        glyph, style = _RAIL_TAIL, p.muted
+        glyph, style = ic.rank_tail, p.muted
     elif rank == 0:
-        glyph, style = _RAIL_TOP, p.accent
+        glyph, style = ic.rank_top, p.accent
     else:
-        glyph, style = _RAIL_MID, p.accent
-    head = glyph[1] if ascii_mode else glyph[0]
-    rows = [(head, style)] + [("  ", Style())] * max(0, height - 1)
+        glyph, style = ic.rank_mid, p.accent
+    rows = [(f"{glyph} ", style)] + [("  ", Style())] * max(0, height - 1)
     return Block.column(rows)
 
 
 def _railed(
-    content: Block, rank: int, expand: int, *, force_tail: bool = False, ascii_mode: bool = False
+    content: Block, rank: int, expand: int, *, force_tail: bool = False
 ) -> Block:
     """Prefix a content block with its relevance rail."""
     from painted import join_horizontal
 
-    rail = _relevance_rail(rank, content.height, expand, force_tail=force_tail, ascii_mode=ascii_mode)
+    rail = _relevance_rail(rank, content.height, expand, force_tail=force_tail)
     return join_horizontal(rail, content)
 
 
@@ -1172,7 +1168,7 @@ def render_search_block(
             ]
             header = _meta_header(left, r.get("max_score"), inner)
             excerpt = _snippet_block(r.get("best_excerpt", ""), inner, oneline=oneline, ascii_mode=ascii_mode)
-            out.append(_railed(join_vertical(header, excerpt), rank, expand, ascii_mode=ascii_mode))
+            out.append(_railed(join_vertical(header, excerpt), rank, expand))
             out.append(_blank_block())
 
     elif mode == "thread":
@@ -1218,7 +1214,7 @@ def render_search_block(
                 header = _meta_header(left, r.get("score"), inner)
                 snippet = _snippet_block(r.get("text", ""), inner, oneline=True, ascii_mode=ascii_mode)
                 out.append(_railed(
-                    join_vertical(header, snippet), rank, expand2, force_tail=True, ascii_mode=ascii_mode,
+                    join_vertical(header, snippet), rank, expand2, force_tail=True,
                 ))
                 out.append(_blank_block())
 
@@ -1232,7 +1228,7 @@ def render_search_block(
             # collapses to one line. --around results (exchanges/context) and
             # --full (inner is None) always expand.
             if inner is not None and rank >= expand and not exchanges and not context_data:
-                out.append(_railed(_minimal_chunk_line(r, inner, ds), rank, expand, ascii_mode=ascii_mode))
+                out.append(_railed(_minimal_chunk_line(r, inner, ds), rank, expand))
                 out.append(_blank_block())
                 continue
 
@@ -1272,7 +1268,7 @@ def render_search_block(
                 hint += f" --at-turn {turn_index}"
             rows.append(_line_block(_line((hint, ds.summary))))
 
-            out.append(_railed(join_vertical(*rows), rank, expand, ascii_mode=ascii_mode))
+            out.append(_railed(join_vertical(*rows), rank, expand))
             out.append(_blank_block())
 
     for c in caveats:

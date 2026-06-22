@@ -134,6 +134,19 @@ def main(argv=None) -> int:
     from siftd.output.theme import siftd_theme
 
     use_theme(siftd_theme)
+    # One glyph-degradation control point (the icon twin of the theme lever):
+    # use_theme installed the ambient IconSet (the default Unicode set); override
+    # it to ASCII when stdout can't render Unicode (a pipe or a LANG=C TTY) so
+    # every glyph consumer — the search rank rail, spinners, rules — degrades from
+    # here rather than threading an ascii flag through each call. prefers_ascii
+    # keys off the live sys.stdout; a per-stream exception (a stderr surface)
+    # scope-overrides with its own use_icons.
+    from siftd.output.common import prefers_ascii
+
+    if prefers_ascii():
+        from painted import ASCII_ICONS, use_icons
+
+        use_icons(ASCII_ICONS)
     parser = argparse.ArgumentParser(
         prog="siftd",
         description="Aggregate and query LLM conversation logs",
