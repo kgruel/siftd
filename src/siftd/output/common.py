@@ -55,9 +55,9 @@ def should_use_ansi(stream: "TextIO | None" = None) -> bool:
     """Whether ``stream`` should receive ANSI colour/style escapes.
 
     painted's ``print_block`` defaults ``use_ansi`` to ``stream.isatty()`` and
-    never consults ``NO_COLOR``; siftd honours the convention here so every CLI
-    surface strips colour when the user asks (https://no-color.org), not only
-    when piped. A non-empty ``NO_COLOR`` (the widely-adopted reading) disables
+    never consults ``NO_COLOR``; this honours the convention so every CLI surface
+    strips colour when the user asks (https://no-color.org), not only when
+    piped. A non-empty ``NO_COLOR`` (the widely-adopted reading) disables
     colour even on a TTY; otherwise an interactive TTY gets colour and a pipe
     does not. Callers pass the result as ``print_block(..., use_ansi=...)``.
     ``stream`` defaults to ``sys.stdout``.
