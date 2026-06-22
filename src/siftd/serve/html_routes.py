@@ -70,6 +70,13 @@ _NAV_ITEMS: tuple[tuple[str, str, str, str, str], ...] = (
 )
 _VIEW_TITLES = {vid: name for vid, _n, name, _d, _u in _NAV_ITEMS}
 
+# Views whose state lives in the canonical URL (stats ?model=, workspaces ?sort=)
+# and whose htmx rail item enhance.js REWRITES at settle (data-resume) so
+# re-clicking RESUMES that state (last-selected) instead of resetting to the bare
+# view — while keeping htmx's history snapshots intact. (Search also resumes, but
+# via its own JS-driven path: its state is DOM-derived, not URL-derived.)
+_RESUMABLE_VIEWS = frozenset({"stats", "workspaces"})
+
 
 def _stub(view: str, title: str, hint: str = "coming in a later slice") -> str:
     """A neutral placeholder for a view not yet authored in this slice.
@@ -372,20 +379,25 @@ def _page_shell(
             f'<span class="ds">{esc(ds)}</span></span>'
         )
         if vid == "search":
-            # Search is JS-driven (data-nav-search): re-clicking it resumes the
-            # last query (last-selected) when one is remembered, else opens a
-            # fresh surface. It can't be htmx-declarative — the mount URL is
-            # dynamic, and htmx's delegated click handler can't be pre-empted to
-            # swap in the remembered surface. enhance.js owns this one click.
+            # Search is JS-driven (data-nav-search): re-clicking resumes the last
+            # query (last-selected). It CAN'T be htmx-declarative — its mount is
+            # derived from the live filter DOM, not the URL, and htmx's delegated
+            # click can't be pre-empted to swap in that mount. Its back/forward is
+            # handled by the inline server-render of the search shell in #main
+            # (the 3a retain crux), not by htmx snapshots. enhance.js owns it.
             nav_parts.append(f'<a data-view="search"{cur} data-nav-search>{inner}</a>')
             continue
-        # Every other rail item pushes its canonical shell URL (/?view=<vid>), so
-        # the address bar stays canonical and back/forward + refresh land on the
-        # right view. State-bearing views gain state from their drill-downs.
+        # Every other rail item is htmx-declarative: it pushes its canonical shell
+        # URL (/?view=<vid>) and htmx snapshots #main into history so back/forward
+        # restore the prior view. The resumable views (stats/workspaces) carry
+        # their state in the URL, so enhance.js REWRITES this rail item's hx-get +
+        # hx-push-url at settle (data-resume) to resume the last model-brush / sort
+        # — keeping htmx's history snapshots intact (unlike a JS-driven swap).
+        resume = f' data-resume="{vid}" data-mount-base="{esc(url)}"' if vid in _RESUMABLE_VIEWS else ""
         push_attr = f' hx-push-url="{esc(_canonical_url(vid))}"'
         nav_parts.append(
             f'<a data-view="{vid}"{cur} hx-get="{esc(url)}" hx-target="#main"'
-            f' hx-swap="innerHTML"{push_attr}>{inner}</a>'
+            f' hx-swap="innerHTML"{push_attr}{resume}>{inner}</a>'
         )
     nav = "".join(nav_parts)
 

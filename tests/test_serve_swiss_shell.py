@@ -313,6 +313,19 @@ def test_search_nav_is_js_driven_not_stub(ctx):
     assert 'hx-get="/view/search"' not in body
 
 
+def test_stats_and_workspaces_nav_are_resumable(ctx):
+    """Stats + Workspaces rail items stay htmx-declarative (so htmx keeps the
+    history snapshots) but carry data-resume + data-mount-base, the hooks
+    enhance.js rewrites at settle so re-clicking resumes the last brush / sort."""
+    client, _cid = ctx
+    body = client.get("/").text
+    # htmx mount is still present (history snapshots intact) AND the resume hooks.
+    assert 'hx-get="/dashboard"' in body and 'data-resume="stats"' in body
+    assert 'data-mount-base="/dashboard"' in body
+    assert 'hx-get="/view/workspaces"' in body and 'data-resume="workspaces"' in body
+    assert 'data-mount-base="/view/workspaces"' in body
+
+
 def test_find_deep_link_propagates_query(ctx):
     """?q= deep-links through the shell to /find, which seeds both the control
     strip (prefill) and the initial list with the term."""
@@ -1197,12 +1210,15 @@ def test_htmx_get_of_fragment_serves_fragment_not_redirect(tmp_path):
 
 
 def test_nav_pushes_canonical_view_urls(ctx):
-    # Every rail item pushes its canonical /?view=<vid> shell URL (was: only
-    # three pushed, and they pushed a bare "/").
+    # The stateless rail items push their canonical /?view=<vid> shell URL
+    # declaratively via htmx. The three resumable views (search/stats/workspaces)
+    # are JS-driven — they push their (possibly stateful) canonical URL in
+    # enhance.js to resume last-selected, not via hx-push-url.
     client, _cid = ctx
     body = client.get("/").text
     # Search is JS-driven (resumes the last query) — it pushes its canonical URL
-    # in enhance.js, not via hx-push-url. The other five push declaratively.
+    # in enhance.js, not via hx-push-url. The other five push declaratively
+    # (stats/workspaces have their push rewritten at settle to resume state).
     for vid in ("sessions", "transcript", "tags", "workspaces", "stats"):
         assert f'hx-push-url="/?view={vid}"' in body
     assert "data-nav-search" in body

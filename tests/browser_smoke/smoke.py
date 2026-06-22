@@ -562,6 +562,22 @@ async def flow(cdp, check, goto, code_conv):
     still_ws = await cdp.eval("!!document.querySelector('#main .workspaces')")
     check("recency sort drops the magnitude bar", bool(no_bar) and bool(still_ws), f"no_bar={no_bar}")
 
+    # last-selected: the sort lives in the canonical URL, so leaving Workspaces
+    # and re-clicking the rail item RESUMES the chosen sort (the bar stays off),
+    # not the default sessions order.
+    sorted_url = await cdp.eval("location.search")
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="workspaces"]')
+    await cdp.drain(1.5)
+    ws_resumed_url = await cdp.eval("location.search")
+    ws_resumed_nobar = await cdp.eval("!document.querySelector('#main .ledger--ws .ledger__bar')")
+    check(
+        "re-clicking Workspaces resumes the last sort (last-selected)",
+        ws_resumed_url == sorted_url and bool(ws_resumed_nobar),
+        f"sorted={sorted_url} resumed={ws_resumed_url} no_bar={ws_resumed_nobar}",
+    )
+
     # stats reckoning: initReck must scale the server-emitted trend bars (set
     # --h under CSP, CSSOM-only) and the Tokens|Cost toggle must re-draw the
     # charts + re-sort the accounts with no round-trip. Invisible to the unit
@@ -594,6 +610,26 @@ async def flow(cdp, check, goto, code_conv):
         "!!document.querySelector('#main .ledger--account .ledger__row.is-current')"
     )
     check("model brushing scopes the activity charts", brushed is True)
+
+    # last-selected (3a, generalized): the brush state lives in the canonical URL,
+    # so leaving Stats and re-clicking the rail item RESUMES the brushed scope
+    # rather than resetting to a bare dashboard.
+    brushed_url = await cdp.eval("location.search")
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.5)
+    resumed_url = await cdp.eval("location.search")
+    resumed_scope = await cdp.eval(
+        "!!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .ledger--account .ledger__row.is-current')"
+    )
+    check(
+        "re-clicking Stats resumes the last model-brush (last-selected)",
+        resumed_url == brushed_url and resumed_scope is True,
+        f"brushed={brushed_url} resumed={resumed_url} scope={resumed_scope}",
+    )
+
     await cdp.click('#main .reck__clear')
     await cdp.drain(1.2)
     cleared = await cdp.eval(

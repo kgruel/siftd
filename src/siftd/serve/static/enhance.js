@@ -407,7 +407,9 @@
   // (data-nav-search, no htmx attrs) precisely so htmx's delegated click handler
   // ignores it and there's no race: we own the mount. With a remembered query we
   // resume it (results + canonical URL); otherwise a fresh /find. The mount swaps
-  // #main via htmx.ajax and we push the canonical shell URL ourselves.
+  // #main via htmx.ajax and we push the canonical shell URL ourselves. Search's
+  // back/forward rides the inline server-render of its shell (not htmx history),
+  // which is why it can be JS-driven without losing restore.
   var lastSearchMount = null, lastSearchShell = null;
   document.addEventListener('click', function (e) {
     var a = e.target.closest && e.target.closest('[data-nav-search]');
@@ -417,7 +419,42 @@
     history.pushState(history.state, '', lastSearchShell || '/?view=search');
   });
 
-  function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); syncFindUrl(); }
+  // Last-selected for the URL-state views (stats ?model=, workspaces ?sort=).
+  // Unlike search these stay HTMX-DECLARATIVE so htmx keeps snapshotting #main
+  // into history (back/forward restore the prior view). We only REWRITE the rail
+  // item's hx-get (mount) + hx-push-url (shell) from the current URL at settle,
+  // so re-clicking resumes the live state. A bare view restores the base mount.
+  // htmx reads these attributes fresh at click time, so the rewrite takes effect
+  // without re-processing the node — and history stays htmx-managed throughout.
+  function syncResumeNav() {
+    var p = new URLSearchParams(location.search);
+    var view = p.get('view');
+    // Only rewrite the rail item for the view currently showing — it captures
+    // the live state (or clears to base when bare). Leaving the OTHER resumable
+    // rails untouched is the whole point: their last-rewritten target must
+    // survive while the user is elsewhere, so re-clicking resumes it.
+    var a = document.querySelector('[data-resume="' + view + '"]');
+    if (!a) return;
+    var base = a.getAttribute('data-mount-base') || '/';
+    p.delete('view');
+    var rest = p.toString();
+    a.setAttribute('hx-get', rest ? base + '?' + rest : base);
+    a.setAttribute('hx-push-url', rest ? location.pathname + location.search : '/?view=' + view);
+  }
+
+  // htmx reads hx-push-url fresh at click time but CACHES hx-get (the mount), so
+  // syncResumeNav's rewritten mount alone is ignored. configRequest fires before
+  // each request with a mutable path — override it from the rail's current hx-get
+  // so the resume mount actually lands, while htmx keeps managing history (the
+  // snapshot + push). This is why stats/workspaces stay declarative not JS-driven.
+  document.body.addEventListener('htmx:configRequest', function (evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (elt && elt.getAttribute && elt.getAttribute('data-resume')) {
+      evt.detail.path = elt.getAttribute('hx-get');
+    }
+  });
+
+  function enhance() { wireTone(); drawLedgers(); drawHists(); drawHitMeters(); initReck(); syncChrome(); initSpy(); initToolSpy(); highlight(); scrollToEvent(); tailLiveFolio(); wireSessionToggles(); wireWorkspaceFilter(); syncFindUrl(); syncResumeNav(); }
 
   document.body.addEventListener('htmx:afterSettle', enhance);
   applyTone();
