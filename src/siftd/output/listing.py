@@ -78,16 +78,18 @@ def _value_segments(value: ValueCell, default_style: Style) -> list[tuple[str, S
     return [(_oneline(value), default_style)]
 
 
-def heading(text: str, *, as_ascii: bool = False) -> Block:
+def heading(text: str) -> Block:
     """A section title — an accent title over a thin ``─`` underline rule.
 
     The accent title with a muted ``─`` rule beneath it (spanning the title's
     display width), echoing the gutter table's header rule so a section header
     and a table read as one family. Border-free and single-column, so it wraps
-    and degrades cleanly at any width. ``as_ascii`` degrades the rule ``─`` →
-    ``-`` for a non-Unicode target (``print_heading`` decides it from the stream).
+    and degrades cleanly at any width. The underline is painted's ``rule()``,
+    which reads the ambient ``IconSet.rule`` — the global icon lever degrades it
+    ``─`` → ``-`` on a non-Unicode stdout, the same control point the search rank
+    rail uses, so no per-call ASCII flag is threaded.
     """
-    from painted import current_palette, join_vertical
+    from painted import join_vertical, rule
 
     from siftd.output.row import row_line
     from siftd.output.theme import domain_styles
@@ -95,18 +97,14 @@ def heading(text: str, *, as_ascii: bool = False) -> Block:
     title = _oneline(text)
     title_line = row_line([(title, domain_styles().label)])
     width = title_line.width
-    rule = ("-" if as_ascii else "─") * width
-    rule_line = row_line([(rule, current_palette().muted)])
-    return join_vertical(title_line.to_block(width), rule_line.to_block(width))
+    return join_vertical(title_line.to_block(width), rule(width))
 
 
 def print_heading(text: str) -> None:
     """Render and print an underlined accent section title to stdout."""
     from painted import print_block
 
-    from siftd.output.common import prefers_ascii
-
-    print_block(heading(text, as_ascii=prefers_ascii()))
+    print_block(heading(text))
 
 
 def definitions(

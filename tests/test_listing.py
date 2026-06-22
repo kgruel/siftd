@@ -117,10 +117,14 @@ def test_heading_is_accent_title_over_an_underline():
 
 
 def test_heading_underline_degrades_to_ascii():
-    # On a non-Unicode target the ─ rule degrades to - (the same gate the table
-    # header rule uses); the title is untouched.
+    # On a non-Unicode target the ─ rule degrades to - via the ambient IconSet —
+    # the global icon lever main() flips on a LANG=C stdout, the same control
+    # point the rank rail uses (conftest restores the icons after the test).
+    from painted import ASCII_ICONS, use_icons
+
     with use_theme(siftd_theme):
-        block = heading("title", as_ascii=True)
+        use_icons(ASCII_ICONS)
+        block = heading("title")
     lines = _text(block).splitlines()
     assert lines[0] == "title"
     assert set(lines[1]) == {"-"}  # ASCII rule, not ─
