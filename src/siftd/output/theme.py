@@ -73,6 +73,13 @@ class DomainStyles:
     thinking_border: BorderChars  # box around thinking blocks
 
 
+# Cream — the warm body foreground. The one identity tone with two homes: the
+# palette `text` substrate (the default fg for every role-less cell, set in
+# _make_theme) and the explicit narrative body roles (assistant/prompt/tool_name,
+# set in domain_styles). One hex, one point of control.
+_CREAM = "#e4d9bf"
+
+
 def _make_theme():
     from painted import LIGHT, ROUNDED, Palette, Style, Theme
 
@@ -108,6 +115,16 @@ def _make_theme():
         # that recedes but stays legible. Single point of control — every muted
         # consumer lifts at once.
         muted=Style(fg="#8f836a"),     # warm dim — the chrome floor
+        # Substrate ownership: cream is the default foreground for every
+        # otherwise-unstyled cell — search snippets, plain table cells, tool
+        # output — not just the narrative bodies that name it explicitly in
+        # domain_styles. resolve_style layers this UNDER each cell's style at the
+        # writer's SGR boundary, so an explicit fg (terracotta/amber/teal/muted)
+        # always wins and only role-less text inherits it; NO_COLOR / pipes strip
+        # it like any other hue. This closes the warm-rebalance scope boundary
+        # (plain text was still on the terminal's own fg). The dark-substrate
+        # light-terminal caveat above now applies theme-wide, not to bodies alone.
+        text=Style(fg=_CREAM),
         # Categorical ramp in the identity hues (error/warning/success + the bright
         # amber). Unused today (no flame surface) but kept blue-free so a future
         # chart inherits the warm identity rather than reviving the dropped accent.
@@ -148,7 +165,7 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
     # TERRACOTTA hue instead of grey, and the grey ramp itself warms. Gold (metrics)
     # and teal (tags) stay the semantic anchors. (Light-terminal caveat per
     # _make_theme still applies — more so now that the body fg is explicit.)
-    cream = Style(fg="#e4d9bf")        # body text — warm + bright, the new default fg
+    cream = Style(fg=_CREAM)           # body text — warm + bright; also the palette substrate
     terracotta = Style(fg="#d69a58")   # code + identifiers — the warm literal hue
     amber = Style(fg="#c9a84c")        # bright — headline figures (the loud tier)
     amber_dim = Style(fg="#a8884a")    # inline metrics — warmed+raised from #8a7a3a
