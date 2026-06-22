@@ -466,7 +466,8 @@ def test_search_fts_only_sort_time_orders_results(monkeypatch, tmp_path, capsys)
     args = make_args(query=["q"], db=str(db), json=True, sort="time")
     assert _search_fts_only(args, db, "q") == 0
     out = json.loads(capsys.readouterr().out)
-    assert [r["conversation_id"] for r in out["results"]] == ["c1", "c2"]
+    # --sort=time is newest-first (9c8a35f8): c2 (2024-01-02) leads c1 (2024-01-01).
+    assert [r["conversation_id"] for r in out["results"]] == ["c2", "c1"]
 
 
 def test_search_fts_only_additional_error_and_warning_branches(monkeypatch, tmp_path, capsys):
