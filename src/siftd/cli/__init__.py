@@ -42,6 +42,40 @@ def _configure_cli_logging() -> None:
         logger.setLevel(logging.INFO)
 
 
+def _relax_output_encoding() -> None:
+    """Let stdout/stderr tolerate content the terminal's codec can't encode.
+
+    Conversation bodies carry arbitrary Unicode — em-dashes, emoji, CJK. On a
+    strict-ASCII stream (LANG=C, or PYTHONIOENCODING=ascii) Python's default
+    ``errors='strict'`` raises ``UnicodeEncodeError`` mid-render, crashing query,
+    peek, search and every other content surface. Switching the *stream's* error
+    handler to ``backslashreplace`` degrades the offending character to a visible,
+    reversible escape (``\\u2014``) instead of crashing.
+
+    This is application I/O policy and belongs here, at the entry point, beside
+    ``use_theme`` — a stream's error handler is owned by whoever owns the stream
+    (us), so painted (correctly) never reconfigures one it's handed. It's also the
+    *only* correct lever for arbitrary user content: ``prefers_ascii`` glyph
+    routing governs only the decorative characters siftd's own renderer emits,
+    not data passing through. ``encoding`` is left untouched (only the error
+    handler changes), and machine output is unaffected — ``--format json``
+    serializes ASCII-safe via ``json.dumps``' ``ensure_ascii`` default.
+
+    Best-effort: pytest capture and some redirects replace the streams with
+    objects that lack ``reconfigure`` (skipped) or that reject it (caught); either
+    way the stream keeps its existing policy rather than the hardening step itself
+    becoming a crash source.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (ValueError, OSError):
+            pass
+
+
 # Top-level command lanes — the story `siftd --help` tells. The lane legend
 # rides the epilog; the per-command descriptions remain in the listing above it.
 _LANES: tuple[tuple[str, str], ...] = (
@@ -88,6 +122,7 @@ def _hide_plumbing(subparsers) -> None:
 
 def main(argv=None) -> int:
     _configure_cli_logging()
+    _relax_output_encoding()
     # Apply siftd's NORD palette process-wide so every painted surface — status,
     # query, search, show, peek, tables, doctor — renders in one theme. Setter
     # semantics: persists for the rest of the process. painted strips color for

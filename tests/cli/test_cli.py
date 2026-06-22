@@ -1,10 +1,11 @@
 """CLI smoke tests — verify commands parse and run without import errors."""
 
+import sys
 
 import pytest
 from conftest import FIXTURES_DIR
 
-from siftd.cli import main
+from siftd.cli import _relax_output_encoding, main
 
 
 def test_help_exits_zero():
@@ -464,3 +465,54 @@ class TestFTS5ErrorHandling:
         rc = main(["--db", str(test_db), "export", "-s", "hello"])
         # rc could be 0 (found) or 1 (not found), but not a crash
         assert rc in (0, 1)
+
+
+class TestRelaxOutputEncoding:
+    """The entry-point hardening that keeps non-ASCII conversation content from
+    crashing a strict-ASCII stream (LANG=C / PYTHONIOENCODING=ascii)."""
+
+    @staticmethod
+    def _ascii_stream():
+        import io
+
+        return io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+
+    def test_degrades_non_ascii_content_instead_of_crashing(self, monkeypatch):
+        """Pins the mechanism: a strict-ASCII stream raises on a conversation
+        em-dash (the production crash); after relaxing, the same content becomes a
+        visible, reversible escape and the write survives."""
+        # Baseline — strict ASCII is exactly the crash the fix targets.
+        before = self._ascii_stream()
+        with pytest.raises(UnicodeEncodeError):
+            before.write("em-dash —")
+            before.flush()
+
+        out, err = self._ascii_stream(), self._ascii_stream()
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        _relax_output_encoding()
+
+        # Both streams now degrade rather than raise; encoding stays ASCII.
+        assert out.errors == "backslashreplace"
+        assert err.errors == "backslashreplace"
+        assert out.encoding == "ascii"
+
+        out.write("em-dash —\n")
+        out.flush()
+        assert out.buffer.getvalue().decode("ascii") == "em-dash \\u2014\n"
+
+    def test_tolerates_streams_that_lack_or_reject_reconfigure(self, monkeypatch):
+        """Best-effort: pytest capture / odd redirects either have no reconfigure
+        or reject it — the hardening step must never become its own crash."""
+        import io
+
+        class NoReconfigure(io.StringIO):
+            pass  # StringIO has no reconfigure → getattr returns None, skipped
+
+        class RejectsReconfigure(io.StringIO):
+            def reconfigure(self, **kwargs):
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "stdout", NoReconfigure())
+        monkeypatch.setattr(sys, "stderr", RejectsReconfigure())
+        _relax_output_encoding()  # must return cleanly, no exception
