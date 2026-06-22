@@ -243,7 +243,9 @@ class _IngestTextRenderer:
             detail = self._skip_reasons_detail()
             if detail:
                 parts.append(text_row([("  skipped: " + detail, pal.muted)]))
-        print_block(join_vertical(*parts))
+        from siftd.output.common import should_use_ansi
+
+        print_block(join_vertical(*parts), use_ansi=should_use_ansi())
 
     def _skip_reasons_detail(self) -> str | None:
         """Aggregate skip-reason breakdown across all adapters, or None."""

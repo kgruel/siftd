@@ -89,9 +89,11 @@ def _lines_to_block(lines: list[Line]) -> Block:
 
 
 def print_block(block: Block) -> None:
-    """Print a painted block with auto-detected ANSI/plain behavior."""
+    """Print a painted block, honouring TTY + NO_COLOR for ANSI/plain behavior."""
+    from siftd.output.common import should_use_ansi
+
     _, _, _, _, _, _, painted_print_block = _painted()
-    painted_print_block(block)
+    painted_print_block(block, use_ansi=should_use_ansi())
 
 
 def emit_output(result) -> None:

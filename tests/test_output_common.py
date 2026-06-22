@@ -15,6 +15,7 @@ from siftd.output.common import (
     print_indented,
     print_refs_content,
     role_label,
+    should_use_ansi,
     split_match_segments,
     supports_unicode,
     truncate_text,
@@ -164,6 +165,42 @@ def test_prefers_ascii(monkeypatch):
 
     monkeypatch.setattr("sys.stdout", _Std("utf-8", True))
     assert prefers_ascii(_Pipe()) is True
+
+
+# --- should_use_ansi (NO_COLOR) ---
+
+
+def test_should_use_ansi_honors_tty_and_no_color(monkeypatch):
+    import io
+
+    class _Std(io.StringIO):
+        def __init__(self, tty):
+            super().__init__()
+            self._tty = tty
+
+        def isatty(self) -> bool:
+            return self._tty
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    # A TTY without NO_COLOR gets colour; a pipe never does.
+    monkeypatch.setattr("sys.stdout", _Std(True))
+    assert should_use_ansi() is True
+    monkeypatch.setattr("sys.stdout", _Std(False))
+    assert should_use_ansi() is False
+
+    # NO_COLOR (non-empty, the widely-adopted reading) disables colour on a TTY —
+    # painted itself never checks the var, so this is the lever that honours it.
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr("sys.stdout", _Std(True))
+    assert should_use_ansi() is False
+
+    # An empty NO_COLOR does not disable (non-empty reading).
+    monkeypatch.setenv("NO_COLOR", "")
+    assert should_use_ansi() is True
+
+    # An explicit stream drives the isatty() check.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    assert should_use_ansi(_Std(False)) is False
 
 
 # --- format_table ---

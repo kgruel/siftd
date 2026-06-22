@@ -17,9 +17,10 @@ Both atoms compose the shared ``output.row`` row atom + ``join_vertical`` (no
 painted change), return a ``Block`` (not printed text), and stay CJK/ANSI-correct.
 A ``definitions`` value may be a plain string or a sequence of ``(text, style)``
 segments, so one value can carry a styled run — e.g. a coloured severity glyph
-ahead of plain text. Colour is auto-stripped by ``print_block`` for a non-TTY /
-``NO_COLOR`` and the ``─`` rule degrades to ``-`` for a non-Unicode target; a
-caller that wants plain labels (a machine-ish surface) passes ``label_style``.
+ahead of plain text. Colour is stripped for a non-TTY / ``NO_COLOR`` (the print
+helpers pass ``should_use_ansi``) and the ``─`` rule degrades to ``-`` for a
+non-Unicode target; a caller that wants plain labels (a machine-ish surface)
+passes ``label_style``.
 """
 
 from __future__ import annotations
@@ -104,7 +105,9 @@ def print_heading(text: str) -> None:
     """Render and print an underlined accent section title to stdout."""
     from painted import print_block
 
-    print_block(heading(text))
+    from siftd.output.common import should_use_ansi
+
+    print_block(heading(text), use_ansi=should_use_ansi())
 
 
 def definitions(
@@ -176,6 +179,8 @@ def print_definitions(
     """
     from painted import print_block
 
+    from siftd.output.common import should_use_ansi
+
     print_block(
         definitions(
             pairs,
@@ -183,5 +188,6 @@ def print_definitions(
             gutter=gutter,
             label_style=label_style,
             value_style=value_style,
-        )
+        ),
+        use_ansi=should_use_ansi(),
     )

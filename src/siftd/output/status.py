@@ -13,8 +13,9 @@ ASCII-degrading) + message, optionally with a muted detail or "↳ hint" line.
 
 Stream policy (overridable via ``stream=``): confirmations -> stdout (the
 command's answer); info / warning / error -> stderr, so a piped stdout (or a
-``--json`` payload) stays clean. Color is auto-stripped for non-TTY / NO_COLOR by
-painted; glyphs degrade to ASCII under a non-UTF-8 locale.
+``--json`` payload) stays clean. Colour is stripped for a non-TTY / ``NO_COLOR``
+(``should_use_ansi`` — painted itself only checks isatty); glyphs degrade to
+ASCII under a non-UTF-8 locale.
 
 This is the human-presentation layer only. ``--json`` branches stay the caller's
 (they are machine-output keepers); a status line never writes onto a ``--json``
@@ -26,7 +27,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from siftd.output.common import prefers_ascii
+from siftd.output.common import prefers_ascii, should_use_ansi
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -127,7 +128,7 @@ def _emit(
             block = callout(subject, severity=callout_severity, detail=detail, hint=hint)
     else:
         block = callout(subject, severity=callout_severity, detail=detail, hint=hint)
-    print_block(block, out)
+    print_block(block, out, use_ansi=should_use_ansi(out))
 
 
 def confirm(subject: str, *, detail: str | None = None, hint: str | None = None,

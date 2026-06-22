@@ -125,9 +125,10 @@ def main(argv=None) -> int:
     _relax_output_encoding()
     # Apply siftd's NORD palette process-wide so every painted surface — status,
     # query, search, show, peek, tables, doctor — renders in one theme. Setter
-    # semantics: persists for the rest of the process. painted strips color for
-    # non-TTY / NO_COLOR output, so this is inert when piped. Imported lazily to
-    # keep painted off the module-import path.
+    # semantics: persists for the rest of the process. The print_block sites
+    # honour TTY + NO_COLOR (output/common.should_use_ansi) — painted itself only
+    # checks isatty — so the palette is inert when piped or colour is disabled.
+    # Imported lazily to keep painted off the module-import path.
     from painted import use_theme
 
     from siftd.output import status

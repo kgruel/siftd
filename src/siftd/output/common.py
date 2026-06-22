@@ -3,6 +3,7 @@
 Shared by peek, query, search, and export commands.
 """
 
+import os
 import re
 import shutil
 import sys
@@ -48,6 +49,22 @@ def prefers_ascii(stream: "TextIO | None" = None) -> bool:
     """
     out = stream if stream is not None else sys.stdout
     return not (out.isatty() and supports_unicode())
+
+
+def should_use_ansi(stream: "TextIO | None" = None) -> bool:
+    """Whether ``stream`` should receive ANSI colour/style escapes.
+
+    painted's ``print_block`` defaults ``use_ansi`` to ``stream.isatty()`` and
+    never consults ``NO_COLOR``; siftd honours the convention here so every CLI
+    surface strips colour when the user asks (https://no-color.org), not only
+    when piped. A non-empty ``NO_COLOR`` (the widely-adopted reading) disables
+    colour even on a TTY; otherwise an interactive TTY gets colour and a pipe
+    does not. Callers pass the result as ``print_block(..., use_ansi=...)``.
+    ``stream`` defaults to ``sys.stdout``.
+    """
+    out = stream if stream is not None else sys.stdout
+    isatty = hasattr(out, "isatty") and out.isatty()
+    return isatty and not os.environ.get("NO_COLOR")
 
 
 def term_width(fallback: int = 80) -> int:

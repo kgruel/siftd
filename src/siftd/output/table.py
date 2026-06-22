@@ -189,9 +189,11 @@ def print_table(columns: list[str], rows: list[list[str]]) -> None:
     """
     from painted import print_block
 
+    from siftd.output.common import should_use_ansi
+
     width, ascii_mode = table_budget()
     block = render_string_table(columns, rows, width=width, as_ascii=ascii_mode)
-    print_block(block)
+    print_block(block, use_ansi=should_use_ansi())
 
 
 # --- helpers ---------------------------------------------------------------
