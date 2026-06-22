@@ -87,7 +87,7 @@ def render_table(
     ``-`` for a non-Unicode target (``print_table`` decides it at the stream).
     """
     from painted import Align, Line, Span, Style
-    from painted.views import AUTO, Column, Fill, Overflow, TableState, table
+    from painted.views import AUTO, Column, EllipsisSide, Fill, Overflow, TableState, table
 
     style_for = lambda c: c.style if c.style is not None else Style()  # noqa: E731
     align_for = lambda c: c.align if c.align is not None else Align.START  # noqa: E731
@@ -99,7 +99,7 @@ def render_table(
             align=align_for(c),
             min_width=c.min_width,
             ellipsis=True,
-            ellipsis_side=Align.START if c.ellipsis_left else Align.END,
+            ellipsis_side=EllipsisSide.START if c.ellipsis_left else EllipsisSide.END,
         )
         for c in cols
     ]

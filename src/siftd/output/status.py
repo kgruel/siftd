@@ -115,10 +115,11 @@ def _emit(
     color is left to painted's ``print_block`` auto-detection.
     """
     from painted import ASCII_ICONS, print_block, use_icons
-    from painted.views import callout
+    from painted.views import Severity, callout
 
     out = stream if stream is not None else (sys.stdout if severity == "success" else sys.stderr)
-    callout_severity = _CALLOUT_SEVERITY.get(severity, "info")
+    # painted 0.4.0 hardened callout's `severity` from a string to the Severity enum.
+    callout_severity = Severity(_CALLOUT_SEVERITY.get(severity, "info"))
     as_ascii = prefers_ascii(out)
 
     if as_ascii:

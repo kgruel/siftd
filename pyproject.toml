@@ -22,7 +22,7 @@ classifiers = [
 ]
 dependencies = [
     "asyncssh",
-    "painted>=0.3.1",
+    "painted>=0.4.0",
     "tomlkit",
     # Client-side HTTP: sync push/pull, serve delegation, and device-code token
     # refresh all need an HTTP client. In base (not [serve]) so a thin client
@@ -69,12 +69,6 @@ dev = [
     "ty",
     "chardet<6",
 ]
-
-# DEV ONLY — iterate against the local painted feat/table-overflow-ellipsis
-# branch (Overflow.FIT + Column.ellipsis), unpublished. Revert this source and
-# bump the `painted>=` pin to the published release before merging this branch.
-[tool.uv.sources]
-painted = { path = "../painted", editable = true }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/siftd"]

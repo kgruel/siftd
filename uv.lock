@@ -1070,23 +1070,14 @@ wheels = [
 
 [[package]]
 name = "painted"
-version = "0.3.1"
-source = { editable = "../painted" }
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "wcwidth" },
 ]
-
-[package.metadata]
-requires-dist = [{ name = "wcwidth", specifier = ">=0.2" }]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "hypothesis", specifier = ">=6.0" },
-    { name = "pytest", specifier = ">=8.0" },
-    { name = "pytest-asyncio", specifier = ">=0.23" },
-    { name = "pytest-cov", specifier = ">=6.0" },
-    { name = "ruff", specifier = ">=0.8" },
-    { name = "ty", specifier = ">=0.0.1a11" },
+sdist = { url = "https://files.pythonhosted.org/packages/c3/73/c35cb7f68e865cbbf92f6266444e5a37b3378d67067495f4b161464943ab/painted-0.4.0.tar.gz", hash = "sha256:a1c52e9698f74b11ba9dec020e6a6fca4ca2511873f429d7507a7b6f450db583", size = 1140497, upload-time = "2026-06-22T19:32:07.664Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/69/5f/d98f5ca5d7ffb0d1ce19786101abad3c16297504dbad9a55e2e55eef8e4c/painted-0.4.0-py3-none-any.whl", hash = "sha256:dedd5d02c7ea14701cf78ccdd53d8e839170a3399063ce372af5eb2296af245c", size = 171628, upload-time = "2026-06-22T19:32:05.886Z" },
 ]
 
 [[package]]
@@ -1511,7 +1502,7 @@ requires-dist = [
     { name = "mistune", specifier = ">=3.0" },
     { name = "numpy", marker = "extra == 'embed'" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
-    { name = "painted", editable = "../painted" },
+    { name = "painted", specifier = ">=0.4.0" },
     { name = "prysk", marker = "extra == 'dev'" },
     { name = "pyjwt", extras = ["crypto"], marker = "extra == 'serve'" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
