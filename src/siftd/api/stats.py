@@ -443,15 +443,45 @@ def _dict_to_stats(data: dict) -> DatabaseStats:
     return dict_to_stats(data)
 
 
-def write_stats_cache(stats: DatabaseStats, *, owner: str | None = None) -> None:
+def effective_db_mtime_ns(db_path: Path | None = None) -> int:
+    """DB mtime in nanoseconds for stats-cache freshness, 0 if missing/unreadable.
+
+    Read-through callers capture this BEFORE the get_stats sweep and thread it
+    into :func:`write_stats_cache`: a write that lands mid-sweep then leaves the
+    stamp older than the live mtime, so the next ``require_fresh`` read recomputes
+    instead of certifying pre-write totals. Stamping at write time (the default
+    fallback) is only correct when nothing wrote during the read. Resolves None to
+    the default path, matching :func:`read_stats_cache`'s freshness comparison.
+    """
+    path = db_path or default_db_path()
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def write_stats_cache(
+    stats: DatabaseStats,
+    *,
+    owner: str | None = None,
+    db_mtime_ns: int | None = None,
+) -> None:
     """Atomically write stats to the cache file (per-owner when scoped).
 
-    Includes db_mtime_ns for staleness detection and computed_at timestamp.
+    Includes db_mtime_ns for staleness detection and computed_at timestamp. Pass
+    ``db_mtime_ns`` captured BEFORE the get_stats read (see
+    :func:`effective_db_mtime_ns`) so a write landing mid-recompute can't stamp a
+    post-write mtime onto pre-write content; when omitted, the mtime is taken at
+    write time.
     """
     payload = {
         "_meta": {
             "computed_at": datetime.now(UTC).isoformat(),
-            "db_mtime_ns": stats.db_path.stat().st_mtime_ns if stats.db_path.exists() else 0,
+            "db_mtime_ns": (
+                db_mtime_ns
+                if db_mtime_ns is not None
+                else effective_db_mtime_ns(stats.db_path)
+            ),
         },
         **_stats_to_dict(stats),
     }

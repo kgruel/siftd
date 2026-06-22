@@ -495,9 +495,15 @@ def set_tag_pin(
 
     Owner-scoped: the pin lives under the effective identity, so one tenant's
     pins never touch another's view. Resolves the tag by name; a nonexistent tag
-    is a no-op (returns False) — you cannot pin what isn't there. Manages its own
-    connection and transaction.
+    is a no-op (returns False) — you cannot pin what isn't there. Under an owner
+    scope, *pin* additionally requires that the owner actually uses the tag, so a
+    crafted request can't pin a foreign tenant's tag and surface its name (a
+    cross-tenant existence oracle); the unscoped (``owner`` None) case keeps the
+    existence-only guard, matching its see-everything view. *Unpin* is always
+    allowed (it only removes state), mirroring :func:`set_workspace_pin`. Manages
+    its own connection and transaction.
     """
+    from siftd.storage.tags import owner_uses_tag as _owner_uses
     from siftd.storage.tags import pin_tag as _pin
     from siftd.storage.tags import unpin_tag as _unpin
 
@@ -509,13 +515,17 @@ def set_tag_pin(
     conn = _open_database(path)
     try:
         tag_id = _get_tag_id(conn, name)
-        if not tag_id:
+        if not pinned:
+            # Unpin always allowed: it only removes the owner's own state, and a
+            # missing tag (its pins already cascade-deleted) simply has nothing
+            # to remove.
+            changed = _unpin(conn, owner=owner, tag_id=tag_id) if tag_id else False
+        elif not tag_id:
             return False
-        changed = (
-            _pin(conn, owner=owner, tag_id=tag_id)
-            if pinned
-            else _unpin(conn, owner=owner, tag_id=tag_id)
-        )
+        elif owner and not _owner_uses(conn, tag_id, owner):
+            return False  # can't pin a tag this owner doesn't use
+        else:
+            changed = _pin(conn, owner=owner, tag_id=tag_id)
         conn.commit()
         return changed
     finally:

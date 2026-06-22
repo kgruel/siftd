@@ -655,6 +655,7 @@ def ui_dashboard(
         return red
 
     from siftd.api.stats import (
+        effective_db_mtime_ns,
         get_cost_coverage,
         get_input_economy,
         get_stats,
@@ -675,9 +676,13 @@ def ui_dashboard(
     # miss pays the sweep once, then writes back. Ingest pre-warms owner=None.
     stats = read_stats_cache(db_path=db_path, owner=owner, require_fresh=True)
     if stats is None:
+        # Capture mtime BEFORE the sweep: a push landing mid-recompute then leaves
+        # the stamp stale, so the next read recomputes rather than certifying
+        # pre-push totals (the per-owner entry a push's own refresh never fixes).
+        db_mtime = effective_db_mtime_ns(db_path)
         stats = get_stats(db_path=db_path, owner=owner)
         try:
-            write_stats_cache(stats, owner=owner)
+            write_stats_cache(stats, owner=owner, db_mtime_ns=db_mtime)
         except OSError:
             pass
 
@@ -1846,7 +1851,7 @@ def ui_export(
             " Use a longer prefix or full ID.</p>"
         )
     if artifact.count == 0:
-        return _html_response(f'<p class="empty">Not found: {id[:12]}</p>')
+        return _html_response(f'<p class="empty">Not found: {escape(id[:12])}</p>')
 
     return Response(
         content=artifact.content.encode(),

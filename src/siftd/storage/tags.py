@@ -215,6 +215,61 @@ def tag_used_by_other_owners(
     return False
 
 
+def owner_uses_tag(
+    conn: sqlite3.Connection,
+    tag_id: str,
+    owner: str | None,
+) -> bool:
+    """Return True when this tag is associated with an entity ``owner`` owns.
+
+    The owner-scoped analogue of the existence check in :func:`set_tag_pin`, and
+    the positive inverse of :func:`tag_used_by_other_owners` (``co.user_id = ?``
+    rather than ``!= ?``). ``list_tags`` is owner-scoped, so the pin write guards
+    on the owner actually using the tag — otherwise a crafted request could pin a
+    foreign tenant's tag and surface its name (a cross-tenant existence oracle),
+    exactly as the workspace-pin participation guard prevents for workspaces.
+    """
+    if not owner:
+        return False
+    if not has_conversation_owners_table(conn):
+        return False
+
+    # conversation-kind: direct ownership join
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversation_owners co ON co.conversation_id = ta.target_id "
+        "WHERE ta.tag_id = ? AND ta.target_kind = 'conversation' AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # tool_call/prompt/response/exchange-kind: ownership via event → conversation
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN events e ON e.id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
+        "WHERE ta.tag_id = ? AND ta.target_kind IN ('tool_call','prompt','response','exchange') "
+        "AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # workspace-kind: the owner participates if any conversation in the workspace is theirs
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversations c ON c.workspace_id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = c.id "
+        "WHERE ta.tag_id = ? AND ta.target_kind = 'workspace' AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    return False
+
+
 def ensure_tag_pins_table(conn: sqlite3.Connection) -> None:
     """Create the per-owner tag-pin table if absent. Idempotent.
 

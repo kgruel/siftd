@@ -51,6 +51,21 @@ def test_ui_shell_returns_html_response(tmp_path):
     assert "chrome--swiss" in resp.content
 
 
+def test_ui_export_escapes_reflected_id_in_not_found(tmp_path):
+    # The /export not-found fragment reflects the requested id; it must escape it
+    # (the lone escaping holdout among the error fragments) so a crafted id can't
+    # inject markup under the script-src 'unsafe-inline' CSP.
+    from siftd.storage.sqlite import create_database
+
+    db = tmp_path / "db.db"
+    create_database(db).close()
+
+    resp = _run(hr.ui_export.fn(object(), db, id="<img src=x>", format="md"))
+    assert resp.media_type == "text/html"
+    assert "<img src=x>" not in resp.content  # raw markup never reflected
+    assert "&lt;img src=x&gt;" in resp.content  # escaped, truncated to 12 visible chars
+
+
 def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.list_models", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))
     monkeypatch.setattr("siftd.api.stats.list_workspaces", lambda **k: (_ for _ in ()).throw(RuntimeError("x")))

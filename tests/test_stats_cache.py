@@ -18,8 +18,9 @@ from siftd.api.stats import (
     ToolStats,
     WorkspaceStats,
     _dict_to_stats,
-    dict_to_stats,
     _stats_to_dict,
+    dict_to_stats,
+    effective_db_mtime_ns,
     read_stats_cache,
     stats_cache_path,
     write_stats_cache,
@@ -245,6 +246,34 @@ class TestCacheOwnerAndFreshness:
         st = db_file.stat()
         os.utime(db_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
         assert read_stats_cache(db_path=db_file) is not None
+        assert read_stats_cache(db_path=db_file, require_fresh=True) is None
+
+    def test_pre_read_mtime_defeats_the_mid_recompute_race(self, tmp_path, monkeypatch):
+        """A write landing mid-recompute must not be certified fresh.
+
+        Stamping mtime at write time (the default) pins the POST-write mtime onto
+        PRE-write content, so require_fresh wrongly serves stale. Threading the
+        mtime captured BEFORE the read (effective_db_mtime_ns) leaves the stamp
+        older than the live mtime, so the next fresh read recomputes instead."""
+        import os
+
+        db_file = tmp_path / "siftd.db"
+        db_file.write_bytes(b"x" * 1024)
+        stats = _make_stats(db_file)
+        monkeypatch.setattr("siftd.api.stats.cache_dir", lambda: tmp_path / "cache")
+        monkeypatch.setattr("siftd.api.stats.default_db_path", lambda: db_file)
+
+        # Capture mtime, THEN a concurrent writer advances the DB mid-"read".
+        captured = effective_db_mtime_ns(db_file)
+        st = db_file.stat()
+        os.utime(db_file, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+
+        # Default (stamp-at-write) certifies the now-stale content as fresh — the bug.
+        write_stats_cache(stats)
+        assert read_stats_cache(db_path=db_file, require_fresh=True) is not None
+
+        # Threading the pre-read mtime leaves the stamp stale → fresh read recomputes.
+        write_stats_cache(stats, db_mtime_ns=captured)
         assert read_stats_cache(db_path=db_file, require_fresh=True) is None
 
 

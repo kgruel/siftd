@@ -93,6 +93,34 @@ def test_pins_are_owner_scoped(tmp_path):
     assert "alpha" not in [t.name for t in list_tags(db_path=db, owner="bob")]
 
 
+def test_cannot_pin_tag_the_owner_does_not_use(tmp_path):
+    """IDOR guard, mirroring the workspace-pin participation check: a tenant who
+    owns nothing tagged 'alpha' must not be able to pin it — else the pin would
+    surface a foreign tenant's tag NAME (a cross-tenant existence oracle) while
+    its owner-scoped counts stay zero."""
+    db, cid = _db_with_tag(tmp_path / "t.db")
+    conn = open_database(db)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (cid, "alice", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    # bob owns nothing tagged 'alpha' → the pin write is denied (no state change)…
+    assert set_tag_pin("alpha", pinned=True, db_path=db, owner="bob") is False
+    # …and 'alpha' never enters bob's owner-scoped view, pinned or otherwise.
+    assert "alpha" not in [t.name for t in list_tags(db_path=db, owner="bob")]
+    # alice, who uses the tag, can still pin it; the unscoped caller keeps the
+    # existence-only guard (owner=None bypasses participation).
+    assert set_tag_pin("alpha", pinned=True, db_path=db, owner="alice") is True
+    assert set_tag_pin("alpha", pinned=True, db_path=db) is True
+
+
 def test_list_tags_unpinned_when_table_absent(tmp_path):
     """A read-only open of a DB that predates tag_pins (and has had no write-open
     since) must degrade to 'nothing pinned', never raise 'no such table'."""
