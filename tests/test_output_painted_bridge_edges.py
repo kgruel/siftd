@@ -40,6 +40,7 @@ def test_tool_content_title_count_suffix(monkeypatch):
         _pending=[],
         _ds=SimpleNamespace(tool_error=_Style(), tool_name=_Style(), separator=_Style()),
     )
+    d._block_break = lambda: None
     monkeypatch.setattr(pb, "_render_tool_content_lines", lambda *a, **k: [])
     monkeypatch.setattr(pb, "_line", lambda *parts: parts)  # capture header parts
     pb.PaintedEmitter.tool_content(d, "search", 2, None, None, None)

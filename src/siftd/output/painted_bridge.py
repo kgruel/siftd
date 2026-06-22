@@ -292,6 +292,11 @@ class PaintedEmitter:
             self._parts.append(_lines_to_block(self._pending))
             self._pending = []
 
+    def _block_break(self) -> None:
+        """A blank line between narrative blocks — never leading, never doubled."""
+        if self._pending and self._pending[-1].spans:
+            self._pending.append(_line())
+
     # -- NarrativeEmitter interface --
 
     def text(self, content: str, *, event_id: str | None = None) -> None:
@@ -302,6 +307,7 @@ class PaintedEmitter:
         from siftd.output.markdown_render import render_markdown
 
         _, Line, _, _, _, _, _ = _painted()
+        self._block_break()
         for item in render_markdown(content, self._ds, self._width, ascii_mode=self._ascii):
             if isinstance(item, Line):
                 self._pending.append(item)
@@ -315,11 +321,19 @@ class PaintedEmitter:
         # ds.thinking and indented, word-wrapped to the width. Typography over
         # chrome: a transcript is a feed, and a box rule fights a variable-width
         # body (it spanned the terminal and the content overflowed it anyway).
-        _, Line, Span, _, _, _, _ = _painted()
+        _, Line, Span, Style_p, _, _, _ = _painted()
         indent = "      "
         avail = max((self._width or term_width()) - len(indent), 20)
+        # A label that pops: a warm ✻ glyph (amber, the gold thread) + the word
+        # in bold, over the dim italic reasoning. Glyph degrades to * for ASCII.
+        glyph = "* " if self._ascii else "✻ "
+        self._block_break()
         self._pending.append(
-            _line(("    ", self._ds.separator), ("thinking", self._ds.summary))
+            _line(
+                ("    ", self._ds.separator),
+                (glyph, self._ds.metric),
+                ("thinking", self._ds.summary.merge(Style_p(bold=True))),
+            )
         )
         for para in content.strip().split("\n"):
             if not para.strip():
@@ -330,9 +344,18 @@ class PaintedEmitter:
 
     def thinking_placeholder(self, *, event_id: str | None = None) -> None:
         del event_id
-        self._pending.append(_line(("    ", self._ds.separator), ("*[thinking]*", self._ds.thinking)))
+        self._block_break()
+        glyph = "* " if self._ascii else "✻ "
+        self._pending.append(
+            _line(
+                ("    ", self._ds.separator),
+                (glyph, self._ds.metric),
+                ("thinking", self._ds.summary),
+            )
+        )
 
     def tool_summary(self, tools: list[tuple[str, int, str | None]]) -> None:
+        self._block_break()
         self._pending.extend(_tool_summary_lines_styled(tools, self._ds))
 
     def tool_content(
@@ -350,6 +373,7 @@ class PaintedEmitter:
         # A header line — the `→ name` idiom the collapsed tool summary already
         # uses — over the input/result indented beneath. No box (typography over
         # chrome); the call now reads the same expanded or collapsed.
+        self._block_break()
         title_style = self._ds.tool_error if status == "error" else self._ds.tool_name
         header: list[tuple[str, Style]] = [("    → ", self._ds.separator), (name, title_style)]
         if count > 1:
@@ -366,6 +390,7 @@ class PaintedEmitter:
 
     def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
         del event_id
+        self._block_break()
         _append_multiline(
             self._pending,
             f"  [{block_type}] ",
