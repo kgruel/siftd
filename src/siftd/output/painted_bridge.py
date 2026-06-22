@@ -184,16 +184,34 @@ _TOOL_INDENT = "      "  # 6-space indent, consistent with current convention
 def _presentation_to_lines(
     pres: ToolPresentation,
     styles: _RoleStyles,
+    width: int | None = None,
 ) -> list[Line]:
-    """Convert a format-neutral ToolPresentation into painted Lines."""
+    """Convert a format-neutral ToolPresentation into painted Lines.
+
+    The headline (a tool's command) and each output line word-wrap to ``width``
+    so a long command/log reflows to the tool indent — aligned with the rest of
+    the feed — rather than spilling to column 0 under the gutter. ``width=None``
+    (natural sizing) keeps the unwrapped form.
+    """
     lines: list[Line] = []
+
+    def emit(indent: str, spans: list[tuple[str, Style]]) -> None:
+        # Word-wrap one logical line to the content width, every wrapped line at
+        # `indent`; the rail then prefixes each so the run stays railed.
+        if not width:
+            lines.append(_line((indent, styles.meta), *spans))
+            return
+        _, Line_p, Span, _, _, _, _ = _painted()
+        avail = max(width - len(indent), 10)
+        for wl in _wrap_spans([Span(t, s) for t, s in spans], avail):
+            lines.append(Line_p(spans=(Span(indent, styles.meta), *wl.spans)))
 
     # Headline + optional meta suffix
     if pres.headline:
-        parts: list[tuple[str, Style]] = [(_TOOL_INDENT, styles.meta), (pres.headline, styles.tool)]
+        head: list[tuple[str, Style]] = [(pres.headline, styles.tool)]
         if pres.meta:
-            parts.append((f" ({pres.meta})", styles.meta))
-        lines.append(_line(*parts))
+            head.append((f" ({pres.meta})", styles.meta))
+        emit(_TOOL_INDENT, head)
 
     # Diff (edit tool)
     if pres.removed:
@@ -208,9 +226,8 @@ def _presentation_to_lines(
 
     # Output preview (already truncated by extractor)
     if pres.output:
-        result_style = styles.tool_result
         for out_line in pres.output.splitlines():
-            lines.append(_line((_TOOL_INDENT, styles.meta), (out_line, result_style)))
+            emit(_TOOL_INDENT, [(out_line, styles.tool_result)])
     if pres.overflow > 0:
         lines.append(_line((_TOOL_INDENT + f"... +{pres.overflow} more lines", styles.summary_hint)))
 
@@ -228,12 +245,13 @@ def _render_tool_content_lines(
     status: str | None,
     styles: _RoleStyles,
     tool_chars: int,
+    width: int | None = None,
 ) -> list[Line]:
     """Extract tool presentation then render as painted lines."""
     from siftd.output.tool_presenters import extract_tool_presentation
 
     pres = extract_tool_presentation(name, raw_input, raw_result, status, tool_chars)
-    return _presentation_to_lines(pres, styles)
+    return _presentation_to_lines(pres, styles, width)
 
 
 
@@ -421,7 +439,7 @@ class PaintedEmitter:
         self._pending.append(_line(*header))
         self._pending.extend(
             _render_tool_content_lines(
-                name, raw_input, raw_result, status, self._role_styles, self._tool_chars
+                name, raw_input, raw_result, status, self._role_styles, self._tool_chars, self._width
             )
         )
 

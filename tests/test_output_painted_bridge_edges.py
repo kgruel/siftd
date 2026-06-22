@@ -37,6 +37,7 @@ def test_tool_content_title_count_suffix(monkeypatch):
     d = SimpleNamespace(
         _role_styles=_Style(),
         _tool_chars=0,
+        _width=None,
         _pending=[],
         _ds=SimpleNamespace(tool_error=_Style(), tool_name=_Style(), separator=_Style()),
     )

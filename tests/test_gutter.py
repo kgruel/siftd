@@ -134,6 +134,26 @@ def test_railed_lines_never_overflow_the_width(monkeypatch):
     assert block.width <= 50  # the rail prefix never pushes a wrapped line past the width
 
 
+def test_long_tool_command_wraps_to_the_indent(monkeypatch):
+    # A long tool command/output reflows to the tool indent under the rail rather
+    # than spilling to column 0 — aligned with the rest of the feed.
+    import siftd.output.painted_bridge as pb
+    from siftd.output.painted_bridge import render_narrative_block
+
+    monkeypatch.setattr(pb, "term_width", lambda *a, **k: 50)
+    monkeypatch.setattr(pb, "prefers_ascii", lambda *a, **k: True)
+    long_cmd = "git status --short && echo done && git log --oneline -20 && echo finished here"
+    blocks = [_NB("tool_calls", tool_calls=[_TC("shell.execute", input=long_cmd, result="ok", status="success")])]
+    with use_theme(siftd_theme):
+        block = render_narrative_block(
+            blocks, fidelity=Fidelity(visible=frozenset({"tools"}), depth=3)
+        )
+    lines = ["".join(c.char for c in block.row(y)).rstrip() for y in range(block.height)]
+    assert block.width <= 50  # the wrapped command no longer overflows the width
+    # every rendered tool line is railed (leads with +), none spill to column 0
+    assert all(line[0] == "+" for line in lines if line)
+
+
 def test_detail_view_rails_user_and_assistant_distinctly(monkeypatch):
     # The whole turn carries the rail: the prompt takes the bright user mark, the
     # response takes the recessed assistant mark — distinct gutter colours even
