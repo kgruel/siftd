@@ -36,7 +36,7 @@ def test_ui_query_list_path(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.dispatch.dispatch", lambda _op, fmt: "<list/>")
     # A facet (workspace) with no content term takes the browse/dispatch path
     # (Slice 2b: bare no-facet/no-term renders the prompt instead).
-    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="/proj", since=None, before=None, model="", tag=[""], search="", owner=None, n=5))
+    out = _run(hr.ui_query.fn(SimpleNamespace(), tmp_path / "db.db", workspace="/proj", since=None, before=None, model="", tool=None, tag=[""], search="", owner=None, n=5, mode="auto", view="chunks", sort="score", threshold=None, full=None))
     assert "<list/>" in out.content
 
 
@@ -110,7 +110,8 @@ def test_ui_meta_populates_non_empty_options(monkeypatch, tmp_path):
     # Pass facet params explicitly (off-route, Parameter defaults are markers).
     out = _run(hr.ui_meta.fn(
         SimpleNamespace(), tmp_path / "db.db", None, tag=None, view="chunks",
-        mode="auto", workspace=None, model=None, owner=None, since=None, before=None,
+        mode="auto", workspace=None, model=None, tool=None, owner=None,
+        since=None, before=None, sort="score", threshold=None, full=None,
     ))
     assert "/w1" in out.content and "tag1" in out.content and "m1" in out.content
 

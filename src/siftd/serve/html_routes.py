@@ -201,15 +201,18 @@ def _shell_redirect(request: Request, view: str, **state: str | None) -> Redirec
 # names (search/view/mode/…) when it builds the /meta + /query mounts.
 _SEARCH_FACET_KEYS: tuple[str, ...] = (
     "q", "shape", "engine", "workspace", "model", "tag", "tool",
-    "owner", "since", "before",
+    "owner", "since", "before", "sort", "threshold", "full",
 )
 
 # Canonical search-facet name → the /meta + /query CONTROL name (q→search,
-# shape→view result-shape, engine→mode; the rest are identity).
+# shape→view result-shape, engine→mode; the rest are identity). Only NON-DEFAULT
+# state is ever carried, so the canonical URL stays clean (a default toggle/knob
+# is normalized to None at ingress and dropped by _search_control_qs).
 _SEARCH_CANON_TO_CONTROL: dict[str, str] = {
     "q": "search", "shape": "view", "engine": "mode", "workspace": "workspace",
     "model": "model", "tag": "tag", "tool": "tool", "owner": "owner",
-    "since": "since", "before": "before",
+    "since": "since", "before": "before", "sort": "sort",
+    "threshold": "threshold", "full": "full",
 }
 
 
@@ -488,6 +491,8 @@ def ui_shell(
     ws: str | None = Parameter(query="ws", default=None),
     model: str | None = Parameter(query="model", default=None),
     sort: str | None = Parameter(query="sort", default=None),
+    threshold: str | None = Parameter(query="threshold", default=None),
+    full: str | None = Parameter(query="full", default=None),
     follow: str | None = Parameter(query="follow", default=None),
     shape: str | None = Parameter(query="shape", default=None),
     engine: str | None = Parameter(query="engine", default=None),
@@ -516,6 +521,11 @@ def ui_shell(
         "q": q, "shape": shape, "engine": engine, "workspace": workspace,
         "model": model, "tag": tag, "tool": tool, "owner": owner,
         "since": since, "before": before,
+        # Clean-wins (3b-3): only NON-DEFAULT values ride the canonical URL —
+        # sort defaults to score, threshold/full are absent unless engaged.
+        "sort": sort if sort and sort != "score" else None,
+        "threshold": threshold or None,
+        "full": full or None,
     }
     return Response(
         content=_page_shell(
@@ -889,6 +899,9 @@ def ui_find(
     owner: str | None = Parameter(query="owner", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
+    sort: str | None = Parameter(query="sort", default=None),
+    threshold: str | None = Parameter(query="threshold", default=None),
+    full: str | None = Parameter(query="full", default=None),
 ) -> Response:
     """The Swiss 'Find' view: one surface unifying metadata facets + content search.
 
@@ -909,10 +922,12 @@ def ui_find(
     fallback otherwise — the same ranking the CLI/REST surfaces serve, with the
     engine that ran named in the result header.
     """
+    sort_facet = sort if sort and sort != "score" else None
     red = _shell_redirect(
         request, "search",
         q=q, tag=tag, shape=shape, engine=engine, workspace=workspace,
         model=model, tool=tool, owner=owner, since=since, before=before,
+        sort=sort_facet, threshold=threshold or None, full=full or None,
     )
     if red is not None:
         return red
@@ -924,6 +939,7 @@ def ui_find(
         "q": q, "shape": shape, "engine": engine, "workspace": workspace,
         "model": model, "tag": tag, "tool": tool, "owner": owner,
         "since": since, "before": before,
+        "sort": sort_facet, "threshold": threshold or None, "full": full or None,
     }
     return _html_response(_find_host(_search_control_qs(search)))
 
@@ -978,6 +994,9 @@ def ui_meta(
     owner: str | None = Parameter(query="owner", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
+    sort: str = Parameter(query="sort", default="score"),
+    threshold: str | None = Parameter(query="threshold", default=None),
+    full: str | None = Parameter(query="full", default=None),
 ) -> Response:
     """Return the find control strip: a content-search box + search/facet controls.
 
@@ -1007,6 +1026,8 @@ def ui_meta(
         engine=mode if mode != "auto" else None,
         workspace=workspace, model=model, tool=tool,
         owner=owner, since=since, before=before,
+        sort=sort if sort and sort != "score" else None,
+        threshold=threshold or None, full=full or None,
     )
     if red is not None:
         return red
@@ -1125,12 +1146,44 @@ def ui_meta(
                 selected=(mode if mode in SEARCH_MODES else "auto"),
             )
         )
+    # Result ordering (clean-win, 3b-3): relevance (default) or chronological.
+    # ``sort=time`` only applies to the chunks shape — the thread/conversations
+    # shapes impose their own order and ui_query clamps it back to score there,
+    # so the toggle never produces an empty pane via axis validation.
+    from siftd.api.search import SEARCH_SORTS
+
+    search_toggles.append(
+        _toggle(
+            "sort", "Result order",
+            [("score", "Relevance"), ("time", "Time")],
+            selected=(sort if sort in SEARCH_SORTS else "score"),
+        )
+    )
 
     owner_val = f' value="{escape(owner_facet)}"' if owner_facet else ""
     owner_input = (
         f'<input type="text" name="owner" placeholder="Owner"{owner_val}'
         ' hx-get="/query" hx-target="#list" hx-trigger="change"'
         ' hx-include="#filters" class="filter-input">'
+    )
+
+    # Clean-wins in the "more filters" disclosure (3b-3): a min-score threshold
+    # (post-filters the ranked hits — most useful for hybrid/semantic) and a
+    # full-text toggle (the CLI's --verbose: untruncated excerpts). Both apply
+    # only to a content query; with no term they ride along inertly.
+    thr_val = f' value="{escape(threshold)}"' if threshold else ""
+    threshold_input = (
+        '<input type="number" name="threshold" placeholder="min score"'
+        f' step="0.05" min="0" max="1"{thr_val} title="Minimum relevance score"'
+        ' hx-get="/query" hx-target="#list" hx-trigger="change"'
+        ' hx-include="#filters" class="filter-input filter-input--num">'
+    )
+    full_check = (
+        '<label class="find__check" title="Show full chunk text, not a truncated excerpt">'
+        '<input type="checkbox" name="full" value="1"'
+        f'{" checked" if full else ""}'
+        ' hx-get="/query" hx-target="#list" hx-trigger="change"'
+        ' hx-include="#filters">full text</label>'
     )
 
     # Two-state strip (Slice 2c), CSS-only via :has — the strip never re-renders,
@@ -1159,6 +1212,8 @@ def ui_meta(
         + owner_input
         + _date("since", "Since", value=since or "")
         + _date("before", "Before", value=before or "")
+        + threshold_input
+        + full_check
         + "</div></details>",
         '<label for="sx-expand" class="find__expand" title="Show all filters">'
         "filters</label>",
@@ -1182,6 +1237,9 @@ def _find_search_fragment(
     n: int,
     mode: str,
     view: str,
+    sort: str = "score",
+    threshold: float | None = None,
+    full: bool = False,
 ) -> Response:
     """Render a Find content query through the real search ENGINE + recipe.
 
@@ -1241,6 +1299,8 @@ def _find_search_fragment(
             n=n,
             mode=eng,
             view=view,
+            sort=sort,
+            threshold=threshold,
             workspace=workspace,
             model=model,
             since=since,
@@ -1280,7 +1340,10 @@ def _find_search_fragment(
         else:
             sv = SearchView(results=[], view=view)
 
-    fidelity = _fidelity()
+    # ``full`` shows untruncated excerpts (the CLI's --verbose). render_search's
+    # chunks branch drops the truncation only when chars==0 AND depth>=2, so the
+    # full-text fidelity raises depth; the default keeps the 200-char excerpt.
+    fidelity = _fidelity(depth=2, chars=0) if full else _fidelity()
     # search_view returns a render-ready SearchView; render_search reads the
     # view shape and the thread tier1/tier2 split off it (not context).
     return _html_response(
@@ -1303,6 +1366,9 @@ def ui_query(
     n: int = Parameter(query="n", default=50),
     mode: str = Parameter(query="mode", default="auto"),
     view: str = Parameter(query="view", default="chunks"),
+    sort: str = Parameter(query="sort", default="score"),
+    threshold: str | None = Parameter(query="threshold", default=None),
+    full: str | None = Parameter(query="full", default=None),
 ) -> Response:
     """The Find results fragment — rows/hits mount the folio into ``#main``.
 
@@ -1349,9 +1415,27 @@ def ui_query(
     # mask the real hits behind a truthful-looking [fts] "No matches"; clamping
     # to the default returns the chunks results instead. ``mode`` needs no clamp:
     # an invalid engine resolves gracefully to fts and still runs a real search.
-    from siftd.api.search import SEARCH_VIEWS
+    from siftd.api.search import SEARCH_SORTS, SEARCH_VIEWS
 
     view = view if view in SEARCH_VIEWS else "chunks"
+
+    # Clean-wins (3b-3), all clamped here so a hand-edited URL never reaches
+    # search_view's axis validation (which would raise → empty pane masking real
+    # hits). ``sort=time`` is valid only for the chunks shape — the thread and
+    # conversations shapes impose their own order, so clamp it back to score
+    # there rather than 500/empty the pane. ``threshold`` parses to a float
+    # post-filter (a bad value is simply ignored). ``full`` toggles untruncated
+    # excerpts (the CLI's --verbose) via the render fidelity, not the engine.
+    sort = sort if sort in SEARCH_SORTS else "score"
+    if view in ("thread", "conversations"):
+        sort = "score"
+    threshold_val: float | None = None
+    if threshold:
+        try:
+            threshold_val = float(threshold)
+        except ValueError:
+            threshold_val = None
+    full_text = bool(full)
 
     fmt = get_format("html")
     ctx = {"detail_base": "/folio", "shell_base": "/"}
@@ -1369,6 +1453,7 @@ def ui_query(
                 db_path, term, fmt, ctx,
                 workspace=workspace, model=model, tag=tag, tool=tool,
                 since=since, before=before, owner=owner, n=n, mode=mode, view=view,
+                sort=sort, threshold=threshold_val, full=full_text,
             )
 
     # No content term: Find is search-first (Slice 2b). With no active facet the

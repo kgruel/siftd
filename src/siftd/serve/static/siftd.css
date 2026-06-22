@@ -665,6 +665,11 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .find__more > summary { cursor:pointer; color:var(--faint); padding:2px 0; letter-spacing:.04em; }
 .find__more > summary:hover { color:var(--ink); }
 .find__morebody { display:flex; flex-wrap:wrap; align-items:center; gap:8px; padding-top:8px; }
+.find__morebody .filter-input--num { width:96px; }
+.find__check { display:inline-flex; align-items:center; gap:5px; cursor:pointer;
+  font-family:var(--font-mono); font-size:calc(var(--fs-base) - 1px); color:var(--faint); }
+.find__check:hover { color:var(--ink); }
+.find__check input { margin:0; cursor:pointer; }
 .sx-expand { position:absolute; width:0; height:0; opacity:0; pointer-events:none; }
 .find__expand { display:none; }
 

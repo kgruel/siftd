@@ -443,6 +443,15 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
     shell_base = context.get("shell_base", "")
     caveats = context.get("caveats") or []
 
+    # The empty state distinguishes a deliberately-emptied result (a threshold
+    # that filtered every hit) from a genuine no-match, so the user knows to
+    # lower the bar rather than reword the query (search_view sets empty_reason).
+    empty_html = (
+        '<p class="empty">No matches above the score threshold.</p>'
+        if sv.empty_reason == "threshold"
+        else '<p class="empty">No matches.</p>'
+    )
+
     parts: list[str] = []
 
     if view == "conversations":
@@ -451,7 +460,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         parts.append('<section class="search-results conversations">')
         parts.append(f"<h2>Conversations for: {escape(query)}{engine_tag}</h2>")
         if not results:
-            parts.append('<p class="empty">No matches.</p>')
+            parts.append(empty_html)
         else:
             parts.append('<table class="conversation-list">')
             parts.append(
@@ -480,7 +489,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         parts.append('<section class="search-results thread">')
         parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
         if not tier1 and not tier2:
-            parts.append('<p class="empty">No matches.</p>')
+            parts.append(empty_html)
 
         for r in tier1:
             ws = r.get("_workspace", "")
@@ -542,7 +551,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
         parts.append('<section class="search-results chunks">')
         parts.append(f"<h2>Results for: {escape(query)}{engine_tag}</h2>")
         if not results:
-            parts.append('<p class="empty">No matches.</p>')
+            parts.append(empty_html)
         for r in results:
             conv_id = r.get("conversation_id", "")
             display_label = r["display_label"]

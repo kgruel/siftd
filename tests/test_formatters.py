@@ -123,6 +123,27 @@ def enriched_results(formatter_db):
     ]
 
 
+class TestHtmlRenderSearchEmpty:
+    """html_fmt.render_search empty-state messaging (3b-3)."""
+
+    def test_threshold_empty_is_distinct(self):
+        from siftd.output import html_fmt
+
+        # A threshold that filtered every hit gets a distinct message so the user
+        # lowers the bar rather than rewording the query.
+        thr = html_fmt.render_search(
+            SearchView(results=[], view="chunks", empty_reason="threshold"),
+            Fidelity(), query="caching",
+        )
+        assert "No matches above the score threshold." in thr
+
+        # A genuine no-match keeps the plain message.
+        plain = html_fmt.render_search(
+            SearchView(results=[], view="chunks"), Fidelity(), query="caching",
+        )
+        assert "No matches." in plain and "score threshold" not in plain
+
+
 class TestJsonRenderSearch:
     """Tests for json_fmt.render_search."""
 

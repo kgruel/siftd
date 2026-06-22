@@ -61,6 +61,7 @@ def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
     resp = _run(hr.ui_meta.fn(
         object(), tmp_path / "db.db", None, tag=None, view="chunks", mode="auto",
         workspace=None, model=None, tool=None, owner=None, since=None, before=None,
+        sort="score", threshold=None, full=None,
     ))
 
     assert resp.media_type == "text/html"
@@ -79,7 +80,47 @@ def test_ui_meta_renders_tool_facet(monkeypatch, tmp_path):
         object(), tmp_path / "db.db", None, tag=None, view="chunks", mode="auto",
         workspace=None, model=None, tool="shell.execute",
         owner=None, since=None, before=None,
+        sort="score", threshold=None, full=None,
     ))
     assert 'name="tool"' in resp.content
     assert '<option value="shell.execute" selected>' in resp.content
     assert '<option value="fs.read">' in resp.content
+
+
+def test_ui_meta_renders_clean_win_controls(tmp_path):
+    # 3b-3 clean-wins: the sort toggle (inline) + threshold/full-text controls
+    # (in the "more filters" disclosure), with the engaged values pre-filled so
+    # they round-trip through the canonical URL.
+    resp = _run(hr.ui_meta.fn(
+        object(), tmp_path / "db.db", None, tag=None, view="chunks", mode="auto",
+        workspace=None, model=None, tool=None, owner=None, since=None, before=None,
+        sort="time", threshold="0.7", full="1",
+    ))
+    body = resp.content
+    # Sort toggle, with the non-default order selected.
+    assert 'name="sort"' in body and '<option value="time" selected>' in body
+    # Threshold number input pre-filled; full-text checkbox checked.
+    assert 'name="threshold"' in body and 'value="0.7"' in body
+    assert 'name="full"' in body and "checked" in body
+
+
+def test_ui_query_clamps_sort_time_for_non_chunks_views(monkeypatch, tmp_path):
+    # sort=time is valid only for the chunks shape; the thread/conversations
+    # shapes impose their own order. ui_query clamps it back to score before the
+    # engine sees it, so a hand-edited URL never trips axis validation.
+    captured = {}
+
+    def _fake_fragment(db_path, term, fmt, ctx, **kw):
+        captured.update(kw)
+        from siftd.serve.html_routes import _html_response
+        return _html_response("<ok/>")
+
+    monkeypatch.setattr(hr, "_find_search_fragment", _fake_fragment)
+    monkeypatch.setattr("siftd.api.sanitize_fts5_query", lambda t: type("R", (), {"fts_query": t})())
+
+    _run(hr.ui_query.fn(
+        object(), tmp_path / "db.db", workspace=None, since=None, before=None,
+        model=None, tool=None, tag=None, search="needle", owner=None, n=5,
+        mode="auto", view="thread", sort="time", threshold=None, full=None,
+    ))
+    assert captured["sort"] == "score"

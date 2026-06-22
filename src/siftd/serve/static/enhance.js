@@ -361,6 +361,7 @@
     ['q', 'search'], ['shape', 'view'], ['engine', 'mode'],
     ['workspace', 'workspace'], ['model', 'model'], ['tag', 'tag'],
     ['tool', 'tool'], ['owner', 'owner'], ['since', 'since'], ['before', 'before'],
+    ['sort', 'sort'], ['threshold', 'threshold'], ['full', 'full'],
   ];
   function syncFindUrl() {
     var filters = document.getElementById('filters');
@@ -369,10 +370,13 @@
     var ctrl = [];                  // control params (search/view/mode/…)
     FIND_FACETS.forEach(function (pair) {
       var el = filters.querySelector('[name="' + pair[1] + '"]');
-      var v = el ? (el.value || '').trim() : '';
+      // A checkbox (full text) reports value '1' regardless of state — read
+      // .checked so an unchecked box drops out rather than always carrying.
+      var v = el ? (el.type === 'checkbox' ? (el.checked ? '1' : '') : (el.value || '').trim()) : '';
       if (!v) return;
       if (pair[1] === 'view' && v === 'chunks') return;  // default result-shape
       if (pair[1] === 'mode' && v === 'auto') return;     // default engine
+      if (pair[1] === 'sort' && v === 'score') return;    // default order
       url.push(pair[0] + '=' + encodeURIComponent(v));
       ctrl.push(pair[1] + '=' + encodeURIComponent(v));
     });
