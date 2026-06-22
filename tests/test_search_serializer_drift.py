@@ -31,8 +31,14 @@ def test_serve_search_chunk_serialization_default_includes_internal_ids():
     assert "conversation_id" in result
 
 
-def test_serve_search_chunk_serialization_debug_ids_includes_all_fields():
-    """render_search(debug_ids=True) includes chunk_id and source_ids (all field names present)."""
+def test_serve_search_curated_shape_and_roundtrip():
+    """Slice 4: serve_fmt emits the curated wire chunk shape (mirroring
+    output/json_fmt — a ``conversation`` sub-object, not raw dataclass fields),
+    and carries the fields the deserializer needs to rebuild a render-identical
+    SearchView (display_label, exchanges)."""
+    from siftd.api.deserialize import deserialize_search_view
+    from siftd.domain.search_types import SearchView
+
     chunk = SearchChunk(
         conversation_id="c1",
         score=0.9,
@@ -47,12 +53,27 @@ def test_serve_search_chunk_serialization_debug_ids_includes_all_fields():
         exchanges=[("p1", "q", "a")],
         context_window=[("p1", "q", "a", True)],
     )
-    out = render_search([chunk], NS(depth=1), debug_ids=True)
+    sv = SearchView(results=[chunk.to_render_dict()], view="chunks")
+    out = render_search(sv, NS(depth=1), mode="hybrid")
     result = out["results"][0]
 
-    # dataclasses.asdict() preserves exact field names; debug_ids=True retains all
-    expected_keys = {f.name for f in fields(SearchChunk)}
-    assert set(result.keys()) == expected_keys
+    # Curated public shape (matches output/json_fmt), NOT the raw dataclass fields.
+    assert result["conversation_id"] == "c1"
+    assert result["chunk_id"] == "k1"
+    assert result["source_ids"] == ["p1"]
+    assert result["conversation"] == {"started_at": "2024-01-01", "workspace": "/repo"}
+    assert result["display_label"] == "EXCHANGE"
+    assert result["exchanges"] == [["p1", "q", "a"]]
+    assert "breakdown" in result
+    assert out["view"] == "chunks" and out["mode"] == "hybrid"
+
+    # Round-trips back to a render-dict the formatters consume.
+    back = deserialize_search_view(out)
+    assert back.view == "chunks"
+    r0 = back.results[0]
+    assert r0["_workspace"] == "/repo" and r0["_started_at"] == "2024-01-01"
+    assert r0["_exchanges"] == [("p1", "q", "a")]
+    assert r0["chunk_id"] == "k1" and r0["source_ids"] == ["p1"]
 
 
 def test_conversation_summary_render_mapping_is_explicit():

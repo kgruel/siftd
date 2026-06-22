@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-02-15T15:52:25.678000+00:00",
     "external_id": "vscode::golden-vscode-001",
     "harness": {
@@ -22,7 +21,6 @@
         "external_id": "req-g01",
         "responses": [
           {
-            "attributes": {},
             "content": [
               {
                 "block_type": "text",
@@ -33,16 +31,12 @@
             ],
             "external_id": "resp-g01",
             "model": "gpt-4o",
-            "provider": null,
-            "timestamp": "2024-02-15T15:52:25.678000+00:00",
-            "tool_calls": [],
-            "usage": null
+            "timestamp": "2024-02-15T15:52:25.678000+00:00"
           }
         ],
         "timestamp": "2024-02-15T15:52:25.678000+00:00"
       }
     ],
-    "started_at": "2024-02-15T15:52:25.678000+00:00",
-    "workspace_path": null
+    "started_at": "2024-02-15T15:52:25.678000+00:00"
   }
 ]

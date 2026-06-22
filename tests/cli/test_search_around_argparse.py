@@ -51,8 +51,8 @@ class TestAroundAndTurnsFlags:
 
     def test_fts_mode_with_around_and_turns(self):
         parser = _make_parser()
-        args = parser.parse_args(["search", "X", "--fts", "--around", "phrase", "--turns", "-2:+2"])
-        assert args.fts is True
+        args = parser.parse_args(["search", "X", "--mode", "fts", "--around", "phrase", "--turns", "-2:+2"])
+        assert args.mode == "fts"
         assert args.around == "phrase"
         assert args.turns_range == "-2:+2"
 
@@ -152,7 +152,7 @@ class TestTurnsRequiresAround:
 
     def _ns(self, **kwargs):
         """Minimal argparse.Namespace for _validate_search_axes."""
-        defaults = {"mode": "chunks", "sort": "score", "around": None, "turns_range": None}
+        defaults = {"view": "chunks", "sort": "score", "around": None, "turns_range": None}
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
 

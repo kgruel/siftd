@@ -146,27 +146,33 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
     return "\n".join(lines)
 
 
-def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
-    """Render search results as GFM markdown.
+def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
+    """Render a :class:`SearchView` as GFM markdown.
 
-    Context keys:
+    The positional argument is a ``SearchView`` (a bare list of render-dicts is
+    tolerated and wrapped as a chunks view); the view shape and the thread
+    ``tier1``/``tier2`` split ride the SearchView. Context keys:
+
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
-        tier1: list — expanded results (thread mode)
-        tier2: list — compact results (thread mode)
+        mode: str — resolved search engine that ran: "fts", "semantic", or "hybrid"
         caveats: list[Finding] — threaded from dispatch; appended as a
             blockquote note section after the last result.
     """
+    from siftd.domain.search_types import as_search_view
     from siftd.output.common import truncate_text
 
+    sv = as_search_view(result, view=context.get("view", "chunks"))
+    results = sv.results
     query = context.get("query", "")
-    mode = context.get("mode", "chunks")
+    view = sv.view
+    engine = context.get("mode")
+    engine_tag = f" [{engine}]" if engine else ""
     caveats = context.get("caveats") or []
 
     lines: list[str] = []
 
-    if mode == "conversations":
-        lines.append(f"## Conversations for: {query}")
+    if view == "conversations":
+        lines.append(f"## Conversations for: {query}{engine_tag}")
         lines.append("")
         headers = ["ID", "Max Score", "Mean Score", "Chunks", "Started", "Workspace"]
         lines.append("| " + " | ".join(headers) + " |")
@@ -183,10 +189,10 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             ]
             lines.append("| " + " | ".join(row) + " |")
 
-    elif mode == "thread":
-        tier1 = context.get("tier1", [])
-        tier2 = context.get("tier2", [])
-        lines.append(f"## Results for: {query}")
+    elif view == "thread":
+        tier1 = sv.tier1 or []
+        tier2 = sv.tier2 or []
+        lines.append(f"## Results for: {query}{engine_tag}")
         lines.append("")
 
         for r in tier1:
@@ -226,8 +232,8 @@ def render_search(results: list, fidelity: Fidelity, **context: Any) -> str:
             lines.append("")
 
     else:
-        # Chunks mode
-        lines.append(f"## Results for: {query}")
+        # Chunks view
+        lines.append(f"## Results for: {query}{engine_tag}")
         lines.append("")
         for r in results:
             conv_id = r.get("conversation_id", "")

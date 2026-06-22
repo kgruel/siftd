@@ -10,8 +10,12 @@ pytestmark = pytest.mark.serve
 from siftd.serve import routes
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most routes are sync now (threadpool via sync_to_thread); body-reading
+    # handlers (tag_write/session_queue/push) stay async and return coroutines.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 def test_dispatch_builds_operation_and_calls_dispatch(monkeypatch, tmp_path):

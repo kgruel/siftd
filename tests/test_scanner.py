@@ -151,6 +151,20 @@ class TestScanSessionFile:
         r = _scan_session_file(_discovered(path=p, mod=m))
         assert r is not None and r.session_id == "s1" and r.exchange_count == 5
 
+    def test_started_at_threads_through(self, tmp_path):
+        """PeekScanResult.started_at reaches SessionInfo — the scan already
+        extracts it; list consumers (Sessions live cards) show age from it
+        without a second file read."""
+        p = tmp_path / "t.jsonl"
+        p.write_text("{}")
+        m = _mod(peek_scan=lambda path: PeekScanResult(
+            session_id="s1", workspace_path="/test",
+            started_at="2026-06-11T09:00:00Z",
+            last_activity_at="2026-06-11T10:00:00Z", exchange_count=5,
+        ))
+        r = _scan_session_file(_discovered(path=p, mod=m))
+        assert r is not None and r.started_at == "2026-06-11T09:00:00Z"
+
     def test_returns_none(self, tmp_path):
         p = tmp_path / "t.jsonl"
         p.write_text("{}")

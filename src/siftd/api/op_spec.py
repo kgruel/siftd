@@ -79,7 +79,11 @@ class OpSpec:
 # path params (today: only ``/api/v1/conversations/{id}``), see
 # :func:`_normalize_path`.
 
-_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action", "embeddings_only", "debug_ids", "around"})
+# ``debug_ids`` is a render-only annotation the local ``search_view`` fn does
+# not accept; ``around``/``turns``/``view``/``sort``/``select``/``threshold``/
+# ``full`` ARE recipe params on ``search_view`` (Slice 4), so they are no longer
+# excluded locally and travel on the wire.
+_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action", "debug_ids"})
 _WIRE_EXCLUDE_COMMON = frozenset({"db_path", "around"})
 
 
@@ -93,9 +97,11 @@ SPECS: dict[tuple[str, str], OpSpec] = {
     ),
     ("/api/v1/search", "GET"): OpSpec(
         local_excludes=_LOCAL_FN_EXCLUDE_SEARCH,
-        # ``embed_db`` is a local-only filesystem path; leaking it to the
-        # remote would expose host paths and the server ignores it anyway.
-        wire_excludes=_WIRE_EXCLUDE_COMMON | frozenset({"embed_db"}),
+        # ``db_path``/``embed_db`` are local-only filesystem paths; leaking them
+        # to the remote would expose host paths and the server ignores them.
+        # Unlike the common set, ``around`` is NOT excluded — it is a real
+        # ``search_view`` recipe param that must travel on the wire (Slice 4).
+        wire_excludes=frozenset({"db_path", "embed_db"}),
         wire_remaps={"lambda_": "lambda"},
     ),
     ("/api/v1/stats", "GET"): OpSpec(

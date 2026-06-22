@@ -15,7 +15,7 @@ Most searches benefit from both: keywords narrow the candidates, semantics rank 
 FTS5 is SQLite's full-text search engine. When siftd ingests conversations, it indexes all text content — prompts and responses — into an FTS5 virtual table.
 
 ```bash
-siftd search --fts "authentication"
+siftd search --mode fts "authentication"
 ```
 
 FTS5 search is:
@@ -122,7 +122,7 @@ Query: "how did I handle token refresh"
 If keyword matching is too restrictive (your query uses different words than the conversations), use embeddings only:
 
 ```bash
-siftd search --embeddings-only "concept I can't name precisely"
+siftd search --mode semantic "concept I can't name precisely"
 ```
 
 This searches all indexed conversations, not just FTS5 matches. Slower but more comprehensive.
@@ -197,19 +197,19 @@ siftd search "query"                    # default: chunk snippets with scores
 siftd search -v "query"                 # verbose: full chunk text
 siftd search --full "query"             # complete prompt+response exchange
 siftd search --around "query" --turns -2:+2  # window ±2 turns around the match
-siftd search --mode thread "query"           # expand top hits into conversation threads
-siftd search --mode conversations "query"    # rank whole conversations, not chunks
+siftd search --view thread "query"           # expand top hits into conversation threads
+siftd search --view conversations "query"    # rank whole conversations, not chunks
 ```
 
-The `--mode thread` view is particularly useful for research — it shows the top conversations expanded as narratives, with a shortlist of other relevant sessions.
+The `--view thread` view is particularly useful for research — it shows the top conversations expanded as narratives, with a shortlist of other relevant sessions.
 
 ## When to use which
 
 | Situation | Approach |
 |-----------|----------|
-| Know the exact terms | `siftd search --fts "exact phrase"` |
+| Know the exact terms | `siftd search --mode fts "exact phrase"` |
 | Remember the concept, not the words | `siftd search "concept description"` |
-| Exploring a topic broadly | `siftd search --embeddings-only "topic"` |
+| Exploring a topic broadly | `siftd search --mode semantic "topic"` |
 | Finding diverse examples | `siftd search --lambda 0.5 "pattern"` |
 | Recent work on a topic | `siftd search --recency "topic"` |
 | Narrowing to a project | `siftd search -w project "query"` |

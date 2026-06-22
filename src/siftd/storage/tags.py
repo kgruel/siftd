@@ -215,6 +215,138 @@ def tag_used_by_other_owners(
     return False
 
 
+def owner_uses_tag(
+    conn: sqlite3.Connection,
+    tag_id: str,
+    owner: str | None,
+) -> bool:
+    """Return True when this tag is associated with an entity ``owner`` owns.
+
+    The owner-scoped analogue of the existence check in :func:`set_tag_pin`, and
+    the positive inverse of :func:`tag_used_by_other_owners` (``co.user_id = ?``
+    rather than ``!= ?``). ``list_tags`` is owner-scoped, so the pin write guards
+    on the owner actually using the tag — otherwise a crafted request could pin a
+    foreign tenant's tag and surface its name (a cross-tenant existence oracle),
+    exactly as the workspace-pin participation guard prevents for workspaces.
+    """
+    if not owner:
+        return False
+    if not has_conversation_owners_table(conn):
+        return False
+
+    # conversation-kind: direct ownership join
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversation_owners co ON co.conversation_id = ta.target_id "
+        "WHERE ta.tag_id = ? AND ta.target_kind = 'conversation' AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # tool_call/prompt/response/exchange-kind: ownership via event → conversation
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN events e ON e.id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
+        "WHERE ta.tag_id = ? AND ta.target_kind IN ('tool_call','prompt','response','exchange') "
+        "AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    # workspace-kind: the owner participates if any conversation in the workspace is theirs
+    row = conn.execute(
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversations c ON c.workspace_id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = c.id "
+        "WHERE ta.tag_id = ? AND ta.target_kind = 'workspace' AND co.user_id = ? LIMIT 1",
+        (tag_id, owner),
+    ).fetchone()
+    if row:
+        return True
+
+    return False
+
+
+def ensure_tag_pins_table(conn: sqlite3.Connection) -> None:
+    """Create the per-owner tag-pin table if absent. Idempotent.
+
+    Pins are owner-scoped UI preference state (which tags a user keeps in their
+    'pinned' zone). The ``tags`` table is global — it has no owner column — so a
+    pin cannot live there without pinning a tag for *every* tenant. This mirrors
+    how ``conversation_owners`` is handled: ensured on every write-open (see
+    ``open_database``), guarded by :func:`has_tag_pins_table` on reads so a
+    read-only open of a DB that has had no write since this shipped degrades to
+    'nothing pinned' instead of raising 'no such table'.
+
+    ``owner`` is stored as ``''`` for the unscoped/local (no-auth) case, matching
+    the ``if owner`` scoping convention used everywhere else — keeping the column
+    NOT NULL so the composite PRIMARY KEY de-dupes correctly (SQLite treats NULLs
+    as distinct, which would let the same tag be pinned twice).
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS tag_pins (
+            owner      TEXT NOT NULL,
+            tag_id     TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+            pinned_at  TEXT NOT NULL,
+            PRIMARY KEY (owner, tag_id)
+        )
+        """
+    )
+
+
+def has_tag_pins_table(conn: sqlite3.Connection) -> bool:
+    """Return True if the tag_pins table exists (created lazily on write-open)."""
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='tag_pins'"
+        ).fetchone()
+        is not None
+    )
+
+
+def pin_tag(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    tag_id: str,
+    pinned_at: str | None = None,
+    commit: bool = False,
+) -> bool:
+    """Pin a tag for an owner. Returns True if newly pinned, False if already pinned."""
+    ensure_tag_pins_table(conn)
+    ts = pinned_at or datetime.now(UTC).isoformat()
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO tag_pins (owner, tag_id, pinned_at) VALUES (?, ?, ?)",
+        (owner or "", tag_id, ts),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
+def unpin_tag(
+    conn: sqlite3.Connection,
+    *,
+    owner: str | None,
+    tag_id: str,
+    commit: bool = False,
+) -> bool:
+    """Unpin a tag for an owner. Returns True if a pin was removed."""
+    if not has_tag_pins_table(conn):
+        return False
+    cur = conn.execute(
+        "DELETE FROM tag_pins WHERE owner = ? AND tag_id = ?",
+        (owner or "", tag_id),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount > 0
+
+
 def list_tags(
     conn: sqlite3.Connection,
     *,
@@ -356,6 +488,18 @@ def list_tags(
         f"WHERE {' AND '.join(response_where)}"
     )
 
+    # pinned flag (owner-scoped). tag_pins is created lazily on a write-open and
+    # may be absent on a read-only open of a DB unwritten since this shipped —
+    # guard the join so the read degrades to "nothing pinned" rather than raising.
+    if has_tag_pins_table(conn):
+        pin_select = "(tp.tag_id IS NOT NULL)"
+        pin_join = "LEFT JOIN tag_pins tp ON tp.tag_id = t.id AND tp.owner = ?"
+        pin_params: list[object] = [owner or ""]
+    else:
+        pin_select = "0"
+        pin_join = ""
+        pin_params = []
+
     sql = f"""
         SELECT
             t.name,
@@ -366,11 +510,16 @@ def list_tags(
             ({tool_call_count_sql}) as tool_call_count,
             ({exchange_count_sql}) as exchange_count,
             ({prompt_count_sql}) as prompt_count,
-            ({response_count_sql}) as response_count
+            ({response_count_sql}) as response_count,
+            {pin_select} as pinned
         FROM tags t
+        {pin_join}
         ORDER BY t.name
     """
-    all_params = [*conv_params, *ws_params, *tc_params, *exchange_params, *prompt_params, *response_params]
+    all_params = [
+        *conv_params, *ws_params, *tc_params, *exchange_params,
+        *prompt_params, *response_params, *pin_params,
+    ]
 
     cur = conn.execute(sql, all_params)
     rows = [
@@ -384,12 +533,18 @@ def list_tags(
             "exchange_count": row["exchange_count"],
             "prompt_count": row["prompt_count"],
             "response_count": row["response_count"],
+            "pinned": bool(row["pinned"]),
         }
         for row in cur.fetchall()
     ]
     if owner:
+        # Drop tags this owner doesn't use — but never a pinned one, or the pin
+        # would orphan: the tag vanishes from the owner's view yet the tag_pins
+        # row persists (untagging doesn't cascade), leaving it impossible to
+        # unpin. A pinned-but-unused tag stays, shown with a zero dominant count.
         rows = [r for r in rows if (
-            r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
+            r["pinned"]
+            or r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
             or r["exchange_count"] or r["prompt_count"] or r["response_count"]
         )]
     return rows

@@ -106,9 +106,10 @@ def run_ingest(
 
     # Best-effort cache refresh after ingest.
     try:
-        from siftd.api.stats import get_stats, write_stats_cache
+        from siftd.api.stats import effective_db_mtime_ns, get_stats, write_stats_cache
 
-        write_stats_cache(get_stats(db_path=path))
+        db_mtime = effective_db_mtime_ns(path)  # captured before the sweep
+        write_stats_cache(get_stats(db_path=path), db_mtime_ns=db_mtime)
     except Exception:
         pass
 

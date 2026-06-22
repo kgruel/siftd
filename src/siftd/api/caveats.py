@@ -416,19 +416,20 @@ def _fresh_corpus_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
 # Embeddings staleness producer (B2)
 # ---------------------------------------------------------------------------
 
-def _is_search_chunks_for_search_render(op) -> bool:
-    """Predicate: search_chunks rendered as search.
+def _is_search_view_for_render(op) -> bool:
+    """Predicate: the search_view Operation rendered as search.
 
-    Embeddings staleness matters most when the user is searching.
+    Embeddings staleness matters most when the user is searching. The op fn is
+    ``search_view`` (engine + recipe composed); its result is a ``SearchView``.
     """
-    from siftd.api.search import search_chunks
+    from siftd.api.search import search_view
     return (
-        op.fn is search_chunks
+        op.fn is search_view
         and op.render_method == "search"
     )
 
 
-@caveat_producer(kind="embeddings-stale", applies_to=_is_search_chunks_for_search_render)
+@caveat_producer(kind="embeddings-stale", applies_to=_is_search_view_for_render)
 def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Caveat: conversations in main db not indexed in embeddings db.
 
@@ -619,13 +620,13 @@ def _query_empty_tip_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
 # FTS stale producer (B5)
 # ---------------------------------------------------------------------------
 
-def _is_search_chunks(op) -> bool:
-    """Predicate: search_chunks operation (FTS keyword search in use)."""
-    from siftd.api.search import search_chunks
-    return op.fn is search_chunks
+def _is_search_view_op(op) -> bool:
+    """Predicate: the search_view Operation (any engine mode in use)."""
+    from siftd.api.search import search_view
+    return op.fn is search_view
 
 
-@caveat_producer(kind="fts-stale", applies_to=_is_search_chunks)
+@caveat_producer(kind="fts-stale", applies_to=_is_search_view_op)
 def _fts_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Caveat: FTS index out of sync with event_content.
 
@@ -662,7 +663,7 @@ def _fts_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
 # Search-mode-degraded producer (B8)
 # ---------------------------------------------------------------------------
 
-@caveat_producer(kind="search-mode-degraded", applies_to=_is_search_chunks_for_search_render)
+@caveat_producer(kind="search-mode-degraded", applies_to=_is_search_view_for_render)
 def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Hint: search ran in FTS-only (keyword) mode because embeddings are unavailable.
 
@@ -674,8 +675,10 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     Suppressed when --around is in use: search-fts5-around-turn-index carries
     the same install-embeddings nudge plus turn-position provenance, so they're
     mutually exclusive at the producer level (avoids hint-cap collision).
+
+    ``result`` is the ``SearchView``; ``.results`` is the post-recipe row set.
     """
-    if not result:
+    if not result.results:
         return []
     if op.params.get("mode") != "fts":
         return []
@@ -691,14 +694,14 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     )]
 
 
-@caveat_producer(kind="search-fts5-around-turn-index", applies_to=_is_search_chunks_for_search_render)
+@caveat_producer(kind="search-fts5-around-turn-index", applies_to=_is_search_view_for_render)
 def _search_fts5_around_turn_index_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Hint: --around turn positions derived from FTS5 match position (no embeddings).
 
     Only fires when --around is used in FTS5 mode — plain FTS5 search without
     --around is covered by search-mode-degraded. Emits once per result set.
     """
-    if not result:
+    if not result.results:
         return []
     if op.params.get("mode") != "fts":
         return []
@@ -717,16 +720,16 @@ def _search_fts5_around_turn_index_caveats(op, result, ctx: ProducerContext) -> 
     )]
 
 
-@caveat_producer(kind="search-tagging-tip", applies_to=_is_search_chunks_for_search_render)
+@caveat_producer(kind="search-tagging-tip", applies_to=_is_search_view_for_render)
 def _search_tagging_tip_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Hint: tag useful search results for future retrieval.
 
     channel="text" so the tip is suppressed in --json output and silenceable
     via --no-hints.
     """
-    if not result:
+    if not result.results:
         return []
-    first = result[0]
+    first = result.results[0]
     conv_id = first.conversation_id if hasattr(first, "conversation_id") else first.get("conversation_id", "")
     if not conv_id:
         return []

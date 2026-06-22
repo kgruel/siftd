@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
+from pathlib import Path
 
 
 def backfill_git_remotes(
@@ -35,6 +36,32 @@ def verify_workspace_identity(conn: sqlite3.Connection) -> dict:
     from siftd.storage.migrate_workspaces import verify_workspace_identity as _verify_workspace_identity
 
     return _verify_workspace_identity(conn)
+
+
+def workspace_duplicate_count(db_path: Path | None = None) -> tuple[int, int]:
+    """Count legacy duplicate-workspace groups (workspaces sharing a git remote).
+
+    Returns ``(groups, extra_rows)`` — the same shape the ambient
+    ``workspace-duplicates`` caveat reports — so a read surface can advertise the
+    condition and the ``siftd migrate --merge-workspaces`` remediation without
+    re-implementing the detection. Count-only by design: it leaks no path or
+    remote, so it is safe to surface regardless of tenant. ``(0, 0)`` when clean
+    or the DB is absent.
+    """
+    from siftd.paths import db_path as default_db_path
+    from siftd.storage.migrate_workspaces import find_duplicate_workspaces
+    from siftd.storage.sqlite import open_database
+
+    path = db_path or default_db_path()
+    if not Path(path).exists():
+        return (0, 0)
+    conn = open_database(path, read_only=True)
+    try:
+        groups = find_duplicate_workspaces(conn)
+    finally:
+        conn.close()
+    extras = sum(len(g["workspace_ids"]) - 1 for g in groups)
+    return (len(groups), extras)
 
 
 def get_schema_version_info(current_version: int) -> dict:

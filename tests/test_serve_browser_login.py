@@ -90,7 +90,8 @@ def test_shell_loads_external_auth_script(tmp_path):
     """The shell references /static/auth.js and no longer inlines the token logic."""
     with _client(tmp_path, {"issuer": "https://idp.example.com", "browser_client_id": "pub"}) as c:
         shell = c.get("/").text
-    assert '<script src="/static/auth.js"></script>' in shell
+    # cache-busted with a ?v=<mtime> query (the static router ignores it)
+    assert '<script src="/static/auth.js?v=' in shell
     # the old inline token bootstrap is gone (moved to the external file)
     assert "sessionStorage.getItem('siftd_token')" not in shell
 

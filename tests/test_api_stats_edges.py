@@ -28,7 +28,7 @@ def test_open_close_and_cache_cleanup_paths(monkeypatch, tmp_path):
 
     c2 = _SeqConn([])
     monkeypatch.setattr("siftd.api.stats.open_database", lambda *a, **k: c2)
-    monkeypatch.setattr("siftd.api.stats.fetch_top_workspaces", lambda conn, limit=10: [{"path": "p", "convs": 1}])
+    monkeypatch.setattr("siftd.api.stats.fetch_top_workspaces", lambda conn, limit=10, **k: [{"path": "p", "convs": 1}])
     assert list_workspaces(n=1, db_path=tmp_path / "db.sqlite") and c2.closed
 
     db = tmp_path / "s.db"
@@ -55,7 +55,8 @@ def test_usage_functions_with_stats_table(tmp_path):
         "CREATE TABLE conversation_stats (conversation_id TEXT, cost REAL, total_tokens INTEGER);"
         "CREATE TABLE usage_by_conv_model (conversation_id TEXT, model_id TEXT,"
         " provider_id TEXT, input_tokens INTEGER, output_tokens INTEGER,"
-        " response_count INTEGER, responses_with_tokens INTEGER, cost REAL);"
+        " response_count INTEGER, responses_with_tokens INTEGER, cost REAL,"
+        " cache_read_tokens INTEGER DEFAULT 0, cache_creation_tokens INTEGER DEFAULT 0);"
         "INSERT INTO models VALUES ('m1','model-a','model-a');"
         "INSERT INTO workspaces VALUES ('w1','/tmp/ws');"
         "INSERT INTO conversations VALUES ('c1','w1');"
@@ -63,7 +64,7 @@ def test_usage_functions_with_stats_table(tmp_path):
         "INSERT INTO event_response VALUES ('e1','m1',NULL,10,20);"
         "INSERT INTO responses VALUES ('r1','c1','m1',10,20);"
         "INSERT INTO conversation_stats VALUES ('c1',1.5,30);"
-        "INSERT INTO usage_by_conv_model VALUES ('c1','m1',NULL,10,20,1,1,1.5);"
+        "INSERT INTO usage_by_conv_model VALUES ('c1','m1',NULL,10,20,1,1,1.5,0,0);"
     )
     conn.close()
 

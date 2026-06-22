@@ -44,6 +44,38 @@ class TestClaudeCodeAdapter:
         assert n({"type": "system"}) is None
         assert not claude_code.can_handle(Source(kind="file", location=Path("/home/.codex/sessions/s.jsonl")))
 
+    def test_subagent_reads_meta_sidecar(self, tmp_path):
+        # The agent-<id>.meta.json sidecar beside a sub-agent transcript binds
+        # agentId -> {agentType, description}; the adapter captures both as
+        # conversation attributes (the child JSONL carries no type of its own).
+        import json
+
+        records = [
+            {"type": "user", "sessionId": "root1", "agentId": "abc", "cwd": "/ws",
+             "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "do the thing"}},
+        ]
+        jsonl = write_jsonl(tmp_path, records, name="agent-abc.jsonl")
+        (tmp_path / "agent-abc.meta.json").write_text(
+            json.dumps({"agentType": "Explore", "description": "scout the repo",
+                        "toolUseId": "toolu_x"})
+        )
+        conv = list(claude_code.parse(Source(kind="file", location=jsonl)))[0]
+        assert conv.attributes["subagent_type"] == "Explore"
+        assert conv.attributes["agent_description"] == "scout the repo"
+
+    def test_subagent_without_sidecar_has_no_type(self, tmp_path):
+        # Historical sub-agents whose sidecar rotated off disk before ingest, or
+        # variants that never wrote one — degrade silently to no attribute.
+        records = [
+            {"type": "user", "sessionId": "root1", "agentId": "def", "cwd": "/ws",
+             "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "hi"}},
+        ]
+        jsonl = write_jsonl(tmp_path, records, name="agent-def.jsonl")
+        conv = list(claude_code.parse(Source(kind="file", location=jsonl)))[0]
+        assert conv.attributes == {}
+
     def test_normalizer_edges(self):
         n = claude_code.normalize_record
         # String content (L307), list content (L308), unknown content type (L310)

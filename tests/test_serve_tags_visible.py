@@ -19,8 +19,12 @@ from siftd.storage.sqlite import create_database, get_or_create_harness, insert_
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most routes are sync now (threadpool via sync_to_thread); body-reading
+    # handlers (tag_write/session_queue/push) stay async and return coroutines.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 def _seed(db_path):

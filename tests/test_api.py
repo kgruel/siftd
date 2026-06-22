@@ -67,6 +67,34 @@ def test_package_level_search_api_exports_are_lazy_and_complete():
     assert callable(enrich_context_window)
 
 
+def test_lazy_search_names_are_a_subset_of_all():
+    """Every lazily-resolved search symbol must also be declared in __all__, or
+    the documented public surface silently disagrees with what __getattr__ will
+    resolve (and `from pkg import *` drops it). Pins the invariant for both the
+    top-level package and the api package."""
+    import siftd
+    import siftd.api
+
+    for mod in (siftd, siftd.api):
+        missing = mod._LAZY_SEARCH_NAMES - set(mod.__all__)
+        assert not missing, f"{mod.__name__}: lazy search names absent from __all__: {sorted(missing)}"
+
+
+def test_process_search_view_resolves_through_api_boundaries():
+    """The Slice-3 orchestrator + its result type are reachable from both the
+    package boundary and the top level (and are the same object)."""
+    from siftd import SearchView as TopSearchView
+    from siftd import process_search_view as top_process
+    from siftd.api import SearchView, process_search_view
+
+    assert TopSearchView is SearchView
+    assert top_process is process_search_view
+    assert callable(process_search_view)
+    assert {"results", "view", "tier1", "tier2", "n_skipped", "empty_reason"} <= set(
+        SearchView.__dataclass_fields__
+    )
+
+
 class TestGetStats:
     def test_returns_database_stats(self, test_db):
         stats = get_stats(db_path=test_db)
@@ -187,6 +215,72 @@ class TestGetCostCoverage:
         assert result.with_positive_cost == 1   # c1 has cost > 0
         assert result.with_null_cost == 1        # c2 is NULL
         assert result.pct_covered == 50.0
+
+
+class TestListConversationsGroupSubagents:
+    """group_subagents pages by ROOT session; sub-agents ride along, unlimited."""
+
+    def _db(self, tmp_path):
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+        )
+
+        conn = create_database(tmp_path / "g.db")
+        h = get_or_create_harness(conn, "claude_code", source="anthropic")
+        w = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        # Newest root r1 + 2 sub-agents; older root r2 + 1 sub-agent.
+        insert_conversation(conn, "claude_code::r1", h, w, "2024-02-02T00:00:00Z")
+        insert_conversation(conn, "claude_code::r1::agent::a", h, w, "2024-02-02T00:01:00Z")
+        insert_conversation(conn, "claude_code::r1::agent::b", h, w, "2024-02-02T00:02:00Z")
+        insert_conversation(conn, "claude_code::r2", h, w, "2024-01-01T00:00:00Z")
+        insert_conversation(conn, "claude_code::r2::agent::c", h, w, "2024-01-01T00:01:00Z")
+        conn.commit()
+        conn.close()
+        return tmp_path / "g.db"
+
+    def test_n_limits_roots_not_children(self, tmp_path):
+        db = self._db(tmp_path)
+        # n=1 -> only the newest ROOT (r1), but BOTH its sub-agents come along.
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=1, group_subagents=True
+        )
+        exts = {r.external_id for r in rows}
+        assert exts == {
+            "claude_code::r1",
+            "claude_code::r1::agent::a",
+            "claude_code::r1::agent::b",
+        }
+        # r2 (root #2) and its child are past the n=1 page -> excluded entirely.
+        assert not any(e.startswith("claude_code::r2") for e in exts)
+
+    def test_parent_external_id_derived(self, tmp_path):
+        db = self._db(tmp_path)
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=1, group_subagents=True
+        )
+        by_ext = {r.external_id: r for r in rows}
+        assert by_ext["claude_code::r1"].parent_external_id is None
+        assert by_ext["claude_code::r1::agent::a"].parent_external_id == "claude_code::r1"
+        assert by_ext["claude_code::r1::agent::b"].parent_external_id == "claude_code::r1"
+
+    def test_two_roots_pull_all_their_children(self, tmp_path):
+        db = self._db(tmp_path)
+        rows = list_conversations(
+            fidelity=Fidelity(), db_path=db, n=2, group_subagents=True
+        )
+        assert {r.external_id for r in rows} == {
+            "claude_code::r1", "claude_code::r1::agent::a", "claude_code::r1::agent::b",
+            "claude_code::r2", "claude_code::r2::agent::c",
+        }
+
+    def test_flat_mode_counts_all_conversations(self, tmp_path):
+        db = self._db(tmp_path)
+        # Without grouping, n=1 is a flat limit over ALL conversations.
+        rows = list_conversations(fidelity=Fidelity(), db_path=db, n=1)
+        assert len(rows) == 1
 
 
 class TestListConversations:
@@ -792,21 +886,6 @@ class TestSearchJsonChunkIds:
         out = _json_chunk_list(rows)
         assert out[0]["chunk_id"] == "chunk-1"
         assert out[0]["source_ids"] == ["e1", "e2"]
-
-
-class TestDebugIdsBackcompat:
-    def test_debug_ids_flag_still_parses(self):
-        import argparse
-
-        from siftd.cli.search import build_search_parser
-
-        # Build a minimal parser with the search subcommand
-        root = argparse.ArgumentParser()
-        sub = root.add_subparsers(dest="command")
-        build_search_parser(sub)
-        # --debug-ids is suppressed in --help but still accepts and sets the flag
-        args = root.parse_args(["search", "q", "--debug-ids"])
-        assert args.debug_ids is True
 
 
 class TestIngestTimeShellTagging:

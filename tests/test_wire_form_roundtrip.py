@@ -19,11 +19,6 @@ from siftd.api.conversations import (
     ToolCallDetail,
     Turn,
 )
-from siftd.serialization.conversations import (
-    serialize_conversation_detail,
-    serialize_conversation_list,
-    serialize_conversation_summary,
-)
 from siftd.api.deserialize import (
     deserialize_conversation_detail,
     deserialize_conversation_list,
@@ -32,7 +27,11 @@ from siftd.api.deserialize import (
     deserialize_narrative_block,
     from_wire,
 )
-
+from siftd.serialization.conversations import (
+    serialize_conversation_detail,
+    serialize_conversation_list,
+    serialize_conversation_summary,
+)
 
 # ---------------------------------------------------------------------------
 # Conversation summary round-trip
@@ -214,6 +213,7 @@ class TestConversationDetailRoundTrip:
             total_output_tokens=sum(t.total_output_tokens for t in turns),
             turns=turns,
             tags=["work"],
+            cost=2.5,
         )
 
     def test_minimal_detail_roundtrips_with_token_splits_reconstructed(self):
@@ -226,6 +226,7 @@ class TestConversationDetailRoundTrip:
         assert recovered.model == original.model
         assert recovered.started_at == original.started_at
         assert recovered.tags == original.tags
+        assert recovered.cost == original.cost  # cost survives the wire boundary
         assert len(recovered.turns) == len(original.turns)
         # Token splits are reconstructed by summing per-turn (the wire form
         # only carries the combined sum at conversation level).
@@ -504,9 +505,13 @@ class TestFromWireDispatcher:
         assert out.id == "c1"
 
     def test_unknown_render_method_returns_body_unchanged(self):
-        """search/stats/tags don't have registered deserializers — pass through."""
+        """stats/tags don't have registered deserializers — pass through.
+
+        (search DOES have one now — Slice 4's deserialize_search_view — so it is
+        no longer a pass-through example.)
+        """
         wire = {"results": [{"id": "x", "score": 0.9}]}
-        out = from_wire("search", wire)
+        out = from_wire("stats", wire)
         assert out is wire
 
     def test_dispatch_module_from_wire_delegates(self):

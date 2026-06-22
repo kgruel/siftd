@@ -29,8 +29,13 @@ from siftd.storage.events import (
     insert_event_tool_call,
 )
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
+from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.sessions import ensure_session_tables
-from siftd.storage.tags import tag_derivative_conversation, tag_shell_command
+from siftd.storage.tags import (
+    ensure_tag_pins_table,
+    tag_derivative_conversation,
+    tag_shell_command,
+)
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 11
@@ -230,6 +235,8 @@ def open_database(
             ensure_canonical_tools(conn)
             ensure_content_blobs_table(conn)
             ensure_session_tables(conn)
+            ensure_tag_pins_table(conn)
+            ensure_workspace_pins_table(conn)
             _ensure_git_remote_index(conn)
             _ensure_usage_by_conv_model_table(conn)
             _ensure_conversation_stats_table(conn)
@@ -2735,6 +2742,12 @@ def store_conversation(
         started_at=conversation.started_at,
         ended_at=conversation.ended_at,
     )
+
+    # Conversation-level derived attributes (e.g. sub-agent type/description
+    # from the Claude Code sidecar). scope='analyzer' marks them as adapter-
+    # derived; set_attribute upserts so re-ingest is idempotent.
+    for attr_key, attr_value in conversation.attributes.items():
+        set_attribute(conn, "conversation", conversation_id, attr_key, attr_value, scope="analyzer")
 
     # Process prompts
     for prompt in conversation.prompts:

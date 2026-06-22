@@ -14,10 +14,13 @@ from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
 from siftd.safecall import read_text as _safe_read_text
-from siftd.storage.conversation_stats import has_conversation_stats_table
+from siftd.storage.conversation_stats import (
+    get_conversation_cost,
+    has_conversation_stats_table,
+)
 from siftd.storage.filters import WhereBuilder
-from siftd.storage.filters import tag_condition as _tag_condition
 from siftd.storage.fts import fts5_first_event_in_conversation
+from siftd.storage.fts import sanitize_fts5_query as sanitize_fts5_query  # re-export for the api boundary
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
@@ -165,6 +168,16 @@ class ConversationSummary:
     cost: float | None
     tags: list[str] = field(default_factory=list)
     owner: str | None = None
+    # Adapter-scoped identity (e.g. "claude_code::<uuid>"). A spawned sub-agent
+    # encodes its root session here as "<root>::agent::<agentId>", so the parent
+    # link is derivable without a schema column (see parent_external_id).
+    external_id: str | None = None
+    parent_external_id: str | None = None
+    # Sub-agent type (e.g. "Explore", "feature-dev:code-reviewer"), captured at
+    # ingest from the Claude Code agent-<id>.meta.json sidecar (scope='analyzer'
+    # 'subagent_type' attribute). None for top-level sessions and for historical
+    # sub-agents whose sidecar had rotated off disk before ingest.
+    agent_type: str | None = None
 
 
 @dataclass
@@ -179,6 +192,7 @@ class ConversationDetail:
     total_output_tokens: int
     turns: list[Turn]
     tags: list[str] = field(default_factory=list)
+    cost: float | None = None
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -220,6 +234,7 @@ def list_conversations(
     n: int = 10,
     oldest: bool = False,
     owner: str | None = None,
+    group_subagents: bool = False,
 ) -> list[ConversationSummary]:
     """List conversations with optional filtering.
 
@@ -250,6 +265,11 @@ def list_conversations(
         n: Maximum results to return (0 = unlimited).
         oldest: Sort by oldest first instead of newest.
         owner: Filter to conversations owned by this user_id.
+        group_subagents: Page by root session — ``n`` then counts only
+            top-level sessions, and every sub-agent of a paged root is pulled
+            in (owner-scoped) regardless of the limit, so the renderer can nest
+            them. Sub-agents are identified by the ``::agent::`` marker in
+            external_id. Off by default (flat listing).
 
     Returns:
         List of ConversationSummary objects.
@@ -264,7 +284,7 @@ def list_conversations(
 
     conn = open_database(db, read_only=True)
     try:
-        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind, workspace_id)
+        return _list_conversations_impl(conn, workspace, model, since, before, search, tool, tag, all_tags, no_tag, tool_tag, n, oldest, fidelity, owner, tag_kind, workspace_id, group_subagents)
     finally:
         conn.close()
 
@@ -287,6 +307,7 @@ def _list_conversations_impl(
     owner: str | None = None,
     tag_kind: list[str] | None = None,
     workspace_id: str | None = None,
+    group_subagents: bool = False,
 ) -> list[ConversationSummary]:
     """Implementation of list_conversations with connection already open."""
     # Build WHERE clauses
@@ -306,14 +327,7 @@ def _list_conversations_impl(
             search,
         )
 
-    if tool:
-        wb.add(
-            "c.id IN (SELECT e.conversation_id FROM events e"
-            " JOIN event_tool_call etc ON etc.event_id = e.id"
-            " JOIN tools t ON t.id = etc.tool_id"
-            " WHERE e.kind = 'tool_call' AND t.name = ?)",
-            tool,
-        )
+    wb.tool(tool)
 
     # Normalize tag: accept str (single) or list (OR filter)
     effective_tags = [tag] if isinstance(tag, str) else list(tag or [])
@@ -322,15 +336,14 @@ def _list_conversations_impl(
     wb.tags_all(all_tags, kinds=tag_kind)
     wb.tags_none(no_tag, kinds=tag_kind)
 
-    if tool_tag:
-        op, val = _tag_condition(tool_tag)
-        wb.add(
-            "c.id IN (SELECT e.conversation_id FROM tag_assignments ta"
-            " JOIN events e ON e.id = ta.target_id"
-            " JOIN tags tg ON tg.id = ta.tag_id"
-            f" WHERE ta.target_kind = 'tool_call' AND {op})",
-            val,
-        )
+    wb.tool_tag(tool_tag)
+
+    if group_subagents:
+        # Page by ROOT session: a sub-agent's external_id is "<root>::agent::…",
+        # so excluding it here makes the n-limit count top-level sessions only.
+        # Their sub-agents are pulled in unconditionally below, so a parent and
+        # its children always travel together regardless of the page boundary.
+        wb.add("c.external_id NOT LIKE '%::agent::%'")
 
     where = wb.where_sql()
     params = wb.params
@@ -342,7 +355,7 @@ def _list_conversations_impl(
     # join responses/models when a filter (e.g. --model) requires them.
     phase1_joins = wb.joins_sql()
     id_sql = f"""
-        SELECT c.id
+        SELECT c.id, c.external_id
         FROM conversations c
         {phase1_joins}
         {where}
@@ -355,6 +368,16 @@ def _list_conversations_impl(
     if not conv_ids:
         return []
 
+    if group_subagents:
+        # Pull every sub-agent of the paged roots (owner-scoped, no n-limit) so
+        # the renderer can nest them — they were excluded from the count above.
+        root_exts = [row["external_id"] for row in id_rows if row["external_id"]]
+        seen = set(conv_ids)
+        for cid in _fetch_subagent_ids(conn, root_exts, owner):
+            if cid not in seen:
+                conv_ids.append(cid)
+                seen.add(cid)
+
     placeholders = ",".join("?" * len(conv_ids))
     use_stats = has_conversation_stats_table(conn)
 
@@ -364,7 +387,7 @@ def _list_conversations_impl(
         # table (e.g. conversations inserted since the last ingest rebuild).
         rows = conn.execute(
             f"""SELECT c.id AS conversation_id, w.path AS workspace,
-                    c.started_at,
+                    c.started_at, c.external_id AS external_id,
                     COALESCE(cs.prompt_count,
                         (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id)
                     ) AS prompts,
@@ -409,7 +432,7 @@ def _list_conversations_impl(
                      LEFT JOIN models m2 ON m2.id = er2.model_id
                      WHERE e2.kind = 'response' AND e2.conversation_id = c.id
                      GROUP BY m2.name ORDER BY COUNT(*) DESC LIMIT 1) AS model,
-                    c.started_at,
+                    c.started_at, c.external_id AS external_id,
                     (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id) AS prompts,
                     (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id) AS responses,
                     (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
@@ -423,25 +446,88 @@ def _list_conversations_impl(
             conv_ids,
         ).fetchall()
 
-    # Bulk-fetch tags and owners
+    # Bulk-fetch tags, owners, and sub-agent types
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
     owner_by_conv = _fetch_owners_for_conversations(conn, conv_ids)
+    agent_type_by_conv = _fetch_agent_types_for_conversations(conn, conv_ids)
 
-    return [
-        ConversationSummary(
-            id=row["conversation_id"],
-            workspace_path=row["workspace"],
-            model=row["model"],
-            started_at=row["started_at"],
-            prompt_count=row["prompts"],
-            response_count=row["responses"],
-            total_tokens=row["tokens"],
-            cost=row["cost"],
-            tags=tags_by_conv.get(row["conversation_id"], []),
-            owner=owner_by_conv.get(row["conversation_id"]),
+    summaries: list[ConversationSummary] = []
+    for row in rows:
+        ext = row["external_id"]
+        # Sub-agent identity is "<root>::agent::<agentId>"; the root before the
+        # marker is the parent session's external_id. None for a top-level conv.
+        parent_ext = ext.split("::agent::")[0] if ext and "::agent::" in ext else None
+        summaries.append(
+            ConversationSummary(
+                id=row["conversation_id"],
+                workspace_path=row["workspace"],
+                model=row["model"],
+                started_at=row["started_at"],
+                prompt_count=row["prompts"],
+                response_count=row["responses"],
+                total_tokens=row["tokens"],
+                cost=row["cost"],
+                tags=tags_by_conv.get(row["conversation_id"], []),
+                owner=owner_by_conv.get(row["conversation_id"]),
+                external_id=ext,
+                parent_external_id=parent_ext,
+                agent_type=agent_type_by_conv.get(row["conversation_id"]),
+            )
         )
-        for row in rows
-    ]
+    return summaries
+
+
+def _fetch_subagent_ids(conn, root_external_ids: list[str], owner: str | None) -> list[str]:
+    """IDs of every sub-agent conversation whose root session is in the page.
+
+    A sub-agent's external_id is ``<root>::agent::<agentId>``; match the prefix
+    before ``::agent::`` against the paged roots. Owner-scoped exactly like the
+    main query — a visible parent must not grant access to a child owned by
+    someone else (IDOR), and an absent owners table with an owner filter yields
+    nothing, matching the caller's own short-circuit.
+    """
+    if not root_external_ids:
+        return []
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    cwb = WhereBuilder()
+    cwb.owner(owner)
+    placeholders = ",".join("?" * len(root_external_ids))
+    cwb.add(
+        "c.external_id LIKE '%::agent::%'"
+        " AND substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)"
+        f" IN ({placeholders})",
+        *root_external_ids,
+    )
+    sql = f"SELECT c.id FROM conversations c {cwb.joins_sql()} {cwb.where_sql()}"
+    return [row["id"] for row in conn.execute(sql, cwb.params).fetchall()]
+
+
+def _fetch_agent_types_for_conversations(
+    conn,
+    conversation_ids: list[str],
+) -> dict[str, str]:
+    """Map conversation_id -> sub-agent type, from the 'subagent_type' attribute.
+
+    Captured at ingest from the Claude Code agent-<id>.meta.json sidecar (see the
+    claude_code adapter). Absent for top-level sessions and for historical
+    sub-agents whose sidecar rotated off disk before ingest. Defensive against a
+    pre-v4 DB with no attributes table (read-only opens) — returns {} rather
+    than raising, matching the owners fetcher's degrade-don't-crash contract.
+    """
+    if not conversation_ids:
+        return {}
+    placeholders = ",".join("?" * len(conversation_ids))
+    try:
+        rows = conn.execute(
+            "SELECT target_id, value FROM attributes"
+            " WHERE target_kind = 'conversation' AND key = 'subagent_type'"
+            f" AND target_id IN ({placeholders})",
+            conversation_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    return {row["target_id"]: row["value"] for row in rows}
 
 
 def _fetch_owners_for_conversations(
@@ -688,8 +774,14 @@ def get_conversation(
                 )
             )
 
-        # Tags render in list/detail at depth >= 3.
+        # Tags + cost render in list/detail at depth >= 3. Cost is the rollup's
+        # canonical precomputed value (None when no priced usage), never faked.
         tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
+        cost = (
+            get_conversation_cost(conn, conv_id)
+            if fidelity.depth >= 3 and has_conversation_stats_table(conn)
+            else None
+        )
 
         # Anchor + window resolution (fetch-layer concern per fidelity-as-contract).
         # All turns are fetched above; we slice here to return only the requested window.
@@ -710,6 +802,7 @@ def get_conversation(
             total_output_tokens=total_output,
             turns=turns,
             tags=tags,
+            cost=cost,
         )
     finally:
         conn.close()

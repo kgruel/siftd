@@ -97,5 +97,6 @@ def serialize_conversation_detail(
         "started_at": detail.started_at,
         "tags": detail.tags,
         "total_tokens": total_tokens,
+        "cost": getattr(detail, "cost", None),
         "turns": turns_data,
     }

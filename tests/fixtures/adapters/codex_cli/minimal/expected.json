@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-01-15T10:00:04Z",
     "external_id": "codex_cli::codex-session-1",
     "harness": {
@@ -19,7 +18,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -45,9 +43,7 @@
                 }
               }
             ],
-            "external_id": null,
             "model": "gpt-4o",
-            "provider": null,
             "timestamp": "2024-01-15T10:00:02Z",
             "tool_calls": [
               {

@@ -565,6 +565,18 @@ class TestSecurityHeaders:
             csp = r.headers.get("content-security-policy", "")
             assert "connect-src 'self' https://idp.example.com" in csp
 
+    def test_build_csp_widening_logic(self):
+        # Unit-level cover for the issuer-widening logic itself (process-state
+        # independent). Pairs with the create_app wiring test above.
+        from siftd.serve.app import _build_csp
+
+        assert "connect-src 'self';" in _build_csp(None)
+        assert "connect-src 'self';" in _build_csp({})
+        widened = _build_csp({"issuer": "https://idp.example.com/realms/x"})
+        assert "connect-src 'self' https://idp.example.com;" in widened
+        # A bare/origin-less issuer falls back to 'self' rather than emitting junk.
+        assert "connect-src 'self';" in _build_csp({"issuer": "not-a-url"})
+
     def test_csp_does_not_bleed_across_apps_in_one_process(self, tmp_path):
         # Litestar memoizes route-handler resolution process-wide: with headers
         # attached via an after_request hook, once a no-auth app had served
@@ -612,19 +624,36 @@ class TestRateLimitAndLiveGate:
     """F4 (per-client rate limit) + F7 (live-endpoint gate)."""
 
     def test_live_endpoints_gated_off(self, tmp_path):
+        """F7: with live endpoints off, /follow is unregistered AND the
+        Sessions view renders no Live zone — the server host's session files
+        are never shown to remote users."""
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
         app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=False)
         with TestClient(app, raise_server_exceptions=False) as client:
-            assert client.get("/peek").status_code == 404
             assert client.get("/follow?sid=abc").status_code == 404
+            sessions = client.get("/view/sessions")
+            assert sessions.status_code == 200
+            assert "zone--live" not in sessions.text
+            assert 'hx-get="/follow' not in sessions.text
+            # The shell's ?follow= deep link degrades to the Sessions view,
+            # never pointing #main at the unregistered route.
+            shell = client.get("/", params={"follow": "abc"}).text
+            assert "/view/sessions" in shell and "/follow?sid=" not in shell
 
     def test_live_endpoints_present_when_allowed(self, tmp_path):
         team_db = tmp_path / "team.db"
         create_database(team_db).close()
         app = create_app(db_path=team_db, auth_config=None, allow_live_endpoints=True)
         with TestClient(app, raise_server_exceptions=False) as client:
-            assert client.get("/peek").status_code == 200  # registered (may be empty)
+            # /view/sessions is an htmx-only fragment (a direct GET 303s to the
+            # canonical shell); fetch it as htmx to assert the fragment itself.
+            client.headers.update({"HX-Request": "true"})
+            sessions = client.get("/view/sessions")
+            assert sessions.status_code == 200
+            assert "zone--live" in sessions.text  # zone present (may be empty)
+            shell = client.get("/", params={"follow": "abc"}).text
+            assert "/follow?sid=abc" in shell
 
     def test_rate_limit_returns_429_when_exceeded(self, tmp_path):
         team_db = tmp_path / "team.db"

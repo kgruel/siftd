@@ -9,6 +9,7 @@ don't leak.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -24,6 +25,7 @@ from siftd.api.caveats import (
 )
 from siftd.api.dispatch import Operation, dispatch, execute_for_render, render
 from siftd.doctor.checks import Finding
+from siftd.domain.search_types import SearchView
 
 
 @dataclass
@@ -919,10 +921,11 @@ class TestActiveSessionsProducer:
 
     def test_active_sessions_produces_finding(self, monkeypatch):
         """Active sessions produce finding with count."""
+        from pathlib import Path
+
         from siftd.api.caveats import _active_sessions_caveats
         from siftd.api.conversations import list_conversations
         from siftd.peek.types import SessionInfo
-        from pathlib import Path
 
         def mock_list_active(workspace):
             return [
@@ -966,10 +969,11 @@ class TestActiveSessionsProducer:
 
     def test_active_sessions_singular_message(self, monkeypatch):
         """Message pluralizes correctly for 1 session."""
+        from pathlib import Path
+
         from siftd.api.caveats import _active_sessions_caveats
         from siftd.api.conversations import list_conversations
         from siftd.peek.types import SessionInfo
-        from pathlib import Path
 
         def mock_list_active(workspace):
             return [
@@ -1198,48 +1202,48 @@ class TestFreshCorpusProducer:
 class TestEmbeddingsStaleProducer:
     """Tests for the embeddings-stale producer.
 
-    The producer's applies_to predicate is gated on (fn is search_chunks,
+    The producer's applies_to predicate is gated on (fn is search_view,
     render_method=='search'). The producer checks embeddings availability,
     opens the embeddings db separately, and compares indexed conversation IDs.
     """
 
-    def test_applies_to_requires_search_chunks(self):
+    def test_applies_to_requires_search_view(self):
         """Predicate is False for ops calling other functions."""
-        from siftd.api.caveats import _is_search_chunks_for_search_render
+        from siftd.api.caveats import _is_search_view_for_render
 
         op = _make_op(fn=lambda: [], render_method="search")
-        assert _is_search_chunks_for_search_render(op) is False
+        assert _is_search_view_for_render(op) is False
 
     def test_applies_to_requires_search_render_method(self):
-        from siftd.api.caveats import _is_search_chunks_for_search_render
-        from siftd.api.search import search_chunks
+        from siftd.api.caveats import _is_search_view_for_render
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks, render_method="list")
-        assert _is_search_chunks_for_search_render(op) is False
+        op = _make_op(fn=search_view, render_method="list")
+        assert _is_search_view_for_render(op) is False
 
     def test_applies_to_satisfied(self):
-        from siftd.api.caveats import _is_search_chunks_for_search_render
-        from siftd.api.search import search_chunks
+        from siftd.api.caveats import _is_search_view_for_render
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks, render_method="search")
-        assert _is_search_chunks_for_search_render(op) is True
+        op = _make_op(fn=search_view, render_method="search")
+        assert _is_search_view_for_render(op) is True
 
     def test_embeddings_unavailable_short_circuits(self, monkeypatch):
         """If embeddings_available() is False, no DB work occurs."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.embeddings.availability.embeddings_available", lambda: False
         )
 
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         assert _embeddings_stale_caveats(op, [], _make_ctx()) == []
 
     def test_embed_db_missing_no_conversations_returns_empty(self, monkeypatch, tmp_path):
         """If embed db missing and main db has no conversations, return empty list."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.storage.sqlite import create_database
 
         monkeypatch.setattr(
@@ -1254,13 +1258,13 @@ class TestEmbeddingsStaleProducer:
         conn = create_database(db_file)
         conn.close()
         ctx = ProducerContext(db_path=db_file)
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         assert _embeddings_stale_caveats(op, [], ctx) == []
 
     def test_embed_db_missing_with_conversations_returns_finding(self, monkeypatch, tmp_path):
         """If embed db missing and main db has conversations, all are flagged as unindexed."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.storage.sqlite import (
             create_database,
             get_or_create_harness,
@@ -1289,7 +1293,7 @@ class TestEmbeddingsStaleProducer:
         conn.close()
 
         ctx = ProducerContext(db_path=db_file)
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         findings = _embeddings_stale_caveats(op, [], ctx)
         assert len(findings) == 1
         assert "not indexed" in findings[0].message
@@ -1297,7 +1301,7 @@ class TestEmbeddingsStaleProducer:
     def test_main_db_missing_returns_empty(self, monkeypatch, tmp_path):
         """If main db path doesn't exist, return empty list (no error)."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.embeddings.availability.embeddings_available", lambda: True
@@ -1310,14 +1314,14 @@ class TestEmbeddingsStaleProducer:
         )
 
         ctx = ProducerContext(db_path="/nonexistent/main.db")
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         assert _embeddings_stale_caveats(op, [], ctx) == []
 
     @pytest.mark.embeddings
     def test_all_indexed_no_finding(self, monkeypatch, tmp_path):
         """All conversations indexed → no finding."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         # Create dummy DB files
         db_file = tmp_path / "main.db"
@@ -1358,7 +1362,7 @@ class TestEmbeddingsStaleProducer:
         )
 
         ctx = ProducerContext(db_path=db_file)
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         findings = _embeddings_stale_caveats(op, [], ctx)
         assert findings == []
 
@@ -1366,7 +1370,7 @@ class TestEmbeddingsStaleProducer:
     def test_missing_conversations_produces_warning(self, monkeypatch, tmp_path):
         """Missing conversations produce warning with count and fix command."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         # Create dummy DB files
         db_file = tmp_path / "main.db"
@@ -1408,7 +1412,7 @@ class TestEmbeddingsStaleProducer:
         )
 
         ctx = ProducerContext(db_path=db_file)
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         findings = _embeddings_stale_caveats(op, [], ctx)
         assert len(findings) == 1
         assert findings[0].check == "embeddings-stale"
@@ -1422,7 +1426,7 @@ class TestEmbeddingsStaleProducer:
     def test_singular_conversation_message(self, monkeypatch, tmp_path):
         """Message uses singular 'conversation' when count=1."""
         from siftd.api.caveats import _embeddings_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         db_file = tmp_path / "main.db"
         db_file.touch()
@@ -1462,7 +1466,7 @@ class TestEmbeddingsStaleProducer:
         )
 
         ctx = ProducerContext(db_path=db_file)
-        op = _make_op(fn=search_chunks, render_method="search")
+        op = _make_op(fn=search_view, render_method="search")
         findings = _embeddings_stale_caveats(op, [], ctx)
         assert len(findings) == 1
         assert "1 conversation not indexed" in findings[0].message
@@ -1470,11 +1474,11 @@ class TestEmbeddingsStaleProducer:
 
     def test_predicate_false_for_list_render_method(self):
         """Predicate is False when render_method is 'list'."""
-        from siftd.api.caveats import _is_search_chunks_for_search_render
-        from siftd.api.search import search_chunks
+        from siftd.api.caveats import _is_search_view_for_render
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks, render_method="list")
-        assert _is_search_chunks_for_search_render(op) is False
+        op = _make_op(fn=search_view, render_method="list")
+        assert _is_search_view_for_render(op) is False
 
 
 
@@ -1601,6 +1605,7 @@ class TestPendingTagsProducer:
     def test_missing_pending_tags_table(self, tmp_path):
         """DB exists but pending_tags table missing → no finding."""
         import sqlite3
+
         from siftd.api.caveats import _pending_tags_caveats
         from siftd.api.conversations import list_conversations
 
@@ -1632,6 +1637,7 @@ class TestIngestStatusProducer:
         causing the producer to emit ingest-never-run finding.
         """
         import sqlite3
+
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
 
@@ -1814,9 +1820,10 @@ class TestIngestStatusProducer:
 
     def test_stale_ingest_produces_info(self, monkeypatch, tmp_path):
         """Last ingest > 7 days ago → info finding check='ingest-stale', age_days=10."""
+        from datetime import datetime, timedelta
+
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
-        from datetime import datetime, timezone, timedelta
 
         class FakeConn:
             def close(self):
@@ -1830,7 +1837,7 @@ class TestIngestStatusProducer:
             lambda conn: [],
         )
         # 10 days ago
-        ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        ten_days_ago = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         monkeypatch.setattr(
             "siftd.storage.queries.fetch_last_ingest_time",
             lambda conn: ten_days_ago,
@@ -1851,9 +1858,10 @@ class TestIngestStatusProducer:
 
     def test_fresh_ingest_no_stale_finding(self, monkeypatch, tmp_path):
         """Last ingest 3 days ago → no stale finding."""
+        from datetime import datetime, timedelta
+
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
-        from datetime import datetime, timezone, timedelta
 
         class FakeConn:
             def close(self):
@@ -1867,7 +1875,7 @@ class TestIngestStatusProducer:
             lambda conn: [],
         )
         # 3 days ago
-        three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        three_days_ago = (datetime.now(UTC) - timedelta(days=3)).isoformat()
         monkeypatch.setattr(
             "siftd.storage.queries.fetch_last_ingest_time",
             lambda conn: three_days_ago,
@@ -1882,9 +1890,10 @@ class TestIngestStatusProducer:
 
     def test_multiple_findings_together(self, monkeypatch, tmp_path):
         """Errors + stale → both findings emitted."""
+        from datetime import datetime, timedelta
+
         from siftd.api.caveats import _ingest_status_caveats
         from siftd.api.conversations import list_conversations
-        from datetime import datetime, timezone, timedelta
 
         class FakeConn:
             def close(self):
@@ -1898,7 +1907,7 @@ class TestIngestStatusProducer:
             lambda conn: [{"path": "/f1.json", "error": "error", "harness_name": "claude-code"}],
         )
         # 10 days ago
-        ten_days_ago = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        ten_days_ago = (datetime.now(UTC) - timedelta(days=10)).isoformat()
         monkeypatch.setattr(
             "siftd.storage.queries.fetch_last_ingest_time",
             lambda conn: ten_days_ago,
@@ -1980,31 +1989,31 @@ class TestQueryEmptyTipProducer:
 class TestFtsStaleProducer:
     """Tests for the fts-stale producer.
 
-    The producer's applies_to predicate gates on (fn is search_chunks).
+    The producer's applies_to predicate gates on (fn is search_view).
     It checks FTS index sync status and warns if missing or orphaned entries exist.
     """
 
-    def test_applies_to_requires_search_chunks(self):
+    def test_applies_to_requires_search_view(self):
         """Predicate is False for ops calling other functions."""
-        from siftd.api.caveats import _is_search_chunks
+        from siftd.api.caveats import _is_search_view_op
 
         op = _make_op(fn=lambda: [])
-        assert _is_search_chunks(op) is False
+        assert _is_search_view_op(op) is False
 
     def test_applies_to_satisfied(self):
-        """Predicate is True when op.fn is search_chunks."""
-        from siftd.api.caveats import _is_search_chunks
-        from siftd.api.search import search_chunks
+        """Predicate is True when op.fn is search_view."""
+        from siftd.api.caveats import _is_search_view_op
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks)
-        assert _is_search_chunks(op) is True
+        op = _make_op(fn=search_view)
+        assert _is_search_view_op(op) is True
 
     def test_nonexistent_db_returns_empty(self):
         """Path doesn't exist → no finding."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         ctx = ProducerContext(db_path=Path("/nonexistent/path/db.sqlite"))
         findings = _fts_stale_caveats(op, [], ctx)
         assert findings == []
@@ -2012,28 +2021,28 @@ class TestFtsStaleProducer:
     def test_clean_index_no_finding(self, monkeypatch):
         """No missing or orphaned entries → no finding."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 0, "orphaned_count": 0},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         findings = _fts_stale_caveats(op, [], _make_ctx())
         assert findings == []
 
     def test_missing_content_produces_warning(self, monkeypatch, tmp_path):
         """Missing content blocks → warning with fix_command."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 3, "orphaned_count": 0},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
@@ -2049,14 +2058,14 @@ class TestFtsStaleProducer:
     def test_orphaned_entries_produces_warning(self, monkeypatch, tmp_path):
         """Orphaned FTS entries → warning with fix_command."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 0, "orphaned_count": 2},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
@@ -2072,14 +2081,14 @@ class TestFtsStaleProducer:
     def test_both_missing_and_orphaned(self, monkeypatch, tmp_path):
         """Both missing and orphaned → single warning mentioning both."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 3, "orphaned_count": 2},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
@@ -2096,14 +2105,14 @@ class TestFtsStaleProducer:
     def test_singular_missing_message(self, monkeypatch, tmp_path):
         """Message uses singular 'block' for missing_count=1."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 1, "orphaned_count": 0},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
@@ -2114,14 +2123,14 @@ class TestFtsStaleProducer:
     def test_singular_orphaned_message(self, monkeypatch, tmp_path):
         """Message uses singular 'entry' for orphaned_count=1."""
         from siftd.api.caveats import _fts_stale_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
         monkeypatch.setattr(
             "siftd.storage.fts.get_fts_sync_status",
             lambda conn: {"missing_count": 0, "orphaned_count": 1},
         )
 
-        op = _make_op(fn=search_chunks)
+        op = _make_op(fn=search_view)
         db_file = tmp_path / "db.sqlite"
         db_file.touch()
         ctx = ProducerContext(db_path=db_file)
@@ -2134,71 +2143,71 @@ class TestSearchModeDegradedProducer:
     """Tests for the search-mode-degraded producer (B8).
 
     Producer fires when op.params["mode"] == "fts" and result is non-empty.
-    Predicate is shared with embeddings-stale: fn is search_chunks + render_method=="search".
+    Predicate is shared with embeddings-stale: fn is search_view + render_method=="search".
     """
 
     def test_applies_to_predicate(self):
-        """Predicate matches search_chunks + render_method=='search'."""
-        from siftd.api.caveats import _is_search_chunks_for_search_render
-        from siftd.api.search import search_chunks
+        """Predicate matches search_view + render_method=='search'."""
+        from siftd.api.caveats import _is_search_view_for_render
+        from siftd.api.search import search_view
 
-        op_match = _make_op(fn=search_chunks, render_method="search")
-        assert _is_search_chunks_for_search_render(op_match) is True
+        op_match = _make_op(fn=search_view, render_method="search")
+        assert _is_search_view_for_render(op_match) is True
 
-        op_wrong_method = _make_op(fn=search_chunks, render_method="list")
-        assert _is_search_chunks_for_search_render(op_wrong_method) is False
+        op_wrong_method = _make_op(fn=search_view, render_method="list")
+        assert _is_search_view_for_render(op_wrong_method) is False
 
     def test_empty_result_no_finding(self):
         """Empty result → no finding."""
         from siftd.api.caveats import _search_mode_degraded_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
-        findings = _search_mode_degraded_caveats(op, [], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, SearchView(results=[], view="chunks"), _make_ctx())
         assert findings == []
 
     def test_non_fts_mode_no_finding(self):
         """mode='hybrid' → no finding even with results."""
         from siftd.api.caveats import _search_mode_degraded_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="abc", score=0.9, text="x", chunk_type="prompt")
-        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "hybrid"})
-        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search", params={"mode": "hybrid"})
+        findings = _search_mode_degraded_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
         assert findings == []
 
     def test_missing_mode_param_no_finding(self):
         """No mode param → no finding (params default to {})."""
         from siftd.api.caveats import _search_mode_degraded_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="abc", score=0.9, text="x", chunk_type="prompt")
-        op = _make_op(fn=search_chunks, render_method="search", params={})
-        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search", params={})
+        findings = _search_mode_degraded_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
         assert findings == []
 
     def test_fts_mode_emits_hint(self):
         """mode='fts' with non-empty result → one hint finding."""
         from siftd.api.caveats import _search_mode_degraded_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
-        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
-        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
         assert len(findings) == 1
 
     def test_hint_fields(self):
         """Finding has correct check, severity, channel, message, fix_available."""
         from siftd.api.caveats import _search_mode_degraded_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
-        op = _make_op(fn=search_chunks, render_method="search", params={"mode": "fts"})
-        findings = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search", params={"mode": "fts"})
+        findings = _search_mode_degraded_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
 
         f = findings[0]
         assert f.check == "search-mode-degraded"
@@ -2217,18 +2226,18 @@ class TestSearchModeDegradedProducer:
             _search_fts5_around_turn_index_caveats,
             _search_mode_degraded_caveats,
         )
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="abc", score=0.8, text="y", chunk_type="fts5")
         op = _make_op(
-            fn=search_chunks,
+            fn=search_view,
             render_method="search",
             params={"mode": "fts", "around": "phrase"},
         )
 
-        degraded = _search_mode_degraded_caveats(op, [chunk], _make_ctx())
-        around = _search_fts5_around_turn_index_caveats(op, [chunk], _make_ctx())
+        degraded = _search_mode_degraded_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
+        around = _search_fts5_around_turn_index_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
 
         assert degraded == [], "search-mode-degraded must yield to search-fts5-around-turn-index"
         assert len(around) == 1
@@ -2244,33 +2253,33 @@ class TestSearchTaggingTipProducer:
     def test_empty_result_no_finding(self):
         """Empty result → no finding."""
         from siftd.api.caveats import _search_tagging_tip_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
 
-        op = _make_op(fn=search_chunks, render_method="search")
-        findings = _search_tagging_tip_caveats(op, [], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search")
+        findings = _search_tagging_tip_caveats(op, SearchView(results=[], view="chunks"), _make_ctx())
         assert findings == []
 
     def test_result_with_conv_id_emits_hint(self):
         """Non-empty result → one hint finding containing conversation_id."""
         from siftd.api.caveats import _search_tagging_tip_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="01JABCDEF", score=0.9, text="x", chunk_type="prompt")
-        op = _make_op(fn=search_chunks, render_method="search")
-        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search")
+        findings = _search_tagging_tip_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
         assert len(findings) == 1
         assert "01JABCDEF" in findings[0].message or "01JABCD" in findings[0].message
 
     def test_hint_fields(self):
         """Finding has channel='text', severity='hint', fix_available=False."""
         from siftd.api.caveats import _search_tagging_tip_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="01JABCDEF", score=0.9, text="x", chunk_type="prompt")
-        op = _make_op(fn=search_chunks, render_method="search")
-        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search")
+        findings = _search_tagging_tip_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
 
         f = findings[0]
         assert f.check == "search-tagging-tip"
@@ -2282,11 +2291,11 @@ class TestSearchTaggingTipProducer:
     def test_empty_conversation_id_no_finding(self):
         """Chunk with empty conversation_id → no finding."""
         from siftd.api.caveats import _search_tagging_tip_caveats
-        from siftd.api.search import search_chunks
+        from siftd.api.search import search_view
         from siftd.domain.search_types import SearchChunk
 
         chunk = SearchChunk(conversation_id="", score=0.9, text="x", chunk_type="prompt")
-        op = _make_op(fn=search_chunks, render_method="search")
-        findings = _search_tagging_tip_caveats(op, [chunk], _make_ctx())
+        op = _make_op(fn=search_view, render_method="search")
+        findings = _search_tagging_tip_caveats(op, SearchView(results=[chunk], view="chunks"), _make_ctx())
         assert findings == []
 

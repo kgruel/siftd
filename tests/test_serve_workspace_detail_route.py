@@ -19,8 +19,12 @@ from siftd.serve import routes
 from test_workspace_detail import _build
 
 
-def _run(coro):
-    return asyncio.run(coro)
+def _run(result):
+    # Most routes are sync now (threadpool via sync_to_thread); body-reading
+    # handlers (tag_write/session_queue/push) stay async and return coroutines.
+    if asyncio.iscoroutine(result):
+        return asyncio.run(result)
+    return result
 
 
 def test_workspace_detail_route_returns_detail(tmp_path):

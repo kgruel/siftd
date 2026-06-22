@@ -153,6 +153,41 @@ class TestFilterConversations:
         result = filter_conversations(db, workspace="bar")
         assert len(result) == 0
 
+    @staticmethod
+    def _ext_to_id(db) -> dict[str, str]:
+        from siftd.storage.sqlite import open_database
+        conn = open_database(db, read_only=True)
+        try:
+            rows = conn.execute("SELECT external_id, id FROM conversations").fetchall()
+        finally:
+            conn.close()
+        return {r["external_id"]: r["id"] for r in rows}
+
+    def test_tool_filter(self, test_db_with_tool_tags):
+        # All three fixture conversations use the shell.execute tool; a
+        # non-matching name yields the empty set (a constraint that matched
+        # nothing), distinct from None (no constraint applied).
+        from siftd.search import filter_conversations
+
+        db = test_db_with_tool_tags
+        ids = self._ext_to_id(db)
+        matched = filter_conversations(db, tool="shell.execute")
+        assert matched == {ids["conv1"], ids["conv2"], ids["conv3"]}
+        assert filter_conversations(db, tool="no.such.tool") == set()
+
+    def test_tool_tag_filter(self, test_db_with_tool_tags):
+        # shell:test tags conv1 + conv3; shell:vcs tags conv2 only. The
+        # trailing-colon prefix match (shell:) spans both tags → all three.
+        from siftd.search import filter_conversations
+
+        db = test_db_with_tool_tags
+        ids = self._ext_to_id(db)
+        assert filter_conversations(db, tool_tag="shell:test") == {ids["conv1"], ids["conv3"]}
+        assert filter_conversations(db, tool_tag="shell:vcs") == {ids["conv2"]}
+        assert filter_conversations(db, tool_tag="shell:") == {
+            ids["conv1"], ids["conv2"], ids["conv3"]
+        }
+
     def test_owner_filter_no_table(self, tmp_path):
         import sqlite3
 

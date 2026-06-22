@@ -163,25 +163,24 @@ def get_cost_coverage(
             conn.close()
 
 
-def list_workspaces(
+def list_models(
     conn: sqlite3.Connection | None = None,
-    n: int = 10,
     *,
     db_path: Path | None = None,
     owner: str | None = None,
-) -> list[sqlite3.Row]:
-    """List workspaces with conversation counts.
+) -> list[str]:
+    """List canonical model names, optionally scoped to an owner.
+
+    A cheap projection for filter UIs — ``get_stats`` returns the same list but
+    pays for full-table counts and token coverage to get it.
 
     Args:
         conn: Database connection. Opened from db_path if not provided.
-        n: Maximum workspaces to return.
         db_path: Path to database. Ignored if conn provided.
+        owner: Scope to conversations owned by this identity.
 
     Returns:
-        Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and
-        'last_activity' keys. The ULID 'id' is the workspace's stable identity
-        (workspaces.id) — the read API addresses workspaces by it, not by the
-        slash-containing path.
+        Sorted, deduped canonical model names.
     """
     should_close = False
     if conn is None:
@@ -190,15 +189,154 @@ def list_workspaces(
         should_close = True
     try:
         owner_kw = {"owner": owner} if owner else {}
-        return fetch_top_workspaces(conn, limit=n, **owner_kw)
+        return fetch_model_names(conn, **owner_kw)
     finally:
         if should_close:
             conn.close()
 
 
-def stats_cache_path() -> Path:
-    """Return path to the stats cache file."""
-    return cache_dir() / "stats.json"
+def list_tools(
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    n: int = 200,
+) -> list[str]:
+    """List canonical tool names, usage-ordered, optionally scoped to an owner.
+
+    A cheap projection for filter UIs (the Find tool facet), dissolved onto
+    ``fetch_top_tools`` — usage-ordered so the most-used tools surface first in
+    the dropdown rather than alphabetically. ``n`` caps the list (mirrors
+    ``list_workspaces``' facet cap); 200 covers any real tool vocabulary.
+
+    Args:
+        conn: Database connection. Opened from db_path if not provided.
+        db_path: Path to database. Ignored if conn provided.
+        owner: Scope to conversations owned by this identity.
+        n: Maximum tool names to return.
+
+    Returns:
+        Canonical ``tools.name`` values, most-used first.
+    """
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        owner_kw = {"owner": owner} if owner else {}
+        return [row["name"] for row in fetch_top_tools(conn, limit=n, **owner_kw)]
+    finally:
+        if should_close:
+            conn.close()
+
+
+def list_workspaces(
+    conn: sqlite3.Connection | None = None,
+    n: int = 10,
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    with_usage: bool = False,
+    sort: str = "sessions",
+) -> list[sqlite3.Row]:
+    """List workspaces with conversation counts.
+
+    Args:
+        conn: Database connection. Opened from db_path if not provided.
+        n: Maximum workspaces to return.
+        db_path: Path to database. Ignored if conn provided.
+        with_usage: Also return ``inp``/``out``/``cost`` columns from the rollup
+            (cost ``None`` when the workspace has no priced usage). Off by default
+            so the name-only callers stay on the lean query; the Workspaces view
+            opts in.
+        sort: Ordering — ``sessions`` (default), ``recent``, ``tokens``, or
+            ``cost``. ``tokens``/``cost`` require ``with_usage`` and fall back to
+            ``sessions`` otherwise.
+
+    Returns:
+        Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs',
+        'last_activity', and 'pinned' (0/1, owner-scoped) keys (plus
+        'inp'/'out'/'cost' when ``with_usage``). The ULID 'id' is the workspace's
+        stable identity (workspaces.id) — the read API addresses workspaces by
+        it, not by the slash-containing path.
+    """
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        owner_kw = {"owner": owner} if owner else {}
+        return fetch_top_workspaces(
+            conn, limit=n, with_usage=with_usage, sort=sort, **owner_kw
+        )
+    finally:
+        if should_close:
+            conn.close()
+
+
+def set_workspace_pin(
+    workspace_id: str,
+    *,
+    pinned: bool,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> bool:
+    """Pin or unpin a workspace (by ULID) for an owner. Returns True if state changed.
+
+    Mirrors :func:`siftd.api.tags.set_tag_pin`, where the workspace analogue of
+    "the tag exists" is "the owner participates": a *pin* requires the workspace
+    to exist and — under an owner scope — that the owner has a conversation there,
+    so you can only pin what your owner-scoped list can show (no stranded pin, no
+    surfacing a foreign workspace later). The local/unscoped case (``owner`` None)
+    keeps the existence-only guard, matching its see-everything view. *Unpin* is
+    always allowed (it only removes state), so a pin can never become unreachable.
+    Owner-scoped, so one tenant's pins never touch another's view. Manages its own
+    connection and transaction.
+    """
+    from siftd.storage.queries import owner_participates_in_workspace as _participates
+    from siftd.storage.queries import pin_workspace as _pin
+    from siftd.storage.queries import unpin_workspace as _unpin
+    from siftd.storage.queries import workspace_exists as _exists
+
+    wid = (workspace_id or "").strip()
+    if not wid:
+        return False
+
+    path = db_path or default_db_path()
+    conn = open_database(path)
+    try:
+        if not pinned:
+            # Unpin always allowed: it only removes the owner's own state, and
+            # gating it could strand a pin whose workspace dropped from the list.
+            changed = _unpin(conn, owner=owner, workspace_id=wid)
+        elif not _exists(conn, wid):
+            return False
+        elif owner and not _participates(conn, owner, wid):
+            return False  # can't pin a workspace this owner can't see
+        else:
+            changed = _pin(conn, owner=owner, workspace_id=wid)
+        conn.commit()
+        return changed
+    finally:
+        conn.close()
+
+
+def stats_cache_path(owner: str | None = None) -> Path:
+    """Return path to the stats cache file.
+
+    The cache is owner-dimensional: ingest writes the unscoped (owner=None)
+    file; owner-scoped consumers (the serve dashboard) get their own file so
+    a tenant never reads cross-tenant totals. Owner is hashed into the name —
+    it is an identity string (email/sub), not filesystem-safe.
+    """
+    if owner is None:
+        return cache_dir() / "stats.json"
+    import hashlib
+
+    digest = hashlib.sha256(owner.encode()).hexdigest()[:16]
+    return cache_dir() / f"stats.{digest}.json"
 
 
 def _stats_to_dict(stats: DatabaseStats) -> dict:
@@ -305,19 +443,49 @@ def _dict_to_stats(data: dict) -> DatabaseStats:
     return dict_to_stats(data)
 
 
-def write_stats_cache(stats: DatabaseStats) -> None:
-    """Atomically write stats to the cache file.
+def effective_db_mtime_ns(db_path: Path | None = None) -> int:
+    """DB mtime in nanoseconds for stats-cache freshness, 0 if missing/unreadable.
 
-    Includes db_mtime_ns for staleness detection and computed_at timestamp.
+    Read-through callers capture this BEFORE the get_stats sweep and thread it
+    into :func:`write_stats_cache`: a write that lands mid-sweep then leaves the
+    stamp older than the live mtime, so the next ``require_fresh`` read recomputes
+    instead of certifying pre-write totals. Stamping at write time (the default
+    fallback) is only correct when nothing wrote during the read. Resolves None to
+    the default path, matching :func:`read_stats_cache`'s freshness comparison.
+    """
+    path = db_path or default_db_path()
+    try:
+        return path.stat().st_mtime_ns
+    except OSError:
+        return 0
+
+
+def write_stats_cache(
+    stats: DatabaseStats,
+    *,
+    owner: str | None = None,
+    db_mtime_ns: int | None = None,
+) -> None:
+    """Atomically write stats to the cache file (per-owner when scoped).
+
+    Includes db_mtime_ns for staleness detection and computed_at timestamp. Pass
+    ``db_mtime_ns`` captured BEFORE the get_stats read (see
+    :func:`effective_db_mtime_ns`) so a write landing mid-recompute can't stamp a
+    post-write mtime onto pre-write content; when omitted, the mtime is taken at
+    write time.
     """
     payload = {
         "_meta": {
             "computed_at": datetime.now(UTC).isoformat(),
-            "db_mtime_ns": stats.db_path.stat().st_mtime_ns if stats.db_path.exists() else 0,
+            "db_mtime_ns": (
+                db_mtime_ns
+                if db_mtime_ns is not None
+                else effective_db_mtime_ns(stats.db_path)
+            ),
         },
         **_stats_to_dict(stats),
     }
-    dest = stats_cache_path()
+    dest = stats_cache_path(owner)
     dest.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=dest.parent, suffix=".tmp")
     try:
@@ -332,12 +500,21 @@ def write_stats_cache(stats: DatabaseStats) -> None:
         raise
 
 
-def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
-    """Read cached stats if the cache exists and is fresh.
+def read_stats_cache(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    require_fresh: bool = False,
+) -> DatabaseStats | None:
+    """Read cached stats if the cache exists and matches.
 
     Returns None if cache is missing, corrupt, or the db_path doesn't match.
+    With require_fresh, also returns None when the DB file changed since the
+    cache was computed (db_mtime_ns mismatch) — the CLI's tiered fallback
+    prefers a possibly-stale answer over a cold recompute, but the serve
+    dashboard must reflect a push-ingest, so it opts in.
     """
-    path = stats_cache_path()
+    path = stats_cache_path(owner)
     if not path.exists():
         return None
     try:
@@ -350,6 +527,14 @@ def read_stats_cache(*, db_path: Path | None = None) -> DatabaseStats | None:
     cached_db = Path(data.get("db_path", ""))
     if cached_db.resolve() != effective_db.resolve():
         return None
+
+    if require_fresh:
+        try:
+            current_mtime = effective_db.stat().st_mtime_ns
+        except OSError:
+            return None
+        if data.get("_meta", {}).get("db_mtime_ns") != current_mtime:
+            return None
 
     return dict_to_stats(data)
 
@@ -422,8 +607,9 @@ def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> Datab
             for row in harness_rows
         ]
 
-        # Top workspaces
-        workspace_rows = fetch_top_workspaces(conn, limit=10, **owner_kw)
+        # Top workspaces (owner passed explicitly so the bool with_usage kwarg
+        # isn't shadowed by the str-typed **owner_kw spread).
+        workspace_rows = fetch_top_workspaces(conn, limit=10, owner=owner)
         top_workspaces = [
             WorkspaceStats(
                 path=row["path"],
@@ -506,23 +692,40 @@ def get_stats(*, db_path: Path | None = None, owner: str | None = None) -> Datab
 
 @dataclass
 class UsageSummary:
-    """Aggregated token/cost stats."""
+    """Aggregated token/cost stats.
+
+    ``total_input_tokens`` is the TRUE TOTAL input (uncached + cache_read +
+    cache_creation — the rollup's normalized convention). The two cache
+    components are broken out so the input economy (how much of the input was
+    served cheaply from cache vs. paid fresh) is derivable:
+    ``uncached = total_input - cache_read - cache_creation``. Defaults keep the
+    pre-cache 4-arg constructors valid.
+    """
 
     total_conversations: int
     total_input_tokens: int
     total_output_tokens: int
     total_cost: float
+    total_cache_read_tokens: int = 0
+    total_cache_creation_tokens: int = 0
 
 
 @dataclass
 class GroupUsage:
-    """Token/cost breakdown for a single group (model or workspace)."""
+    """Token/cost breakdown for a single group (model or workspace).
+
+    ``cost`` is ``None`` when the group has no priced usage — the same
+    NULL-means-unpriced invariant :class:`~siftd.api.conversations.ConversationDetail`
+    carries — so consumers render "unknown" rather than a fabricated ``$0`` that
+    would re-introduce the mispricing the rollup work removed. A genuine summed
+    ``0.0`` (priced rows that net to zero) stays distinct from that ``None``.
+    """
 
     name: str
     conversations: int
     input_tokens: int
     output_tokens: int
-    cost: float
+    cost: float | None
 
 
 def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) -> UsageSummary:
@@ -549,7 +752,9 @@ def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) 
         row = conn.execute(
             "SELECT COUNT(DISTINCT c.id) AS n,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
-            " COALESCE(SUM(u.output_tokens), 0) AS out"
+            " COALESCE(SUM(u.output_tokens), 0) AS out,"
+            " COALESCE(SUM(u.cache_read_tokens), 0) AS cread,"
+            " COALESCE(SUM(u.cache_creation_tokens), 0) AS ccreate"
             " FROM conversations c"
             " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
             f"{conv_where}",
@@ -575,6 +780,8 @@ def get_usage_summary(*, db_path: Path | None = None, owner: str | None = None) 
             total_input_tokens=row["inp"],
             total_output_tokens=row["out"],
             total_cost=total_cost,
+            total_cache_read_tokens=row["cread"],
+            total_cache_creation_tokens=row["ccreate"],
         )
     finally:
         conn.close()
@@ -609,7 +816,9 @@ def get_usage_by_model(*, db_path: Path | None = None, owner: str | None = None)
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: an all-unpriced model sums to NULL → cost=None,
+            # rendered as "unknown" rather than a fabricated $0 (see GroupUsage).
+            " SUM(u.cost) AS cost"
             " FROM usage_by_conv_model u"
             " LEFT JOIN models m ON m.id = u.model_id"
             f"{owner_where}"
@@ -657,7 +866,9 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             " COUNT(DISTINCT c.id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: a workspace with no priced usage sums to NULL →
+            # cost=None ("unknown"), never a fabricated $0 (see GroupUsage).
+            " SUM(u.cost) AS cost"
             " FROM conversations c"
             " LEFT JOIN usage_by_conv_model u ON u.conversation_id = c.id"
             " LEFT JOIN workspaces w ON w.id = c.workspace_id"
@@ -672,10 +883,237 @@ def get_usage_by_workspace(*, db_path: Path | None = None, owner: str | None = N
             )
             for r in rows
         ]
-        results.sort(key=lambda g: g.cost, reverse=True)
+        # Sort by total tokens (not cost) so row order matches the token-sized
+        # bars the dashboard draws — the same key get_usage_by_model uses, which
+        # keeps bar length monotonic with rank. Ordering by cost let a high-token
+        # cheap workspace sink below a low-token expensive one, so the bars read
+        # as non-descending against the row order.
+        results.sort(key=lambda g: g.input_tokens + g.output_tokens, reverse=True)
         return results
     finally:
         conn.close()
+
+
+@dataclass
+class Bucket:
+    """One time-bucket of usage: a label plus summed tokens and honest cost.
+
+    ``cost`` is ``None`` when no row in the bucket was priced (the GroupUsage
+    rule), never a fabricated ``0.0`` — so the cost measure can render ``&mdash;``
+    for an idle/unpriced bucket instead of a false zero.
+    """
+
+    label: str
+    tokens: int
+    cost: float | None
+
+
+@dataclass
+class UsageDistributions:
+    """Activity over time: the daily series + hour-of-day and day-of-week rhythms.
+
+    All three are projections of ``usage_by_conv_model`` joined to the
+    conversation's start time (``localtime``). Tokens attribute to the
+    conversation's START day/hour — the same coarse grain the Sessions daybook
+    groups by; finer per-event attribution would need the rollup re-keyed by
+    event, which it isn't (a 0.11.0 substrate concern).
+
+    ``by_day`` is gap-filled (every calendar day in ``[first, last]`` present,
+    zeroed where idle) so the trend reads as real elapsed time. ``by_hour`` (24,
+    ``00``..``23``) and ``by_dow`` (7, ``Mon``..``Sun``) are dense by
+    construction. Empty corpus → all three empty / all-zero.
+    """
+
+    by_day: list[Bucket]
+    by_hour: list[Bucket]
+    by_dow: list[Bucket]
+
+
+@dataclass
+class InputEconomy:
+    """The input token economy — how the (true-total) input splits into freshly
+    paid (uncached), cheaply re-served (cache reads), and one-time written
+    (cache creation) tokens. ``input_tokens`` is the rollup's TRUE TOTAL, so
+    ``uncached = input - cache_read - cache_creation``. Owner- and model-
+    scopable, so the reckoning can show it for the whole corpus or one brushed
+    model.
+    """
+
+    input_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+
+    @property
+    def uncached_tokens(self) -> int:
+        return max(0, self.input_tokens - self.cache_read_tokens - self.cache_creation_tokens)
+
+    @property
+    def cache_hit_pct(self) -> float:
+        return (self.cache_read_tokens / self.input_tokens * 100) if self.input_tokens else 0.0
+
+    @property
+    def has_cache(self) -> bool:
+        return self.input_tokens > 0 and (self.cache_read_tokens + self.cache_creation_tokens) > 0
+
+
+def get_input_economy(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    model_name: str | None = None,
+) -> InputEconomy:
+    """Input-token economy over the rollup (the reckoning's cache lever).
+
+    Three SUMs over ``usage_by_conv_model``: true-total input + the two broken-
+    out cache components. ``owner`` scopes to a tenant; ``model_name`` scopes to
+    one canonical model (the chart-brushing — same COALESCE key as the other
+    reads) so the strip can follow the Model-mix selection.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return InputEconomy(0, 0, 0)
+        clauses: list[str] = []
+        params: list = []
+        if owner:
+            clauses.append(owner_predicate("u.conversation_id"))
+            params.append(owner)
+        model_join = ""
+        if model_name is not None:
+            model_join = " LEFT JOIN models m ON m.id = u.model_id"
+            clauses.append("COALESCE(m.name, m.raw_name, 'unknown') = ?")
+            params.append(model_name)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+        row = conn.execute(
+            "SELECT COALESCE(SUM(u.input_tokens), 0) AS inp,"
+            " COALESCE(SUM(u.cache_read_tokens), 0) AS cread,"
+            " COALESCE(SUM(u.cache_creation_tokens), 0) AS ccreate"
+            f" FROM usage_by_conv_model u{model_join}{where}",
+            params,
+        ).fetchone()
+        return InputEconomy(row["inp"], row["cread"], row["ccreate"])
+    finally:
+        conn.close()
+
+
+_DOW_LABELS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def _fill_days(rows: list) -> list[Bucket]:
+    """Gap-fill a sparse ``date -> (tok, cost)`` series into a dense daily run.
+
+    Every calendar day between the first and last active day gets a bucket;
+    idle days are zeroed (cost ``None``, not ``0`` — they were never priced).
+    """
+    from datetime import date, timedelta
+
+    present = {r["k"]: r for r in rows if r["k"]}
+    if not present:
+        return []
+    keys = sorted(present)
+    start, end = date.fromisoformat(keys[0]), date.fromisoformat(keys[-1])
+    out: list[Bucket] = []
+    d = start
+    while d <= end:
+        key = d.isoformat()
+        r = present.get(key)
+        out.append(Bucket(key, r["tok"] if r else 0, r["cost"] if r else None))
+        d += timedelta(days=1)
+    return out
+
+
+def get_usage_distributions(
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    workspace_id: str | None = None,
+    model_name: str | None = None,
+) -> UsageDistributions:
+    """Daily / hourly / weekday token+cost distributions over the rollup.
+
+    Three GROUP BYs over ``usage_by_conv_model`` joined up to
+    ``conversations.started_at`` (no schema, no new fact — the dashboard
+    reckoning's activity charts and the per-workspace cadence strip are both
+    projections of this). ``workspace_id`` scopes to one workspace (the cadence
+    strip); ``model_name`` scopes to one canonical model (the reckoning's
+    chart-brushing — same COALESCE(name, raw_name, 'unknown') grouping key
+    get_usage_by_model ranks by); ``owner`` scopes to a tenant, matching every
+    other read here.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+
+    empty_hours = [Bucket(f"{h:02d}", 0, None) for h in range(24)]
+    empty_dows = [Bucket(label, 0, None) for label in _DOW_LABELS]
+
+    path = db_path or default_db_path()
+    conn = open_database(path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return UsageDistributions([], empty_hours, empty_dows)
+
+        clauses: list[str] = []
+        params: list = []
+        if owner:
+            clauses.append(owner_predicate("c.id"))
+            params.append(owner)
+        if workspace_id:
+            clauses.append("c.workspace_id = ?")
+            params.append(workspace_id)
+        # The model join is only needed when brushing by model; keep it out of the
+        # unscoped query so the common path stays a two-table join.
+        model_join = ""
+        if model_name is not None:
+            model_join = " LEFT JOIN models m ON m.id = u.model_id"
+            clauses.append("COALESCE(m.name, m.raw_name, 'unknown') = ?")
+            params.append(model_name)
+        where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        def run(grain: str) -> list:
+            # tokens = the rollup's TRUE-TOTAL input + output (same as every other
+            # GROUP BY here); cost left un-COALESCEd so an unpriced bucket sums to
+            # NULL → Bucket.cost None, never a fabricated $0.
+            return conn.execute(
+                f"SELECT {grain} AS k,"
+                " COALESCE(SUM(u.input_tokens + u.output_tokens), 0) AS tok,"
+                " SUM(u.cost) AS cost"
+                " FROM usage_by_conv_model u"
+                " JOIN conversations c ON c.id = u.conversation_id"
+                f"{model_join}{where}"
+                " GROUP BY k",
+                params,
+            ).fetchall()
+
+        day_rows = run("date(c.started_at, 'localtime')")
+        hour_rows = run("strftime('%H', c.started_at, 'localtime')")
+        dow_rows = run("strftime('%w', c.started_at, 'localtime')")
+    finally:
+        conn.close()
+
+    by_day = _fill_days(day_rows)
+
+    hour_present = {r["k"]: r for r in hour_rows if r["k"] is not None}
+    by_hour = [
+        Bucket(f"{h:02d}", (r["tok"] if (r := hour_present.get(f"{h:02d}")) else 0),
+               r["cost"] if r else None)
+        for h in range(24)
+    ]
+
+    # SQLite %w is 0=Sunday..6=Saturday; remap to 0=Mon..6=Sun for the rhythm.
+    dow_present: dict[int, dict] = {}
+    for r in dow_rows:
+        if r["k"] is None:
+            continue
+        dow_present[(int(r["k"]) + 6) % 7] = r
+    by_dow = [
+        Bucket(_DOW_LABELS[i], (r["tok"] if (r := dow_present.get(i)) else 0),
+               r["cost"] if r else None)
+        for i in range(7)
+    ]
+
+    return UsageDistributions(by_day, by_hour, by_dow)
 
 
 @dataclass
@@ -694,9 +1132,11 @@ class WorkspaceDetail:
     sessions: int
     input_tokens: int
     output_tokens: int
-    cost: float
+    cost: float | None
     model_mix: list[GroupUsage]
     recent: list
+    cadence: list[Bucket]
+    tags: list[tuple[str, int]]
 
 
 def workspace_detail(
@@ -746,7 +1186,10 @@ def workspace_detail(
             " COUNT(DISTINCT u.conversation_id) AS convs,"
             " COALESCE(SUM(u.input_tokens), 0) AS inp,"
             " COALESCE(SUM(u.output_tokens), 0) AS out,"
-            " COALESCE(SUM(u.cost), 0) AS cost"
+            # No COALESCE on cost: an all-unpriced model sums to NULL → cost=None,
+            # rendered "unknown" not a fabricated $0 (the GroupUsage rule the
+            # dashboard already honors; this is the detail twin that lagged it).
+            " SUM(u.cost) AS cost"
             " FROM usage_by_conv_model u"
             " JOIN conversations c ON c.id = u.conversation_id"
             " LEFT JOIN models m ON m.id = u.model_id"
@@ -781,15 +1224,41 @@ def workspace_detail(
         # owner=None (single-tenant/local) stays fully unscoped.
         if owner and sessions == 0:
             return None
+
+        # "What it's about": conversation-level tags on this workspace's
+        # conversations, counted by conversation (the subject-index grain), most
+        # used first. Owner-scoped via the conversation, same as the rest.
+        tag_rows = conn.execute(
+            "SELECT t.name AS name, COUNT(DISTINCT ta.target_id) AS n"
+            " FROM tag_assignments ta"
+            " JOIN tags t ON t.id = ta.tag_id"
+            " JOIN conversations c ON c.id = ta.target_id"
+            " WHERE ta.target_kind = 'conversation' AND c.workspace_id = ?"
+            f"{conv_owner}"
+            " GROUP BY t.name"
+            " ORDER BY n DESC, t.name"
+            " LIMIT 12",
+            [workspace_id, *owner_params],
+        ).fetchall()
+        tags = [(r["name"], r["n"]) for r in tag_rows]
     finally:
         conn.close()
+
+    # Cadence: the reckoning's daily trend scoped to this one workspace (its own
+    # GROUP BY over the rollup — see get_usage_distributions).
+    cadence = get_usage_distributions(
+        db_path=path, owner=owner, workspace_id=workspace_id
+    ).by_day
 
     recent = list_conversations(
         fidelity=fidelity, db_path=path, workspace_id=ws["id"], owner=owner, n=recent_n,
     )
     # Headline cost is the sum of the model mix — one source, so the headline
-    # can never disagree with the per-model rows shown beneath it (the old
-    # separate cs.cost headline could, and the model rows read 0.0).
+    # can never disagree with the per-model rows shown beneath it. It stays None
+    # (not a fabricated $0) when no model in the workspace has priced usage,
+    # matching the dashboard headline; a genuine summed $0 with priced rows
+    # present is distinct from "unknown".
+    priced = [g.cost for g in model_mix if g.cost is not None]
     return WorkspaceDetail(
         id=ws["id"],
         path=ws["path"],
@@ -797,7 +1266,9 @@ def workspace_detail(
         sessions=sessions,
         input_tokens=sum(g.input_tokens for g in model_mix),
         output_tokens=sum(g.output_tokens for g in model_mix),
-        cost=sum(g.cost for g in model_mix),
+        cost=sum(priced) if priced else None,
         model_mix=model_mix,
         recent=recent,
+        cadence=cadence,
+        tags=tags,
     )

@@ -16,7 +16,6 @@ See: test_peek_follow.py test_follow_session_json_output for the canonical
 example of converting from monkeypatch-stdout to callback collection.
 """
 
-import dataclasses
 import json
 import random
 import string
@@ -57,6 +56,9 @@ def _sandbox_db_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_xdg_data"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "_xdg_config"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_xdg_state"))
+    # XDG_CACHE_HOME for the same reason: the dashboard's stats read-through
+    # writes the cache file; without this, tests pollute ~/.cache/siftd.
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "_xdg_cache"))
     yield
 
 
@@ -165,11 +167,16 @@ def load_golden_expected(adapter: str, case: str) -> list[dict]:
 def assert_golden(adapter_module, adapter: str, case: str, tmp_path=None) -> None:
     """Run adapter.parse() on the golden input and compare to expected.json.
 
-    Comparison is sort_keys=True so dict insertion order never causes diffs.
-    tmp_path is required for SQL-backed fixtures (cases with setup.sql).
+    Serializes via ``collapse`` (not ``dataclasses.asdict``): fields equal to
+    their dataclass default are omitted, so expected.json encodes only what the
+    case exercises and a new defaulted domain field never ripples across
+    fixtures. Comparison is sort_keys=True so dict insertion order never causes
+    diffs. tmp_path is required for SQL-backed fixtures (cases with setup.sql).
     """
+    from _golden import collapse
+
     source = load_golden_input(adapter, case, tmp_path)
-    actual = [dataclasses.asdict(c) for c in adapter_module.parse(source)]
+    actual = [collapse(c) for c in adapter_module.parse(source)]
     expected = load_golden_expected(adapter, case)
     assert (
         json.loads(json.dumps(actual, sort_keys=True))

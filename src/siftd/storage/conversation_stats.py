@@ -40,6 +40,21 @@ def has_conversation_stats_table(conn: sqlite3.Connection) -> bool:
     return row[0] > 0
 
 
+def get_conversation_cost(conn: sqlite3.Connection, conversation_id: str) -> float | None:
+    """Return the rollup's canonical cost for one conversation, or None.
+
+    Reads the single precomputed cost definition (``conversation_stats.cost``,
+    a SUM over ``usage_by_conv_model``). None means no priced usage — distinct
+    from a genuine 0.0 — so callers can render "unknown" rather than fabricate
+    a $0 that would re-introduce the mispricing the rollup work removed.
+    """
+    row = conn.execute(
+        f"SELECT cost FROM {_TABLE} WHERE conversation_id = ?",
+        (conversation_id,),
+    ).fetchone()
+    return row[0] if row else None
+
+
 def rebuild_conversation_stats(conn: sqlite3.Connection, *, commit: bool = False) -> int:
     """Rebuild conversation_stats as a cache derived from ``usage_by_conv_model``.
 
