@@ -209,6 +209,8 @@ def cmd_search(args) -> int:
             "no_tag": filters.no_tag,
             "tag_kind": filters.tag_kind,
             "owner": filters.owner,
+            "tool": filters.tool,
+            "tool_tag": filters.tool_tag,
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "recall": args.recall,
@@ -385,6 +387,8 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "no_tag": filters.no_tag,
             "tag_kind": filters.tag_kind,
             "owner": filters.owner,
+            "tool": filters.tool,
+            "tool_tag": filters.tool_tag,
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "raw_fts": getattr(args, "raw_fts", False),
@@ -570,6 +574,10 @@ examples:
   siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
   siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
 
+  # filter by tool use
+  siftd search --tool shell.execute "test failure"     # only conversations that ran a shell
+  siftd search --tool-tag shell:vcs "merge conflict"   # conversations with a git-tagged tool call
+
   # save useful results for future retrieval
   siftd tag 01HX... research:auth                   # bookmark a conversation
   siftd tag --last research:architecture            # tag most recent conversation
@@ -595,7 +603,7 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
     # Filtering options (most commonly used)
     from siftd.cli._filters import add_filter_args
 
-    add_filter_args(p_search)
+    add_filter_args(p_search, include_tool=True, include_tool_tag=True)
 
     # Output options
     from siftd.cli._common import add_fidelity_args, add_output_args

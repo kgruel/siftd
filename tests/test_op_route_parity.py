@@ -198,6 +198,8 @@ def test_search_op_keys_accepted_by_route():
             "no_tag": ["n"],
             "tag_kind": ["k"],
             "owner": "o",
+            "tool": "shell.execute",             # Slice 3b — candidate filter, travels
+            "tool_tag": "shell:test",
             "exclude_active": True,
             "include_derivative": False,
             "recall": 80,

@@ -322,6 +322,37 @@ def test_cmd_search_mode_processing_and_refs(test_db, tmp_path, monkeypatch):
     assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed), view="conversations")) == 0
 
 
+def test_cmd_search_threads_tool_filters(test_db, monkeypatch):
+    # --tool / --tool-tag ride the search Operation onto search_view (3b-1).
+    captured = {}
+
+    def _capture(op):
+        captured.update(op.params)
+        return SearchView(results=[], view="chunks"), []
+
+    monkeypatch.setattr("siftd.api.dispatch.execute_for_render", _capture)
+    monkeypatch.setattr(
+        "siftd.cli.search._can_delegate_to_serve", lambda *a, **k: False
+    )
+
+    # fts mode takes the _search_fts_only path; auto resolves to fts without
+    # embeddings — both must thread the tool filters.
+    assert cmd_search(
+        make_args(query=["x"], db=str(test_db), mode="fts",
+                  tool="shell.execute", tool_tag="shell:test")
+    ) == 0
+    assert captured["tool"] == "shell.execute"
+    assert captured["tool_tag"] == "shell:test"
+
+    captured.clear()
+    assert cmd_search(
+        make_args(query=["x"], db=str(test_db), mode="auto",
+                  tool="shell.execute", tool_tag="shell:test")
+    ) == 0
+    assert captured["tool"] == "shell.execute"
+    assert captured["tool_tag"] == "shell:test"
+
+
 def test_misc_remaining_helper_branches(monkeypatch):
     # _can_delegate_to_serve: can_delegate False
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: False)

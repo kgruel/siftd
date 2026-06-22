@@ -990,6 +990,8 @@ def search_route(
     tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
     raw_fts: bool = Parameter(query="raw_fts", default=False),
     # Engine selector: auto|fts|semantic|hybrid. 'auto' resolves to hybrid when
@@ -1050,7 +1052,8 @@ def search_route(
              "tag": tag, "all_tags": all_tags,
              "no_tag": no_tag, "tag_kind": tag_kind,
              "include_derivative": include_derivative,
-             "owner": owner, "raw_fts": raw_fts,
+             "owner": owner, "tool": tool, "tool_tag": tool_tag,
+             "raw_fts": raw_fts,
              # Recipe controls — search_view runs the post-processing recipe.
              "view": view, "sort": sort, "select": select,
              "threshold": threshold, "full": full,
