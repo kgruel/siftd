@@ -60,8 +60,26 @@ def test_ui_meta_handles_data_source_failures(monkeypatch, tmp_path):
     # defaults aren't resolved off-route, so unspecified args are marker objects).
     resp = _run(hr.ui_meta.fn(
         object(), tmp_path / "db.db", None, tag=None, view="chunks", mode="auto",
-        workspace=None, model=None, owner=None, since=None, before=None,
+        workspace=None, model=None, tool=None, owner=None, since=None, before=None,
     ))
 
     assert resp.media_type == "text/html"
     assert "<select" in resp.content and 'name="workspace"' in resp.content
+
+
+def test_ui_meta_renders_tool_facet(monkeypatch, tmp_path):
+    # The tool facet (3b-2) is a <select> sourced from the corpus tool vocabulary
+    # (list_tools, usage-ordered), riding the same control substrate as the other
+    # facets so a selected tool round-trips through the URL.
+    monkeypatch.setattr(
+        "siftd.api.stats.list_tools",
+        lambda **k: ["shell.execute", "fs.read"],
+    )
+    resp = _run(hr.ui_meta.fn(
+        object(), tmp_path / "db.db", None, tag=None, view="chunks", mode="auto",
+        workspace=None, model=None, tool="shell.execute",
+        owner=None, since=None, before=None,
+    ))
+    assert 'name="tool"' in resp.content
+    assert '<option value="shell.execute" selected>' in resp.content
+    assert '<option value="fs.read">' in resp.content

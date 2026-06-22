@@ -195,6 +195,42 @@ def list_models(
             conn.close()
 
 
+def list_tools(
+    conn: sqlite3.Connection | None = None,
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+    n: int = 200,
+) -> list[str]:
+    """List canonical tool names, usage-ordered, optionally scoped to an owner.
+
+    A cheap projection for filter UIs (the Find tool facet), dissolved onto
+    ``fetch_top_tools`` — usage-ordered so the most-used tools surface first in
+    the dropdown rather than alphabetically. ``n`` caps the list (mirrors
+    ``list_workspaces``' facet cap); 200 covers any real tool vocabulary.
+
+    Args:
+        conn: Database connection. Opened from db_path if not provided.
+        db_path: Path to database. Ignored if conn provided.
+        owner: Scope to conversations owned by this identity.
+        n: Maximum tool names to return.
+
+    Returns:
+        Canonical ``tools.name`` values, most-used first.
+    """
+    should_close = False
+    if conn is None:
+        db = db_path or default_db_path()
+        conn = open_database(db, read_only=True)
+        should_close = True
+    try:
+        owner_kw = {"owner": owner} if owner else {}
+        return [row["name"] for row in fetch_top_tools(conn, limit=n, **owner_kw)]
+    finally:
+        if should_close:
+            conn.close()
+
+
 def list_workspaces(
     conn: sqlite3.Connection | None = None,
     n: int = 10,

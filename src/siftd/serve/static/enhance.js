@@ -360,7 +360,7 @@
   var FIND_FACETS = [
     ['q', 'search'], ['shape', 'view'], ['engine', 'mode'],
     ['workspace', 'workspace'], ['model', 'model'], ['tag', 'tag'],
-    ['owner', 'owner'], ['since', 'since'], ['before', 'before'],
+    ['tool', 'tool'], ['owner', 'owner'], ['since', 'since'], ['before', 'before'],
   ];
   function syncFindUrl() {
     var filters = document.getElementById('filters');

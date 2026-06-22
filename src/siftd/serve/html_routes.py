@@ -200,14 +200,16 @@ def _shell_redirect(request: Request, view: str, **state: str | None) -> Redirec
 # the folio's reading/trace axis). ``ui_find`` maps these back to the control
 # names (search/view/mode/…) when it builds the /meta + /query mounts.
 _SEARCH_FACET_KEYS: tuple[str, ...] = (
-    "q", "shape", "engine", "workspace", "model", "tag", "owner", "since", "before",
+    "q", "shape", "engine", "workspace", "model", "tag", "tool",
+    "owner", "since", "before",
 )
 
 # Canonical search-facet name → the /meta + /query CONTROL name (q→search,
 # shape→view result-shape, engine→mode; the rest are identity).
 _SEARCH_CANON_TO_CONTROL: dict[str, str] = {
     "q": "search", "shape": "view", "engine": "mode", "workspace": "workspace",
-    "model": "model", "tag": "tag", "owner": "owner", "since": "since", "before": "before",
+    "model": "model", "tag": "tag", "tool": "tool", "owner": "owner",
+    "since": "since", "before": "before",
 }
 
 
@@ -490,6 +492,7 @@ def ui_shell(
     shape: str | None = Parameter(query="shape", default=None),
     engine: str | None = Parameter(query="engine", default=None),
     workspace: str | None = Parameter(query="workspace", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
@@ -511,7 +514,8 @@ def ui_shell(
     footer = _shell_footer(db_path, with_counts=auth_config is None)
     search = {
         "q": q, "shape": shape, "engine": engine, "workspace": workspace,
-        "model": model, "tag": tag, "owner": owner, "since": since, "before": before,
+        "model": model, "tag": tag, "tool": tool, "owner": owner,
+        "since": since, "before": before,
     }
     return Response(
         content=_page_shell(
@@ -881,6 +885,7 @@ def ui_find(
     engine: str | None = Parameter(query="engine", default=None),
     workspace: str | None = Parameter(query="workspace", default=None),
     model: str | None = Parameter(query="model", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
@@ -907,7 +912,7 @@ def ui_find(
     red = _shell_redirect(
         request, "search",
         q=q, tag=tag, shape=shape, engine=engine, workspace=workspace,
-        model=model, owner=owner, since=since, before=before,
+        model=model, tool=tool, owner=owner, since=since, before=before,
     )
     if red is not None:
         return red
@@ -917,7 +922,8 @@ def ui_find(
     # reproduces the results (Slice 3a).
     search = {
         "q": q, "shape": shape, "engine": engine, "workspace": workspace,
-        "model": model, "tag": tag, "owner": owner, "since": since, "before": before,
+        "model": model, "tag": tag, "tool": tool, "owner": owner,
+        "since": since, "before": before,
     }
     return _html_response(_find_host(_search_control_qs(search)))
 
@@ -968,6 +974,7 @@ def ui_meta(
     mode: str = Parameter(query="mode", default="auto"),
     workspace: str | None = Parameter(query="workspace", default=None),
     model: str | None = Parameter(query="model", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),
@@ -987,15 +994,19 @@ def ui_meta(
     semantic / keyword). The engine toggle is shown only when this server has
     embeddings — without them every engine collapses to keyword, so the knob
     would be a no-op that contradicts the header's truthful ``[fts]`` label. The
-    *facet* dropdowns (workspace / model / tag / owner / since / before) filter
-    which conversations the query (or the bare browse) draws from.
+    *facet* dropdowns (workspace / model / tag / tool / owner / since / before)
+    filter which conversations the query (or the bare browse) draws from. The
+    ``tool`` facet narrows to conversations that ran a given tool — the same
+    ``--tool`` capability the CLI/REST search exposes (3b-1), now a dropdown
+    sourced from the corpus's tool vocabulary.
     """
     red = _shell_redirect(
         request, "search",
         q=search, tag=tag,
         shape=view if view != "chunks" else None,
         engine=mode if mode != "auto" else None,
-        workspace=workspace, model=model, owner=owner, since=since, before=before,
+        workspace=workspace, model=model, tool=tool,
+        owner=owner, since=since, before=before,
     )
     if red is not None:
         return red
@@ -1004,7 +1015,7 @@ def ui_meta(
 
     from siftd.api import embeddings_available
     from siftd.api.search import SEARCH_MODES, SEARCH_VIEWS
-    from siftd.api.stats import list_models, list_workspaces
+    from siftd.api.stats import list_models, list_tools, list_workspaces
     from siftd.api.tags import list_tags
     from siftd.paths import embeddings_db_path
 
@@ -1027,6 +1038,12 @@ def ui_meta(
     tag_names: list[str] = []
     try:
         tag_names = [t.name for t in list_tags(db_path=db_path, owner=owner)]
+    except Exception:
+        pass
+
+    tool_names: list[str] = []
+    try:
+        tool_names = list_tools(db_path=db_path, owner=owner)
     except Exception:
         pass
 
@@ -1071,6 +1088,7 @@ def ui_meta(
     ws_opts = [(r["path"], fmt_workspace(r["path"])) for r in ws_rows if r["path"]]
     model_opts = [(m, m) for m in model_names]
     tag_opts = [(t, t) for t in tag_names]
+    tool_opts = [(t, t) for t in tool_names]
 
     def _date(name: str, label: str, *, value: str = "") -> str:
         val = f' value="{escape(value)}"' if value else ""
@@ -1134,6 +1152,7 @@ def ui_meta(
         + _select("workspace", "workspaces", ws_opts, selected=(workspace or ""))
         + _select("model", "models", model_opts, selected=(model or ""))
         + _select("tag", "tags", tag_opts, selected=(tag or ""))
+        + _select("tool", "tools", tool_opts, selected=(tool or ""))
         + "</div>",
         '<details class="find__more"><summary>more filters</summary>'
         '<div class="find__morebody">'
@@ -1156,6 +1175,7 @@ def _find_search_fragment(
     workspace: str | None,
     model: str | None,
     tag: list[str] | None,
+    tool: str | None,
     since: str | None,
     before: str | None,
     owner: str | None,
@@ -1226,6 +1246,7 @@ def _find_search_fragment(
             since=since,
             before=before,
             tag=tag,
+            tool=tool,
             owner=owner,
         )
 
@@ -1276,6 +1297,7 @@ def ui_query(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
     search: str | None = Parameter(query="search", default=None),
     owner: str | None = Parameter(query="owner", default=None),
     n: int = Parameter(query="n", default=50),
@@ -1307,6 +1329,7 @@ def ui_query(
     # Normalize empty strings to None (htmx sends "" for blank inputs)
     workspace = workspace or None
     model = model or None
+    tool = tool or None
     since = since or None
     before = before or None
     owner_filter = owner or None  # the user-supplied owner FACET (before resolution)
@@ -1315,7 +1338,9 @@ def ui_query(
     # Active facets = the user narrowing the corpus (the owner facet is the raw
     # user value, NOT the always-present effective owner). Drives the no-query
     # branch: no term + no facet → the search prompt; no term + a facet → browse.
-    has_facets = bool(workspace or model or tag or since or before or owner_filter)
+    has_facets = bool(
+        workspace or model or tag or tool or since or before or owner_filter
+    )
 
     # Clamp the result shape to the canonical vocabulary BEFORE delegating —
     # mirrors the control strip, which clamps the toggle's selected value. An
@@ -1342,7 +1367,7 @@ def ui_query(
         if sanitize_fts5_query(term).fts_query:
             return _find_search_fragment(
                 db_path, term, fmt, ctx,
-                workspace=workspace, model=model, tag=tag,
+                workspace=workspace, model=model, tag=tag, tool=tool,
                 since=since, before=before, owner=owner, n=n, mode=mode, view=view,
             )
 
@@ -1365,6 +1390,7 @@ def ui_query(
             "db_path": db_path,
             "workspace": workspace,
             "model": model,
+            "tool": tool,
             "since": since,
             "before": before,
             "search": None,
