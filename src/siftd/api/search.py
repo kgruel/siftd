@@ -372,9 +372,15 @@ def filter_by_threshold(
 def sort_chunks_by_time(
     results: list[SearchChunk] | list[dict[str, Any]],
 ) -> list[SearchChunk]:
-    """Sort chunks by date then chunk_id (legacy CLI behavior)."""
+    """Sort chunks newest-first by date then chunk_id.
+
+    ``--sort=time`` answers "what did I work on most recently that matches",
+    so the most recent hit leads — the intuitive reading of a time sort (and
+    consistent with the default recency order of the browse list)."""
     chunks = [_as_chunk(r) for r in results]
-    return sorted(chunks, key=lambda r: ((r.started_at or "")[:10], r.chunk_id or ""))
+    return sorted(
+        chunks, key=lambda r: ((r.started_at or "")[:10], r.chunk_id or ""), reverse=True
+    )
 
 
 def compute_thread_tiers(
