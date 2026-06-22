@@ -471,6 +471,7 @@ def render_query_detail_block(
     tool_chars: int = 0,
 ) -> Block:
     """Render a conversation detail view as a painted block."""
+    from siftd.output.listing import definitions
     from siftd.output.theme import domain_styles
 
     Block, _, _, _, _, join_vertical, _ = _painted()
@@ -482,26 +483,27 @@ def render_query_detail_block(
     started = fmt_timestamp(detail.started_at)
     total_tokens = detail.total_input_tokens + detail.total_output_tokens
 
-    header_lines: list[Line] = []
-    header_lines.append(_line(("Conversation: ", ds.label), (detail.id, ds.identifier)))
+    header_pairs: list[tuple[str, list[tuple[str, Style]]]] = [
+        ("Conversation:", [(detail.id, ds.identifier)]),
+    ]
     if ws_name:
-        header_lines.append(_line(("Workspace: ", ds.temporal), (ws_name, ds.workspace)))
-    header_lines.append(_line(("Started: ", ds.temporal), (started, ds.temporal)))
-    header_lines.append(_line(("Model: ", ds.temporal), (detail.model or "unknown", ds.model)))
-    header_lines.append(
-        _line(
-            ("Tokens: ", ds.temporal),
+        header_pairs.append(("Workspace:", [(ws_name, ds.workspace)]))
+    header_pairs.append(("Started:", [(started, ds.temporal)]))
+    header_pairs.append(("Model:", [(detail.model or "unknown", ds.model)]))
+    header_pairs.append((
+        "Tokens:",
+        [
             (fmt_tokens(total_tokens), ds.metric_strong),
             (
                 f" (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})",
                 ds.metric,
             ),
-        )
-    )
+        ],
+    ))
     if detail.tags:
-        header_lines.append(_line(("Tags: ", ds.temporal), (", ".join(detail.tags), ds.tag)))
-    header_lines.append(_line())
-    parts.append(_lines_to_block(header_lines))
+        header_pairs.append(("Tags:", [(", ".join(detail.tags), ds.tag)]))
+    parts.append(definitions(header_pairs, indent=0, label_style=ds.temporal))
+    parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
     for turn in turns:
@@ -556,6 +558,7 @@ def render_peek_detail_block(
     tool_chars: int = 0,
 ) -> Block:
     """Render a peek session detail view as a painted block."""
+    from siftd.output.listing import definitions
     from siftd.output.theme import domain_styles
 
     Block, _, _, _, _, join_vertical, _ = _painted()
@@ -573,22 +576,23 @@ def render_peek_detail_block(
     if shown_exchanges and total_exchanges > shown_exchanges:
         exchanges_text = f"{shown_exchanges} shown / {total_exchanges} total"
 
-    header_lines: list[Line] = []
-    header_lines.append(_line(("Session: ", ds.label), (info.session_id, ds.identifier)))
+    header_pairs: list[tuple[str, list[tuple[str, Style]]]] = [
+        ("Session:", [(info.session_id, ds.identifier)]),
+    ]
     if ws_name:
-        header_lines.append(_line(("Workspace: ", ds.temporal), (ws_name, ds.workspace)))
+        header_pairs.append(("Workspace:", [(ws_name, ds.workspace)]))
     if started:
-        header_lines.append(_line(("Started: ", ds.temporal), (started, ds.temporal)))
+        header_pairs.append(("Started:", [(started, ds.temporal)]))
     if last_activity:
-        header_lines.append(_line(("Last activity: ", ds.temporal), (last_activity, ds.temporal)))
-    header_lines.append(_line(("Model: ", ds.temporal), (info.model or "unknown", ds.model)))
-    header_lines.append(_line(("Adapter: ", ds.temporal), ((info.adapter_name or "unknown"), ds.adapter)))
-    header_lines.append(_line(("Exchanges: ", ds.temporal), (exchanges_text, ds.metric)))
+        header_pairs.append(("Last activity:", [(last_activity, ds.temporal)]))
+    header_pairs.append(("Model:", [(info.model or "unknown", ds.model)]))
+    header_pairs.append(("Adapter:", [(info.adapter_name or "unknown", ds.adapter)]))
+    header_pairs.append(("Exchanges:", [(exchanges_text, ds.metric)]))
     if getattr(info, "parent_session_id", None):
-        header_lines.append(_line(("Parent: ", ds.temporal), (info.parent_session_id, ds.identifier)))
-    header_lines.append(_line(("File: ", ds.temporal), (str(info.file_path), ds.workspace)))
-    header_lines.append(_line())
-    parts.append(_lines_to_block(header_lines))
+        header_pairs.append(("Parent:", [(info.parent_session_id, ds.identifier)]))
+    header_pairs.append(("File:", [(str(info.file_path), ds.workspace)]))
+    parts.append(definitions(header_pairs, indent=0, label_style=ds.temporal))
+    parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
     for exchange in exchanges:
