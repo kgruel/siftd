@@ -420,8 +420,9 @@ class TestTerminalRenderSearch:
         assert "Caching stores data." in output
 
     def test_context_displayed(self):
-        """Pre-enriched context exchanges mark the matched turn (▸, not >>>)."""
+        """Pre-enriched context exchanges mark the matched turn (caret, not >>>)."""
         from siftd.output import terminal_fmt
+        from siftd.output.common import prefers_ascii
 
         results = [{
             "conversation_id": "abc123",
@@ -442,7 +443,11 @@ class TestTerminalRenderSearch:
             terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
         )
 
-        assert "▸" in output  # matched-turn marker (replaces the old >>> marker)
+        # Matched-turn caret (▸ on a Unicode TTY, * degraded on this non-TTY
+        # capture) — the same prefers_ascii() gate the renderer uses.
+        caret = "*" if prefers_ascii() else "▸"
+        assert caret in output
+        assert ">>>" not in output
         assert "match prompt" in output
 
 

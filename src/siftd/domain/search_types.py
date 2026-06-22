@@ -10,6 +10,14 @@ from typing import Any, ClassVar
 ROLE_USER: str = "user"
 ROLE_ASSISTANT: str = "assistant"
 
+# FTS5 snippet() delimiters — the marker pair (and elision mark) wrapping matched
+# terms in the `text`/`best_excerpt` fields. Produced by storage (the snippet()
+# SQL) and parsed by the output renderers; defined once here in the neutral domain
+# layer so the producer and every consumer can't drift apart.
+MATCH_OPEN: str = ">>>"
+MATCH_CLOSE: str = "<<<"
+MATCH_ELLIPSIS: str = "..."
+
 
 @dataclass
 class ScoreBreakdown:

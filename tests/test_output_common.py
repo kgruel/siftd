@@ -14,6 +14,8 @@ from siftd.output.common import (
     prefers_ascii,
     print_indented,
     print_refs_content,
+    role_label,
+    split_match_segments,
     supports_unicode,
     truncate_text,
 )
@@ -279,3 +281,60 @@ def test_print_refs_content_filter_no_match(capsys):
     print_refs_content(refs, filter_basenames=["missing.py"])
     out = capsys.readouterr().out
     assert "No file references matching" in out
+
+
+# --- split_match_segments (the painted-free FTS marker splitter) ---
+
+
+def test_split_match_segments_balanced():
+    assert split_match_segments("API >>>error<<<: 500") == [
+        ("API ", False),
+        ("error", True),
+        (": 500", False),
+    ]
+
+
+def test_split_match_segments_multiple_and_adjacent():
+    # Two spread matches, then two adjacent matches with no literal between.
+    assert split_match_segments(">>>a<<< mid >>>b<<<>>>c<<<") == [
+        ("a", True),
+        (" mid ", False),
+        ("b", True),
+        ("c", True),
+    ]
+
+
+def test_split_match_segments_unbalanced_open_stays_literal():
+    # A dangling open marker (e.g. snippet truncated mid-pair) is NOT consumed —
+    # it stays literal text so real content '>>>' (a REPL prompt) is never eaten.
+    assert split_match_segments("foo >>>bar baz") == [("foo >>>bar baz", False)]
+
+
+def test_split_match_segments_no_markers_is_one_literal():
+    assert split_match_segments("just text") == [("just text", False)]
+
+
+def test_split_match_segments_empty_falls_back_to_one_literal():
+    assert split_match_segments("") == [("", False)]
+
+
+# --- role_label (casing + abbreviation, shared by detail + search) ---
+
+
+def test_role_label_full_lowercases():
+    assert role_label("USER") == "user"
+    assert role_label("Assistant") == "assistant"
+    assert role_label("user") == "user"
+
+
+def test_role_label_abbrev_only_collapses_assistant():
+    assert role_label("assistant", abbrev=True) == "asst"
+    assert role_label("ASSISTANT", abbrev=True) == "asst"
+    # user and everything else stay full even when abbreviated.
+    assert role_label("user", abbrev=True) == "user"
+    assert role_label("tool", abbrev=True) == "tool"
+
+
+def test_role_label_unknown_role_passthrough():
+    assert role_label("System") == "system"
+    assert role_label("System", abbrev=True) == "system"

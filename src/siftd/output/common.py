@@ -3,11 +3,14 @@
 Shared by peek, query, search, and export commands.
 """
 
+import re
 import shutil
 import sys
 from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from siftd.domain.search_types import MATCH_CLOSE, MATCH_OPEN
 
 if TYPE_CHECKING:
     from typing import TextIO
@@ -24,9 +27,10 @@ def supports_unicode() -> bool:
     enc = getattr(sys.stdout, "encoding", None) or "ascii"
     try:
         # The full glyph surface the painted UI draws: severity marks, the
-        # progress bar fill, rounded box corners, separators, rails, and the
-        # table's ``…`` truncation marker.
-        "✓⚠ℹ✗─│█░╭╮╰╯↳·…".encode(enc)
+        # progress bar fill, rounded box corners, separators, the search rank
+        # rail (◆ top / │ mid / · tail) and context caret (▸), and the ``…``
+        # truncation marker.
+        "✓⚠ℹ✗─│█░╭╮╰╯↳·◆▸…".encode(enc)
     except (UnicodeEncodeError, LookupError):
         return False
     return True
@@ -56,6 +60,47 @@ def term_width(fallback: int = 80) -> int:
     instead of reporting 0.
     """
     return shutil.get_terminal_size((fallback, 24)).columns
+
+
+_MATCH_RE = re.compile(re.escape(MATCH_OPEN) + r"(.*?)" + re.escape(MATCH_CLOSE), re.DOTALL)
+
+
+def split_match_segments(text: str) -> list[tuple[str, bool]]:
+    """Split FTS5 snippet text into ``(segment, is_match)`` runs.
+
+    Matched terms arrive wrapped in the ``MATCH_OPEN``/``MATCH_CLOSE`` delimiters
+    embedded in the data by the snippet() SQL. This yields the alternating literal
+    and matched runs so each formatter can style the matches its own way (terminal
+    → accent span, markdown → ``**bold**``) instead of leaking the raw ``>>>``/
+    ``<<<`` markers. Unbalanced markers (an open with no close) stay literal text.
+    The painted-free splitter shared by every search renderer.
+    """
+    out: list[tuple[str, bool]] = []
+    last = 0
+    for m in _MATCH_RE.finditer(text):
+        if m.start() > last:
+            out.append((text[last : m.start()], False))
+        out.append((m.group(1), True))
+        last = m.end()
+    if last < len(text):
+        out.append((text[last:], False))
+    return out or [(text, False)]
+
+
+_ROLE_ABBREV = {"assistant": "asst"}
+
+
+def role_label(role: str, *, abbrev: bool = False) -> str:
+    """Normalize a role / display label to its lowercase presentation token.
+
+    Detail surfaces pass the role through full (you're reading a transcript);
+    search passes ``abbrev=True`` for the dense scan list, where ``assistant``
+    collapses to ``asst``. The brackets and styling stay with each renderer — this
+    owns only the casing and the abbreviation, so the terminal detail and search
+    paths render the same role identically instead of drifting (full/UPPER/abbrev).
+    """
+    token = role.lower()
+    return _ROLE_ABBREV.get(token, token) if abbrev else token
 
 
 def fmt_tokens(n: int) -> str:

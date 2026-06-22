@@ -536,7 +536,8 @@ class TestMarkdownRenderSearch:
 
         chunk = _chunk_result(_context=[("p1", "Q?", "A!", True), ("p2", "Q2", "A2", False)])
         output = render_search([chunk], Fidelity(depth=1), query="q")
-        assert "**>>>**" in output  # matched entry
+        assert "**▸**" in output  # matched entry caret (no raw >>> marker leaks)
+        assert ">>>" not in output
         assert "Q?" in output
 
     def test_chunks_mode_text_truncation(self):
@@ -546,6 +547,39 @@ class TestMarkdownRenderSearch:
         chunk = _chunk_result(text=long_text)
         output = render_search([chunk], Fidelity(depth=0), query="q")
         assert "..." in output  # truncated at depth 0
+
+    def test_chunks_marker_becomes_bold_not_literal(self):
+        """FTS >>>...<<< markers in a markdown snippet render as **bold**, never raw."""
+        from siftd.output.markdown_fmt import render_search
+
+        chunk = _chunk_result(text="see >>>caching<<< here")
+        output = render_search([chunk], Fidelity(depth=1), query="caching")
+        assert "**caching**" in output
+        assert ">>>" not in output and "<<<" not in output
+
+    def test_thread_tier_markers_become_bold_not_literal(self):
+        """The thread tier1 fallback + tier2 snippet both strip raw markers."""
+        from siftd.output.markdown_fmt import render_search
+
+        tier1 = [{"_workspace": "w", "_started_at": "2026-01-01", "text": "a >>>hit<<< b"}]
+        tier2 = [_chunk_result(text="more >>>hit<<< text")]
+        output = render_search(
+            [], Fidelity(depth=1), query="hit", mode="thread", tier1=tier1, tier2=tier2
+        )
+        assert "**hit**" in output
+        assert ">>>" not in output and "<<<" not in output
+
+    def test_truncation_across_match_leaves_no_dangling_marker(self):
+        """A match run straddling the truncation boundary stays a balanced **run** —
+        neither a raw >>> nor a dangling ** can leak (the _md_truncate boundary)."""
+        from siftd.output.markdown_fmt import render_search
+
+        # 195 filler + a 12-char match: the 200-char content budget cuts mid-match.
+        chunk = _chunk_result(text="y" * 195 + ">>>boundaryword<<< tail")
+        output = render_search([chunk], Fidelity(depth=0), query="boundaryword")
+        assert ">>>" not in output and "<<<" not in output
+        assert output.count("**") % 2 == 0  # every bold run is closed
+        assert "..." in output  # it really did truncate
 
     def test_caveats_footer_appended(self):
         from siftd.doctor.checks import Finding
@@ -656,9 +690,13 @@ class TestTerminalRenderSearch:
         chunk = _chunk_result(
             _context=[("p1", "Multi\nline Q", "Response\ntext", True), ("p2", "Q2", None, False)]
         )
+        from siftd.output.common import prefers_ascii
+
         output = _search_text(render_search([chunk], Fidelity(depth=1), query="q"))
-        # The matched turn is marked with ▸ (replaces the old styleless >>> marker).
-        assert "▸" in output
+        # The matched turn is marked with a caret (▸ on a Unicode TTY, * degraded
+        # on this non-TTY capture) — replaces the old styleless >>> marker.
+        caret = "*" if prefers_ascii() else "▸"
+        assert caret in output
         assert ">>>" not in output
         assert "Multi" in output
         assert "Response" in output
