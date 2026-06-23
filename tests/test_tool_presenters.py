@@ -422,3 +422,52 @@ class TestFidelityIntegration:
         # Both should render the command (just with different truncation)
         assert "$ echo hi" in "\n".join(lines_default)
         assert "$ echo hi" in "\n".join(lines_override)
+
+
+# ---------------------------------------------------------------------------
+# "content" result key — the shape Claude Code (+ others) actually store
+# ---------------------------------------------------------------------------
+
+class TestContentKeyResults:
+    """Tool results are stored as {"content": ...}. The presenters must surface
+    that value rather than drop it (shell/file.read) or truncate the JSON wrapper
+    at the generic json.dumps cap (the Workflow cutoff)."""
+
+    def test_shell_result_under_content_key(self):
+        block = _tool_block(
+            "shell.execute",
+            input=json.dumps({"command": "grep foo"}),
+            result=json.dumps({"content": "No matches found"}),
+        )
+        assert "No matches found" in "\n".join(_render([block]))
+
+    def test_file_read_content_is_surfaced(self):
+        block = _tool_block(
+            "file.read",
+            input=json.dumps({"file_path": "/x.py"}),
+            result=json.dumps({"content": "1\tdef main():\n2\t    pass"}),
+        )
+        assert "def main():" in "\n".join(_render([block]))
+
+    def test_generic_content_key_shown_in_full_at_full_depth(self):
+        # tool_chars=0 (the trace): the presenter yields the whole content value,
+        # not the old json.dumps(d)[:200] wrapper truncation (the Workflow cutoff).
+        # Asserted at the presenter — the HTML trace renders pres.output verbatim;
+        # the terminal box renderer has its own width wrap, tested elsewhere.
+        from siftd.output.tool_presenters import extract_tool_presentation
+
+        body = "Task ID: wu05h3vzn — " + "x" * 400
+        pres = extract_tool_presentation(
+            "Workflow", json.dumps({"description": "audit"}),
+            json.dumps({"content": body}), "success", tool_chars=0,
+        )
+        assert pres.output == body  # full value, not the JSON wrapper or a [:200] cut
+
+    def test_generic_list_content_renders_clean_json(self):
+        block = _tool_block(
+            "ToolSearch",
+            input=json.dumps({"query": "x"}),
+            result=json.dumps({"content": [{"type": "tool_reference", "tool_name": "TaskCreate"}]}),
+        )
+        text = "\n".join(_render([block], tool_chars=0))
+        assert '"tool_name": "TaskCreate"' in text  # clean JSON, not a Python repr

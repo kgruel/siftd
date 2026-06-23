@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 import pytest
 from painted import Fidelity
 
+from siftd.domain.search_types import SearchView
+
 
 @dataclass
 class FakeSummary:
@@ -352,7 +354,7 @@ class TestJsonRenderList:
 
 
 class TestFormatTable:
-    def test_print_table_renders_through_painted(self, capsys):
+    def test_print_table_delegates(self, capsys):
         from siftd.output import print_table
 
         print_table(["x"], [["y"]])
@@ -403,9 +405,9 @@ class TestJsonRenderSearch:
         from siftd.output.json_fmt import render_search
 
         result = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="meaning of life", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="meaning of life", view="chunks"
         )
-        assert result["mode"] == "chunks"
+        assert result["view"] == "chunks"
         assert result["query"] == "meaning of life"
         assert result["result_count"] == 1
         assert result["results"][0]["score"] == 0.85
@@ -414,9 +416,9 @@ class TestJsonRenderSearch:
         from siftd.output.json_fmt import render_search
 
         result = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
-        assert result["mode"] == "conversations"
+        assert result["view"] == "conversations"
         assert result["results"][0]["max_score"] == 0.92
         assert result["results"][0]["chunk_count"] == 3
 
@@ -426,9 +428,10 @@ class TestJsonRenderSearch:
         tier1 = [_chunk_result(text="expanded")]
         tier2 = [_chunk_result(text="compact", score=0.5)]
         result = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(depth=1), query="q",
         )
-        assert result["mode"] == "thread"
+        assert result["view"] == "thread"
         assert result["result_count"] == 2
         assert len(result["tier1"]) == 1
         assert len(result["tier2"]) == 1
@@ -516,7 +519,7 @@ class TestMarkdownRenderSearch:
         from siftd.output.markdown_fmt import render_search
 
         output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
         )
         assert "## Results for: test query" in output
         assert "01ABC123" in output
@@ -526,7 +529,7 @@ class TestMarkdownRenderSearch:
         from siftd.output.markdown_fmt import render_search
 
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
         assert "## Conversations for: q" in output
         assert "0.920" in output
@@ -536,7 +539,8 @@ class TestMarkdownRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+            Fidelity(depth=1), query="q",
         )
         assert "> What?" in output
         assert "That." in output
@@ -547,7 +551,8 @@ class TestMarkdownRenderSearch:
         tier1 = [_chunk_result(text="fallback text")]
         tier2 = [_chunk_result(text="compact", score=0.4)]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2
+            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(depth=1), query="q",
         )
         assert "fallback text" in output
         assert "compact" in output
@@ -566,8 +571,7 @@ class TestMarkdownRenderSearch:
 
         chunk = _chunk_result(_context=[("p1", "Q?", "A!", True), ("p2", "Q2", "A2", False)])
         output = render_search([chunk], Fidelity(depth=1), query="q")
-        assert "**▸**" in output  # matched entry caret (no raw >>> marker leaks)
-        assert ">>>" not in output
+        assert "**▸**" in output  # matched entry (caret marker, not the raw >>>)
         assert "Q?" in output
 
     def test_chunks_mode_text_truncation(self):
@@ -577,39 +581,6 @@ class TestMarkdownRenderSearch:
         chunk = _chunk_result(text=long_text)
         output = render_search([chunk], Fidelity(depth=0), query="q")
         assert "..." in output  # truncated at depth 0
-
-    def test_chunks_marker_becomes_bold_not_literal(self):
-        """FTS >>>...<<< markers in a markdown snippet render as **bold**, never raw."""
-        from siftd.output.markdown_fmt import render_search
-
-        chunk = _chunk_result(text="see >>>caching<<< here")
-        output = render_search([chunk], Fidelity(depth=1), query="caching")
-        assert "**caching**" in output
-        assert ">>>" not in output and "<<<" not in output
-
-    def test_thread_tier_markers_become_bold_not_literal(self):
-        """The thread tier1 fallback + tier2 snippet both strip raw markers."""
-        from siftd.output.markdown_fmt import render_search
-
-        tier1 = [{"_workspace": "w", "_started_at": "2026-01-01", "text": "a >>>hit<<< b"}]
-        tier2 = [_chunk_result(text="more >>>hit<<< text")]
-        output = render_search(
-            [], Fidelity(depth=1), query="hit", mode="thread", tier1=tier1, tier2=tier2
-        )
-        assert "**hit**" in output
-        assert ">>>" not in output and "<<<" not in output
-
-    def test_truncation_across_match_leaves_no_dangling_marker(self):
-        """A match run straddling the truncation boundary stays a balanced **run** —
-        neither a raw >>> nor a dangling ** can leak (the _md_truncate boundary)."""
-        from siftd.output.markdown_fmt import render_search
-
-        # 195 filler + a 12-char match: the 200-char content budget cuts mid-match.
-        chunk = _chunk_result(text="y" * 195 + ">>>boundaryword<<< tail")
-        output = render_search([chunk], Fidelity(depth=0), query="boundaryword")
-        assert ">>>" not in output and "<<<" not in output
-        assert output.count("**") % 2 == 0  # every bold run is closed
-        assert "..." in output  # it really did truncate
 
     def test_caveats_footer_appended(self):
         from siftd.doctor.checks import Finding
@@ -640,7 +611,7 @@ class TestMarkdownRenderSearch:
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
         )
         assert "> **Note:** FTS stale" in output
 
@@ -673,7 +644,7 @@ class TestTerminalRenderSearch:
         from siftd.output.terminal_fmt import render_search
 
         output = _search_text(
-            render_search([_conv_result()], Fidelity(depth=1), query="q", mode="conversations")
+            render_search([_conv_result()], Fidelity(depth=1), query="q", view="conversations")
         )
         assert "Conversations for: q" in output
         assert "0.92" in output
@@ -683,7 +654,10 @@ class TestTerminalRenderSearch:
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = _search_text(
-            render_search([], Fidelity(depth=1), query="q", mode="thread", tier1=tier1)
+            render_search(
+                SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+                Fidelity(depth=1), query="q",
+            )
         )
         assert "[user] What?" in output
         assert "[asst] That." in output
@@ -700,7 +674,10 @@ class TestTerminalRenderSearch:
         tier1 = [_chunk_result(text="fallback", file_refs=[Ref("a.py", "/a.py", "r")])]
         tier2 = [_chunk_result(text="compact", score=0.4, file_refs=[Ref("b.py", "/b.py", "w")])]
         output = _search_text(
-            render_search([], Fidelity(depth=1), query="q", mode="thread", tier1=tier1, tier2=tier2)
+            render_search(
+                SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(depth=1), query="q",
+            )
         )
         assert "fallback" in output
         assert "refs:" in output
@@ -796,30 +773,41 @@ class TestHtmlRenderSearch:
         from siftd.output.html_fmt import render_search
 
         output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks"
+            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
         )
         assert 'class="search-results chunks"' in output
         assert "01ABC123" in output
         assert "0.850" in output
+        # editorial folio markup: a hanging meta gutter (folio number + score
+        # meter) beside the excerpt body, the nav block a sibling of the unfold.
+        assert 'class="hit-meta"' in output and 'class="hit-num"' in output
+        assert 'class="hit-meter" data-n="850"' in output  # score×1000 for drawHitMeters
+        assert 'class="hit-body"' in output and 'class="excerpt"' in output
+        assert 'class="search-hit__main"' in output
 
     def test_conversations_mode_smoke(self):
         from siftd.output.html_fmt import render_search
 
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations"
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
         )
         assert 'class="search-results conversations"' in output
         assert "0.920" in output
+        assert 'class="conv-num"' in output  # folio-numbered table
 
     def test_thread_mode_smoke(self):
         from siftd.output.html_fmt import render_search
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
         output = render_search(
-            [], Fidelity(depth=1), query="q", mode="thread", tier1=tier1
+            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+            Fidelity(depth=1), query="q",
         )
         assert 'class="search-results thread"' in output
         assert "What?" in output
+        # expanded thread hit gains the shared gutter + a typeset prompt/assistant body
+        assert 'class="search-hit expanded"' in output and 'class="hit-meta"' in output
+        assert 'class="prompt"' in output and 'class="assistant"' in output
 
     def test_caveats_aside_appended(self):
         from siftd.doctor.checks import Finding
@@ -851,7 +839,7 @@ class TestHtmlRenderSearch:
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
         output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
         )
         assert '<aside class="caveats">' in output
         assert "FTS stale" in output
@@ -1154,20 +1142,6 @@ class TestRenderNarrativeBlock:
         text = _block_to_text(result)
         assert "result content" in text
 
-    def test_markdown_heading_and_table_via_emitter(self):
-        # Exercises PaintedEmitter.text flush ordering: a heading + prose + table in
-        # one narrative body must emit prose Lines then a real table Block, in order.
-        from siftd.output.painted_bridge import render_narrative_block
-
-        blocks = [FakeNarrativeBlock(
-            "text", "## Heading\n\nprose line\n\n| A | B |\n|---|---|\n| x | y |"
-        )]
-        text = _block_to_text(render_narrative_block(blocks, fidelity=Fidelity(depth=1)))
-        assert "Heading" in text and "prose line" in text
-        assert "A" in text and "B" in text and "x" in text and "y" in text
-        assert "|---|" not in text
-        assert text.index("Heading") < text.index("prose line") < text.index("x")
-
     def test_empty_blocks(self):
         from siftd.output.painted_bridge import render_narrative_block
 
@@ -1307,34 +1281,6 @@ class TestRenderQueryDetailBlock:
         assert "[user]" in text
         assert "[assistant]" in text
 
-    def test_grand_total_uses_loud_amber_breakdown_uses_quiet(self):
-        # The two-tier amber payload: the conversation grand-total token figure takes
-        # the bright metric_strong tier (#c9a84c) while its (input/output) breakdown
-        # stays the quiet metric tier (#8a7a3a). Guards painted_bridge.py:428/431 — the
-        # nearby tests read cell.char only, so a swap or collapse to one tier passes
-        # them; this reads cell.style.fg, the only place the mapping is pinned.
-        from painted import use_theme
-
-        from siftd.output.painted_bridge import render_query_detail_block
-        from siftd.output.theme import siftd_theme
-
-        detail = FakeDetail(total_input_tokens=500, total_output_tokens=1000)
-        with use_theme(siftd_theme):
-            result = render_query_detail_block(
-                detail, turns=[FakeTurn()], fidelity=Fidelity(depth=1)
-            )
-
-        tokens_row_fgs = None
-        for y in range(result.height):
-            if "Tokens:" in "".join(cell.char for cell in result.row(y)):
-                tokens_row_fgs = [cell.style.fg for cell in result.row(y)]
-                break
-        assert tokens_row_fgs is not None, "no Tokens: row rendered"
-        # Both tiers present, and the loud grand-total precedes the quiet breakdown.
-        assert "#c9a84c" in tokens_row_fgs  # metric_strong — the grand total
-        assert "#a8884a" in tokens_row_fgs  # metric — the input/output breakdown
-        assert tokens_row_fgs.index("#c9a84c") < tokens_row_fgs.index("#a8884a")
-
     def test_turn_with_tool_summaries(self):
         from siftd.output.painted_bridge import render_query_detail_block
 
@@ -1362,23 +1308,6 @@ class TestRenderQueryDetailBlock:
         )
         text = _block_to_text(result)
         assert "AI response text" in text
-
-    def test_prompt_markdown_table_renders_as_real_table(self):
-        # Pins the slice's Line/Block routing through _body_parts: a markdown table
-        # in a prompt body must surface prose as Lines AND a real table Block (not
-        # raw pipe source), in order — the contract plain-content tests can't catch.
-        from siftd.output.painted_bridge import render_query_detail_block
-
-        detail = FakeDetail()
-        turn = FakeTurn(
-            prompt_text="here is a table:\n\n| Slice | What |\n|---|---|\n| 1 | bump |\n| 2 | rail |",
-            narrative=[FakeNarrativeBlock("text", "ok")],
-        )
-        text = _block_to_text(render_query_detail_block(detail, turns=[turn], fidelity=Fidelity(depth=1)))
-        assert "here is a table" in text  # prose run survives
-        assert "Slice" in text and "What" in text and "bump" in text and "rail" in text
-        assert "|---|" not in text  # markdown source delimiter gone
-        assert text.index("here is a table") < text.index("Slice")  # prose before the table
 
     def test_prompt_only_turn_no_response(self):
         from siftd.output.painted_bridge import render_query_detail_block

@@ -35,8 +35,11 @@ main() {
 
     # Python script: run adapter, serialize, idempotence-check, write output
     uv run python - "$adapter" "$case_name" "$out" << 'PYEOF'
-import dataclasses, importlib, json, sqlite3, sys, tempfile
+import importlib, json, sqlite3, sys, tempfile
 from pathlib import Path
+
+sys.path.insert(0, "tests")
+from _golden import collapse  # collapsed serialization shared with assert_golden
 
 from siftd.domain.source import Source
 
@@ -67,7 +70,7 @@ with tempfile.TemporaryDirectory() as tmp_dir:
     def run():
         convs = list(adapter.parse(source))
         return json.dumps(
-            json.loads(json.dumps([dataclasses.asdict(c) for c in convs], sort_keys=True)),
+            json.loads(json.dumps([collapse(c) for c in convs], sort_keys=True)),
             indent=2, sort_keys=True
         ) + "\n"
 

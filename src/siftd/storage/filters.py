@@ -122,6 +122,38 @@ class WhereBuilder:
                 f"%{value}%",
             )
 
+    def tool(self, value: str | None) -> None:
+        """Filter to conversations with a tool_call event matching a canonical name.
+
+        Conversation-level (any tool call in the conversation matches), like the
+        other candidate filters — so it composes identically across the
+        list/browse path and the search engine's candidate resolution.
+        """
+        if value:
+            self.add(
+                "c.id IN (SELECT e.conversation_id FROM events e"
+                " JOIN event_tool_call etc ON etc.event_id = e.id"
+                " JOIN tools t ON t.id = etc.tool_id"
+                " WHERE e.kind = 'tool_call' AND t.name = ?)",
+                value,
+            )
+
+    def tool_tag(self, value: str | None) -> None:
+        """Filter to conversations with a tool_call tagged with this tag.
+
+        Honors the trailing-colon prefix match (see :func:`tag_condition`),
+        scoped to ``target_kind = 'tool_call'``.
+        """
+        if value:
+            op, val = tag_condition(value)
+            self.add(
+                "c.id IN (SELECT e.conversation_id FROM tag_assignments ta"
+                " JOIN events e ON e.id = ta.target_id"
+                " JOIN tags tg ON tg.id = ta.tag_id"
+                f" WHERE ta.target_kind = 'tool_call' AND {op})",
+                val,
+            )
+
     def since(self, value: str | None) -> None:
         if value:
             self.add("c.started_at >= ?", value)

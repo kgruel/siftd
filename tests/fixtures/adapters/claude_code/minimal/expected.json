@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-01-15T10:00:03Z",
     "external_id": "claude_code::test-session-1",
     "harness": {
@@ -48,7 +47,6 @@
             ],
             "external_id": "claude_code::msg-002",
             "model": "claude-3-opus-20240229",
-            "provider": null,
             "timestamp": "2024-01-15T10:00:01Z",
             "tool_calls": [
               {
@@ -70,7 +68,6 @@
             }
           },
           {
-            "attributes": {},
             "content": [
               {
                 "block_type": "text",
@@ -82,9 +79,7 @@
             ],
             "external_id": "claude_code::msg-004",
             "model": "claude-3-opus-20240229",
-            "provider": null,
             "timestamp": "2024-01-15T10:00:03Z",
-            "tool_calls": [],
             "usage": {
               "input_tokens": 150,
               "output_tokens": 20

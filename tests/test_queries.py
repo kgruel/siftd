@@ -688,3 +688,28 @@ class TestFetchTopTools:
         assert result == []
 
         conn.close()
+
+    def test_list_tools_projects_names_usage_ordered(self, tmp_path):
+        """``api.stats.list_tools`` is the name-only projection the Find tool
+        facet draws from — usage-ordered (dissolved onto fetch_top_tools), so
+        the most-used tools head the dropdown."""
+        from siftd.api.stats import list_tools
+
+        db_path = tmp_path / "list_tools.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        ws_id = get_or_create_workspace(conn, "/test", "2024-01-01T00:00:00Z")
+        model_id = get_or_create_model(conn, "test-model")
+        conv_id = insert_conversation(conn, "c1", harness_id, ws_id, "2024-01-01T00:00:00Z")
+        prompt_id = insert_prompt(conn, conv_id, "p1", "2024-01-01T00:00:00Z")
+        response_id = insert_response(conn, conv_id, prompt_id, model_id, None, "r1", "2024-01-01T00:00:01Z", 100, 50)
+        tool_a_id = get_or_create_tool(conn, "tool_a")
+        for i in range(3):
+            insert_tool_call(conn, response_id, conv_id, tool_a_id, f"a-{i}", "{}", None, "success", "2024-01-01T00:00:02Z")
+        tool_b_id = get_or_create_tool(conn, "tool_b")
+        insert_tool_call(conn, response_id, conv_id, tool_b_id, "b-0", "{}", None, "success", "2024-01-01T00:00:02Z")
+        conn.commit()
+
+        assert list_tools(conn) == ["tool_a", "tool_b"]
+
+        conn.close()

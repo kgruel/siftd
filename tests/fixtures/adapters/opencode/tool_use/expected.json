@@ -1,6 +1,5 @@
 [
   {
-    "branch": null,
     "ended_at": "2024-03-10T14:01:00+00:00",
     "external_id": "opencode::ses_golden_001",
     "harness": {
@@ -19,7 +18,6 @@
             }
           }
         ],
-        "external_id": null,
         "responses": [
           {
             "attributes": {
@@ -43,9 +41,7 @@
                 }
               }
             ],
-            "external_id": null,
             "model": "claude-3-opus-20240229",
-            "provider": null,
             "timestamp": "2024-03-10T14:00:20+00:00",
             "tool_calls": [
               {

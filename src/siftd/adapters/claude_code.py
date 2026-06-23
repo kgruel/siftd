@@ -139,6 +139,29 @@ def parse(source: Source) -> Iterable[Conversation]:
     else:
         external_id = f"{NAME}::{session_id or path.stem}"
 
+    # Sub-agent type/description live in an `agent-<id>.meta.json` sidecar beside
+    # the transcript — the child JSONL itself carries no type. The sidecar
+    # authoritatively binds this agentId to {agentType, description}, so we
+    # capture it as conversation attributes here rather than reconstructing it
+    # downstream from the spawning parent's tool_call (which has no agentId key
+    # and only a lossy prompt-equality join back to the child). Absent for
+    # top-level sessions and for historical sub-agents whose sidecar rotated off
+    # disk before ingest — both degrade silently to no attribute.
+    conv_attributes: dict[str, str] = {}
+    if agent_id:
+        meta_path = path.parent / f"{path.stem}.meta.json"
+        try:
+            import json as _json
+
+            meta = _json.loads(meta_path.read_text())
+        except (OSError, ValueError):
+            meta = None
+        if isinstance(meta, dict):
+            if atype := meta.get("agentType"):
+                conv_attributes["subagent_type"] = str(atype)
+            if desc := meta.get("description"):
+                conv_attributes["agent_description"] = str(desc)
+
     branch = None
     if session_cwd:
         from siftd.git import get_worktree_branch
@@ -153,6 +176,7 @@ def parse(source: Source) -> Iterable[Conversation]:
         ended_at=ended_at,
         workspace_path=session_cwd,
         branch=branch,
+        attributes=conv_attributes,
     )
 
     # Process messages

@@ -165,7 +165,13 @@ def test_search_op_keys_accepted_by_route():
     ST-4a update: `mode` was also in `_WIRE_EXCLUDE` (the route had no
     matching Parameter), which meant FTS mode was unreachable on the wire.
     ST-4a added ``mode`` to the route and removed it from ``_WIRE_EXCLUDE``,
-    so ``mode`` now travels on the wire. The assertion below reflects this.
+    so ``mode`` now travels on the wire.
+
+    Slice 4 update: the op fn is now ``search_view`` (engine + recipe), so the
+    post-processing controls (view/sort/select/threshold/full/around/turns)
+    travel on the wire and ``around`` is NO LONGER excluded — it is a real
+    recipe param the route runs server-side. Only the local-only filesystem
+    paths (db_path/embed_db) stay off the wire.
     """
     from pathlib import Path as _Path
 
@@ -192,6 +198,8 @@ def test_search_op_keys_accepted_by_route():
             "no_tag": ["n"],
             "tag_kind": ["k"],
             "owner": "o",
+            "tool": "shell.execute",             # Slice 3b — candidate filter, travels
+            "tool_tag": "shell:test",
             "exclude_active": True,
             "include_derivative": False,
             "recall": 80,
@@ -201,10 +209,16 @@ def test_search_op_keys_accepted_by_route():
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
             "backend": "fastembed",
-            "embeddings_only": False,            # deprecated alias; still sent for old-server compat
             "raw_fts": False,
-            "debug_ids": False,                  # CLI annotation
-            "around": None,                      # CLI annotation
+            "debug_ids": False,                  # render annotation (wire param)
+            # Slice 4 recipe controls — all travel on the wire.
+            "view": "chunks",
+            "sort": "score",
+            "select": "all",
+            "threshold": 0.7,
+            "full": False,
+            "around": "why",                     # recipe param — now travels
+            "turns": "-2:+2",
         },
         render_method="search",
         fidelity=Fidelity(),
@@ -231,11 +245,14 @@ def test_search_op_keys_accepted_by_route():
         f"Either remove the dead Parameter()+forward, or add it to "
         f"SERVER_ONLY_SEARCH_PARAMS with a reason."
     )
-    # Local paths and CLI annotations must not bleed to the wire.
+    # Local paths must not bleed to the wire.
     assert "embed_db" not in wire_keys, "local embeddings DB path must not leak to the wire"
-    assert "around" not in wire_keys, "around is a CLI-only post-processing annotation"
-    # mode now travels on the wire so the route can dispatch all three modes (ST-4a).
+    assert "db_path" not in wire_keys, "local db path must not leak to the wire"
+    # mode + the Slice-4 recipe controls all travel to the route.
     assert "mode" in wire_keys, "mode must travel to the route (ST-4a: fts/hybrid/semantic)"
+    assert {"view", "sort", "select", "threshold", "full", "around", "turns"} <= wire_keys, (
+        "Slice 4 recipe controls must travel on the wire for the server to run the recipe"
+    )
 
 
 def test_export_op_format_aware_keys_accepted_by_route():

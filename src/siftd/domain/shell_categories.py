@@ -62,6 +62,18 @@ SHELL_CATEGORIES = {
 }
 
 
+def shell_tag_names() -> frozenset[str]:
+    """The closed set of auto-applied shell tag names (``shell:<category>``).
+
+    These names are written automatically at ingest/backfill by composing
+    :data:`SHELL_TAG_PREFIX` with a :func:`categorize_shell_command` result.
+    Enumerating the same vocabulary here lets consumers recognize auto-applied
+    tags from the name alone — no stored auto-vs-user flag is needed, because
+    the category set is closed and the name *is* the intent signal.
+    """
+    return frozenset(f"{SHELL_TAG_PREFIX}{category}" for category in SHELL_CATEGORIES)
+
+
 def categorize_shell_command(cmd: str) -> str | None:
     """Categorize a shell command string into a category.
 

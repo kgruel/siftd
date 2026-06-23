@@ -206,7 +206,7 @@ def _rendered_shells() -> list[str]:
     return [
         _page_shell(),
         _page_shell(conv_id="01ABCDEF"),
-        _page_shell(search_q="hello world"),
+        _page_shell(search={"q": "hello world"}),
         _page_shell(follow_sid="sid-1"),
     ]
 

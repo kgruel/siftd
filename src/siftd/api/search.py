@@ -13,7 +13,12 @@ from pathlib import Path
 from statistics import mean as _mean
 from typing import TYPE_CHECKING, Any, Protocol
 
-from siftd.domain.search_types import ConversationSearchSummary, ScoreBreakdown, SearchChunk
+from siftd.domain.search_types import (
+    ConversationSearchSummary,
+    ScoreBreakdown,
+    SearchChunk,
+    SearchView,
+)
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
@@ -81,7 +86,12 @@ __all__ = [
     "enrich_file_refs",
     "enrich_exchanges",
     "enrich_context_window",
+    "enrich_around_window",
     "first_mention",
+    "SearchView",
+    "process_search_view",
+    "search_view",
+    "parse_turns_range",
     "build_index",
     # Temporal weighting
     "apply_temporal_weight",
@@ -259,6 +269,8 @@ def resolve_candidates(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
 ) -> set[str] | None:
     """Resolve candidate conversation IDs from filters + scope options.
 
@@ -280,6 +292,8 @@ def resolve_candidates(
         exclude_active=exclude_active,
         include_derivative=include_derivative,
         owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
     )
 
 
@@ -358,9 +372,15 @@ def filter_by_threshold(
 def sort_chunks_by_time(
     results: list[SearchChunk] | list[dict[str, Any]],
 ) -> list[SearchChunk]:
-    """Sort chunks by date then chunk_id (legacy CLI behavior)."""
+    """Sort chunks newest-first by date then chunk_id.
+
+    ``--sort=time`` answers "what did I work on most recently that matches",
+    so the most recent hit leads — the intuitive reading of a time sort (and
+    consistent with the default recency order of the browse list)."""
     chunks = [_as_chunk(r) for r in results]
-    return sorted(chunks, key=lambda r: ((r.started_at or "")[:10], r.chunk_id or ""))
+    return sorted(
+        chunks, key=lambda r: ((r.started_at or "")[:10], r.chunk_id or ""), reverse=True
+    )
 
 
 def compute_thread_tiers(
@@ -694,6 +714,98 @@ def first_mention(
     return above[0]
 
 
+def process_search_view(
+    chunks: list[SearchChunk],
+    conn: sqlite3.Connection,
+    *,
+    view: str = "chunks",
+    sort: str = "score",
+    select: str = "all",
+    threshold: float | None = None,
+    limit: int = 10,
+    full: bool = False,
+    around: str | None = None,
+    turns_range: tuple[int, int] | None = None,
+    db_path: Path | None = None,
+) -> SearchView:
+    """Run the shared search post-processing recipe over engine chunks.
+
+    The single owner of the steps that used to live inline in the CLI handler:
+    threshold filter → ``--select first`` → limit trim → metadata/file-ref
+    enrichment → ``--sort time`` → the conversations/thread view shape →
+    ``--full`` exchanges → the ``--around`` window. Operating on
+    :class:`SearchChunk` objects end-to-end (one dict conversion, at the render
+    boundary), it is the location every surface composes, so the recipe cannot
+    drift between the CLI's two paths or any serve surface that adopts it. Steps
+    are opt-in via the keyword controls — a caller wanting only a subset (e.g.
+    the keyword-only path, which excludes embeddings-dependent richness) leaves
+    the rest at their defaults.
+
+    ``conn`` is a read-only main-DB connection for the enrichment steps;
+    ``db_path`` is consulted only by ``--select first`` (which opens its own
+    connection for the timestamp lookup).
+    """
+    # 1. Score threshold (client-side post-filter).
+    if threshold is not None:
+        chunks = filter_by_threshold(chunks, threshold=threshold)
+        if not chunks:
+            return SearchView(results=[], view=view, empty_reason="threshold")
+
+    # 2. --select first: chronologically earliest match above the threshold.
+    if select == "first":
+        effective_threshold = threshold if threshold is not None else 0.65
+        earliest = first_mention(chunks, threshold=effective_threshold, db_path=db_path)
+        if earliest is None:
+            return SearchView(results=[], view=view, empty_reason="first")
+        chunks = [_as_chunk(earliest)]
+
+    # 3. Trim to the requested count — only the chunks view; the aggregate and
+    #    thread views manage their own (widened) candidate pools downstream.
+    if view == "chunks":
+        chunks = chunks[:limit]
+
+    # 4. Enrich with conversation metadata (+ file refs, except the aggregate
+    #    view, which never displays them). Both mutate the chunks in place.
+    enrich_search_metadata(conn, chunks)
+    if view != "conversations":
+        enrich_file_refs(conn, chunks)
+
+    # 5. --sort time (chunks view only; the other views impose their own order
+    #    and reject --sort=time at axis validation).
+    if sort == "time" and view == "chunks":
+        chunks = sort_chunks_by_time(chunks)
+
+    # 6. View shape.
+    if view == "conversations":
+        convs = aggregate_by_conversation(chunks, limit=limit)
+        return SearchView(results=[c.to_render_dict() for c in convs], view=view)
+
+    if view == "thread":
+        enrich_exchanges(conn, chunks)  # tier1 displays full exchanges
+        tier1, tier2 = compute_thread_tiers(chunks)
+        return SearchView(
+            results=[c.to_render_dict() for c in chunks],
+            view=view,
+            tier1=[c.to_render_dict() for c in tier1],
+            tier2=[c.to_render_dict() for c in tier2],
+        )
+
+    # Chunks view: optional full-exchange and phrase-anchored window enrichment.
+    if full:
+        enrich_exchanges(conn, chunks)
+
+    n_skipped = 0
+    if around is not None and turns_range is not None:
+        window_start, window_end = turns_range
+        chunks, n_skipped = enrich_around_window(conn, chunks, around, window_start, window_end)
+
+    return SearchView(
+        results=[c.to_render_dict() for c in chunks],
+        view=view,
+        n_skipped=n_skipped,
+    )
+
+
 def build_index(
     *,
     db_path: Path | None = None,
@@ -738,6 +850,45 @@ def build_index(
     return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
 
 
+SEARCH_MODES = ("auto", "fts", "semantic", "hybrid")
+"""Valid engine-mode selectors. ``auto`` resolves to a concrete engine at
+request time; ``fts``/``semantic``/``hybrid`` name the engine directly."""
+
+
+class EmbeddingsRequiredError(ValueError):
+    """Raised when an explicit ``semantic``/``hybrid`` mode is requested but
+    embeddings are unavailable. Distinct from a plain ``ValueError`` so callers
+    can map it to an install/index hint (CLI) or a 4xx (route) rather than a
+    generic invalid-argument message."""
+
+    def __init__(self, mode: str) -> None:
+        self.mode = mode
+        super().__init__(f"mode {mode!r} requires embeddings")
+
+
+def resolve_search_mode(requested: str, *, has_embeddings: bool) -> str:
+    """Resolve a requested engine mode to the concrete engine that will run.
+
+    The single source of truth for ``auto`` resolution, shared by the CLI and
+    the serve route so the two surfaces cannot drift. ``auto`` → ``hybrid``
+    when embeddings are available, else ``fts``. Explicit ``semantic``/
+    ``hybrid`` require embeddings and raise :class:`EmbeddingsRequiredError`
+    when absent; ``fts`` always resolves to ``fts``.
+
+    The returned value is what should be reported back to the caller as the
+    engine that actually ran (``output["mode"]``) — never ``auto``.
+    """
+    if requested not in SEARCH_MODES:
+        raise ValueError(
+            f"invalid mode: {requested!r}; expected one of {', '.join(SEARCH_MODES)}"
+        )
+    if requested == "auto":
+        return "hybrid" if has_embeddings else "fts"
+    if requested in ("semantic", "hybrid") and not has_embeddings:
+        raise EmbeddingsRequiredError(requested)
+    return requested
+
+
 def search_chunks(
     q: str,
     *,
@@ -756,6 +907,8 @@ def search_chunks(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
     recall: int = 80,
     rerank: str = "mmr",
     lambda_: float = 0.7,
@@ -785,6 +938,8 @@ def search_chunks(
         exclude_active=exclude_active,
         include_derivative=include_derivative,
         owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
         recall=recall,
         rerank=rerank,
         lambda_=lambda_,
@@ -817,6 +972,8 @@ def hybrid_search(
     exclude_active: bool = True,
     include_derivative: bool = False,
     owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
     # FTS5 tuning
     recall: int = 80,
     raw_fts: bool = False,
@@ -869,7 +1026,7 @@ def hybrid_search(
             workspace=workspace, model=model, since=since, before=before,
             tag=tag, all_tags=all_tags, no_tag=no_tag, tag_kind=tag_kind,
             exclude_active=exclude_active, include_derivative=include_derivative,
-            owner=owner,
+            owner=owner, tool=tool, tool_tag=tool_tag,
         )
         conn = open_database(db_path, read_only=True)
         try:
@@ -937,7 +1094,7 @@ def hybrid_search(
         workspace=workspace, model=model, since=since, before=before,
         tag=tag, all_tags=all_tags, no_tag=no_tag, tag_kind=tag_kind,
         exclude_active=exclude_active, include_derivative=include_derivative,
-        owner=owner,
+        owner=owner, tool=tool, tool_tag=tool_tag,
     )
 
     # FTS5 recall (hybrid mode only — narrows candidates before embeddings)
@@ -1044,3 +1201,187 @@ def hybrid_search(
         finally:
             _pos_conn.close()
     return final_chunks
+
+
+# ---------------------------------------------------------------------------
+# search_view — engine + recipe composed into one Operation result
+# ---------------------------------------------------------------------------
+
+SEARCH_VIEWS = ("chunks", "thread", "conversations")
+SEARCH_SORTS = ("score", "time")
+SEARCH_SELECTS = ("all", "first")
+
+
+def parse_turns_range(s: str) -> tuple[int, int]:
+    """Parse a turns-range string like ``-2:+2`` or ``5:10`` into (start, end).
+
+    The neutral, layer-agnostic parser (raises :class:`ValueError`) used by
+    :func:`search_view`, so the ``--around`` window validates the same way on
+    the CLI, the REST route (``ValueError`` → 400), and any programmatic caller.
+    The CLI keeps its own ``_parse_turns_range`` wrapper that maps the same
+    failures to ``sys.exit(2)`` for a friendly argparse-style message.
+    """
+    parts = s.split(":")
+    if len(parts) != 2:
+        raise ValueError(f"turns must be in A:B format (e.g. -2:+2, 5:10), got: {s!r}")
+    try:
+        start = int(parts[0].lstrip("+"))
+        end = int(parts[1].lstrip("+"))
+    except ValueError as e:
+        raise ValueError(f"turns values must be integers, got: {s!r}") from e
+    if end < start:
+        raise ValueError(f"turns end ({end}) must be >= start ({start})")
+    return start, end
+
+
+def _validate_view_axes(view: str, sort: str, select: str, around: str | None, turns: str | None) -> None:
+    """Validate the view/sort/select axis combination + the around/turns pairing.
+
+    Raises :class:`ValueError` (→ CLI error / REST 400) so the axis rules can't
+    drift between surfaces. The CLI keeps a thin early pre-check for the friendly
+    ``exit(2)`` UX; this is the canonical gate every surface inherits.
+    """
+    if view not in SEARCH_VIEWS:
+        raise ValueError(f"invalid view {view!r}; choose from {', '.join(SEARCH_VIEWS)}")
+    if sort not in SEARCH_SORTS:
+        raise ValueError(f"invalid sort {sort!r}; choose from {', '.join(SEARCH_SORTS)}")
+    if select not in SEARCH_SELECTS:
+        raise ValueError(f"invalid select {select!r}; choose from {', '.join(SEARCH_SELECTS)}")
+    if view in ("thread", "conversations") and sort == "time":
+        raise ValueError(
+            f"view={view} is incompatible with sort=time ({view} imposes its own ordering)"
+        )
+    if turns is not None and around is None:
+        raise ValueError("turns requires around=PHRASE")
+
+
+def _engine_limit(n: int, *, view: str, select: str) -> int:
+    """Widen the engine candidate pool for views that aggregate or filter post-hoc.
+
+    Callers pass the *final* result count ``n``; the aggregate/thread/first
+    shapes need a wider engine pool to draw from before trimming. This is the
+    widening that used to live inline in the CLI handler — homed here so the
+    REST route and HTML view inherit identical pool sizing.
+    """
+    if view == "thread":
+        return max(n, 40)
+    if select == "first" or view == "conversations":
+        return max(n * 10, 100)
+    return n
+
+
+def search_view(
+    q: str,
+    *,
+    db_path: Path,
+    embed_db: Path | None = None,
+    n: int = 10,
+    mode: str = "hybrid",
+    # Filters
+    workspace: str | None = None,
+    model: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    tag: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    no_tag: list[str] | None = None,
+    tag_kind: list[str] | None = None,
+    exclude_active: bool = True,
+    include_derivative: bool = False,
+    owner: str | None = None,
+    tool: str | None = None,
+    tool_tag: str | None = None,
+    # Engine tuning
+    recall: int = 80,
+    rerank: str = "mmr",
+    lambda_: float = 0.7,
+    recency: bool = False,
+    recency_half_life: float = 30.0,
+    recency_max_boost: float = 1.15,
+    backend: str | None = None,
+    embed_backend: EmbeddingBackend | None = None,
+    raw_fts: bool = False,
+    # Recipe (post-processing) controls
+    view: str = "chunks",
+    sort: str = "score",
+    select: str = "all",
+    threshold: float | None = None,
+    full: bool = False,
+    around: str | None = None,
+    turns: str | None = None,
+) -> SearchView:
+    """The whole search Operation: engine retrieval + the post-processing recipe.
+
+    Composes :func:`search_chunks` (the engine) with
+    :func:`process_search_view` (threshold → select → trim → enrich → sort →
+    view shape → full → around) into one render-ready :class:`SearchView`, so
+    every surface — the CLI, the REST ``/api/v1/search`` route, and the HTML
+    Find view — runs the *same* recipe and the wire carries the post-processed
+    result rather than raw chunks. The engine candidate pool is widened
+    internally for the aggregate/thread/first views (callers pass the final
+    ``n``); axis combinations and the ``turns`` window validate here
+    (:class:`ValueError` → CLI error / REST 400) so the rules can't drift.
+
+    ``threshold`` is the client-side post-filter (the CLI's ``--threshold``);
+    the engine-side score threshold stays at its default. An empty engine result
+    short-circuits to an empty chunks/thread/conversations view (``empty_reason``
+    stays ``None``) so the "no results" message is distinct from a deliberately
+    emptied one.
+    """
+    _validate_view_axes(view, sort, select, around, turns)
+    turns_range = (
+        parse_turns_range(turns) if (around is not None and turns is not None) else None
+    )
+
+    chunks = search_chunks(
+        q,
+        db_path=db_path,
+        embed_db=embed_db,
+        n=_engine_limit(n, view=view, select=select),
+        mode=mode,
+        workspace=workspace,
+        model=model,
+        since=since,
+        before=before,
+        tag=tag,
+        all_tags=all_tags,
+        no_tag=no_tag,
+        tag_kind=tag_kind,
+        exclude_active=exclude_active,
+        include_derivative=include_derivative,
+        owner=owner,
+        tool=tool,
+        tool_tag=tool_tag,
+        recall=recall,
+        rerank=rerank,
+        lambda_=lambda_,
+        recency=recency,
+        recency_half_life=recency_half_life,
+        recency_max_boost=recency_max_boost,
+        backend=backend,
+        embed_backend=embed_backend,
+        raw_fts=raw_fts,
+    )
+
+    if not chunks:
+        return SearchView(results=[], view=view)
+
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        return process_search_view(
+            chunks,
+            conn,
+            view=view,
+            sort=sort,
+            select=select,
+            threshold=threshold,
+            limit=n,
+            full=full,
+            around=around,
+            turns_range=turns_range,
+            db_path=db_path,
+        )
+    finally:
+        conn.close()

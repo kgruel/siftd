@@ -39,7 +39,12 @@ def test_run_ingest_returns_result_and_writes_stats_cache(tmp_path, monkeypatch)
 
     cache_calls = []
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda db_path: {"db": str(db_path)})
-    monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda payload: cache_calls.append(payload))
+    # write_stats_cache now takes a db_mtime_ns kwarg (captured before the sweep);
+    # the mock must absorb it or the call raises and the cache refresh is swallowed.
+    monkeypatch.setattr(
+        "siftd.api.stats.write_stats_cache",
+        lambda payload, **_kw: cache_calls.append(payload),
+    )
 
     result = ingest_api.run_ingest(db_path=db, adapter_names=["claude_code"])
 

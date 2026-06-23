@@ -8,7 +8,26 @@ from unittest.mock import MagicMock
 import pytest
 from painted import Fidelity
 
+from siftd.domain.search_types import SearchView
 from siftd.output.validation import validate_formatter
+
+
+# Render-input builders over the api primitives. The recipe that used to sequence
+# these inline in cli/search.py now lives in api.process_search_view; these two
+# helpers reproduce the render-dict shapes the formatter tests feed in (the old
+# cli.search._aggregate_conversations / _compute_thread_tiers wrappers), built
+# straight from the public primitives + to_render_dict.
+def _aggregate_conversations(results, *, limit=10):
+    from siftd.api.search import aggregate_by_conversation
+
+    return [c.to_render_dict() for c in aggregate_by_conversation(results, limit=limit)]
+
+
+def _compute_thread_tiers(results):
+    from siftd.api.search import compute_thread_tiers
+
+    tier1, tier2 = compute_thread_tiers(results)
+    return [c.to_render_dict() for c in tier1], [c.to_render_dict() for c in tier2]
 
 
 @pytest.fixture
@@ -104,6 +123,27 @@ def enriched_results(formatter_db):
     ]
 
 
+class TestHtmlRenderSearchEmpty:
+    """html_fmt.render_search empty-state messaging (3b-3)."""
+
+    def test_threshold_empty_is_distinct(self):
+        from siftd.output import html_fmt
+
+        # A threshold that filtered every hit gets a distinct message so the user
+        # lowers the bar rather than rewording the query.
+        thr = html_fmt.render_search(
+            SearchView(results=[], view="chunks", empty_reason="threshold"),
+            Fidelity(), query="caching",
+        )
+        assert "No matches above the score threshold." in thr
+
+        # A genuine no-match keeps the plain message.
+        plain = html_fmt.render_search(
+            SearchView(results=[], view="chunks"), Fidelity(), query="caching",
+        )
+        assert "No matches." in plain and "score threshold" not in plain
+
+
 class TestJsonRenderSearch:
     """Tests for json_fmt.render_search."""
 
@@ -111,12 +151,12 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         assert isinstance(result, dict)
         assert result["query"] == "caching"
-        assert result["mode"] == "chunks"
+        assert result["view"] == "chunks"
         assert result["result_count"] == 2
         assert len(result["results"]) == 2
 
@@ -124,7 +164,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         chunk = result["results"][0]
@@ -142,7 +182,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks", debug_ids=False,
+            enriched_results, Fidelity(), query="caching", view="chunks", debug_ids=False,
         )
 
         chunk = result["results"][0]
@@ -151,14 +191,13 @@ class TestJsonRenderSearch:
 
     def test_formats_conversation_mode(self, enriched_results):
         from siftd.output import json_fmt
-        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         result = json_fmt.render_search(
-            conv_results, Fidelity(), query="caching", mode="conversations"
+            conv_results, Fidelity(), query="caching", view="conversations"
         )
 
-        assert result["mode"] == "conversations"
+        assert result["view"] == "conversations"
         assert len(result["results"]) == 1  # Both chunks same conversation
 
         conv = result["results"][0]
@@ -171,7 +210,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(), query="test", mode="chunks"
+            enriched_results, Fidelity(), query="test", view="chunks"
         )
 
         assert "timestamp" in result
@@ -181,12 +220,12 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            enriched_results, Fidelity(),
-            query="caching", mode="thread",
-            tier1=enriched_results[:1], tier2=enriched_results[1:],
+            SearchView(results=enriched_results, view="thread", tier1=enriched_results[:1], tier2=enriched_results[1:]),
+            Fidelity(),
+            query="caching",
         )
 
-        assert result["mode"] == "thread"
+        assert result["view"] == "thread"
         assert "tier1" in result
         assert "tier2" in result
 
@@ -194,7 +233,7 @@ class TestJsonRenderSearch:
         from siftd.output import json_fmt
 
         result = json_fmt.render_search(
-            [], Fidelity(), query="nothing", mode="chunks"
+            [], Fidelity(), query="nothing", view="chunks"
         )
 
         assert result["query"] == "nothing"
@@ -275,12 +314,11 @@ class TestTerminalRenderSearch:
         assert long_text not in output
 
     def test_conversations_mode(self, enriched_results):
-        from siftd.cli.search import _aggregate_conversations
         from siftd.output import terminal_fmt
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = _search_text(
-            terminal_fmt.render_search(conv_results, Fidelity(), query="caching", mode="conversations")
+            terminal_fmt.render_search(conv_results, Fidelity(), query="caching", view="conversations")
         )
 
         assert "Conversations for: caching" in output
@@ -288,13 +326,13 @@ class TestTerminalRenderSearch:
         assert "0.85" in output  # max score
 
     def test_thread_mode(self, enriched_results):
-        from siftd.cli.search import _compute_thread_tiers
         from siftd.output import terminal_fmt
 
         tier1, tier2 = _compute_thread_tiers(enriched_results)
         output = _search_text(
             terminal_fmt.render_search(
-                enriched_results, Fidelity(), query="caching", mode="thread", tier1=tier1, tier2=tier2
+                SearchView(results=enriched_results, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
             )
         )
 
@@ -304,7 +342,6 @@ class TestTerminalRenderSearch:
 
     def test_thread_mode_two_tiers(self):
         """Thread mode with clearly separated tiers."""
-        from siftd.cli.search import _compute_thread_tiers
         from siftd.output import terminal_fmt
 
         results = [
@@ -318,7 +355,8 @@ class TestTerminalRenderSearch:
         tier1, tier2 = _compute_thread_tiers(results)
         output = _search_text(
             terminal_fmt.render_search(
-                results, Fidelity(), query="caching", mode="thread", tier1=tier1, tier2=tier2
+                SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
             )
         )
 
@@ -326,14 +364,14 @@ class TestTerminalRenderSearch:
 
     def test_single_result_in_thread_tier2(self, enriched_results):
         """Single result at mean score goes to tier2."""
-        from siftd.cli.search import _compute_thread_tiers
         from siftd.output import terminal_fmt
 
         single = enriched_results[:1]
         tier1, tier2 = _compute_thread_tiers(single)
         output = _search_text(
             terminal_fmt.render_search(
-                single, Fidelity(), query="caching", mode="thread", tier1=tier1, tier2=tier2
+                SearchView(results=single, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
             )
         )
 
@@ -458,7 +496,7 @@ class TestMarkdownRenderSearch:
         from siftd.output import markdown_fmt
 
         output = markdown_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", mode="chunks"
+            enriched_results, Fidelity(), query="caching", view="chunks"
         )
 
         assert isinstance(output, str)
@@ -467,11 +505,10 @@ class TestMarkdownRenderSearch:
 
     def test_conversations_mode_table(self, enriched_results):
         from siftd.output import markdown_fmt
-        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
         output = markdown_fmt.render_search(
-            conv_results, Fidelity(), query="caching", mode="conversations"
+            conv_results, Fidelity(), query="caching", view="conversations"
         )
 
         assert "## Conversations for: caching" in output
@@ -481,7 +518,6 @@ class TestMarkdownRenderSearch:
 
     def test_thread_mode(self):
         from siftd.output import markdown_fmt
-        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "conv-high", "score": 0.95, "chunk_type": "prompt",
@@ -493,9 +529,9 @@ class TestMarkdownRenderSearch:
         ]
         tier1, tier2 = _compute_thread_tiers(results)
         output = markdown_fmt.render_search(
-            results, Fidelity(),
-            query="caching", mode="thread",
-            tier1=tier1, tier2=tier2,
+            SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
+            Fidelity(),
+            query="caching",
         )
 
         assert "## Results for: caching" in output
@@ -681,7 +717,6 @@ class TestSearchHelpers:
     """Tests for cli_search helper functions used by the new formatter flow."""
 
     def test_aggregate_conversations(self, enriched_results):
-        from siftd.cli.search import _aggregate_conversations
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
 
@@ -692,7 +727,6 @@ class TestSearchHelpers:
         assert r["_workspace"] == "project"
 
     def test_aggregate_conversations_respects_limit(self):
-        from siftd.cli.search import _aggregate_conversations
 
         results = [
             {"conversation_id": f"conv{i}", "score": 0.9 - i * 0.1,
@@ -705,7 +739,6 @@ class TestSearchHelpers:
         assert len(conv_results) == 2
 
     def test_compute_thread_tiers(self):
-        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "high", "score": 0.95, "chunk_type": "prompt",
@@ -725,7 +758,6 @@ class TestSearchHelpers:
 
     def test_compute_thread_tiers_single(self):
         """Single result at mean goes to tier2."""
-        from siftd.cli.search import _compute_thread_tiers
 
         results = [
             {"conversation_id": "only", "score": 0.8, "chunk_type": "prompt",
@@ -739,12 +771,13 @@ class TestSearchHelpers:
         assert len(tier2) == 1
 
     def test_fetch_search_metadata(self, mock_conn, sample_results):
-        from siftd.cli.search import _fetch_search_metadata
+        from siftd.api.search import enrich_search_metadata
+        from siftd.domain.search_types import SearchChunk
 
-        _fetch_search_metadata(mock_conn, sample_results)
+        chunks = [SearchChunk.from_mapping(r) for r in sample_results]
+        enrich_search_metadata(mock_conn, chunks)
 
-        for r in sample_results:
-            assert "_workspace" in r
-            assert "_started_at" in r
-            assert r["_workspace"] == "project"
-            assert r["_started_at"] == "2024-01-15"
+        for c in chunks:
+            # SearchChunk exposes the render keys via its Mapping interface.
+            assert c["_workspace"] == "project"
+            assert c["_started_at"] == "2024-01-15"

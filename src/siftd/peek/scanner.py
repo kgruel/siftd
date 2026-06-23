@@ -237,6 +237,7 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
         preview_available=True,
         adapter_name=file_info.adapter_name,
         parent_session_id=result.parent_session_id,
+        started_at=result.started_at,
     )
 
 

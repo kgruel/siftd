@@ -191,8 +191,9 @@
 
   // --- UI: sign-out button + login overlay -----------------------------------
   function addSignout() {
-    var nav = document.querySelector('nav');
-    if (!nav || nav.querySelector('.nav-auth-btn')) return;
+    // Swiss shell: the rail foot. Falls back to <nav> for any other shell.
+    var mount = document.querySelector('.sw-foot') || document.querySelector('nav');
+    if (!mount || mount.querySelector('.nav-auth-btn')) return;
     var btn = document.createElement('button');
     btn.className = 'nav-auth-btn';
     btn.textContent = 'Sign out';
@@ -201,7 +202,7 @@
       sessionStorage.removeItem(DISCO_KEY);
       location.reload();
     });
-    nav.appendChild(btn);
+    mount.appendChild(btn);
   }
 
   // Surface a flow error inside the login box (building it first if needed).
@@ -219,8 +220,10 @@
 
   function showLogin(opts) {
     if (document.getElementById('siftd-login')) return;
-    var list = document.getElementById('list');
-    if (!list) return;
+    // Swiss shell mounts the overlay in #main; fall back to #list for any
+    // other shell. Without this rebind a 401 leaves a dead login box.
+    var mount = document.getElementById('main') || document.getElementById('list');
+    if (!mount) return;
 
     var box = document.createElement('div');
     box.id = 'siftd-login';
@@ -269,8 +272,8 @@
     });
     box.appendChild(form);
 
-    list.innerHTML = '';
-    list.appendChild(box);
+    mount.innerHTML = '';
+    mount.appendChild(box);
     input.focus();
     var detail = document.getElementById('detail');
     if (detail) detail.innerHTML = '';

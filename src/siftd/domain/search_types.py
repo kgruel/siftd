@@ -220,3 +220,46 @@ class ThreadTiers:
 
     tier1: list[SearchChunk]
     tier2: list[SearchChunk]
+
+
+@dataclass(frozen=True)
+class SearchView:
+    """Post-processed, render-ready search output — the recipe's single product.
+
+    ``results`` is what a formatter consumes as its positional argument, in
+    render-dict shape: chunk dicts for the ``chunks``/``thread`` views,
+    per-conversation dicts for ``conversations``. ``tier1``/``tier2`` carry the
+    thread split (``None`` outside the thread view; the thread renderers read
+    *them*, not ``results``). ``n_skipped`` counts results dropped by the
+    ``--around`` phrase filter. ``empty_reason`` distinguishes a deliberately
+    emptied result (``"threshold"`` / ``"first"``) from an ordinary empty one,
+    so a caller can phrase the right message; it is never set while ``results``
+    is non-empty.
+
+    It lives in ``domain`` (not ``api``) so every layer that renders or
+    serializes a search — ``output`` formatters, the ``serialization`` serve
+    formatter, and the ``api`` deserializer — can construct one without
+    crossing an architecture boundary. ``api.search.process_search_view`` (the
+    DB-touching recipe that produces it) re-exports it for back-compat.
+    """
+
+    results: list[dict[str, Any]]
+    view: str
+    tier1: list[dict[str, Any]] | None = None
+    tier2: list[dict[str, Any]] | None = None
+    n_skipped: int = 0
+    empty_reason: str | None = None
+
+
+def as_search_view(result: Any, *, view: str = "chunks") -> SearchView:
+    """Normalize a renderer's positional argument to a :class:`SearchView`.
+
+    The canonical search render contract passes a ``SearchView``; this shim
+    wraps a bare list of render-dicts into a chunks-shaped view so the empty-
+    result helper and any list-passing caller keep working. A value that is
+    already a ``SearchView`` (duck-typed on ``.results``) passes through
+    unchanged.
+    """
+    if hasattr(result, "results") and hasattr(result, "view"):
+        return result
+    return SearchView(results=list(result or []), view=view)

@@ -67,7 +67,12 @@ class PeekExchange:
 
 @dataclass
 class SessionInfo:
-    """Session metadata for list display."""
+    """Session metadata for list display.
+
+    started_at is the scan's in-file first timestamp (ISO string) — already
+    extracted by every peek_scan into PeekScanResult; carried here so list
+    consumers can show session age without a second file read.
+    """
 
     session_id: str
     file_path: Path
@@ -80,6 +85,7 @@ class SessionInfo:
     preview_available: bool = True
     adapter_name: str | None = None
     parent_session_id: str | None = None
+    started_at: str | None = None
 
 
 @dataclass

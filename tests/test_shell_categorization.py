@@ -2,7 +2,12 @@
 
 import pytest
 
-from siftd.domain.shell_categories import categorize_shell_command
+from siftd.domain.shell_categories import (
+    SHELL_CATEGORIES,
+    SHELL_TAG_PREFIX,
+    categorize_shell_command,
+    shell_tag_names,
+)
 
 
 @pytest.mark.parametrize(
@@ -98,3 +103,18 @@ class TestEdgeCases:
 
     def test_none_input(self):
         assert categorize_shell_command(None) is None
+
+
+class TestShellTagNames:
+    """shell_tag_names() enumerates the closed auto-applied shell vocabulary."""
+
+    def test_matches_category_set_with_prefix(self):
+        names = shell_tag_names()
+        assert names == {f"{SHELL_TAG_PREFIX}{c}" for c in SHELL_CATEGORIES}
+        assert all(n.startswith(SHELL_TAG_PREFIX) for n in names)
+
+    def test_categorized_command_yields_an_enumerated_name(self):
+        # The name the auto-tagger would write for a real command is in the set.
+        cat = categorize_shell_command("git status")
+        assert cat is not None
+        assert f"{SHELL_TAG_PREFIX}{cat}" in shell_tag_names()

@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from painted import Fidelity
 
+from siftd.domain.shell_categories import shell_tag_names
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import open_database as _open_database
 from siftd.storage.tags import DERIVATIVE_TAG
@@ -63,6 +64,7 @@ __all__ = [
     "rename_tag_safe",
     "remove_tag",
     "rename_tag",
+    "set_tag_pin",
     "tag_info_from_dict",
     "tag_info_list_from_dict",
 ]
@@ -70,10 +72,21 @@ __all__ = [
 _GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
 _ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
 
+# Auto-applied tag names: the closed shell:* category vocabulary (written
+# automatically at ingest/backfill) plus the derivative marker. Membership is a pure
+# predicate over the name — no stored auto-vs-user flag, no migration. Surfaces
+# (e.g. the Swiss "Most used" headline) read TagInfo.auto to demote auto-applied
+# vocabulary from curation views; the names still appear in the namespace tree.
+_AUTO_TAG_VOCABULARY = shell_tag_names() | {DERIVATIVE_TAG}
+
 
 @dataclass
 class TagInfo:
     """Tag with usage counts.
+
+    ``auto`` marks a tag whose name is in the closed auto-applied vocabulary
+    (``shell:*`` categories + ``siftd:derivative``); curation views demote these
+    from "most used" rankings while keeping them in the namespace tree.
 
     ``activity`` is an optional Fidelity-gated enrichment (a per-week
     conversation-activity sparkline, oldest→newest); it is ``None`` unless the
@@ -90,6 +103,8 @@ class TagInfo:
     exchange_count: int
     prompt_count: int
     response_count: int
+    pinned: bool = False
+    auto: bool = False
     activity: list[int] | None = None
 
 
@@ -186,6 +201,8 @@ def list_tags(
                 exchange_count=r["exchange_count"],
                 prompt_count=r["prompt_count"],
                 response_count=r["response_count"],
+                pinned=r.get("pinned", False),
+                auto=r["name"] in _AUTO_TAG_VOCABULARY,
             )
             for r in rows
         ]
@@ -463,6 +480,54 @@ def modify_conversation_tag(
 
         conn.commit()
         return fetch_conversation_tags(conn, resolved)
+    finally:
+        conn.close()
+
+
+def set_tag_pin(
+    tag_name: str,
+    *,
+    pinned: bool,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> bool:
+    """Pin or unpin a tag (by name) for an owner. Returns True if state changed.
+
+    Owner-scoped: the pin lives under the effective identity, so one tenant's
+    pins never touch another's view. Resolves the tag by name; a nonexistent tag
+    is a no-op (returns False) — you cannot pin what isn't there. Under an owner
+    scope, *pin* additionally requires that the owner actually uses the tag, so a
+    crafted request can't pin a foreign tenant's tag and surface its name (a
+    cross-tenant existence oracle); the unscoped (``owner`` None) case keeps the
+    existence-only guard, matching its see-everything view. *Unpin* is always
+    allowed (it only removes state), mirroring :func:`set_workspace_pin`. Manages
+    its own connection and transaction.
+    """
+    from siftd.storage.tags import owner_uses_tag as _owner_uses
+    from siftd.storage.tags import pin_tag as _pin
+    from siftd.storage.tags import unpin_tag as _unpin
+
+    name = (tag_name or "").strip()
+    if not name:
+        return False
+
+    path = db_path or _db_path()
+    conn = _open_database(path)
+    try:
+        tag_id = _get_tag_id(conn, name)
+        if not pinned:
+            # Unpin always allowed: it only removes the owner's own state, and a
+            # missing tag (its pins already cascade-deleted) simply has nothing
+            # to remove.
+            changed = _unpin(conn, owner=owner, tag_id=tag_id) if tag_id else False
+        elif not tag_id:
+            return False
+        elif owner and not _owner_uses(conn, tag_id, owner):
+            return False  # can't pin a tag this owner doesn't use
+        else:
+            changed = _pin(conn, owner=owner, tag_id=tag_id)
+        conn.commit()
+        return changed
     finally:
         conn.close()
 

@@ -82,11 +82,12 @@ RUST = (
 def build_fixture(db_path: Path) -> str:
     """Create the fixture DB; return the conversation id with the code fence."""
     from siftd.api.search import rebuild_fts_index
+    from siftd.storage.usage_rollup import rebuild_rollups
     from siftd.storage.sqlite import (
         create_database, get_or_create_harness, get_or_create_model,
         get_or_create_provider, get_or_create_workspace, insert_conversation,
         insert_prompt, insert_prompt_content, insert_response,
-        insert_response_content,
+        insert_response_content, insert_tool_call,
     )
 
     conn = create_database(db_path)
@@ -115,8 +116,59 @@ def build_fixture(db_path: Path) -> str:
             )
             body = RUST if (ci == 2 and ti == 1) else f"plain response conv={ci} turn={ti}"
             insert_response_content(conn, rid, 0, "text", json.dumps({"text": body}))
+            if ci == 2 and ti == 0:
+                # A tool call in the code_conv so the folio's trace mode has
+                # interleaved I/O to inline (the reading→trace toggle smoke).
+                insert_response_content(
+                    conn, rid, 1, "tool_use",
+                    json.dumps({"id": "toolu_smoke", "name": "Read",
+                                "input": {"file_path": "x.py"}}),
+                )
+                insert_tool_call(
+                    conn, rid, cid, None, "toolu_smoke",
+                    json.dumps({"file_path": "x.py"}),
+                    json.dumps({"text": "file body"}), "success", ts,
+                )
+
+    # A sub-agent of the newest root (csp-2), to exercise Sessions nesting:
+    # collapsed-by-default + chevron expand. external_id is "<root>::agent::<id>".
+    sub = insert_conversation(
+        conn, external_id="csp-2::agent::sub1", harness_id=h, workspace_id=w,
+        started_at="2024-02-03T10:05:00Z",
+    )
+    spid = insert_prompt(conn, sub, "p-sub", "2024-02-03T10:05:00Z")
+    insert_prompt_content(
+        conn, spid, 0, "text",
+        json.dumps({"text": "sub-agent prompt anchor-find-needle"}),
+    )
+    srid = insert_response(
+        conn, sub, spid, m, p, "r-sub", "2024-02-03T10:05:01Z",
+        input_tokens=10, output_tokens=5,
+    )
+    insert_response_content(conn, srid, 0, "text", json.dumps({"text": "sub-agent response"}))
+
+    # A second workspace so the Workspaces view lists >1 row — the body filter
+    # check needs something to hide while keeping a match shown.
+    w2 = get_or_create_workspace(conn, "/work/other-proj", "2024-01-01T00:00:00Z")
+    cid2 = insert_conversation(
+        conn, external_id="other-0", harness_id=h, workspace_id=w2,
+        started_at="2024-02-05T10:00:00Z",
+    )
+    pid2 = insert_prompt(conn, cid2, "p-other", "2024-02-05T10:00:00Z")
+    insert_prompt_content(
+        conn, pid2, 0, "text",
+        json.dumps({"text": "other-proj prompt anchor-find-needle"}),
+    )
+    rid2 = insert_response(
+        conn, cid2, pid2, m, p, "r-other", "2024-02-05T10:00:01Z",
+        input_tokens=20, output_tokens=10,
+    )
+    insert_response_content(conn, rid2, 0, "text", json.dumps({"text": "other-proj response"}))
 
     rebuild_fts_index(conn)
+    # The reckoning + workspace cadence read usage_by_conv_model (a real ingest
+    # builds it); build it here so the Stats charts have data to scale.
+    rebuild_rollups(conn)
     conn.commit()
     conn.close()
     return ids[2]
@@ -204,50 +256,422 @@ document.addEventListener('securitypolicyviolation', function (e) {
 
 
 # ---------------------------------------------------------------------------
-# Flow: the current two-pane shell. Shell-SPECIFIC — rewrite when the UI does.
+# Flow: the Swiss shell. Shell-SPECIFIC — rewrite when the UI does.
 # ---------------------------------------------------------------------------
 
 
 async def flow(cdp, check, goto, code_conv):
     await goto(f"{BASE}/", 2.5)
-    shell_ok = await cdp.eval("!!document.getElementById('list') && !!window.htmx")
-    check("shell rendered + vendored htmx loaded", bool(shell_ok))
+    shell_ok = await cdp.eval("!!document.querySelector('.sw-rail') && !!window.htmx")
+    check("swiss shell rendered + vendored htmx loaded", bool(shell_ok))
 
-    rows = await cdp.eval(
-        "document.querySelectorAll('#list tr, #list .conv-row, #list li, #list a').length"
+    # rail nav: every view (stubs included) must swap #main via htmx
+    for view in ("sessions", "search", "transcript", "tags", "workspaces", "stats"):
+        await cdp.click(f'a[data-view="{view}"]')
+        await cdp.drain(1.5)
+        children = await cdp.eval(
+            "document.getElementById('main') ? document.getElementById('main').childElementCount : -1"
+        )
+        check(
+            f"rail nav swaps #main: {view}",
+            children is not None and children > 0,
+            f"children={children}",
+        )
+
+    # URL-as-state: rail nav pushes canonical /?view= URLs, and browser
+    # back/forward restores the prior view (htmx history). Drive real popstate.
+    await cdp.click('a[data-view="tags"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.2)
+    at_stats = await cdp.eval("location.search")
+    check("rail nav pushes canonical ?view= URL", at_stats == "?view=stats", f"search={at_stats}")
+    await cdp.eval("history.back()")
+    await cdp.drain(1.5)
+    back_url = await cdp.eval("location.search")
+    back_view = await cdp.eval(
+        "(function(){var v=document.querySelector('#main [data-view]');"
+        "return v ? v.getAttribute('data-view') : null;})()"
     )
-    check("list pane populated on load", rows is not None and rows > 0, f"rows={rows}")
+    check(
+        "browser back restores the prior view (URL + #main)",
+        back_url == "?view=tags" and back_view == "tags",
+        f"url={back_url} view={back_view}",
+    )
 
-    # search box: real keystrokes -> htmx keyup trigger (300ms delay)
-    await cdp.click('input[name="q"]')
+    # find box: real keystrokes -> htmx keyup trigger (350ms delay)
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.5)
+    # Slice 2b: bare Find (no term, no facet) opens as the search PROMPT, not a
+    # recency list.
+    prompt_shown = await cdp.eval(
+        "!!document.querySelector('#list .find-prompt') "
+        "&& !document.querySelector('#list .conversation-list')"
+    )
+    check("bare Find opens as the search prompt (no recency list)", prompt_shown is True)
+    await cdp.click('input[name="search"]')
     await cdp.type_text("needle")
     await cdp.drain(1.5)
-    listed = await cdp.eval("document.getElementById('list').textContent.length")
-    check("search keystrokes swap list", listed is not None and listed > 0, f"len={listed}")
+    # A content query now runs the real engine: ranked excerpt hits, not the
+    # recency list table. Each hit is a .search-hit article.
+    hits = await cdp.eval(
+        "document.querySelectorAll('#list .search-results .search-hit').length"
+    )
+    check("find keystrokes run engine search", hits is not None and hits > 0, f"hits={hits}")
+    engine_named = await cdp.eval(
+        "/\\[(fts|hybrid|semantic)\\]/.test(document.getElementById('list').textContent)"
+    )
+    check("find search names the engine that ran", bool(engine_named))
+    # editorial hit markup: a hanging meta gutter + a score meter that
+    # drawHitMeters scales under CSP (--w set from data-n). Guards the new JS.
+    meter_drawn = await cdp.eval(
+        "(function(){var m=document.querySelector('#list .search-hit .hit-meta .hit-meter');"
+        "return !!m && !!m.style.getPropertyValue('--w');})()"
+    )
+    check("search hit-meta gutter + score meter drawn under CSP", meter_drawn is True)
 
-    # open the conversation w/ the rust fence -> Prism autoloader under CSP
+    # Slice 2c: with results showing, the strip COLLAPSES (CSS :has) — the
+    # secondary "more filters" disclosure is hidden and the expand chevron shows.
+    collapsed = await cdp.eval(
+        "(function(){var more=document.querySelector('#filters .find__more');"
+        "var ex=document.querySelector('#filters .find__expand');"
+        "return getComputedStyle(more).display==='none'"
+        " && getComputedStyle(ex).display!=='none';})()"
+    )
+    check("control strip collapses to a refinement bar on search", collapsed is True)
+    # Clicking the chevron force-expands back to the builder (more filters shown).
+    await cdp.click('#filters .find__expand')
+    await cdp.drain(0.6)
+    reexpanded = await cdp.eval(
+        "getComputedStyle(document.querySelector('#filters .find__more')).display!=='none'"
+    )
+    check("expand chevron re-opens the builder", reexpanded is True)
+    # Collapse again so the view-toggle check below runs against the bar state.
+    await cdp.click('#filters .find__expand')
+    await cdp.drain(0.6)
+
+    # view toggle: changing the result-shape <select> re-runs the query through
+    # the same recipe server-side and swaps #list to the thread shape. Guards
+    # the htmx wiring — the toggle must include into #filters and fire on change
+    # — which the unit tests (firing /query?view= directly) can't see. Must
+    # reset to chunks after: the thread view's tier1 .search-hit.expanded has no
+    # detail link, so the downstream row-click test needs the clickable chunks
+    # view back.
+    await cdp.eval(
+        "(function(){var s=document.querySelector('select[name=\"view\"]');"
+        "if(s){s.value='thread';s.dispatchEvent(new Event('change'));}})()"
+    )
+    await cdp.drain(1.5)
+    thread_shape = await cdp.eval(
+        "!!document.querySelector('#list .search-results.thread')"
+    )
+    check("view toggle swaps result shape to thread", bool(thread_shape), f"ok={thread_shape}")
+    await cdp.eval(
+        "(function(){var s=document.querySelector('select[name=\"view\"]');"
+        "if(s){s.value='chunks';s.dispatchEvent(new Event('change'));}})()"
+    )
+    await cdp.drain(1.0)
+
+    # context unfold: clicking a hit's unfold control expands the surrounding
+    # exchanges IN PLACE (the #list result list stays — no navigation), proving
+    # the windowed read + that the control (a sibling of the folio-navigable
+    # block) does not bubble to the folio jump. Then unfold a second, still-
+    # collapsed hit and confirm the first stays open (independent per-hit state).
+    await cdp.click("#list .search-hit .hit-unfold")
+    await cdp.drain(1.5)
+    unfolded = await cdp.eval(
+        "document.querySelectorAll('#list .hit-context__slice .turn').length"
+    )
+    still_list = await cdp.eval("!!document.querySelector('#list .search-results.chunks')")
+    no_nav = await cdp.eval("!document.querySelector('#main .folio')")
+    check("hit unfold expands context in place", unfolded is not None and unfolded > 0,
+          f"turns={unfolded}")
+    check("unfold does not navigate to the folio", bool(still_list) and bool(no_nav))
+    # Unfold a different, still-collapsed hit (one whose control still reads
+    # "unfold context"); the first must remain expanded.
+    await cdp.eval(
+        "(function(){var hits=document.querySelectorAll('#list .search-hit');"
+        "for(var i=0;i<hits.length;i++){var b=hits[i].querySelector('.hit-unfold');"
+        "if(b&&b.textContent.indexOf('unfold context')>=0){b.click();return true;}}"
+        "return false;})()"
+    )
+    await cdp.drain(1.5)
+    slices = await cdp.eval("document.querySelectorAll('#list .hit-context__slice').length")
+    check("multiple hits unfold independently", slices is not None and slices >= 2,
+          f"slices={slices}")
+
+    # FTS5 footgun characters must not error the list pane
+    await cdp.eval("document.querySelector('input[name=\"search\"]').value=''")
+    await cdp.click('input[name="search"]')
+    await cdp.type_text('a"(:*')
+    await cdp.drain(1.5)
+    err = await cdp.eval(
+        "document.getElementById('list').textContent.toLowerCase().includes('error')"
+    )
+    check("FTS5 punctuation input survives", not err)
+
+    # row click: a Find list row must mount the folio into #main and push
+    # /?id=… — regression guard for the dead two-pane "#detail" target
+    # (htmx targetError: clicks silently did nothing).
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.5)
+    # Re-clicking Search now RESUMES the last query (last-selected), and earlier
+    # sections left a non-chunks / punctuation state behind — reset to a clean
+    # chunks search before driving this section.
+    await cdp.eval(
+        "(function(){var v=document.querySelector('select[name=\"view\"]');"
+        "if(v)v.value='chunks';"
+        "var b=document.querySelector('input[name=\"search\"]');"
+        "if(b)b.value='';})()"
+    )
+    await cdp.click('input[name="search"]')
+    await cdp.type_text("needle")
+    await cdp.drain(1.5)
+    # Slice 3a: the live search state is mirrored into the canonical URL, so a
+    # refresh/shared link reproduces the query.
+    synced = await cdp.eval("location.search.includes('view=search') && location.search.includes('q=needle')")
+    check("search state mirrored into the URL (?view=search&q=needle)", bool(synced))
+    await cdp.click("#list .search-hit__main")
+    await cdp.drain(1.5)
+    folio = await cdp.eval("!!document.querySelector('#main .folio')")
+    pushed = await cdp.eval("location.search.includes('id=')")
+    check("find hit click mounts folio in #main", bool(folio))
+    check("find hit click pushes /?id= deep link", bool(pushed))
+
+    # Event-precise jump: a search hit opens the folio in TRACE mode (the
+    # entry-point rule) anchored at the matched event. The route marks that
+    # element .is-target and emits data-scroll-to, which enhance.js consumes
+    # (scrollIntoView) then removes — so the reader lands ON the match, not the
+    # top. "needle" occurs only in prompts, so every hit carries a prompt
+    # event_id → the landing is deterministic. Proves the whole chain (button →
+    # route → enhance.js) fires in a real browser under CSP; the consume is also
+    # the only in-browser proof scrollToEvent() actually ran.
+    jump_trace = await cdp.eval('!!document.querySelector(\'#main .folio[data-mode="trace"]\')')
+    is_target = await cdp.eval("!!document.querySelector('#main .is-target')")
+    hint_consumed = await cdp.eval("!document.querySelector('#main [data-scroll-to]')")
+    check("find hit opens folio in trace mode", bool(jump_trace))
+    check("search jump marks + lands on the matched event",
+          bool(is_target) and bool(hint_consumed), f"target={is_target} consumed={hint_consumed}")
+
+    # Slice 3a — the retain crux: Back from the folio restores the prior search
+    # results (URL carries the query, so the restore reproduces them).
+    await cdp.eval("history.back()")
+    await cdp.drain(2.5)
+    back_url = await cdp.eval("location.search")
+    back_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    back_has_find = await cdp.eval("!!document.querySelector('#main .find')")
+    check(
+        "back from folio retains the prior search results",
+        ("q=needle" in (back_url or "")) and (back_hits or 0) > 0,
+        f"url={back_url} hits={back_hits} find={back_has_find}",
+    )
+
+    # Slice 3a — the rail-nav path: search → Transcript NAV → Back must also
+    # restore the results (htmx tracks the nav's pushed URL, not our replaceState,
+    # so this exercises a different snapshot key than the hit-click path above).
+    await cdp.click('a[data-view="transcript"]')
+    await cdp.drain(1.6)
+    nav_folio = await cdp.eval("!!document.querySelector('#main .folio')")
+    await cdp.eval("history.back()")
+    await cdp.drain(2.5)
+    nav_back_url = await cdp.eval("location.search")
+    nav_back_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    check(
+        "back after Transcript-nav retains the search results",
+        ("q=needle" in (nav_back_url or "")) and (nav_back_hits or 0) > 0,
+        f"folio={nav_folio} url={nav_back_url} hits={nav_back_hits}",
+    )
+
+    # Slice 3a last-selected: leave search, then RE-CLICK the Search rail item —
+    # it resumes the last query (results + URL), not a blank surface.
+    await cdp.click('a[data-view="transcript"]')
+    await cdp.drain(1.4)
+    await cdp.click('a[data-view="search"]')
+    await cdp.drain(1.8)
+    resume_hits = await cdp.eval("document.querySelectorAll('#main .search-hit').length")
+    resume_url = await cdp.eval("location.search")
+    check(
+        "re-clicking Search resumes the last query (last-selected)",
+        ("q=needle" in (resume_url or "")) and (resume_hits or 0) > 0,
+        f"url={resume_url} hits={resume_hits}",
+    )
+
+    # sessions view: live zone (loopback server -> live on, sandbox -> empty)
+    # over the day-grouped ingested timeline; hist bars scaled by enhance.js
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.5)
+    zones = await cdp.eval(
+        "!!document.querySelector('#main .zone--live')"
+        " && !!document.querySelector('#main .leaf__head')"
+    )
+    check("sessions view renders live zone + daybook leaves", bool(zones))
+    hist_drawn = await cdp.eval(
+        "(function(){var s=document.querySelector('#main .hist span[data-n]');"
+        "return s ? s.style.height !== '' : false;})()"
+    )
+    check("day hist bars scaled by enhance.js", bool(hist_drawn))
+
+    # sub-agent nesting: collapsed by default, chevron expands. Guards the
+    # `[hidden]` vs `.row { display:flex }` specificity trap (a class selector
+    # beats the UA [hidden] rule) that unit tests can't see — and that the
+    # chevron toggle does NOT navigate (stopPropagation keeps the row's hx-get
+    # from firing on a caret click).
+    sub_hidden = await cdp.eval(
+        "(function(){var r=document.querySelector('#main .row--sub');"
+        "return r ? (r.offsetParent === null) : null;})()"
+    )
+    check("sub-agents collapsed by default", sub_hidden is True, f"hidden={sub_hidden}")
+    await cdp.click("#main .row__toggle")
+    await cdp.drain(1.0)
+    sub_shown = await cdp.eval(
+        "(function(){var r=document.querySelector('#main .row--sub');"
+        "return r ? (r.offsetParent !== null) : null;})()"
+    )
+    still_sessions = await cdp.eval("!!document.querySelector('#main .sessions')")
+    check("chevron expands sub-agents", sub_shown is True, f"shown={sub_shown}")
+    check("chevron toggle does not navigate away", bool(still_sessions))
+
+    await cdp.click("#main .entries .entry")
+    await cdp.drain(1.5)
+    srow = await cdp.eval("!!document.querySelector('#main .folio')")
+    check("sessions row click mounts folio", bool(srow))
+
+    # workspaces view: the body filter hides master rows. Guards the
+    # `.ledger__row[hidden]` vs display:grid trap (a grid display beats the UA
+    # [hidden] rule) — same class of bug as the sub-agent rows, invisible to unit
+    # tests. Then the recency sort re-render must drop the magnitude bar.
+    await cdp.click('a[data-view="workspaces"]')
+    await cdp.drain(1.5)
+    ws_rows = await cdp.eval(
+        "document.querySelectorAll('#main .ledger--ws .ledger__row').length"
+    )
+    check("workspaces body lists rows", ws_rows is not None and ws_rows >= 2, f"rows={ws_rows}")
+    await cdp.click("#main [data-ws-filter]")
+    await cdp.type_text("other")
+    await cdp.drain(0.8)
+    filtered = await cdp.eval(
+        "(function(){var rows=document.querySelectorAll('#main .ledger--ws .ledger__row');"
+        "var shown=0,hid=0;rows.forEach(function(r){"
+        "if(r.offsetParent===null)hid++;else shown++;});"
+        "return hid>0 && shown>0;})()"
+    )
+    check("workspace filter hides non-matching rows", filtered is True, f"ok={filtered}")
+    await cdp.click('#main .ws-sort__opt[hx-get*="sort=recent"]')
+    await cdp.drain(1.2)
+    no_bar = await cdp.eval("!document.querySelector('#main .ledger--ws .ledger__bar')")
+    still_ws = await cdp.eval("!!document.querySelector('#main .workspaces')")
+    check("recency sort drops the magnitude bar", bool(no_bar) and bool(still_ws), f"no_bar={no_bar}")
+
+    # last-selected: the sort lives in the canonical URL, so leaving Workspaces
+    # and re-clicking the rail item RESUMES the chosen sort (the bar stays off),
+    # not the default sessions order.
+    sorted_url = await cdp.eval("location.search")
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="workspaces"]')
+    await cdp.drain(1.5)
+    ws_resumed_url = await cdp.eval("location.search")
+    ws_resumed_nobar = await cdp.eval("!document.querySelector('#main .ledger--ws .ledger__bar')")
+    check(
+        "re-clicking Workspaces resumes the last sort (last-selected)",
+        ws_resumed_url == sorted_url and bool(ws_resumed_nobar),
+        f"sorted={sorted_url} resumed={ws_resumed_url} no_bar={ws_resumed_nobar}",
+    )
+
+    # stats reckoning: initReck must scale the server-emitted trend bars (set
+    # --h under CSP, CSSOM-only) and the Tokens|Cost toggle must re-draw the
+    # charts + re-sort the accounts with no round-trip. Invisible to the unit
+    # tests (which render markup but never run enhance.js). Guards the new JS.
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.5)
+    bars_scaled = await cdp.eval(
+        "(function(){var p=document.querySelector('#main #trend-plot');"
+        "if(!p||!p.children.length)return false;"
+        "return [].some.call(p.children,function(b){return b.style.getPropertyValue('--h');});})()"
+    )
+    check("reckoning trend bars scaled by initReck under CSP", bars_scaled is True)
+    # the radios are visually hidden (label-styled), so drive the visible label
+    await cdp.click('#main .measure label[for="m-cost"]')
+    await cdp.drain(0.6)
+    by_cost = await cdp.eval(
+        "!!document.querySelector('#main .reck.by-cost') && "
+        "!!document.querySelector('#main #trend-unit') && "
+        "/cost/.test(document.querySelector('#main #trend-unit').textContent)"
+    )
+    check("reckoning measure toggle re-draws to cost", by_cost is True)
+
+    # chart-brushing: clicking a Model-mix name re-renders the reckoning scoped
+    # to that model (whole #main swap), marks the row is-current + shows a reset.
+    # Guards the htmx wiring + the route's model validation under CSP.
+    await cdp.click('#main .reck__books .ledger--account a.ledger__name')
+    await cdp.drain(1.5)
+    brushed = await cdp.eval(
+        "!!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .ledger--account .ledger__row.is-current')"
+    )
+    check("model brushing scopes the activity charts", brushed is True)
+
+    # last-selected (3a, generalized): the brush state lives in the canonical URL,
+    # so leaving Stats and re-clicking the rail item RESUMES the brushed scope
+    # rather than resetting to a bare dashboard.
+    brushed_url = await cdp.eval("location.search")
+    await cdp.click('a[data-view="sessions"]')
+    await cdp.drain(1.2)
+    await cdp.click('a[data-view="stats"]')
+    await cdp.drain(1.5)
+    resumed_url = await cdp.eval("location.search")
+    resumed_scope = await cdp.eval(
+        "!!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .ledger--account .ledger__row.is-current')"
+    )
+    check(
+        "re-clicking Stats resumes the last model-brush (last-selected)",
+        resumed_url == brushed_url and resumed_scope is True,
+        f"brushed={brushed_url} resumed={resumed_url} scope={resumed_scope}",
+    )
+
+    await cdp.click('#main .reck__clear')
+    await cdp.drain(1.2)
+    cleared = await cdp.eval(
+        "!document.querySelector('#main .reck__clear') && "
+        "!!document.querySelector('#main .reck')"
+    )
+    check("show-all reset clears the model scope", cleared is True)
+
+    # folio with the rust fence -> Prism autoloader under CSP
     await goto(f"{BASE}/?id={code_conv}", 3.5)
-    pre = await cdp.eval("document.querySelectorAll('#detail pre, #detail code').length")
-    tokens = await cdp.eval("document.querySelectorAll('#detail .token').length")
+    pre = await cdp.eval("document.querySelectorAll('#main pre, #main code').length")
+    tokens = await cdp.eval("document.querySelectorAll('#main .token').length")
     check("folio code block present", pre and pre > 0, f"pre/code={pre}")
     check("prism highlighted under CSP", tokens and tokens > 0, f"tokens={tokens}")
 
-    # nav links (htmx swaps), incl. the F3 listener rewrite on #nav-recent
-    await cdp.click('a[hx-get="/stats"]')
-    await cdp.drain(1.5)
-    stats_ok = await cdp.eval("document.getElementById('detail').textContent.length > 10")
-    check("stats nav swaps detail", bool(stats_ok))
-    await cdp.click("#nav-recent")
-    await cdp.drain(1.5)
-    recent_ok = await cdp.eval("document.getElementById('list').childElementCount > 0")
-    check("recent nav (listener rewrite) swaps list", bool(recent_ok))
+    # folio reading↔trace toggle: reading mode keeps tool I/O out of the body;
+    # clicking Trace re-fetches the folio (the route re-resolves a tools-visible
+    # fidelity so get_conversation FETCHES tool input/result) and inlines it.
+    # Guards the htmx wiring + the fetch-fidelity resolution under CSP — neither
+    # visible to the unit tests (which pass fidelity directly).
+    reading_no_tools = await cdp.eval(
+        "!document.querySelector('#main .folio[data-mode=\"reading\"] .tool-call')"
+    )
+    check("folio reading mode keeps tool I/O out of body", bool(reading_no_tools))
+    await cdp.click('#main .folio-mode__btn[hx-get*="mode=trace"]')
+    await cdp.drain(1.8)
+    trace_on = await cdp.eval(
+        "!!document.querySelector('#main .folio[data-mode=\"trace\"]')"
+    )
+    trace_tools = await cdp.eval(
+        "document.querySelectorAll('#main .folio[data-mode=\"trace\"] .tool-call').length"
+    )
+    check("folio trace toggle re-renders in trace mode", bool(trace_on))
+    check("folio trace mode inlines tool I/O", trace_tools is not None and trace_tools > 0,
+          f"tool-calls={trace_tools}")
 
-    # density toggle (inline onclick under 'unsafe-inline')
-    before = await cdp.eval("document.body.classList.contains('compact')")
-    await cdp.click(".density-toggle")
+    # tone toggle (enhance.js listener under CSP)
+    before = await cdp.eval("document.body.dataset.tone")
+    await cdp.click("[data-tone-toggle]")
     await cdp.drain(0.5)
-    after = await cdp.eval("document.body.classList.contains('compact')")
-    check("density toggle flips", before != after, f"{before} -> {after}")
+    after = await cdp.eval("document.body.dataset.tone")
+    check("tone toggle flips", before != after, f"{before} -> {after}")
 
 
 # ---------------------------------------------------------------------------

@@ -61,28 +61,32 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> Any:
     return render_list_block(summaries, fidelity, caveats=context.get("caveats"))
 
 
-def render_search(results: list, fidelity: Fidelity, **context: Any) -> Any:
-    """Render search results as a painted Block.
+def render_search(result: Any, fidelity: Fidelity, **context: Any) -> Any:
+    """Render a :class:`SearchView` as a painted Block.
 
-    Matched terms (FTS5 >>>...<<< markers) become accent spans and a left rail
-    encodes relevance rank — see painted_bridge.render_search_block.
+    The positional argument is a ``SearchView`` (a bare list of render-dicts is
+    tolerated and wrapped as a chunks view); the view shape and the thread
+    ``tier1``/``tier2`` split ride the SearchView. Matched terms (FTS5 markers)
+    become accent spans and a left rail encodes relevance rank — see
+    painted_bridge.render_search_block.
 
     Context keys:
         query: str — the search query
-        mode: str — "chunks", "conversations", or "thread"
-        tier1: list — expanded results (thread mode)
-        tier2: list — compact results (thread mode)
+        mode: str — the resolved engine that ran ("fts"/"semantic"/"hybrid")
+        view: str — fallback view shape when ``result`` is a bare list
         caveats: list[Finding] — threaded from dispatch; rendered as
             ``note: <message>`` lines after the last result.
     """
+    from siftd.domain.search_types import as_search_view
     from siftd.output.painted_bridge import render_search_block
 
+    sv = as_search_view(result, view=context.get("view", "chunks"))
     return render_search_block(
-        results,
+        sv.results,
         fidelity,
         query=context.get("query", ""),
-        mode=context.get("mode", "chunks"),
-        tier1=context.get("tier1"),
-        tier2=context.get("tier2"),
+        mode=sv.view,
+        tier1=sv.tier1,
+        tier2=sv.tier2,
         caveats=context.get("caveats"),
     )

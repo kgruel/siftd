@@ -205,8 +205,8 @@ def _fidelity_from_visible(visible: str | None, *, depth: int = 1):
     return Fidelity(depth=depth, visible=frozenset(tags))
 
 
-@get("/api/v1")
-async def index() -> dict:
+@get("/api/v1", sync_to_thread=False)
+def index() -> dict:
     """API index — list available endpoints."""
     return {
         "service": "siftd",
@@ -229,8 +229,8 @@ async def index() -> dict:
     }
 
 
-@get("/api/v1/health", opt={"no_auth": True})
-async def health(db_path: Path) -> dict:
+@get("/api/v1/health", opt={"no_auth": True}, sync_to_thread=True)
+def health(db_path: Path) -> dict:
     """Health check — returns DB status."""
     from siftd.api import get_health_status
     from siftd.serialization import serialize_health_status
@@ -238,8 +238,8 @@ async def health(db_path: Path) -> dict:
     return serialize_health_status(get_health_status(db_path))
 
 
-@get("/api/v1/stats")
-async def stats_route(request: Request, db_path: Path) -> dict | Response:
+@get("/api/v1/stats", sync_to_thread=True)
+def stats_route(request: Request, db_path: Path) -> dict | Response:
     """Return database statistics. Server has DB warm, so this is fast."""
     from siftd.api.stats import get_stats
 
@@ -247,8 +247,8 @@ async def stats_route(request: Request, db_path: Path) -> dict | Response:
     return _dispatch("/api/v1/stats", "GET", get_stats, {"db_path": db_path, "owner": owner}, "stats", db_path)
 
 
-@get("/api/v1/workspaces")
-async def workspaces_route(
+@get("/api/v1/workspaces", sync_to_thread=True)
+def workspaces_route(
     request: Request,
     db_path: Path,
     n: int = Parameter(query="n", default=10000),
@@ -264,8 +264,8 @@ async def workspaces_route(
     )
 
 
-@get("/api/v1/workspaces/{id:str}")
-async def workspace_detail_route(
+@get("/api/v1/workspaces/{id:str}", sync_to_thread=True)
+def workspace_detail_route(
     request: Request,
     db_path: Path,
     id: str,
@@ -293,8 +293,8 @@ async def workspace_detail_route(
     )
 
 
-@get("/api/v1/tags")
-async def tags_route(
+@get("/api/v1/tags", sync_to_thread=True)
+def tags_route(
     request: Request,
     db_path: Path,
     since: str | None = Parameter(query="since", default=None),
@@ -418,16 +418,17 @@ async def tag_write_route(request: Request, db_path: Path) -> dict | Response:
 
     # Refresh stats cache
     try:
-        from siftd.api.stats import get_stats, write_stats_cache
+        from siftd.api.stats import effective_db_mtime_ns, get_stats, write_stats_cache
 
-        write_stats_cache(get_stats(db_path=db_path))
+        db_mtime = effective_db_mtime_ns(db_path)  # captured before the sweep
+        write_stats_cache(get_stats(db_path=db_path), db_mtime_ns=db_mtime)
     except Exception:
         pass
     return payload
 
 
-@get("/api/v1/events/{event_id:str}")
-async def event_detail_route(
+@get("/api/v1/events/{event_id:str}", sync_to_thread=True)
+def event_detail_route(
     request: Request, event_id: str, db_path: Path,
     neighbors: bool = Parameter(query="neighbors", default=False),
 ) -> dict | Response:
@@ -545,8 +546,8 @@ async def session_queue_tag_route(
     return {"queued": queued, "duplicate": duplicate}
 
 
-@get("/api/v1/export")
-async def export_route(
+@get("/api/v1/export", sync_to_thread=True)
+def export_route(
     request: Request,
     db_path: Path,
     id: list[str] | None = Parameter(query="id", default=None),
@@ -704,9 +705,10 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
 
         # Refresh stats cache (server has DB warm from the merge)
         try:
-            from siftd.api.stats import get_stats, write_stats_cache
+            from siftd.api.stats import effective_db_mtime_ns, get_stats, write_stats_cache
 
-            write_stats_cache(get_stats(db_path=db_path))
+            db_mtime = effective_db_mtime_ns(db_path)  # captured before the sweep
+            write_stats_cache(get_stats(db_path=db_path), db_mtime_ns=db_mtime)
         except Exception:
             pass  # Cache refresh failure is never fatal
 
@@ -726,8 +728,8 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             tmp_path.unlink()
 
 
-@get("/api/v1/pull")
-async def pull(
+@get("/api/v1/pull", sync_to_thread=True)
+def pull(
     request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -843,8 +845,8 @@ async def pull(
         raise
 
 
-@get("/api/v1/sync/status", opt={"no_auth": True})
-async def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
+@get("/api/v1/sync/status", opt={"no_auth": True}, sync_to_thread=True)
+def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
     """Return sync capabilities and inbox status."""
     from siftd.api.inbox import get_inbox_status
     from siftd.domain.sync import SYNC_CAPABILITIES, SYNC_PROTOCOL_VERSION
@@ -863,8 +865,8 @@ async def sync_status_route(db_path: Path, request_max_body_size: int) -> dict:
     }
 
 
-@get("/api/v1/conversations/{id:str}")
-async def conversation_detail(
+@get("/api/v1/conversations/{id:str}", sync_to_thread=True)
+def conversation_detail(
     request: Request,
     db_path: Path,
     id: str,
@@ -919,8 +921,8 @@ async def conversation_detail(
     )
 
 
-@get("/api/v1/conversations")
-async def conversation_list(
+@get("/api/v1/conversations", sync_to_thread=True)
+def conversation_list(
     request: Request,
     db_path: Path,
     workspace: str | None = Parameter(query="workspace", default=None),
@@ -966,8 +968,8 @@ async def conversation_list(
     )
 
 
-@get("/api/v1/search")
-async def search_route(
+@get("/api/v1/search", sync_to_thread=True)
+def search_route(
     request: Request,
     db_path: Path,
     q: str = Parameter(query="q"),
@@ -977,7 +979,6 @@ async def search_route(
     model: str | None = Parameter(query="model", default=None),
     n: int = Parameter(query="n", default=10),
     recall: int = Parameter(query="recall", default=80),
-    embeddings_only: bool = Parameter(query="embeddings_only", default=True),
     exclude_active: bool = Parameter(query="exclude_active", default=True),
     rerank: str = Parameter(query="rerank", default="mmr"),
     lambda_: float = Parameter(query="lambda", default=0.7),
@@ -991,15 +992,31 @@ async def search_route(
     tag_kind: list[str] | None = Parameter(query="tag_kind", default=None),
     include_derivative: bool = Parameter(query="include_derivative", default=False),
     owner: str | None = Parameter(query="owner", default=None),
+    tool: str | None = Parameter(query="tool", default=None),
+    tool_tag: str | None = Parameter(query="tool_tag", default=None),
     debug_ids: bool = Parameter(query="debug_ids", default=False),
     raw_fts: bool = Parameter(query="raw_fts", default=False),
-    # Canonical mode selector — takes precedence over embeddings_only when provided.
-    # embeddings_only is a deprecated backward-compat alias (remove in a future slice).
-    mode: str | None = Parameter(query="mode", default=None),
+    # Engine selector: auto|fts|semantic|hybrid. 'auto' resolves to hybrid when
+    # this server has embeddings, else fts (resolve_search_mode is shared with the CLI).
+    mode: str = Parameter(query="mode", default="auto"),
+    # Post-processing recipe controls (Slice 4): the route runs the same
+    # search_view recipe the CLI does, so REST/HTML inherit the full view
+    # repertoire. Defaults reproduce the prior flat chunks envelope.
+    view: str = Parameter(query="view", default="chunks"),
+    sort: str = Parameter(query="sort", default="score"),
+    select: str = Parameter(query="select", default="all"),
+    threshold: float | None = Parameter(query="threshold", default=None),
+    full: bool = Parameter(query="full", default=False),
+    around: str | None = Parameter(query="around", default=None),
+    turns: str | None = Parameter(query="turns", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
     try:
-        from siftd.api.search import search_chunks
+        from siftd.api.search import (
+            EmbeddingsRequiredError,
+            resolve_search_mode,
+            search_view,
+        )
     except ImportError:
         return Response(
             content={"error": "search requires siftd[embed]"},
@@ -1007,18 +1024,26 @@ async def search_route(
         )
 
     owner = _effective_owner(request, owner)
-    if mode is not None:
-        if mode not in ("semantic", "hybrid", "fts"):
-            return Response(
-                content={"error": f"invalid mode: {mode!r}; expected semantic, hybrid, or fts"},
-                status_code=400,
-            )
-    else:
-        # Derive from deprecated embeddings_only alias.
-        mode = "semantic" if embeddings_only else "hybrid"
+
+    # Resolve the engine and report the concrete value back via the envelope.
+    # embeddings_available comes through the api boundary (serve must not import
+    # siftd.embeddings directly — see tests/architecture/test_imports.py).
+    from siftd.api import embeddings_available
+    from siftd.paths import embeddings_db_path
+
+    has_embed = embeddings_available() and embeddings_db_path().exists()
+    try:
+        mode = resolve_search_mode(mode, has_embeddings=has_embed)
+    except EmbeddingsRequiredError as e:
+        return Response(
+            content={"error": f"mode {e.mode!r} requires embeddings (siftd[embed] + a built index)"},
+            status_code=400,
+        )
+    except ValueError as e:
+        return Response(content={"error": str(e)}, status_code=400)
     try:
         return _dispatch(
-            "/api/v1/search", "GET", search_chunks,
+            "/api/v1/search", "GET", search_view,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,
@@ -1029,9 +1054,14 @@ async def search_route(
              "tag": tag, "all_tags": all_tags,
              "no_tag": no_tag, "tag_kind": tag_kind,
              "include_derivative": include_derivative,
-             "owner": owner, "raw_fts": raw_fts},
+             "owner": owner, "tool": tool, "tool_tag": tool_tag,
+             "raw_fts": raw_fts,
+             # Recipe controls — search_view runs the post-processing recipe.
+             "view": view, "sort": sort, "select": select,
+             "threshold": threshold, "full": full,
+             "around": around, "turns": turns},
             "search", db_path,
-            render_context={"debug_ids": debug_ids},
+            render_context={"debug_ids": debug_ids, "mode": mode},
         )
     except Exception:
         import logging

@@ -112,9 +112,10 @@ def _extract_shell(
         wall = res.get("wall_time_seconds") or res.get("wall_time")
         if wall is not None:
             meta_parts.append(f"{float(wall):.1f}s")
-        raw_output = res.get("output", "")
+        raw_output = res.get("output") or res.get("content")
         if raw_output:
-            output, overflow = _preview(raw_output, tool_chars)
+            text = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, ensure_ascii=False)
+            output, overflow = _preview(text, tool_chars)
     elif raw_result:
         output, overflow = _preview(raw_result, tool_chars)
 
@@ -161,6 +162,21 @@ def _extract_file_read(
         if tokens:
             meta = f"({tokens} tokens)"
 
+    # The file content IS the result — surface it (the trace renders it collapsed;
+    # a compact view shows a tool_chars preview). Stored under "content" by Claude
+    # Code (and others); fall back to text/output or a bare-string result.
+    output = None
+    overflow = 0
+    if status != "error":
+        raw_output = None
+        if isinstance(res, dict):
+            raw_output = res.get("content") or res.get("text") or res.get("output")
+        elif raw_result:
+            raw_output = raw_result
+        if raw_output:
+            text = raw_output if isinstance(raw_output, str) else json.dumps(raw_output, ensure_ascii=False)
+            output, overflow = _preview(text, tool_chars)
+
     error = None
     if status == "error":
         if isinstance(res, dict):
@@ -168,7 +184,10 @@ def _extract_file_read(
         elif raw_result:
             error = raw_result
 
-    return ToolPresentation(headline=headline, meta=meta, error=error, status=status)
+    return ToolPresentation(
+        headline=headline, meta=meta, output=output, error=error,
+        overflow=overflow, status=status,
+    )
 
 
 def _extract_file_edit(
@@ -348,7 +367,7 @@ def _extract_generic(
     error = None
 
     if raw_result:
-        formatted = _format_generic_result(raw_result)
+        formatted = _format_generic_result(raw_result, tool_chars)
         if formatted:
             if status == "error":
                 error = formatted
@@ -369,7 +388,9 @@ _INPUT_PRIORITY_KEYS = (
     "pattern", "query", "url", "title",
 )
 
-_RESULT_OUTPUT_KEYS = ("output", "text", "result", "message")
+# "content" is the key Claude Code (+ others) store the tool result under —
+# without it, results render empty / fall through to the json.dumps cap below.
+_RESULT_OUTPUT_KEYS = ("output", "text", "result", "message", "content")
 _RESULT_META_KEYS = ("exit_code", "wall_time_seconds", "wall_time", "duration")
 _RESULT_COMPACT_KEYS = ("output", "result", "message", "error", "status")
 
@@ -388,7 +409,7 @@ def _format_generic_input(raw: str) -> str:
     return str(raw).strip()
 
 
-def _format_generic_result(raw: str) -> str:
+def _format_generic_result(raw: str, tool_chars: int = 120) -> str:
     d = _parse(raw)
     if isinstance(d, dict):
         # Check for output field
@@ -401,7 +422,10 @@ def _format_generic_result(raw: str) -> str:
                     if mv is not None:
                         meta.append(f"{mk}: {mv}")
                 prefix = (" · ".join(meta) + "\n") if meta else ""
-                return prefix + str(val)
+                # A non-string value (list/dict, e.g. a tool_reference array)
+                # renders as clean JSON, not a Python repr.
+                text = val if isinstance(val, str) else json.dumps(val, ensure_ascii=False)
+                return prefix + text
         # Compact format
         parts = []
         for key in _RESULT_COMPACT_KEYS:
@@ -410,7 +434,10 @@ def _format_generic_result(raw: str) -> str:
                 parts.append(f"{key}: {val}")
         if parts:
             return " · ".join(parts)
-        return json.dumps(d, ensure_ascii=False)[:200]
+        # Last resort: dump the dict. tool_chars==0 (the trace/full view) keeps
+        # it whole; a compact view caps it so an unstructured blob can't flood.
+        dumped = json.dumps(d, ensure_ascii=False)
+        return dumped if tool_chars == 0 else dumped[:200]
     return str(raw).strip()
 
 
