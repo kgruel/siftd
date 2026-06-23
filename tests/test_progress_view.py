@@ -119,6 +119,18 @@ def test_sweep_when_total_is_none_shows_no_percentage():
     assert "/" not in text  # nor a "done/total" count
 
 
+def test_none_total_flips_a_determinate_bar_to_the_sweep():
+    # The contract subtlety: total is the group's *current* size each event, so a
+    # later total=None must override a known total (push's bisection grows the
+    # work mid-flight) — not be ignored as "no update".
+    c = ProgressConsumer(shape="bars", bar_width=20, label_width=8)
+    c.feed(ProgressEvent(group="windows", index=1, total=3))
+    assert "1/3" in _render(c._block())  # determinate
+    c.feed(ProgressEvent(group="windows", index=1, total=None))
+    text = _render(c._block())
+    assert "/3" not in text and "%" not in text  # flipped to the indeterminate sweep
+
+
 def test_sweep_window_advances_with_the_event_stream():
     # Each event ticks the frame; the lit window's position differs between
     # frames (no timer thread — the stream drives the animation).

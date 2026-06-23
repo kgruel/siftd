@@ -20,9 +20,12 @@ import sqlite3
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import asyncssh
+
+if TYPE_CHECKING:
+    from siftd.domain.progress import ProgressSink
 
 from siftd.domain.sync import (
     SYNC_CAPABILITIES,  # noqa: F401 — re-exported for CLI
@@ -44,6 +47,63 @@ _WINDOW_SAFETY = 0.8  # size headroom: target each window at 80% of the cap
 
 class SyncError(Exception):
     """Raised when a sync operation fails."""
+
+
+class _PushProgress:
+    """Emits ``ProgressEvent``\\s for the HTTP push window loop.
+
+    A thin accumulator threaded down the (recursive) window machinery so the CLI
+    can render a transfer bar. It centralises the one subtle bit: the windows
+    *total* is dynamic — ``_post_window_with_bisect`` splits a window into
+    sub-windows on HTTP 413, so the denominator grows mid-flight. Once any
+    bisection has happened the fixed total is a lie, so the bar flips to the
+    indeterminate sweep (``total=None``); until then it shows ``done/total``.
+    The ``conversations``/``bytes`` tally counts up across windows either way.
+
+    Emission is best-effort: a sink that raises must never break a push (the
+    transport is the point, the bar is decoration), so ``_emit`` swallows.
+    """
+
+    def __init__(self, on_progress: ProgressSink | None, windows_total: int) -> None:
+        self._sink = on_progress
+        self._total = windows_total
+        self._done = 0
+        self._convs = 0
+        self._bytes = 0
+        self._bisected = False
+
+    def _emit(self, *, terminal: bool, status: str = "progress") -> None:
+        if self._sink is None:
+            return
+        from siftd.domain.progress import ProgressEvent
+
+        try:
+            self._sink(ProgressEvent(
+                group="windows",
+                index=self._done,
+                total=None if self._bisected else self._total,
+                tally={"conversations": self._convs, "bytes": self._bytes},
+                status=status,
+                terminal=terminal,
+            ))
+        except Exception:  # noqa: BLE001 — a rendering fault must not fail the push
+            self._sink = None  # stop trying after the first failure
+
+    def start(self) -> None:
+        """Paint the empty bar before the first window posts."""
+        self._emit(terminal=True)
+
+    def bisecting(self) -> None:
+        """A window split on 413 — flip to the indeterminate sweep for the rest."""
+        self._bisected = True
+        self._emit(terminal=True)
+
+    def window_done(self, conversations: int, size_bytes: int) -> None:
+        """One top-level window finished; advance the count and tally."""
+        self._done += 1
+        self._convs += conversations
+        self._bytes += size_bytes
+        self._emit(terminal=True)
 
 
 def _is_http_remote(remote: SyncRemote) -> bool:
@@ -85,6 +145,7 @@ def sync_push(
     no_tag: list[str] | None = None,
     owner: str | None = None,
     dry_run: bool = False,
+    on_progress: ProgressSink | None = None,
 ) -> PushResult:
     """Push conversations to a remote database.
 
@@ -95,6 +156,9 @@ def sync_push(
         push_all: Push all conversations (ignore last_push).
         workspace..owner: Filter kwargs (override remote config filters).
         dry_run: If True, slice and report but don't transfer.
+        on_progress: Optional ``ProgressEvent`` sink for a live transfer bar.
+            Only the HTTP transport (the windowed path) emits; SSH/local pushes
+            are a single slice+merge with no per-window granularity to report.
 
     Returns:
         PushResult with stats.
@@ -121,7 +185,7 @@ def sync_push(
     if _is_http_remote(remote):
         return _sync_push_http(
             db_path, remote, filters, effective_since,
-            should_update_cursor, current_sig, dry_run,
+            should_update_cursor, current_sig, dry_run, on_progress,
         )
 
     # Slice to a temp file (no FTS — remote doesn't need it)
@@ -688,6 +752,7 @@ def _post_window_with_bisect(
     connect_timeout: float,
     command_timeout: float,
     token_source: str | None = None,
+    progress: _PushProgress | None = None,
 ) -> tuple[bool, int, int, int | None]:
     """Slice a date window, POST it, and bisect on 413.
 
@@ -737,6 +802,10 @@ def _post_window_with_bisect(
                     "A single conversation exceeds the remote's body size limit "
                     "and cannot be split."
                 )
+            # The work just grew: this window splits into sub-windows, so the
+            # fixed windows-total no longer holds. Flip the bar to the sweep.
+            if progress is not None:
+                progress.bisecting()
             # Bisect on timestamp midpoint
             from painted import Fidelity
 
@@ -772,11 +841,11 @@ def _post_window_with_bisect(
                     )
             lo_existed, lo_convs, lo_bytes, lo_owned = _post_window_with_bisect(
                 url, headers, client, db_path, filters, since, mid_ts,
-                connect_timeout, command_timeout, token_source,
+                connect_timeout, command_timeout, token_source, progress,
             )
             _, hi_convs, hi_bytes, hi_owned = _post_window_with_bisect(
                 url, headers, client, db_path, filters, mid_ts, before,
-                connect_timeout, command_timeout, token_source,
+                connect_timeout, command_timeout, token_source, progress,
             )
             return (
                 lo_existed,
@@ -808,6 +877,7 @@ def _sync_push_http(
     should_update_cursor: bool,
     current_sig: str,
     dry_run: bool,
+    on_progress: ProgressSink | None = None,
 ) -> PushResult:
     """Full HTTP push: preflight, windowing, per-window POST, cursor advance."""
     import httpx
@@ -909,6 +979,9 @@ def _sync_push_http(
     remote_existed = True
     now = datetime.now(UTC).isoformat()
 
+    progress = _PushProgress(on_progress, len(date_windows))
+    progress.start()
+
     with httpx.Client(
         timeout=httpx.Timeout(
             connect=connect_timeout,
@@ -929,12 +1002,14 @@ def _sync_push_http(
                 connect_timeout=connect_timeout,
                 command_timeout=command_timeout,
                 token_source=token_source,
+                progress=progress,
             )
             if win_idx == 0:
                 remote_existed = win_existed
             total_conversations += win_convs
             total_size_bytes += win_bytes
             total_owned = _sum_owned(total_owned, win_owned)
+            progress.window_done(win_convs, win_bytes)
 
             if should_update_cursor and win_convs > 0:
                 from siftd.config_sync import update_last_push
@@ -971,6 +1046,7 @@ def sync_pull(
     no_tag: list[str] | None = None,
     owner: str | None = None,
     dry_run: bool = False,
+    on_progress: ProgressSink | None = None,
 ) -> PullResult:
     """Pull conversations from a remote database.
 
@@ -981,6 +1057,9 @@ def sync_pull(
         pull_all: Pull all conversations (ignore last_pull).
         workspace..owner: Filter kwargs (override remote config filters).
         dry_run: If True, query remote but don't merge locally.
+        on_progress: Optional ``ProgressEvent`` sink for a live transfer bar.
+            Pull is a single streamed transfer (no windowing), so this brackets
+            it with one indeterminate (sweep) bar that resolves to the count.
 
     Returns:
         PullResult with stats.
@@ -1000,18 +1079,40 @@ def sync_pull(
     effective_since = _resolve_pull_since(since, pull_all, remote, current_sig)
     should_update_last_pull = since is None
 
-    if _is_http_remote(remote):
-        conversations, size_bytes = _pull_http(
-            remote, db_path, effective_since, filters, dry_run,
-        )
-    elif remote.host:
-        conversations, size_bytes = asyncio.run(
-            _pull_ssh(remote, db_path, effective_since, filters, dry_run)
-        )
-    else:
-        conversations, size_bytes = _pull_local(
-            remote, db_path, effective_since, filters, dry_run,
-        )
+    # Pull has no per-window granularity (one streamed blob); surface it as a
+    # single indeterminate sweep that resolves to the count. Best-effort: a
+    # rendering fault must not break the transfer (mirrors _PushProgress._emit).
+    def _emit_pull(status: str, conversations: int = 0, size_bytes: int = 0) -> None:
+        if on_progress is None:
+            return
+        from siftd.domain.progress import ProgressEvent
+
+        try:
+            on_progress(ProgressEvent(
+                group="pull", total=None, status=status, terminal=True,
+                tally={"conversations": conversations, "bytes": size_bytes},
+            ))
+        except Exception:  # noqa: BLE001 — decoration must not fail the pull
+            pass
+
+    _emit_pull("progress")
+    try:
+        if _is_http_remote(remote):
+            conversations, size_bytes = _pull_http(
+                remote, db_path, effective_since, filters, dry_run,
+            )
+        elif remote.host:
+            conversations, size_bytes = asyncio.run(
+                _pull_ssh(remote, db_path, effective_since, filters, dry_run)
+            )
+        else:
+            conversations, size_bytes = _pull_local(
+                remote, db_path, effective_since, filters, dry_run,
+            )
+    except Exception:
+        _emit_pull("error")
+        raise
+    _emit_pull("done", conversations, size_bytes)
 
     if conversations == 0:
         return PullResult(

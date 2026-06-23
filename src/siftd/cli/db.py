@@ -707,18 +707,22 @@ def cmd_db_pull(args) -> int:
     if not dry_run:
         print(f"Pulling from {args.name} ({location})...", file=sys.stderr)
 
+    # Live transfer bar only on a real run (dry-run just queries the remote).
+    live, on_progress = _transfer_progress(enabled=not dry_run)
     try:
-        result = sync_pull(
-            db_path=db,
-            remote=remote,
-            since=getattr(args, "since", None),
-            pull_all=getattr(args, "pull_all", False),
-            workspace=getattr(args, "workspace", None),
-            tag=getattr(args, "tag", None),
-            no_tag=getattr(args, "no_tag", None),
-            owner=getattr(args, "owner", None),
-            dry_run=dry_run,
-        )
+        with live:
+            result = sync_pull(
+                db_path=db,
+                remote=remote,
+                since=getattr(args, "since", None),
+                pull_all=getattr(args, "pull_all", False),
+                workspace=getattr(args, "workspace", None),
+                tag=getattr(args, "tag", None),
+                no_tag=getattr(args, "no_tag", None),
+                owner=getattr(args, "owner", None),
+                dry_run=dry_run,
+                on_progress=on_progress,
+            )
     except SyncError as e:
         status.error(f"Pull failed: {e}")
         return 1
@@ -797,6 +801,29 @@ def cmd_db_remote_remove(args) -> int:
         return 1
 
 
+def _transfer_progress(enabled: bool):
+    """Return ``(context, on_progress)`` for a push/pull transfer bar.
+
+    These are human commands (live bar OK), but ``cmd_db_push``/``cmd_db_pull``
+    write their status to **stderr** (the preamble + error/warning callouts) and
+    reserve stdout for the final success line / any piping. So the bar rides
+    stderr too — it sits with the preamble and never collides with stdout.
+
+    ``enabled`` is False for a dry-run (no per-window work) or any non-bar caller:
+    then the context is a no-op and ``on_progress`` is None, so sync runs bare.
+    """
+    import contextlib
+
+    from siftd.output.live import LiveRegion
+    from siftd.output.progress_view import ProgressConsumer
+
+    if enabled:
+        consumer = ProgressConsumer(shape="bars", live=LiveRegion(stream=sys.stderr))
+        if consumer.active:
+            return consumer, consumer.feed
+    return contextlib.nullcontext(), None
+
+
 def cmd_db_push(args) -> int:
     """Push conversations to a sync remote."""
     from siftd.api.sync import SyncError, SyncRemote, sync_push
@@ -826,18 +853,22 @@ def cmd_db_push(args) -> int:
     if not dry_run:
         print(f"Pushing to {args.name} ({location})...", file=sys.stderr)
 
+    # Live transfer bar only on a real run (a dry-run does no per-window work).
+    live, on_progress = _transfer_progress(enabled=not dry_run)
     try:
-        result = sync_push(
-            db_path=db,
-            remote=remote,
-            since=getattr(args, "since", None),
-            push_all=getattr(args, "push_all", False),
-            workspace=getattr(args, "workspace", None),
-            tag=getattr(args, "tag", None),
-            no_tag=getattr(args, "no_tag", None),
-            owner=getattr(args, "owner", None),
-            dry_run=dry_run,
-        )
+        with live:
+            result = sync_push(
+                db_path=db,
+                remote=remote,
+                since=getattr(args, "since", None),
+                push_all=getattr(args, "push_all", False),
+                workspace=getattr(args, "workspace", None),
+                tag=getattr(args, "tag", None),
+                no_tag=getattr(args, "no_tag", None),
+                owner=getattr(args, "owner", None),
+                dry_run=dry_run,
+                on_progress=on_progress,
+            )
     except SyncError as e:
         status.error(f"Push failed: {e}")
         return 1

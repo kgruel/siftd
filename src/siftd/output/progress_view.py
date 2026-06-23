@@ -109,8 +109,12 @@ class ProgressConsumer:
             self._groups[event.group] = g
         if event.index is not None:
             g.index = event.index
-        if event.total is not None:
-            g.total = event.total
+        # ``total`` is the group's *current* size, reflected exactly each event —
+        # including None, which flips a previously-determinate bar to the sweep
+        # (push's bisection grows the work mid-flight). A producer that knows the
+        # total re-sends it every event (push does); one that never knows it
+        # (migrate steps) simply never carries it.
+        g.total = event.total
         if event.tally:
             g.tally = dict(event.tally)
         g.status = event.status
