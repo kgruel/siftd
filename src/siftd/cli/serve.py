@@ -109,8 +109,6 @@ def cmd_serve(args) -> int:
 
     import uvicorn
 
-    print(f"siftd serve — listening on {host}:{port}", file=sys.stderr)
-    print(f"  db: {db_path}", file=sys.stderr)
     if args.no_auth:
         auth_state = "disabled (--no-auth)"
     elif auth_config:
@@ -119,7 +117,25 @@ def cmd_serve(args) -> int:
             auth_state += " (browser SSO: auth-code+PKCE)"
     else:
         auth_state = "disabled (no [serve.auth] config)"
-    print(f"  auth: {auth_state}", file=sys.stderr)
+
+    # Startup banner — the listening facts as a key:value listing on the report
+    # atoms, sent to STDERR so a piped stdout stays clean (the server's own
+    # stdout is uvicorn's domain). The address rides the accent identifier role.
+    from painted import print_block
+
+    from siftd.output.common import should_use_ansi
+    from siftd.output.listing import definitions
+    from siftd.output.theme import domain_styles
+
+    status.info(f"siftd serve — listening on {host}:{port}")
+    banner = definitions(
+        [
+            ("url", [(f"http://{host}:{port}/", domain_styles().identifier)]),
+            ("db", str(db_path)),
+            ("auth", auth_state),
+        ]
+    )
+    print_block(banner, sys.stderr, use_ansi=should_use_ansi(sys.stderr))
 
     # Runtime discovery for CLI delegation: write serve state for `siftd search`.
     import json

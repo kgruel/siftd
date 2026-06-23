@@ -544,9 +544,15 @@ def cmd_backfill(args) -> int:
         counts = result.shell_tag_counts
         total = sum(counts.values())
         if counts:
-            print(f"Tagged {total} tool calls:")
-            for category, count in sorted(counts.items(), key=lambda x: -x[1]):
-                print(f"  shell:{category}: {count}")
+            from siftd.output.listing import print_definitions, print_heading
+            from siftd.output.theme import domain_styles
+
+            ds = domain_styles()
+            print_heading(f"Tagged {total} tool calls")
+            print_definitions(
+                (f"shell:{category}", [(str(count), ds.metric)])
+                for category, count in sorted(counts.items(), key=lambda x: -x[1])
+            )
         else:
             status.info("No untagged shell commands found.")
     elif args.derivative_tags:
@@ -576,10 +582,17 @@ def cmd_backfill(args) -> int:
         else:
             print("Filtering binary content from existing blobs...")
         result = run_backfill(db_path=db, operation="filter_binary", dry_run=dry_run)
-        print(f"  Filtered: {result.filtered}")
-        print(f"  Skipped (no change): {result.skipped}")
+        from siftd.output.listing import print_definitions
+        from siftd.output.theme import domain_styles
+
+        ds = domain_styles()
+        rows = [
+            ("Filtered", [(str(result.filtered), ds.metric)]),
+            ("Skipped (no change)", [(str(result.skipped), ds.metric)]),
+        ]
         if result.errors:
-            print(f"  Errors: {result.errors}")
+            rows.append(("Errors", [(str(result.errors), ds.metric)]))
+        print_definitions(rows)
         if dry_run and result.filtered:
             status.info("Run without --dry-run to apply changes.")
     elif args.git_remote:
@@ -598,10 +611,16 @@ def cmd_backfill(args) -> int:
                     print(event.message)
 
             stats = backfill_git_remotes(conn, on_progress=on_progress, dry_run=dry_run)
-            print(f"  Checked: {stats['checked']}")
-            print(f"  Updated: {stats['updated']}")
-            print(f"  Skipped (path missing): {stats['skipped_missing']}")
-            print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+            from siftd.output.listing import print_definitions
+            from siftd.output.theme import domain_styles
+
+            ds = domain_styles()
+            print_definitions([
+                ("Checked", [(str(stats["checked"]), ds.metric)]),
+                ("Updated", [(str(stats["updated"]), ds.metric)]),
+                ("Skipped (path missing)", [(str(stats["skipped_missing"]), ds.metric)]),
+                ("Skipped (no git remote)", [(str(stats["skipped_no_git"]), ds.metric)]),
+            ])
             if dry_run and stats["updated"]:
                 status.info("Run without --dry-run to apply changes.")
         finally:
@@ -771,15 +790,27 @@ def cmd_migrate(args) -> int:
         return rc
     else:
         # Show current status
+        from siftd.output.listing import print_definitions, print_heading
+        from siftd.output.theme import domain_styles
+
         ws_status = verify_workspace_identity(conn)
-        print("Workspace identity status:")
-        print(f"  Total workspaces: {ws_status['total']}")
-        print(f"  With git remote: {ws_status['with_remote']}")
-        print(f"  Without git remote: {ws_status['without_remote']}")
+        ds = domain_styles()
+        print_heading("Workspace identity status")
+        rows = [
+            ("Total workspaces", [(str(ws_status["total"]), ds.metric)]),
+            ("With git remote", [(str(ws_status["with_remote"]), ds.metric)]),
+            ("Without git remote", [(str(ws_status["without_remote"]), ds.metric)]),
+        ]
         if ws_status["duplicate_groups"] > 0:
-            print(
-                f"  Duplicate groups: {ws_status['duplicate_groups']} ({ws_status['duplicate_workspaces']} workspaces)"
-            )
+            rows.append((
+                "Duplicate groups",
+                [
+                    (str(ws_status["duplicate_groups"]), ds.metric),
+                    (f" ({ws_status['duplicate_workspaces']} workspaces)", None),
+                ],
+            ))
+        print_definitions(rows)
+        if ws_status["duplicate_groups"] > 0:
             status.info("Run 'siftd migrate --merge-workspaces' to merge duplicates.")
 
     conn.close()
@@ -818,9 +849,10 @@ def cmd_copy(args) -> int:
                 except CopyError as e:
                     status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied adapters:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied adapters")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:
@@ -853,9 +885,10 @@ def cmd_copy(args) -> int:
                 except CopyError as e:
                     status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied queries:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied queries")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:
@@ -892,9 +925,10 @@ def cmd_copy(args) -> int:
                 except CopyError as e:
                     status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied formatters:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied formatters")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:

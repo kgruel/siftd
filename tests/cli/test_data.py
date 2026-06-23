@@ -522,7 +522,7 @@ class TestCmdBackfill:
         rc = main(["--db", str(test_db), "backfill", "--filter-binary"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Filtered:" in out
+        assert "Filtered" in out
 
     def test_backfill_dry_run_warning_without_filter_binary(self, test_db, capsys):
         """--dry-run without --filter-binary warns."""
@@ -544,7 +544,7 @@ class TestCmdMigrate:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Workspace identity status" in out
-        assert "Total workspaces:" in out
+        assert "Total workspaces" in out
 
     def test_migrate_missing_db(self, tmp_path, capsys):
         """Migrate with missing database returns error."""
@@ -612,7 +612,7 @@ class TestCmdCopy:
         rc = main(["copy", "adapter", "--all"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Copied adapters:" in out
+        assert "Copied adapters" in out
 
     def test_copy_nonexistent_adapter(self, tmp_path, monkeypatch, capsys):
         """siftd copy adapter <bad-name> returns error."""
@@ -1147,7 +1147,7 @@ class TestDataDirectBranches:
         rc = main(["--db", str(test_db), "migrate"])
         assert rc == 0
         captured = capsys.readouterr()
-        assert "Duplicate groups: 2" in captured.out  # breakdown stays on stdout
+        assert "Duplicate groups" in captured.out  # breakdown stays on stdout (now a gutter-aligned listing row)
         assert "--merge-workspaces" in captured.err  # the hint is status -> stderr
 
         # copy formatter usage listing lines (636-641)

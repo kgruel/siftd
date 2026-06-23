@@ -84,9 +84,24 @@ def cmd_search(args) -> int:
     # Search mode — need a query
     query = " ".join(args.query) if args.query else ""
     if not query:
-        print("Usage: siftd search <query>")
-        print("       siftd search --index     (build/update index)")
-        print("       siftd search --rebuild   (rebuild index from scratch)")
+        # A usage triplet can't ride a callout hint (it flattens newlines), so the
+        # examples travel on a lines() body — print_ambiguous_error's idiom — all
+        # to stderr so a piped stdout stays clean.
+        from painted import print_block
+
+        from siftd.output.common import should_use_ansi
+        from siftd.output.listing import lines
+
+        status.error("A search query is required.")
+        print_block(
+            lines([
+                "siftd search <query>",
+                "siftd search --index     (build/update index)",
+                "siftd search --rebuild   (rebuild index from scratch)",
+            ]),
+            sys.stderr,
+            use_ansi=should_use_ansi(sys.stderr),
+        )
         return 1
 
     # Validate axis combinations before any execution
@@ -129,26 +144,28 @@ def cmd_search(args) -> int:
             if args.json:
                 print(json.dumps({"error": f"Mode '{requested_mode}' requires the [embed] extra. Install with: siftd install embed"}))
             else:
-                print(f"Mode '{requested_mode}' requires the [embed] extra.", file=sys.stderr)
-                print(file=sys.stderr)
-                print("Install with:", file=sys.stderr)
-                print("  siftd install embed", file=sys.stderr)
+                status.error(
+                    f"Mode '{requested_mode}' requires the [embed] extra.",
+                    hint="Install with: siftd install embed",
+                )
         else:
             if args.json:
                 print(json.dumps({"error": "No embeddings index found. Run 'siftd search --index' to build it."}))
             else:
-                print("No embeddings index found.", file=sys.stderr)
-                print("Run 'siftd search --index' to build it.", file=sys.stderr)
+                status.error(
+                    "No embeddings index found.",
+                    hint="Run 'siftd search --index' to build it.",
+                )
         return 1
 
     try:
         search_mode = resolve_search_mode(requested_mode, has_embeddings=has_embeddings)
     except EmbeddingsRequiredError:
         # Covered by the explicit pre-check above; defensive.
-        print(f"Mode '{requested_mode}' requires embeddings.", file=sys.stderr)
+        status.error(f"Mode '{requested_mode}' requires embeddings.")
         return 1
     except ValueError as e:
-        print(f"siftd: error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     # Explicit `--mode fts` uses the dedicated lean keyword path (which warns
@@ -343,7 +360,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     if unsupported_flags:
         flags_str = ", ".join(unsupported_flags)
-        print(f"WARNING: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
+        status.warning(f"{flags_str} ignored in FTS5 mode (requires embeddings)")
 
     # Compose filters
     if filters is None:
@@ -361,7 +378,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             is_tty=sys.stdout.isatty(),
         )
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
     fidelity = Fidelity()
 

@@ -173,7 +173,7 @@ class TestSearchSearch:
         captured = capsys.readouterr()
 
         assert result == 1
-        assert "Usage" in captured.out
+        assert "A search query is required" in captured.err
 
     def test_missing_embed_db_shows_hint(self, populated_db, tmp_path, capsys):
         """Missing embeddings database shows helpful message when --semantic used."""

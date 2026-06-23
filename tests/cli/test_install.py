@@ -119,9 +119,9 @@ class TestInstallPluginDryRun:
         assert rc == 0
         assert not (fake_home / ".claude" / "plugins" / "siftd").exists()
         captured = capsys.readouterr()
-        assert "Source:" in captured.out
-        assert "Target:" in captured.out
-        assert "Scope:" in captured.out
+        assert "Source" in captured.out
+        assert "Target" in captured.out
+        assert "Scope" in captured.out
 
 
 class TestInstallPluginPermissions:
@@ -214,7 +214,7 @@ class TestInstallSkill:
         assert rc == 0
         assert not (fake_home / ".claude" / "skills" / "siftd").exists()
         captured = capsys.readouterr()
-        assert "Source:" in captured.out
+        assert "Source" in captured.out
 
     def test_plugin_install_removes_standalone_skill(self, tmp_path, monkeypatch):
         """Installing plugin removes standalone skill to avoid duplicates."""

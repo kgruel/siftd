@@ -17,11 +17,27 @@ def _require_issuer() -> str | None:
 
     issuer = get_config("auth.issuer")
     if not issuer:
-        print(
-            "No [auth].issuer configured. Configure device-code login first:\n"
-            "  siftd config set auth.issuer https://idp.example.com/...\n"
-            "  siftd config set auth.client_id <public-device-code-client-id>",
-            file=sys.stderr,
+        from painted import print_block
+
+        from siftd.output.common import should_use_ansi
+        from siftd.output.listing import lines
+
+        # An enumerated-remedy error: the two `config set` commands ride a
+        # lines() block — a callout's hint flattens newlines and can't carry a
+        # multi-line body. All to stderr so a piped stdout stays clean.
+        status.error(
+            "No [auth].issuer configured.",
+            hint="Configure device-code login first:",
+        )
+        print_block(
+            lines(
+                [
+                    "siftd config set auth.issuer https://idp.example.com/...",
+                    "siftd config set auth.client_id <public-device-code-client-id>",
+                ]
+            ),
+            sys.stderr,
+            use_ansi=should_use_ansi(sys.stderr),
         )
         return None
     return str(issuer)

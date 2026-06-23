@@ -4,6 +4,30 @@ import argparse
 import sys
 
 
+def _print_ambiguous_session_error(e) -> None:
+    """Render an AmbiguousSessionError as a framed, enumerated stderr error.
+
+    The matched file paths ride a lines() block (a callout subject/hint flattens
+    newlines and can't carry the list), framed by status.error + a disambiguation
+    hint — the cli._common.print_ambiguous_error idiom for the peek session case.
+    Shared by the detail, follow, and last-response branches.
+    """
+    from painted import print_block
+
+    from siftd.output import status
+    from siftd.output.common import should_use_ansi
+    from siftd.output.listing import lines
+
+    status.error(
+        f"Ambiguous session ID prefix {e.prefix!r} matches {len(e.matches)} files:",
+        hint="Disambiguate with a longer prefix or full ID.",
+    )
+    body = [str(m) for m in e.matches[:10]]
+    if len(e.matches) > 10:
+        body.append(f"... and {len(e.matches) - 10} more")
+    print_block(lines(body), sys.stderr, use_ansi=should_use_ansi(sys.stderr))
+
+
 def cmd_peek(args) -> int:
     """Inspect live sessions directly from disk."""
     import json as _json
@@ -73,7 +97,7 @@ def cmd_peek(args) -> int:
             try:
                 path = find_session_file(args.session_id)
             except AmbiguousSessionError as e:
-                status.error(str(e))
+                _print_ambiguous_session_error(e)
                 return 1
             if path is None:
                 status.error(f"Session not found: {args.session_id}")
@@ -131,7 +155,7 @@ def cmd_peek(args) -> int:
             try:
                 path = find_session_file(args.session_id)
             except AmbiguousSessionError as e:
-                status.error(str(e))
+                _print_ambiguous_session_error(e)
                 return 1
             if path is None:
                 status.error(f"Session not found: {args.session_id}")
@@ -214,11 +238,11 @@ def cmd_peek(args) -> int:
         try:
             path = find_session_file(args.session_id)
         except AmbiguousSessionError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
         if path is None:
-            print(f"Session not found: {args.session_id}")
+            status.error(f"Session not found: {args.session_id}")
             return 1
 
         # Tail mode
@@ -250,7 +274,7 @@ def cmd_peek(args) -> int:
             include_thinking=include_thinking,
         )
         if detail is None:
-            print(f"Could not read session: {path}")
+            status.error(f"Could not read session: {path}")
             return 1
 
         if args.json:

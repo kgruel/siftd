@@ -163,7 +163,9 @@ def cmd_status(args) -> int:
     for w in stats.top_workspaces:
         last_activity = fmt_timestamp(w.last_activity)
         last_str = f" (last {last_activity})" if last_activity else ""
-        workspaces.append((w.path, f"{w.conversation_count} conversations{last_str}"))
+        workspaces.append(
+            (w.path, [(str(w.conversation_count), ds.metric), (f" conversations{last_str}", None)])
+        )
     report.section("Workspaces (top 10)", workspaces)
     report.lines_section("Models", list(stats.models))
     report.section(
@@ -296,21 +298,45 @@ def cmd_workspaces(args) -> int:
         status.info("No workspaces found.")
         return 0
 
+    from siftd.output.listing import print_definitions
+    from siftd.output.theme import domain_styles
+
+    # Aligned workspace -> count listing; the conversation count joins the amber
+    # metric thread (consistent with query/peek and the status Workspaces section).
+    ds = domain_styles()
+    pairs = []
     for row in rows:
         name = fmt_workspace(row["path"])
         last_activity = fmt_timestamp(row["last_activity"])
-        last_str = f"  last {last_activity}" if last_activity else ""
-        print(f"{name}  {row['convs']} conversations{last_str}")
+        last_str = f" (last {last_activity})" if last_activity else ""
+        pairs.append(
+            (
+                name,
+                [
+                    (str(row["convs"]), ds.metric),
+                    (f" conversations{last_str}", None),
+                ],
+            )
+        )
+    print_definitions(pairs)
 
     return 0
 
 
 def cmd_path(args) -> int:
     """Show XDG paths."""
-    print(f"Data directory:   {data_dir()}")
-    print(f"Config directory: {config_dir()}")
-    print(f"Cache directory:  {cache_dir()}")
-    print(f"Database:         {db_path()}")
+    from siftd.output.listing import print_definitions
+
+    # Aligned key:value listing — the atom pads the labels by display width
+    # (the hand-spaced colons were doing this by hand).
+    print_definitions(
+        {
+            "Data directory": str(data_dir()),
+            "Config directory": str(config_dir()),
+            "Cache directory": str(cache_dir()),
+            "Database": str(db_path()),
+        }
+    )
     return 0
 
 

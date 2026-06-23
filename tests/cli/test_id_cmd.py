@@ -115,7 +115,7 @@ class TestIdClassification:
         output = capsys.readouterr().out
         assert "conversation" in output
         assert c[:8] in output
-        assert "workspace:" in output
+        assert "workspace" in output
         assert "siftd query" in output
 
     def test_prompt_event_classification(self, id_test_db, capsys):
@@ -127,8 +127,8 @@ class TestIdClassification:
         output = capsys.readouterr().out
         assert "event" in output
         assert p[:8] in output
-        assert "conversation:" in output
-        assert "turn 1" in output
+        assert "conversation" in output
+        assert "turn" in output
         assert "siftd query" in output
 
     def test_response_event_classification(self, id_test_db, capsys):
@@ -140,8 +140,8 @@ class TestIdClassification:
         output = capsys.readouterr().out
         assert "event" in output
         assert r[:8] in output
-        assert "conversation:" in output
-        assert "turn 1" in output
+        assert "conversation" in output
+        assert "turn" in output
         assert "siftd query" in output
 
     def test_tool_call_event_classification(self, id_test_db, capsys):
@@ -153,7 +153,7 @@ class TestIdClassification:
         output = capsys.readouterr().out
         assert "event" in output
         assert tc[:8] in output
-        assert "turn 1" in output
+        assert "turn" in output
 
     def test_conversation_prefix_classification(self, id_test_db, capsys):
         """siftd id <conversation_prefix> classifies as conversation."""
@@ -198,7 +198,7 @@ class TestIdClassification:
 
         err = capsys.readouterr().err
         assert "Ambiguous ID prefix" in err
-        assert "Candidates:" in err
+        assert "matches both a conversation and an event" in err
         assert "conversation:" in err
         assert "event:" in err
 

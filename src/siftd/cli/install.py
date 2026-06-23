@@ -171,17 +171,20 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
 
     cmd_str = install_hint(extra)
 
+    from siftd.output.listing import print_definitions, print_heading
+
     if args.dry_run:
-        print(f"Detected: {method_label}")
-        print(f"Would run: {cmd_str}")
+        print_heading("[dry run] install plan")
+        rows = [("Detected", method_label), ("Would run", cmd_str)]
         if cwd:
-            print(f"In directory: {cwd}")
+            rows.append(("In directory", str(cwd)))
+        print_definitions(rows)
         return 0
 
-    print(f"Detected: {method_label}")
-    print(f"Running: {cmd_str}")
+    rows = [("Detected", method_label), ("Running", cmd_str)]
     if cwd:
-        print(f"In directory: {cwd}")
+        rows.append(("In directory", str(cwd)))
+    print_definitions(rows)
     print()
 
     try:
@@ -349,10 +352,15 @@ def _install_skill(args) -> int:
         target = base
 
         if args.dry_run:
-            print(f"Harness: {info['display_name']}")
-            print(f"Source:  {skill_source}")
-            print(f"Target:  {target}")
-            print(f"Scope:   {scope}")
+            from siftd.output.listing import print_definitions, print_heading
+
+            print_heading("[dry run] skill install plan")
+            print_definitions([
+                ("Harness", info["display_name"]),
+                ("Source", str(skill_source)),
+                ("Target", str(target)),
+                ("Scope", scope),
+            ])
             return 0
 
         if target.is_symlink():
@@ -378,7 +386,9 @@ def _install_skill(args) -> int:
                 )
 
         status.confirm(f"Installed skill to {target}")
-        print(f"Harness: {info['display_name']}")
+        from siftd.output.listing import print_definitions
+
+        print_definitions([("Harness", info["display_name"])])
 
     else:
         # Instructions: render plain markdown to a single file
@@ -388,9 +398,14 @@ def _install_skill(args) -> int:
         reference_dir = skill_source / "reference"
 
         if args.dry_run:
-            print(f"Harness: {info['display_name']}")
-            print(f"Target:  {target}")
-            print(f"Scope:   {scope}")
+            from siftd.output.listing import print_definitions, print_heading
+
+            print_heading("[dry run] instructions install plan")
+            print_definitions([
+                ("Harness", info["display_name"]),
+                ("Target", str(target)),
+                ("Scope", scope),
+            ])
             return 0
 
         content = render_instructions(reference_dir)
@@ -399,7 +414,9 @@ def _install_skill(args) -> int:
         target.write_text(content)
 
         status.confirm(f"Installed instructions to {target}")
-        print(f"Harness: {info['display_name']}")
+        from siftd.output.listing import print_definitions
+
+        print_definitions([("Harness", info["display_name"])])
 
     return 0
 
@@ -419,9 +436,14 @@ def _install_plugin(args) -> int:
         target = Path.home() / ".claude" / "plugins" / "siftd"
 
     if args.dry_run:
-        print(f"Source: {source_path}")
-        print(f"Target: {target}")
-        print(f"Scope:  {scope}")
+        from siftd.output.listing import print_definitions, print_heading
+
+        print_heading("[dry run] plugin install plan")
+        print_definitions([
+            ("Source", str(source_path)),
+            ("Target", str(target)),
+            ("Scope", scope),
+        ])
         return 0
 
     # Clean replace — remove stale files (symlinks from dev-mode --plugin-dir)
@@ -451,7 +473,9 @@ def _install_plugin(args) -> int:
             status.confirm(f"Removed standalone skill at {stale_skill} (plugin includes it)")
 
     status.confirm(f"Installed plugin to {target}")
-    print(f"Scope: {scope}")
+    from siftd.output.listing import print_definitions
+
+    print_definitions([("Scope", scope)])
     return 0
 
 

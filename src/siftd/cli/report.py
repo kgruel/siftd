@@ -44,26 +44,38 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
     try:
         result = run_query_file(name, variables, db_path=db)
     except FileNotFoundError as e:
-        if "Query file not found" in str(e):
-            status.error(f"Report not found: {e}")
-            print("Available reports:")
-            for qf in list_query_files():
-                print(f"  {qf.name}")
-            return 1
         status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
     except QueryError as e:
-        if "Missing variables" in str(e):
+        msg = str(e)
+        if "Query file not found" in msg:
+            # Report not found — the LIVE path: run_query_file raises QueryError
+            # (not FileNotFoundError) for a missing report. status.error frames it;
+            # the available report names ride a lines() block (a callout hint
+            # flattens newlines), both to stderr so a piped stdout stays clean —
+            # the cli._common.print_ambiguous_error idiom.
+            import sys
+
+            from painted import print_block
+
+            from siftd.output.common import should_use_ansi
+            from siftd.output.listing import lines
+
+            status.error(f"Report not found: {name}", hint="Available reports:")
+            names = [qf.name for qf in list_query_files()]
+            if names:
+                print_block(lines(names), sys.stderr, use_ansi=should_use_ansi(sys.stderr))
+        elif "Missing variables" in msg:
             import re
 
-            match = re.search(r"Missing variables: (.+)", str(e))
+            match = re.search(r"Missing variables: (.+)", msg)
             missing = match.group(1).split(", ") if match else []
             status.error(
                 f"Report '{name}' requires variables not provided: {', '.join(missing)}",
                 hint=f"siftd report {name} " + " ".join(f"--var {v}=<value>" for v in missing),
             )
         else:
-            status.error(str(e))
+            status.error(msg)
         return 1
 
     # Format output.
@@ -71,7 +83,7 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         str_rows = [[str(v) if v is not None else "" for v in row] for row in result.rows]
         print_table(result.columns, str_rows)
     else:
-        status.info("OK (no results)")
+        status.info("No rows returned.")
 
     return 0
 

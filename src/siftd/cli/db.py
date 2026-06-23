@@ -65,17 +65,33 @@ def cmd_db_info(args) -> int:
         fts_exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='content_fts'"
         ).fetchone() is not None
-
-        print(f"Path:           {db}")
-        print(f"Size:           {size_bytes / 1024:.1f} KB ({size_bytes:,} bytes)")
-        print(f"Page size:      {page_size:,} bytes")
-        print(f"Page count:     {page_count:,}")
-        print(f"Journal mode:   {journal_mode}")
-        print(f"Schema version: {user_version}")
-        print(f"FTS5 index:     {'yes' if fts_exists else 'no'}")
     finally:
         conn.close()
 
+    from siftd.output.listing import StatusReport
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    report = StatusReport()
+    # Counts ride the amber metric thread (the page/byte tallies); the KB size
+    # stays plain to match the sibling ``db vacuum`` report. Path / mode / version
+    # are plain facts.
+    report.preamble(
+        {
+            "Path": str(db),
+            "Size": [
+                (f"{size_bytes / 1024:.1f} KB (", None),
+                (f"{size_bytes:,}", ds.metric),
+                (" bytes)", None),
+            ],
+            "Page size": [(f"{page_size:,}", ds.metric), (" bytes", None)],
+            "Page count": [(f"{page_count:,}", ds.metric)],
+            "Journal mode": journal_mode,
+            "Schema version": str(user_version),
+            "FTS5 index": "yes" if fts_exists else "no",
+        }
+    )
+    report.render()
     return 0
 
 
@@ -187,7 +203,7 @@ def cmd_db_vacuum(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        status.error(f"Database not found: {db}")
+        status.db_missing(db)
         return 1
 
     size_before = db.stat().st_size
@@ -225,7 +241,7 @@ def cmd_db_backup(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        status.error(f"Database not found: {db}")
+        status.db_missing(db)
         return 1
 
     target = Path(args.output)
@@ -305,9 +321,9 @@ def cmd_db_restore(args) -> int:
         ]
         print_heading("[dry run] restore preview")
         print_definitions([
-            ("source", str(source)),
-            ("target", str(db)),
-            ("schema version", [(glyph, glyph_style), (f" {schema}", None)]),
+            ("Source", str(source)),
+            ("Target", str(db)),
+            ("Schema version", [(glyph, glyph_style), (f" {schema}", None)]),
         ])
         print()
         # The table's own header (table | source | target) is self-describing —
@@ -534,8 +550,8 @@ def cmd_db_receive(args) -> int:
             ]
             print_heading("[dry run] receive preview")
             print_definitions([
-                ("target", target_state),
-                ("preflight", [(ok_glyph, ok_style), (" ok", None)]),
+                ("Target", target_state),
+                ("Preflight", [(ok_glyph, ok_style), (" ok", None)]),
             ])
             print()
             # The table's own header (table | incoming | target) is self-describing.
@@ -594,20 +610,30 @@ def cmd_db_process(args) -> int:
     results = process_inbox(db)
 
     if not results:
-        print("No staged payloads to process.")
+        status.info("No staged payloads to process.")
         return 0
 
+    # A severity-bearing result log: each payload's outcome carries its severity
+    # glyph (merged ✓ / skipped ℹ / error ✗). The log IS the command's answer, so
+    # it rides stdout whole — info/error override their default stderr stream so a
+    # `db process > log` redirect captures every outcome, not just the merges.
     errors = 0
     for r in results:
         if r["status"] == "done":
-            print(f"  {r['id']}: merged ({r.get('conversations', 0)} conversations)")
+            status.confirm(
+                f"{r['id']}: merged ({r.get('conversations', 0)} conversations)"
+            )
         elif r["status"] == "skipped":
-            print(f"  {r['id']}: skipped (claimed by another processor)")
+            status.info(f"{r['id']}: skipped (claimed by another processor)", stream=sys.stdout)
         else:
-            print(f"  {r['id']}: error — {r.get('error', 'unknown')}", file=sys.stderr)
+            status.error(f"{r['id']}: {r.get('error', 'unknown')}", stream=sys.stdout)
             errors += 1
 
-    print(f"Processed {len(results)} payload(s), {errors} error(s).")
+    summary = f"Processed {len(results)} payload(s), {errors} error(s)."
+    if errors:
+        status.warning(summary, stream=sys.stdout)
+    else:
+        status.confirm(summary)
     return 1 if errors else 0
 
 
@@ -801,13 +827,21 @@ def cmd_db_remote_list(args) -> int:
         )
         return 0
 
+    # name → location listing (wcwidth-correct alignment, replacing the ad-hoc
+    # ``:20s`` pad that misaligned on CJK); per-remote last-push/pull ride keyless
+    # sub-rows under each remote.
+    pairs: list[tuple[str, str]] = []
     for r in remotes:
         location = f"{r['host']}:{r['path']}" if r["host"] else f"{r['path']} (local)"
-        print(f"{r['name']:20s} {location}")
+        pairs.append((r["name"], location))
         if r["last_push"]:
-            print(f"{'':20s} last push: {r['last_push']}")
+            pairs.append(("", f"last push: {r['last_push']}"))
         if r.get("last_pull"):
-            print(f"{'':20s} last pull: {r['last_pull']}")
+            pairs.append(("", f"last pull: {r['last_pull']}"))
+
+    from siftd.output.listing import print_definitions
+
+    print_definitions(pairs)
     return 0
 
 

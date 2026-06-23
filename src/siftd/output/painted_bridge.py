@@ -532,22 +532,14 @@ def _gutter_ctx(width: int | None, ascii_mode: bool):
     return body_width, gut
 
 
-def render_query_detail_block(
-    detail,
-    *,
-    turns: list,
-    fidelity: Fidelity,
-    tool_chars: int = 0,
-) -> Block:
-    """Render a conversation detail view as a painted block."""
-    from siftd.output.listing import definitions
-    from siftd.output.theme import domain_styles
+def conversation_header_pairs(detail, ds: DomainStyles) -> list[tuple[str, list[tuple[str, Style]]]]:
+    """The conversation-summary header as ``definitions`` pairs.
 
-    Block, _, _, _, _, join_vertical, _ = _painted()
-
-    ds = domain_styles(fidelity)
-    parts: list[Block] = []
-
+    The single source of the themed metadata header — ids ride ``ds.identifier``,
+    the token line rides the amber metric thread (grand-total bright, the in/out
+    split dim). Both the detail-view block (``render_query_detail_block``) and the
+    ``--summary`` path (``cli.query``) compose this so the two reads stay identical.
+    """
     ws_name = fmt_workspace(detail.workspace_path)
     started = fmt_timestamp(detail.started_at)
     total_tokens = detail.total_input_tokens + detail.total_output_tokens
@@ -571,6 +563,43 @@ def render_query_detail_block(
     ))
     if detail.tags:
         header_pairs.append(("Tags:", [(", ".join(detail.tags), ds.tag)]))
+    return header_pairs
+
+
+def render_conversation_summary_block(detail, *, fidelity: Fidelity) -> Block:
+    """Render the ``query --summary`` metadata-only view as a painted block.
+
+    The detail view's header (``conversation_header_pairs``) plus a ``Turns:``
+    count on the amber metric thread — no turn bodies. Single-sources the header
+    with ``render_query_detail_block`` so a summary reads identically to a full
+    detail's top.
+    """
+    from siftd.output.listing import definitions
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles(fidelity)
+    pairs = conversation_header_pairs(detail, ds)
+    pairs.append(("Turns:", [(str(len(detail.turns)), ds.metric)]))
+    return definitions(pairs, indent=0, label_style=ds.temporal)
+
+
+def render_query_detail_block(
+    detail,
+    *,
+    turns: list,
+    fidelity: Fidelity,
+    tool_chars: int = 0,
+) -> Block:
+    """Render a conversation detail view as a painted block."""
+    from siftd.output.listing import definitions
+    from siftd.output.theme import domain_styles
+
+    Block, _, _, _, _, join_vertical, _ = _painted()
+
+    ds = domain_styles(fidelity)
+    parts: list[Block] = []
+
+    header_pairs = conversation_header_pairs(detail, ds)
     parts.append(definitions(header_pairs, indent=0, label_style=ds.temporal))
     parts.append(_blank_block())
 

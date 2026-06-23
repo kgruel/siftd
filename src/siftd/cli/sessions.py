@@ -35,7 +35,9 @@ def cmd_register(args) -> int:
     sid_file.write_text(session_id)
 
     conn.close()
-    print(f"Registered session {short_id(session_id)}... for {adapter_name}")
+    from siftd.output import status
+
+    status.confirm(f"Registered session {short_id(session_id)}... for {adapter_name}")
     return 0
 
 

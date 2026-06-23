@@ -145,10 +145,9 @@ def maybe_print_notice() -> None:
     current = _get_version()
     latest = cache.get("latest", "")
     if latest and _is_newer(latest, current):
-        print(
-            f"\nsiftd {latest} available (current: {current})"
-            " — run `siftd upgrade` to update",
-            file=sys.stderr,
+        status.info(
+            f"siftd {latest} available (current: {current})",
+            hint="Run `siftd upgrade` to update.",
         )
 
 
@@ -179,10 +178,10 @@ def cmd_upgrade(args) -> int:
 
     check_only = getattr(args, "check", False)
 
-    print(f"siftd {current} (installed via {method_label})", file=sys.stderr)
+    status.info(f"siftd {current} (installed via {method_label})")
 
     # Always fetch fresh when user explicitly runs upgrade
-    print("Checking PyPI for updates...", file=sys.stderr)
+    status.info("Checking PyPI for updates...")
     latest = _fetch_latest_version()
     if latest is None:
         status.error("Could not reach PyPI")
@@ -191,16 +190,16 @@ def cmd_upgrade(args) -> int:
     _write_cache(latest)
 
     if not _is_newer(latest, current):
-        print("Already up to date.", file=sys.stderr)
+        status.info("Already up to date.")
         return 0
 
-    print(f"Update available: {current} → {latest}", file=sys.stderr)
+    status.info(f"Update available: {current} → {latest}")
 
     if check_only:
         return 0
 
     if method == "editable":
-        print("Editable install detected — upgrade manually (git pull).", file=sys.stderr)
+        status.info("Editable install detected — upgrade manually (git pull).")
         return 0
 
     cmd = _upgrade_command(method)
@@ -213,10 +212,10 @@ def cmd_upgrade(args) -> int:
 
     # Homebrew needs a tap update before upgrade to pull new formulae
     if method == "brew":
-        print("Running: brew update", file=sys.stderr)
+        status.info("Running: brew update")
         subprocess.run(["brew", "update"], capture_output=True)
 
-    print(f"Running: {' '.join(cmd)}", file=sys.stderr)
+    status.info(f"Running: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd)
     except FileNotFoundError:
@@ -228,6 +227,9 @@ def cmd_upgrade(args) -> int:
     # Next invocation runs the new binary and the background check refreshes.
     if result.returncode == 0:
         _write_cache(current)
+        status.confirm(f"Upgraded to {latest}.")
+    else:
+        status.error("Upgrade command failed.")
 
     return result.returncode
 

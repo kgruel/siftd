@@ -13,7 +13,7 @@ from siftd.cli._common import (
     print_ambiguous_error,
     resolve_db,
 )
-from siftd.output import fmt_timestamp, fmt_tokens, fmt_workspace, status
+from siftd.output import fmt_tokens, status
 from siftd.output.painted_bridge import emit_output
 
 
@@ -104,40 +104,58 @@ def _query_event_detail(args, *, conn=None) -> int:
         print(_json.dumps(detail.to_dict(), indent=2))
         return 0
 
-    # Compact text rendering — keep it minimal; agents will use --json.
-    print(f"Event: {detail.id}")
-    print(f"Kind: {detail.kind}")
-    print(f"Conversation: {detail.conversation_id}")
+    # Compact text rendering — keep it minimal; agents will use --json. The themed
+    # key:value listing: event/conversation ids ride ds.identifier, the token line
+    # rides the amber metric thread, counts ride ds.metric. label_style=ds.temporal
+    # matches the conversation-detail header so the two reads are one family.
+    from siftd.output.listing import print_definitions
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    pairs: list[tuple[str, list[tuple[str, object]]]] = [
+        ("Event:", [(detail.id, ds.identifier)]),
+        ("Kind:", [(detail.kind, ds.model)]),
+        ("Conversation:", [(detail.conversation_id, ds.identifier)]),
+    ]
     if detail.parent_id:
-        print(f"Parent: {detail.parent_id}")
+        pairs.append(("Parent:", [(detail.parent_id, ds.identifier)]))
     if detail.external_id:
-        print(f"External ID: {detail.external_id}")
+        pairs.append(("External ID:", [(detail.external_id, ds.identifier)]))
     if detail.timestamp:
-        print(f"Timestamp: {detail.timestamp}")
+        pairs.append(("Timestamp:", [(str(detail.timestamp), ds.temporal)]))
     if detail.tags:
-        print(f"Tags: {', '.join(detail.tags)}")
+        pairs.append(("Tags:", [(", ".join(detail.tags), ds.tag)]))
     if detail.kind == "response" and detail.kind_specific:
         ks = detail.kind_specific
         if ks.get("model"):
-            print(f"Model: {ks['model']}")
-        toks = (ks.get("input_tokens") or 0, ks.get("output_tokens") or 0)
-        if any(toks):
-            print(f"Tokens: {toks[0]} in / {toks[1]} out")
+            pairs.append(("Model:", [(ks["model"], ds.model)]))
+        in_toks = ks.get("input_tokens") or 0
+        out_toks = ks.get("output_tokens") or 0
+        if in_toks or out_toks:
+            pairs.append((
+                "Tokens:",
+                [(f"{fmt_tokens(in_toks)} in / {fmt_tokens(out_toks)} out", ds.metric)],
+            ))
         children = ks.get("tool_calls") or []
         if children:
-            print(f"Tool calls: {len(children)}")
+            pairs.append(("Tool calls:", [(str(len(children)), ds.metric)]))
     if detail.kind == "tool_call" and detail.kind_specific:
         ks = detail.kind_specific
         if ks.get("tool_name"):
-            print(f"Tool: {ks['tool_name']} ({ks.get('status') or 'unknown'})")
+            pairs.append((
+                "Tool:",
+                [(f"{ks['tool_name']} ({ks.get('status') or 'unknown'})", ds.tool_name)],
+            ))
     if include_neighbors and detail.neighbors:
         nb = detail.neighbors
         if nb.get("prev_event_id"):
-            print(f"Prev: {nb['prev_event_id']}")
+            pairs.append(("Prev:", [(nb["prev_event_id"], ds.identifier)]))
         if nb.get("next_event_id"):
-            print(f"Next: {nb['next_event_id']}")
+            pairs.append(("Next:", [(nb["next_event_id"], ds.identifier)]))
     if detail.content_blocks:
-        print(f"Content blocks: {len(detail.content_blocks)}")
+        pairs.append(("Content blocks:", [(str(len(detail.content_blocks)), ds.metric)]))
+
+    print_definitions(pairs, indent=0, label_style=ds.temporal)
     return 0
 
 
@@ -274,10 +292,9 @@ def _query_detail(args) -> int:
                             {t for t in _turn_indices if t is not None}
                             - ({first_turn} if first_turn is not None else set())
                         )
-                        print(
-                            f"matched {len(_all_events)} turns; showing first (turn {first_turn}). "
-                            f"Use --at-turn <N> for others: {others}",
-                            file=sys.stderr,
+                        status.info(
+                            f"matched {len(_all_events)} turns; showing first (turn {first_turn}).",
+                            hint=f"Use --at-turn <N> for others: {others}",
                         )
             finally:
                 _pre_conn.close()
@@ -309,21 +326,12 @@ def _query_detail(args) -> int:
         status.error(f"Conversation not found: {args.conversation_id}")
         return 1
 
-    # Summary mode: just metadata, no turns.
+    # Summary mode: just metadata, no turns. Reuse the painted_bridge header so a
+    # --summary reads identically to a full detail's top (the single-sourced twin).
     if getattr(args, "summary", False):
-        ws_name = fmt_workspace(detail.workspace_path)
-        started = fmt_timestamp(detail.started_at)
-        total_tokens = detail.total_input_tokens + detail.total_output_tokens
+        from siftd.output.painted_bridge import render_conversation_summary_block
 
-        print(f"Conversation: {detail.id}")
-        if ws_name:
-            print(f"Workspace: {ws_name}")
-        print(f"Started: {started}")
-        print(f"Model: {detail.model or 'unknown'}")
-        print(f"Tokens: {fmt_tokens(total_tokens)} (input: {fmt_tokens(detail.total_input_tokens)} / output: {fmt_tokens(detail.total_output_tokens)})")
-        if detail.tags:
-            print(f"Tags: {', '.join(detail.tags)}")
-        print(f"Turns: {len(detail.turns)}")
+        emit_output(render_conversation_summary_block(detail, fidelity=fidelity))
         return 0
 
     from siftd.output.format_registry import select_format
@@ -352,6 +360,35 @@ def _query_sql(args) -> int:
     deprecation_notice("query sql", "report")
     db = Path(args.db) if args.db else None
     return run_report(args.sql_name, args.var, db)
+
+
+def _emit_stats_footer(view_convs: int, view_tokens: int, corpus, corpus_tokens: int) -> None:
+    """Print the --stats view/corpus comparison as a themed metric listing.
+
+    The command's actual answer (a summary), so → stdout. Single-sources the
+    footer the empty-list and populated-list paths both show; the view/corpus
+    counts ride the amber ``ds.metric`` thread, consistent with the list table's
+    token/turn columns and the detail header.
+    """
+    from siftd.output.listing import print_definitions
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    print()
+    print_definitions(
+        [
+            (
+                "Conversations:",
+                [(f"{view_convs:,} / {corpus.total_conversations:,} corpus", ds.metric)],
+            ),
+            (
+                "View tokens:",
+                [(f"{fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus", ds.metric)],
+            ),
+        ],
+        indent=0,
+        label_style=ds.temporal,
+    )
 
 
 def cmd_query(args) -> int:
@@ -465,11 +502,7 @@ def cmd_query(args) -> int:
             status.info("No conversations found.")
             status.caveats([c for c in caveats if c.channel != "json"])
         if args.stats and corpus is not None:
-            print()
-            print(
-                f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
-                f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
-            )
+            _emit_stats_footer(view_convs, view_tokens, corpus, corpus_tokens)
         return 0
 
     # Render list via formatter (fidelity already includes -v; reuse op.fidelity)
@@ -481,11 +514,7 @@ def cmd_query(args) -> int:
 
     # Stats summary (shown after list when --stats flag is set)
     if args.stats and corpus is not None:
-        print()
-        print(
-            f"View: {view_convs:,} / {corpus.total_conversations:,} corpus"
-            f" | view tokens: {fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus"
-        )
+        _emit_stats_footer(view_convs, view_tokens, corpus, corpus_tokens)
 
     return 0
 

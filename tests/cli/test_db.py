@@ -20,10 +20,10 @@ def test_db_info(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "info"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Path:" in out
-    assert "Size:" in out
-    assert "Schema version:" in out
-    assert "FTS5 index:" in out
+    assert "Path" in out
+    assert "Size" in out
+    assert "Schema version" in out
+    assert "FTS5 index" in out
 
 
 def test_db_stats(test_db, capsys):
@@ -45,7 +45,7 @@ def test_db_path(capsys):
     rc = main(["db", "path"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Data directory:" in out
+    assert "Data directory" in out
 
 
 def test_db_vacuum(test_db, capsys):
@@ -690,7 +690,7 @@ class TestDbRestoreDryRun:
         out = capsys.readouterr().out
         assert str(backup) in out
         assert str(new_db) in out
-        assert "schema version" in out
+        assert "Schema version" in out
         assert "target does not exist" in out
         assert "conversations" in out
 
@@ -707,7 +707,7 @@ class TestDbRestoreDryRun:
 
         out = capsys.readouterr().out
         assert str(test_db) in out
-        assert "schema version" in out
+        assert "Schema version" in out
         assert "(no change)" in out
         assert "conversations" in out
 
@@ -767,7 +767,7 @@ class TestDbReceiveDryRun:
 
         out = capsys.readouterr().out
         assert "dry run" in out.lower()
-        assert "preflight" in out
+        assert "Preflight" in out
         assert "+ ok" in out  # all-clear glyph + space + "ok" (debt-3 spacing pin)
         assert "conversations" in out
         assert "incoming" in out and "target" in out
