@@ -109,9 +109,11 @@ class _IngestTextRenderer:
 
         from siftd.output.common import term_width
         from siftd.output.live import bar_row, spinner_glyph
+        from siftd.output.theme import domain_styles
 
         pal = current_palette()
         ic = current_icons()
+        ds = domain_styles()
         items = [(n, c) for n, c in self._counts.items() if n in self._started]
         if not items:
             return Block.empty(0, 0)
@@ -140,11 +142,15 @@ class _IngestTextRenderer:
                 glyph, gstyle = ic.ok, pal.success
             else:
                 glyph, gstyle = spinner_glyph(), pal.accent
+            # The counts join the amber metric thread (consistent with the summary
+            # table and the query/peek lists); the progress fraction stays a muted
+            # caption. err keeps the error severity hue — a non-zero error count is
+            # a signal, not a neutral quantity.
             segments = [
                 (f"{prog[name]:>{prog_w}}  ", pal.muted),
-                ("new ", None), (f"{c.new:>{new_w}}", pal.success),
-                ("  upd ", None), (f"{c.updated_total:>{upd_w}}", pal.accent),
-                ("  skip ", None), (f"{c.skipped:>{skip_w}}", pal.muted),
+                ("new ", None), (f"{c.new:>{new_w}}", ds.metric),
+                ("  upd ", None), (f"{c.updated_total:>{upd_w}}", ds.metric),
+                ("  skip ", None), (f"{c.skipped:>{skip_w}}", ds.metric),
             ]
             # Show the err column for every row when any adapter errored, so the
             # structure stays consistent down the set (0 where clean).

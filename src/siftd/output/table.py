@@ -126,15 +126,20 @@ def render_string_table(
     """Render pre-stringified columns as a table, inferring the width policy.
 
     For callers that only have strings (``report`` SQL results, ``adapters``,
-    ``doctor --list``): numeric columns right-align, and the widest *non-numeric*
-    column is the flex (``Fill``) candidate so free text — never a quantity —
-    absorbs any overflow. An all-numeric table gets no flex column (every column
-    sizes to content). This is a deterministic layout policy over a known
-    tabular shape, not a guess at what the data *means* — cells render verbatim.
+    ``doctor --list``): numeric columns right-align and carry the amber ``metric``
+    role (consistent with the ``Col``-spec ``render_table`` path, where a count is
+    gilded), and the widest *non-numeric* column is the flex (``Fill``) candidate
+    so free text — never a quantity — absorbs any overflow. An all-numeric table
+    gets no flex column (every column sizes to content). The same ``_is_numeric_col``
+    inference drives both the right-align and the metric hue; text cells render
+    verbatim (no styling guessed onto them).
     """
     from painted import Align
     from painted.core._text_width import display_width
 
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
     ncols = len(headers)
     col_cells = [[(row[j] if j < len(row) else "") for row in rows] for j in range(ncols)]
     numeric = [_is_numeric_col(col_cells[j]) for j in range(ncols)]
@@ -154,6 +159,7 @@ def render_string_table(
             align=Align.END if numeric[j] else Align.START,
             fill=(j == fill_idx),
             min_width=10 if j == fill_idx else None,
+            style=ds.metric if numeric[j] else None,
         )
         for j in range(ncols)
     ]

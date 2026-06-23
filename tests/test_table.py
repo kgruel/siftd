@@ -191,3 +191,34 @@ def test_fill_left_ellipsis_keeps_leaf():
     row = _text(block).splitlines()[2]
     assert "…" in row
     assert row.rstrip().endswith("siftd--7")  # leaf survived; head was trimmed
+
+
+# --- count gilding (the systemic theme fix) ---------------------------------
+
+
+def test_render_string_table_gilds_numeric_columns_with_metric():
+    # The string-table path now carries the amber `metric` role on numeric cells,
+    # consistent with the Col-spec render_table path — a count is a count whichever
+    # builder drew it (report SQL results / adapters / doctor --list / db previews
+    # all flow through here). Text cells stay un-gilded (no hue guessed onto prose).
+    from painted import use_theme
+
+    from siftd.output.theme import domain_styles, siftd_theme
+
+    with use_theme(siftd_theme):
+        ds = domain_styles()
+        block = render_string_table(["name", "count"], [["alpha", "42"]], width=None)
+        digit_fgs = {
+            cell.style.fg
+            for y in range(block.height)
+            for cell in block.row(y)
+            if cell.char.isdigit()
+        }
+        text_fgs = {
+            cell.style.fg
+            for y in range(block.height)
+            for cell in block.row(y)
+            if cell.char in "alpha" and cell.char.strip()
+        }
+    assert digit_fgs == {ds.metric.fg}  # the count column is gilded amber
+    assert ds.metric.fg not in text_fgs  # the text column is not

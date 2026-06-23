@@ -128,7 +128,9 @@ def cmd_status(args) -> int:
         return 0
 
     from siftd.output.listing import StatusReport
+    from siftd.output.theme import domain_styles
 
+    ds = domain_styles()
     report = StatusReport()
     report.preamble(
         {
@@ -136,18 +138,21 @@ def cmd_status(args) -> int:
             "Size": f"{stats.db_size_bytes / 1024:.1f} KB",
         }
     )
+    # Counts join the amber metric thread (consistent with the query/peek lists
+    # and the ingest summary table). Conversations — the primary entity every
+    # other count is a child or dimension of — takes the bright grand-total tier.
     report.section(
         "Counts",
         {
-            "Conversations": str(stats.counts.conversations),
-            "Prompts": str(stats.counts.prompts),
-            "Responses": str(stats.counts.responses),
-            "Tool calls": str(stats.counts.tool_calls),
-            "Harnesses": str(stats.counts.harnesses),
-            "Workspaces": str(stats.counts.workspaces),
-            "Tools": str(stats.counts.tools),
-            "Models": str(stats.counts.models),
-            "Ingested files": str(stats.counts.ingested_files),
+            "Conversations": [(str(stats.counts.conversations), ds.metric_strong)],
+            "Prompts": [(str(stats.counts.prompts), ds.metric)],
+            "Responses": [(str(stats.counts.responses), ds.metric)],
+            "Tool calls": [(str(stats.counts.tool_calls), ds.metric)],
+            "Harnesses": [(str(stats.counts.harnesses), ds.metric)],
+            "Workspaces": [(str(stats.counts.workspaces), ds.metric)],
+            "Tools": [(str(stats.counts.tools), ds.metric)],
+            "Models": [(str(stats.counts.models), ds.metric)],
+            "Ingested files": [(str(stats.counts.ingested_files), ds.metric)],
         },
     )
     report.section(
@@ -163,7 +168,7 @@ def cmd_status(args) -> int:
     report.lines_section("Models", list(stats.models))
     report.section(
         "Tools (top 10 by usage)",
-        [(t.name, str(t.usage_count)) for t in stats.top_tools],
+        [(t.name, [(str(t.usage_count), ds.metric)]) for t in stats.top_tools],
     )
     coverage = [
         (
@@ -195,13 +200,13 @@ def cmd_status(args) -> int:
     if stats.harness_counts:
         report.section(
             "Harness activity",
-            [(hc.name, str(hc.conversation_count)) for hc in stats.harness_counts],
+            [(hc.name, [(str(hc.conversation_count), ds.metric)]) for hc in stats.harness_counts],
         )
 
     if stats.top_tags:
         report.section(
             "Tags (top 5)",
-            [(tag.name, str(tag.count)) for tag in stats.top_tags],
+            [(tag.name, [(str(tag.count), ds.metric)]) for tag in stats.top_tags],
         )
 
     if stats.last_ingest_at:
