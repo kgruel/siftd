@@ -19,7 +19,6 @@ def test_styles_lines_and_multiline_edges(monkeypatch):
 
     pal = SimpleNamespace(accent=_Style(a=1), muted=_Style(m=1), error=_Style(e=1))
     monkeypatch.setattr(pb, "_painted", lambda: (_Block, object, object, _Style, lambda: pal, lambda *a: a, lambda x: x))
-    assert isinstance(pb._styles().heading, _Style)
     assert pb._lines_to_block([]) == (0, 0)
 
     lines = []

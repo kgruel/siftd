@@ -17,10 +17,9 @@ Separators are spaced gutters, not box rules — *box a fixed set, never a feed*
 On a non-TTY the width budget drops to ``None`` (natural sizing) so piped /
 machine output is never truncated.
 
-This is the general form of two hand-rolled, ``len()``-based table algorithms
-(``painted_bridge._styled_table``, ``common.format_table``): one painted
-``table(overflow=FIT)`` call — the responsive width resolution, the shrink-to-fit
-policy, and the ellipsis all owned by painted.
+This is the general form of the hand-rolled, ``len()``-based table algorithms it
+replaced: one painted ``table(overflow=FIT)`` call — the responsive width
+resolution, the shrink-to-fit policy, and the ellipsis all owned by painted.
 """
 
 from __future__ import annotations

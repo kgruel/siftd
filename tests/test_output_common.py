@@ -10,9 +10,7 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
-    format_table,
     prefers_ascii,
-    print_indented,
     print_refs_content,
     role_label,
     should_use_ansi,
@@ -201,32 +199,6 @@ def test_should_use_ansi_honors_tty_and_no_color(monkeypatch):
     # An explicit stream drives the isatty() check.
     monkeypatch.delenv("NO_COLOR", raising=False)
     assert should_use_ansi(_Std(False)) is False
-
-
-# --- format_table ---
-
-
-def test_format_table_alignment():
-    result = format_table(["Name", "Val"], [["a", "long"], ["bb", "x"]])
-    lines = result.split("\n")
-    assert len(lines) == 4
-    assert "Name" in lines[0]
-    assert "---" in lines[1] or "──" in lines[1]
-
-
-# --- print_indented ---
-
-
-def test_print_indented(capsys):
-    print_indented("line1\nline2\nline3")
-    out = capsys.readouterr().out
-    assert out == "  line1\n  line2\n  line3\n"
-
-
-def test_print_indented_custom_prefix(capsys):
-    print_indented("hello", indent=">> ")
-    out = capsys.readouterr().out
-    assert out == ">> hello\n"
 
 
 # --- format_refs_annotation ---

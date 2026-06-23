@@ -48,23 +48,6 @@ def _painted():
     return Block, Line, Span, Style, current_palette, join_vertical, print_block
 
 
-def _styles() -> _RoleStyles:
-    _, _, _, Style, current_palette, _, _ = _painted()
-    palette = current_palette()
-    return _RoleStyles(
-        heading=palette.accent.merge(Style(bold=True)),
-        meta=palette.muted,
-        prompt=palette.accent.merge(Style(bold=True)),
-        assistant=Style(),
-        thinking=palette.muted.merge(Style(italic=True)),
-        tool=palette.accent,
-        tool_input=palette.muted,
-        tool_result=Style(),
-        tool_error=palette.error,
-        summary_hint=palette.muted,
-    )
-
-
 def _line(*parts: tuple[str, Style]) -> Line:
     # The shared row atom — drops empty segments, identical span construction.
     from siftd.output.row import row_line

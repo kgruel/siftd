@@ -352,14 +352,6 @@ class TestJsonRenderList:
 
 
 class TestFormatTable:
-    def test_returns_string(self):
-        from siftd.output.common import format_table
-
-        result = format_table(["a", "b"], [["1", "22"], ["333", "4"]])
-        lines = result.split("\n")
-        assert len(lines) == 4  # header + sep + 2 rows
-        assert "---" in lines[1]
-
     def test_print_table_renders_through_painted(self, capsys):
         from siftd.output import print_table
 
