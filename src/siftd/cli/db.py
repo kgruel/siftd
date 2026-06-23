@@ -102,6 +102,9 @@ def cmd_db_schema_version(args) -> int:
     pending = info["pending"]
     all_migrations = info["all_migrations"]
 
+    from siftd.output.listing import StatusReport
+    from siftd.output.status import severity_mark
+
     if current > target:
         if getattr(args, "json", False):
             print(json.dumps({
@@ -112,37 +115,49 @@ def cmd_db_schema_version(args) -> int:
                 ),
             }))
         else:
-            print(f"Current version:  {current}")
-            print(f"Target version:   {target}")
-            print(
-                f"Status:           ERROR: DB version {current} exceeds supported "
-                f"max {target} — upgrade siftd."
+            glyph, sev_style = severity_mark("error")
+            report = StatusReport()
+            report.preamble(
+                {
+                    "Current version": str(current),
+                    "Target version": str(target),
+                    "Status": [(
+                        f"{glyph} ERROR: DB version {current} exceeds supported "
+                        f"max {target} — upgrade siftd.",
+                        sev_style,
+                    )],
+                }
             )
+            report.render()
         return 1
 
     if getattr(args, "json", False):
         print(json.dumps(info))
         return 0
 
-    print(f"Current version:  {current}")
-    print(f"Target version:   {target}")
     if not pending:
-        print("Status:           up to date")
+        status_text, severity = "up to date", None
     elif len(pending) == 1:
-        print("Status:           1 migration pending")
+        status_text, severity = "1 migration pending", "warning"
     else:
-        print(f"Status:           {len(pending)} migrations pending")
+        status_text, severity = f"{len(pending)} migrations pending", "warning"
+    glyph, sev_style = severity_mark(severity)
 
-    print()
-    print("Registered migrations:")
-    for v in all_migrations:
-        label = "pending" if v > current else "applied"
-        print(f"  v{v} ({label})")
-
+    report = StatusReport()
+    report.preamble(
+        {
+            "Current version": str(current),
+            "Target version": str(target),
+            "Status": [(f"{glyph} {status_text}", sev_style)],
+        }
+    )
+    report.lines_section(
+        "Registered migrations",
+        [f"v{v} ({'pending' if v > current else 'applied'})" for v in all_migrations],
+    )
     if pending:
-        print()
-        print("Run 'siftd ingest' to apply pending migrations.")
-
+        report.note("Run 'siftd ingest' to apply pending migrations.")
+    report.render()
     return 0
 
 
@@ -188,13 +203,20 @@ def cmd_db_vacuum(args) -> int:
 
     size_after = db.stat().st_size
     saved = size_before - size_after
-    print(f"Before: {size_before / 1024:.1f} KB")
-    print(f"After:  {size_after / 1024:.1f} KB")
-    if saved > 0:
-        print(f"Saved:  {saved / 1024:.1f} KB ({saved / size_before * 100:.1f}%)")
-    else:
-        print("No space reclaimed (database already compact).")
 
+    from siftd.output.listing import StatusReport
+
+    pairs = {
+        "Before": f"{size_before / 1024:.1f} KB",
+        "After": f"{size_after / 1024:.1f} KB",
+    }
+    if saved > 0:
+        pairs["Saved"] = f"{saved / 1024:.1f} KB ({saved / size_before * 100:.1f}%)"
+    report = StatusReport()
+    report.preamble(pairs)
+    if saved <= 0:
+        report.note("No space reclaimed (database already compact).")
+    report.render()
     return 0
 
 

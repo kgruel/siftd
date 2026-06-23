@@ -63,12 +63,19 @@ def cmd_status(args) -> int:
         return 1
     state = "stale (will refresh on next use)" if cred.is_stale() else "valid"
     has_refresh = "yes" if cred.refresh_token else "no"
+    from siftd.output.listing import StatusReport
     from siftd.paths import credential_file
 
-    print(f"Issuer:     {issuer}")
-    print(f"Status:     {state} ({_fmt_expiry(cred.expires_at)})")
-    print(f"Refreshable: {has_refresh}")
-    print(f"Stored at:  {credential_file(issuer)}")
+    report = StatusReport()
+    report.preamble(
+        {
+            "Issuer": issuer,
+            "Status": f"{state} ({_fmt_expiry(cred.expires_at)})",
+            "Refreshable": has_refresh,
+            "Stored at": str(credential_file(issuer)),
+        }
+    )
+    report.render()
     return 0
 
 

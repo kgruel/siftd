@@ -10,7 +10,7 @@ import io
 
 from painted import print_block, use_theme
 
-from siftd.output.listing import definitions, heading
+from siftd.output.listing import StatusReport, definitions, heading, lines
 from siftd.output.theme import domain_styles, siftd_theme
 
 
@@ -186,3 +186,86 @@ def test_non_segment_sequence_value_is_stringified_not_split():
     # mis-split into per-character segments (text='a', style='b', ...).
     block = definitions([("k", ("ab", "cd"))])
     assert "('ab', 'cd')" in _text(block)
+
+
+# --- lines: the keyless sibling of definitions --------------------------------
+
+
+def test_lines_one_per_item_indented():
+    block = lines(["alpha", "beta", "gamma"])
+    assert _text(block).split("\n") == ["  alpha", "  beta", "  gamma"]
+
+
+def test_lines_empty_renders_nothing():
+    block = lines([])
+    assert block.height == 0
+    assert _text(block) == ""
+
+
+def test_lines_accepts_styled_segments():
+    # An item may be (text, style) segments — a coloured glyph ahead of text —
+    # like a definitions value; the rendered text is their concatenation.
+    from painted import Style
+
+    block = lines([[("✓", Style(fg=2)), (" ok", None)], "plain"])
+    assert _text(block).split("\n") == ["  ✓ ok", "  plain"]
+
+
+def test_lines_indent_is_honoured():
+    block = lines(["x"], indent=4)
+    assert _text(block).splitlines()[0] == "    x"
+
+
+# --- StatusReport: the section accumulator ------------------------------------
+
+
+def test_statusreport_composes_units_with_one_blank_between():
+    report = StatusReport()
+    report.preamble({"a": "1"})
+    report.section("Counts", {"x": "10"})
+    report.note("done")
+    rendered = _text(report.to_block()).split("\n")
+    assert rendered[0] == "  a  1"  # headingless preamble, indented
+    assert rendered[1] == ""  # one blank between units
+    assert rendered[2] == "Counts"  # section heading title
+    assert set(rendered[3]) == {"─"}  # heading underline rule
+    assert rendered[4] == "  x  10"  # section body
+    assert rendered[5] == ""  # blank before the note
+    assert rendered[6] == "  done"  # trailing note
+    # No leading or trailing blank line.
+    assert rendered[0] != "" and rendered[-1] != ""
+
+
+def test_statusreport_empty_section_contributes_no_orphan_heading():
+    report = StatusReport()
+    report.preamble({"a": "1"})
+    report.section("Empty", {})  # empty body → no heading
+    report.lines_section("AlsoEmpty", [])
+    out = _text(report.to_block())
+    assert "Empty" not in out and "AlsoEmpty" not in out
+    assert out == "  a  1"  # only the preamble, no trailing blank
+
+
+def test_statusreport_empty_report_renders_nothing():
+    report = StatusReport()
+    assert report.to_block().height == 0
+    assert _text(report.to_block()) == ""
+
+
+def test_statusreport_lines_section_is_a_heading_over_free_lines():
+    report = StatusReport()
+    report.lines_section("Models", ["m1", "m2"])
+    rendered = _text(report.to_block()).split("\n")
+    assert rendered[0] == "Models"
+    assert set(rendered[1]) == {"─"}
+    assert rendered[2:] == ["  m1", "  m2"]
+
+
+def test_statusreport_section_value_may_carry_a_styled_severity_glyph():
+    # The schema-version "Status" case: a definitions value with a coloured glyph
+    # segment. The text concatenates; the colour rides ANSI (invisible in _text).
+    from painted import Style
+
+    report = StatusReport()
+    report.preamble({"Status": [("⚠ 1 migration pending", Style(fg=3))]})
+    assert "⚠ 1 migration pending" in _text(report.to_block())

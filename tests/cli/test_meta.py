@@ -158,7 +158,7 @@ def test_cmd_workspaces_and_status(monkeypatch, tmp_path, capsys):
 
     assert cmd_status(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
     out = capsys.readouterr().out
-    assert "Database:" in out and "Embeddings:" in out
+    assert "Database" in out and "Embeddings" in out
 
     monkeypatch.setattr("siftd.api.dispatch.execute", lambda op: [{"id": "01HWS", "path": "/w", "git_remote": None, "convs": 2, "last_activity": "2024-01-01"}])
     assert cmd_workspaces(_args(json=True, db=str(tmp_path / "db.sqlite"), limit=5)) == 0
@@ -178,7 +178,7 @@ def test_status_and_workspaces_remaining_branches(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
     assert cmd_status(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
     out = capsys.readouterr().out
-    assert "(unknown)" in out and "Embeddings: installed" in out
+    assert "(unknown)" in out and "Embeddings  installed" in out
 
     # latest-only activity window branch (L176-177)
     stats.activity_window = (None, "2024-01-02")

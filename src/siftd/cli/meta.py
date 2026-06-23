@@ -127,82 +127,97 @@ def cmd_status(args) -> int:
         print(json.dumps(out, indent=2))
         return 0
 
-    print(f"Database: {stats.db_path}")
-    print(f"Size: {stats.db_size_bytes / 1024:.1f} KB")
+    from siftd.output.listing import StatusReport
 
-    print("\n--- Counts ---")
-    print(f"  Conversations: {stats.counts.conversations}")
-    print(f"  Prompts: {stats.counts.prompts}")
-    print(f"  Responses: {stats.counts.responses}")
-    print(f"  Tool calls: {stats.counts.tool_calls}")
-    print(f"  Harnesses: {stats.counts.harnesses}")
-    print(f"  Workspaces: {stats.counts.workspaces}")
-    print(f"  Tools: {stats.counts.tools}")
-    print(f"  Models: {stats.counts.models}")
-    print(f"  Ingested files: {stats.counts.ingested_files}")
-
-    print("\n--- Harnesses ---")
-    for h in stats.harnesses:
-        print(f"  {h.name} ({h.source}, {h.log_format})")
-
-    print("\n--- Workspaces (top 10) ---")
+    report = StatusReport()
+    report.preamble(
+        {
+            "Database": str(stats.db_path),
+            "Size": f"{stats.db_size_bytes / 1024:.1f} KB",
+        }
+    )
+    report.section(
+        "Counts",
+        {
+            "Conversations": str(stats.counts.conversations),
+            "Prompts": str(stats.counts.prompts),
+            "Responses": str(stats.counts.responses),
+            "Tool calls": str(stats.counts.tool_calls),
+            "Harnesses": str(stats.counts.harnesses),
+            "Workspaces": str(stats.counts.workspaces),
+            "Tools": str(stats.counts.tools),
+            "Models": str(stats.counts.models),
+            "Ingested files": str(stats.counts.ingested_files),
+        },
+    )
+    report.section(
+        "Harnesses",
+        [(h.name, f"({h.source}, {h.log_format})") for h in stats.harnesses],
+    )
+    workspaces = []
     for w in stats.top_workspaces:
         last_activity = fmt_timestamp(w.last_activity)
         last_str = f" (last {last_activity})" if last_activity else ""
-        print(f"  {w.path}: {w.conversation_count} conversations{last_str}")
+        workspaces.append((w.path, f"{w.conversation_count} conversations{last_str}"))
+    report.section("Workspaces (top 10)", workspaces)
+    report.lines_section("Models", list(stats.models))
+    report.section(
+        "Tools (top 10 by usage)",
+        [(t.name, str(t.usage_count)) for t in stats.top_tools],
+    )
+    coverage = [
+        (
+            "Responses with tokens",
+            f"{stats.token_coverage.with_tokens}/{stats.token_coverage.responses} "
+            f"({stats.token_coverage.pct_with_tokens:.2f}%)",
+        ),
+    ]
+    coverage.extend(
+        (h.name, f"{h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
+        for h in stats.token_coverage.by_harness
+    )
+    report.section("Token Coverage", coverage)
 
-    print("\n--- Models ---")
-    for model in stats.models:
-        print(f"  {model}")
-
-    print("\n--- Tools (top 10 by usage) ---")
-    for t in stats.top_tools:
-        print(f"  {t.name}: {t.usage_count}")
-
-    print("\n--- Token Coverage ---")
-    total = stats.token_coverage.responses
-    with_tokens = stats.token_coverage.with_tokens
-    pct = stats.token_coverage.pct_with_tokens
-    print(f"  Responses with tokens: {with_tokens}/{total} ({pct:.2f}%)")
-    for h in stats.token_coverage.by_harness:
-        print(f"  {h.name}: {h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
-
-    # Activity window + ingest recency
     earliest, latest = stats.activity_window
     if earliest or latest:
         earliest_fmt = fmt_timestamp(earliest)
         latest_fmt = fmt_timestamp(latest)
-        print("\n--- Activity window ---")
+        window = None
         if earliest_fmt and latest_fmt:
-            print(f"  Conversations: {earliest_fmt} -> {latest_fmt}")
+            window = f"{earliest_fmt} -> {latest_fmt}"
         elif earliest_fmt:
-            print(f"  Conversations: {earliest_fmt} -> (unknown)")
+            window = f"{earliest_fmt} -> (unknown)"
         elif latest_fmt:
-            print(f"  Conversations: (unknown) -> {latest_fmt}")
+            window = f"(unknown) -> {latest_fmt}"
+        if window is not None:
+            report.section("Activity window", {"Conversations": window})
 
     if stats.harness_counts:
-        print("\n--- Harness activity ---")
-        for hc in stats.harness_counts:
-            print(f"  {hc.name}: {hc.conversation_count}")
+        report.section(
+            "Harness activity",
+            [(hc.name, str(hc.conversation_count)) for hc in stats.harness_counts],
+        )
 
     if stats.top_tags:
-        print("\n--- Tags (top 5) ---")
-        for tag in stats.top_tags:
-            print(f"  {tag.name}: {tag.count}")
+        report.section(
+            "Tags (top 5)",
+            [(tag.name, str(tag.count)) for tag in stats.top_tags],
+        )
 
     if stats.last_ingest_at:
-        print("\n--- Ingest ---")
-        print(f"  Last ingest: {fmt_timestamp(stats.last_ingest_at)}")
+        report.section("Ingest", {"Last ingest": fmt_timestamp(stats.last_ingest_at)})
 
-    # Features status
     from siftd.api import embeddings_available
 
-    print("\n--- Features ---")
-    if embeddings_available():
-        print("  Embeddings: installed")
-    else:
-        print("  Embeddings: not installed (run: siftd install embed)")
-
+    report.section(
+        "Features",
+        {
+            "Embeddings": "installed"
+            if embeddings_available()
+            else "not installed (run: siftd install embed)"
+        },
+    )
+    report.render()
     return 0
 
 

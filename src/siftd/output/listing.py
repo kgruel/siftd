@@ -164,6 +164,37 @@ def definitions(
     return join_vertical(*rows)
 
 
+def lines(
+    items: Iterable[ValueCell],
+    *,
+    indent: int = 2,
+    style: Style | None = None,
+) -> Block:
+    """Render free-form lines as an indented ``Block`` — the keyless sibling of ``definitions``.
+
+    Each item is one visual line: a plain ``str`` (rendered in ``style``, default
+    plain) or ``(text, style)`` segments (see ``_value_segments``) so a line can
+    carry a styled run. For genuinely keyless content — a bare list (models), a
+    trailing note — where a ``definitions`` label column would be empty. An empty
+    input renders a zero-row block, contributing nothing.
+    """
+    from painted import Block, Style, join_vertical
+
+    from siftd.output.row import row_line
+
+    items_list = list(items)
+    if not items_list:
+        return Block.empty(0, 0)
+
+    val_style = style if style is not None else Style()
+    pad = " " * indent
+    rows = [
+        row_line(_value_segments(item, val_style), indent=pad) for item in items_list
+    ]
+    blocks = [ln.to_block(ln.width) for ln in rows]
+    return join_vertical(*blocks)
+
+
 def print_definitions(
     pairs: Mapping[str, ValueCell] | Iterable[tuple[str, ValueCell]],
     *,
@@ -191,3 +222,82 @@ def print_definitions(
         ),
         use_ansi=should_use_ansi(),
     )
+
+
+class StatusReport:
+    """Accumulator that composes the report-structure atoms into one report.
+
+    The named composition frontier: a multi-section status command (``status``,
+    ``db schema-version`` / ``db vacuum``, ``auth status``) is a headingless
+    preamble + ordered titled sections (each a ``definitions`` or a ``lines``
+    body) + trailing notes. This accumulates those as atom ``Block``s and joins
+    them with one blank line between units.
+
+    WhereBuilder-shaped (``storage/filters.py``): the section methods mutate and
+    return ``None`` — no fluent chain (siftd has no fluent-builder idiom). The
+    terminal/plain projection only: each command keeps its own ``--json`` branch
+    (the machine envelope is a keeper, never routed here).
+
+    A section whose body is empty contributes nothing — no orphan heading. That
+    is the "empty renders nothing" rule the atoms already follow, lifted to the
+    section level so a caller can append unconditionally (matching the old
+    ``if data:`` guards' output without the guard).
+    """
+
+    def __init__(self) -> None:
+        self._blocks: list[Block] = []
+
+    def preamble(
+        self, pairs: Mapping[str, ValueCell] | Iterable[tuple[str, ValueCell]]
+    ) -> None:
+        """A headingless key:value listing — the report's opening facts."""
+        self._append(definitions(pairs))
+
+    def section(
+        self,
+        title: str,
+        pairs: Mapping[str, ValueCell] | Iterable[tuple[str, ValueCell]],
+    ) -> None:
+        """A titled key:value section — ``heading`` over a ``definitions`` body."""
+        self._append_titled(title, definitions(pairs))
+
+    def lines_section(self, title: str, items: Iterable[ValueCell]) -> None:
+        """A titled free-form section — ``heading`` over a ``lines`` body."""
+        self._append_titled(title, lines(items))
+
+    def note(self, *items: ValueCell) -> None:
+        """A trailing free-form line (or lines), set off by the unit blank."""
+        self._append(lines(items))
+
+    def _append(self, block: Block) -> None:
+        if block.height > 0:
+            self._blocks.append(block)
+
+    def _append_titled(self, title: str, body: Block) -> None:
+        from painted import join_vertical
+
+        if body.height > 0:  # no orphan heading over an empty body
+            self._blocks.append(join_vertical(heading(title), body))
+
+    def to_block(self) -> Block:
+        """Join the accumulated units, one blank line between each."""
+        from painted import Block, join_vertical
+
+        if not self._blocks:
+            return Block.empty(0, 0)
+        parts: list[Block] = []
+        for i, block in enumerate(self._blocks):
+            if i > 0:
+                parts.append(Block.empty(0, 1))
+            parts.append(block)
+        return join_vertical(*parts)
+
+    def render(self) -> None:
+        """Print the report to stdout — ANSI on a capable stream, else plain text."""
+        from painted import print_block
+
+        from siftd.output.common import should_use_ansi
+
+        block = self.to_block()
+        if block.height > 0:
+            print_block(block, use_ansi=should_use_ansi())

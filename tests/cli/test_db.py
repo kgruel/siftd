@@ -31,7 +31,7 @@ def test_db_stats(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "stats"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Conversations:" in out
+    assert "Conversations" in out
 
 
 def test_db_workspaces(test_db, capsys):
@@ -53,8 +53,8 @@ def test_db_vacuum(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "vacuum"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Before:" in out
-    assert "After:" in out
+    assert "Before" in out
+    assert "After" in out
 
 
 def test_db_backup(test_db, tmp_path, capsys):
@@ -569,7 +569,7 @@ class TestDbErrorPaths:
 
         rc = main(["db", "vacuum"])
         assert rc == 0
-        assert "Saved:" in capsys.readouterr().out
+        assert "Saved" in capsys.readouterr().out
 
 
 class TestDbSchemaVersion:
@@ -580,8 +580,8 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(test_db), "db", "schema-version"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert f"Current version:  {SCHEMA_VERSION}" in out
-        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert f"Current version  {SCHEMA_VERSION}" in out
+        assert f"Target version   {SCHEMA_VERSION}" in out
         assert "up to date" in out
         assert "(applied)" in out
         assert "(pending)" not in out
@@ -602,8 +602,8 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(db), "db", "schema-version"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert f"Current version:  {prev}" in out
-        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert f"Current version  {prev}" in out
+        assert f"Target version   {SCHEMA_VERSION}" in out
         assert "migration pending" in out
         assert f"v{SCHEMA_VERSION} (pending)" in out
         assert "siftd ingest" in out
@@ -639,7 +639,7 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(db), "db", "schema-version"])
         assert rc == 1
         out = capsys.readouterr().out
-        assert f"Current version:  {future}" in out
+        assert f"Current version  {future}" in out
         assert "ERROR" in out
 
     def test_missing_db(self, tmp_path, capsys):
