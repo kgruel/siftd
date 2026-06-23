@@ -66,6 +66,24 @@ _SEVERITY_ICON: dict[str | None, tuple[str, str]] = {
     None: ("ok", "success"),  # pass / all-clear (no findings for a check)
 }
 
+# The third projection of the same severity vocabulary (beside the callout map
+# and the icon map): the ORDERING. error < warning < info, with anything else
+# (the declared-but-unused "hint", an unknown severity) sorting last. Findings
+# are surfaced worst-first and a check's dominant severity is the worst of its
+# findings; the doctor view, the ``--json`` branch, and the plain branch all
+# sorted by a private copy of this dict — single-sourced here so there is one
+# ordering of the vocabulary.
+SEVERITY_ORDER: dict[str, int] = {"error": 0, "warning": 1, "info": 2}
+
+
+def severity_rank(severity: str | None) -> int:
+    """Sort key for a severity: ``error`` (0) < ``warning`` (1) < ``info`` (2) < other.
+
+    The single ordering of the vocabulary — the doctor view, the ``--json`` branch,
+    and the plain branch all sort findings worst-first by this.
+    """
+    return SEVERITY_ORDER.get(severity or "", len(SEVERITY_ORDER))
+
 
 def severity_glyph(severity: str | None, *, as_ascii: bool = False) -> tuple[str, str]:
     """Return ``(glyph, palette-key)`` for a finding severity.

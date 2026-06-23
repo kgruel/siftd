@@ -838,37 +838,79 @@ class TestDataDirectBranches:
         assert data_cli._doctor_run_json(args, None, False, Path(test_db)) == 1
         assert data_cli._doctor_run_plain(args, None, False, Path(test_db)) == 1
 
-        class _R:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_a):
-                return False
-
-            def render(self, *_a, **_k):
-                return None
-
-            def finalize(self, *_a, **_k):
-                return None
-
-        class _Theme:
-            def __enter__(self):
-                return None
-
-            def __exit__(self, *_a):
-                return False
-
-        monkeypatch.setitem(
-            __import__("sys").modules,
-            "painted",
-            SimpleNamespace(InPlaceRenderer=_R, use_theme=lambda *_a, **_k: _Theme()),
-        )
+        # The painted path with a non-TTY stdout: LiveRegion is inactive, so it
+        # paints nothing and just returns the exit code (run_checks → no findings
+        # → 0). The active render path is exercised separately below.
         monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
-        monkeypatch.setattr("siftd.doctor.view.render_progress_block", lambda *_a, **_k: "blk")
-        monkeypatch.setitem(__import__("sys").modules, "siftd.output.theme", SimpleNamespace(siftd_theme=object()))
         monkeypatch.setattr("siftd.api.run_checks", lambda **k: [])
         monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
         assert data_cli._doctor_run_painted(args, ["c1"], False, Path(test_db)) == 0
+
+    def test_doctor_run_painted_active_paints_panel_and_report(self, monkeypatch):
+        """The active live path: a real LiveRegion + the real view renderers paint
+        to a fake TTY. on_check_done drives the panel frames; finalize deposits the
+        settled findings report (the check name + tally land in the stream)."""
+        from siftd.doctor.checks import Finding
+
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        stream = _FakeTTY()
+        monkeypatch.setattr("sys.stdout", stream)
+
+        warning = Finding(
+            check="ingest-errors", severity="warning",
+            message="claude_code: 8 file(s) failed", fix_available=True,
+            fix_command="siftd doctor --verbose",
+        )
+
+        def fake_run_checks(*, checks, db_path, deep, fast, on_check_done):
+            on_check_done("schema-current", [])  # a clean check → passed
+            on_check_done("ingest-errors", [warning])  # an issue
+            return [warning]
+
+        monkeypatch.setattr("siftd.api.run_checks", fake_run_checks)
+        monkeypatch.setattr(
+            "siftd.api.list_checks",
+            lambda: [SimpleNamespace(name="schema-current"), SimpleNamespace(name="ingest-errors")],
+        )
+        saved: list = []
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: saved.append(findings))
+
+        args = SimpleNamespace(db=None, json=False, strict=False, no_hints=False)
+        rc = data_cli._doctor_run_painted(args, None, False, None)
+
+        assert rc == 0  # a warning, non-strict → does not fail
+        out = stream.getvalue()
+        assert "ingest-errors" in out  # the issue surfaced (panel + report)
+        assert "passed" in out  # the report's severity tally (a report-only token)
+        assert "1 passed" in out  # tally counts the clean check → the report deposited
+        assert saved == [[warning]]  # the filtered findings were cached for `doctor fix`
+
+    def test_doctor_run_painted_return_codes(self, monkeypatch):
+        """The painted path's strict/error return contract (inactive stdout isolates
+        the return logic from rendering): an error fails non-strict; a warning fails
+        only under --strict. The full-stack strict test uses --json, a different path."""
+        from siftd.doctor.checks import Finding
+
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
+        monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
+
+        def run_returning(findings):
+            def _run(*, checks, db_path, deep, fast, on_check_done):
+                return findings
+            return _run
+
+        error = Finding(check="c1", severity="error", message="bad", fix_available=False)
+        warning = Finding(check="c1", severity="warning", message="careful", fix_available=False)
+
+        # error → fail even non-strict
+        monkeypatch.setattr("siftd.api.run_checks", run_returning([error]))
+        args = SimpleNamespace(db=None, json=False, strict=False, no_hints=False)
+        assert data_cli._doctor_run_painted(args, None, False, None) == 1
+
+        # warning → passes non-strict, fails under --strict
+        monkeypatch.setattr("siftd.api.run_checks", run_returning([warning]))
+        assert data_cli._doctor_run_painted(SimpleNamespace(db=None, json=False, strict=False, no_hints=False), None, False, None) == 0
+        assert data_cli._doctor_run_painted(SimpleNamespace(db=None, json=False, strict=True, no_hints=False), None, False, None) == 1
 
     def test_migrate_merge_verbose_and_dry_run_outputs(self, test_db, monkeypatch, capsys):
         from siftd.domain.progress import ProgressEvent

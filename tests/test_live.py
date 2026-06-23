@@ -277,9 +277,47 @@ def test_bar_row_shimmer_recolors_the_window_over_the_fill():
     assert fgs[0] == ds.metric_strong.fg  # the window leads the fill at frame 0
 
 
+def test_bar_row_plain_honors_fill_and_empty_style():
+    # The plain (non-shimmer) determinate bar colours its fill / track from
+    # fill_style / empty_style. push/pull/ingest's resolved bars and doctor's
+    # progress bar rely on this — before the fix the plain branch passed neither to
+    # progress_bar, so the colour (the one thing _render_plain strips) was silently
+    # dropped.
+    from painted import current_palette, use_theme
+
+    from siftd.output.theme import domain_styles, siftd_theme
+
+    with use_theme(siftd_theme):
+        ds, pal = domain_styles(), current_palette()
+        block = bar_row(
+            "push", 0.5, label_width=4, bar_width=20,
+            fill_style=ds.metric, empty_style=pal.muted,
+            filled_char="━", empty_char="─",
+        )
+        fgs = {
+            cell.style.fg
+            for cell in block._rows[0]
+            if getattr(cell, "char", "") in ("━", "─")
+        }
+    assert ds.metric.fg in fgs  # the fill carries fill_style
+    assert pal.muted.fg in fgs  # the track carries empty_style
+
+
+def test_bar_row_plain_label_pads_by_display_width():
+    # The label column is padded to display columns, not len(): a wide-char (CJK)
+    # label and an ASCII label of the SAME display width must lay out identically.
+    # len()-based padding would make the 2-char/4-col CJK label overrun its column
+    # and push the bar past its budget (tearing the in-place frame).
+    cjk = bar_row("日本", 0.5, label_width=10, bar_width=10, filled_char="━", empty_char="─")
+    ascii_same = bar_row("ABCD", 0.5, label_width=10, bar_width=10, filled_char="━", empty_char="─")
+    assert cjk.width == ascii_same.width  # "日本" and "ABCD" both span 4 columns
+
+
 def test_bar_row_without_shimmer_is_unchanged():
-    # The shimmer is strictly opt-in (needs both frame and shimmer_style); the
-    # plain path stays painted's progress_bar so existing consumers are untouched.
+    # The shimmer is strictly opt-in (needs both frame and shimmer_style); frame
+    # alone does not engage the cell-by-cell sweep path — the plain branch renders
+    # the same characters (it now also honours fill_style/empty_style, asserted
+    # in test_bar_row_plain_honors_fill_and_empty_style).
     plain = _render_plain(bar_row("x", 0.5, label_width=2, bar_width=10, filled_char="━", empty_char="─"))
     only_frame = _render_plain(bar_row("x", 0.5, label_width=2, bar_width=10, frame=3, filled_char="━", empty_char="─"))
     assert plain == only_frame  # frame alone (no shimmer_style) changes nothing

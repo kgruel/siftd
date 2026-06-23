@@ -1197,8 +1197,7 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) 
 
     findings = _filter_findings(findings, json_mode=True, drop_hints=getattr(args, "no_hints", False))
 
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+    findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
 
     error_count = sum(1 for f in findings if f.severity == "error")
     warning_count = sum(1 for f in findings if f.severity == "warning")
@@ -1251,8 +1250,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
         print("No issues found.")
         return 0
 
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+    findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
 
     from siftd.output.status import severity_glyph
 
@@ -1288,10 +1286,9 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
 
 
 def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
-    from painted import InPlaceRenderer
-
     from siftd.api import list_checks, run_checks
-    from siftd.doctor.view import render_progress_block
+    from siftd.doctor.view import render_findings_block, render_progress_block
+    from siftd.output.live import LiveRegion
 
     all_checks = list_checks()
     if check_names:
@@ -1302,18 +1299,27 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
         all_checks = [c for c in all_checks if getattr(c, "cost", "") != "deep"]
     check_names_ordered = [c.name for c in all_checks]
 
+    drop_hints = getattr(args, "no_hints", False)
     completed: dict[str, list] = {}
 
-    with InPlaceRenderer() as renderer:
+    # LiveRegion brings the shared gate + throttle + log-quiesce (checks log
+    # warnings mid-run; quiesce keeps them off the relative-addressed frame). The
+    # panel repaints on each check completion (on_check_done fires on this thread
+    # from run_checks' as_completed loop — no extra threading): the bar fills, the
+    # just-resolved check rides the label, issues accumulate. The settled report
+    # is deposited as the final frame. force=True per event: checks finish in
+    # bursts, so each completion is a moment, not a stream to throttle.
+    live = LiveRegion()
+    with live:
 
         def on_done(name, check_findings):
-            completed[name] = check_findings
-            block = render_progress_block(check_names_ordered, completed, len(completed))
-            renderer.render(block)
+            completed[name] = _filter_findings(check_findings, json_mode=False, drop_hints=drop_hints)
+            if live.active:
+                live.update(render_progress_block(check_names_ordered, completed, current=name), force=True)
 
-        # Show initial state
-        block = render_progress_block(check_names_ordered, completed, 0)
-        renderer.render(block)
+        if live.active:
+            # Show the empty bar from t=0 (before the first check resolves).
+            live.update(render_progress_block(check_names_ordered, completed), force=True)
 
         try:
             findings = run_checks(
@@ -1324,19 +1330,21 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
                 on_check_done=on_done,
             )
         except FileNotFoundError as e:
-            renderer.finalize()
+            live.finalize()
             print(str(e))
             return 1
         except ValueError as e:
-            renderer.finalize()
+            live.finalize()
             print(f"Error: {e}")
             return 1
 
-        # Finalize progress in place — it already shows the full layout
-        final_block = render_progress_block(check_names_ordered, completed, len(completed))
-        renderer.finalize(final_block)
-
-    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
+        findings = _filter_findings(findings, json_mode=False, drop_hints=drop_hints)
+        if live.active:
+            live.finalize(
+                render_findings_block(
+                    findings, show_fixes=show_fixes, total_checks=len(check_names_ordered)
+                )
+            )
 
     # Cache fixable findings for `doctor fix`
     from siftd.doctor.fixes import save_findings_cache

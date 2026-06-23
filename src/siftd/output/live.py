@@ -215,6 +215,19 @@ def _sweep_window(frame: int, width: int, win: int) -> set[int]:
     return {(start + k) % width for k in range(win)}
 
 
+def _padded_label(label: str, label_width: int) -> str:
+    """Left-justify ``label`` to ``label_width`` DISPLAY columns (not ``len()``).
+
+    ``f"{label:<{label_width}}"`` pads by character count, so a wide-char (CJK)
+    label — two columns per char — overruns its column and pushes the bar past the
+    terminal width (tearing the in-place frame). Padding by display width keeps the
+    row within budget. Byte-identical to the f-string for ASCII labels.
+    """
+    from painted.core._text_width import display_width
+
+    return label + " " * max(0, label_width - display_width(label))
+
+
 def bar_row(
     label: str,
     fraction: float,
@@ -235,9 +248,10 @@ def bar_row(
 ) -> Block:
     """One labelled progress-bar row: ``label  [====----]  <segments>  <glyph>``.
 
-    ``fraction`` is clamped to 0..1; the bar draws from the ambient palette
-    (accent fill / muted empty). ``filled_char`` / ``empty_char`` override the
-    IconSet glyphs (default ``█``/``░``) — pass e.g. ``━``/``─`` for a lighter,
+    ``fraction`` is clamped to 0..1; ``fill_style`` / ``empty_style`` colour the
+    fill / track (default: the ambient palette's accent / muted), and apply in
+    both the plain and the shimmer modes. ``filled_char`` / ``empty_char`` override
+    the IconSet glyphs (default ``█``/``░``) — pass e.g. ``━``/``─`` for a lighter,
     thinner rule. ``segments`` is a list of ``(text, style)`` so trailing stats
     can be individually themed; ``glyph`` is the trailing status mark.
 
@@ -279,10 +293,11 @@ def bar_row(
     else:
         bar = progress_bar(
             ProgressState().set(fraction), bar_width,
+            filled_style=fill_style, empty_style=empty_style,
             filled_char=filled_char, empty_char=empty_char,
         )
 
-    label_line = Line(spans=(Span(f"{label:<{label_width}}  ", label_style or plain),))
+    label_line = Line(spans=(Span(f"{_padded_label(label, label_width)}  ", label_style or plain),))
     parts = [label_line.to_block(label_line.width), bar]
 
     trailing: list[Span] = [Span("  ", plain)]
@@ -348,7 +363,7 @@ def sweep_row(
     ]
     bar = Block([cells], width)
 
-    label_line = Line(spans=(Span(f"{label:<{label_width}}  ", label_style or pal_default),))
+    label_line = Line(spans=(Span(f"{_padded_label(label, label_width)}  ", label_style or pal_default),))
     parts = [label_line.to_block(label_line.width), bar]
 
     trailing: list[Span] = [Span("  ", pal_default)]
