@@ -871,12 +871,19 @@ class TestDataDirectBranches:
         assert data_cli._doctor_run_painted(args, ["c1"], False, Path(test_db)) == 0
 
     def test_migrate_merge_verbose_and_dry_run_outputs(self, test_db, monkeypatch, capsys):
+        from siftd.domain.progress import ProgressEvent
+
+        def _emit(on_progress, group, text):
+            # The producers emit ProgressEvents (not raw strings) since the
+            # progress contract; the verbose plain sink prints event.message.
+            on_progress(ProgressEvent(group=group, message=text, status="progress"))
+
         monkeypatch.setattr(
             "siftd.api.migrations.backfill_git_remotes",
-            lambda conn, on_progress, dry_run: (on_progress("progress"), {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0})[1],
+            lambda conn, on_progress, group, dry_run: (_emit(on_progress, group, "progress"), {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0})[1],
         )
         monkeypatch.setattr("siftd.api.migrations.verify_workspace_identity", lambda conn: {"duplicate_groups": 1, "duplicate_workspaces": 2, "total": 2, "with_remote": 1, "without_remote": 1})
-        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn, on_progress, dry_run: (on_progress("merging"), {"workspaces_merged": 1, "conversations_moved": 2})[1])
+        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn, on_progress, group, dry_run: (_emit(on_progress, group, "merging"), {"workspaces_merged": 1, "conversations_moved": 2})[1])
         rc = main(["--db", str(test_db), "migrate", "--merge-workspaces", "--dry-run", "-v"])
         assert rc == 0
         out = capsys.readouterr().out
@@ -1075,7 +1082,7 @@ class TestDataDirectBranches:
         # migrate merge non-dry-run summary lines (505/506)
         monkeypatch.setattr(
             "siftd.api.migrations.backfill_git_remotes",
-            lambda conn, on_progress, dry_run: {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0},
+            lambda conn, on_progress, group, dry_run: {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0},
         )
         monkeypatch.setattr(
             "siftd.api.migrations.verify_workspace_identity",
@@ -1083,7 +1090,7 @@ class TestDataDirectBranches:
         )
         monkeypatch.setattr(
             "siftd.api.migrations.merge_duplicate_workspaces",
-            lambda conn, on_progress, dry_run: {"workspaces_merged": 2, "conversations_moved": 5},
+            lambda conn, on_progress, group, dry_run: {"workspaces_merged": 2, "conversations_moved": 5},
         )
         rc = main(["--db", str(test_db), "migrate", "--merge-workspaces"])
         assert rc == 0

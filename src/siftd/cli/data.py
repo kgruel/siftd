@@ -587,9 +587,9 @@ def cmd_backfill(args) -> int:
             else:
                 print("Backfilling git remote URLs for workspaces missing them...")
 
-            def on_progress(msg):
-                if getattr(args, "verbose", False):
-                    print(msg)
+            def on_progress(event):
+                if getattr(args, "verbose", False) and event.message:
+                    print(event.message)
 
             stats = backfill_git_remotes(conn, on_progress=on_progress, dry_run=dry_run)
             print(f"  Checked: {stats['checked']}")
@@ -610,13 +610,146 @@ def cmd_backfill(args) -> int:
     return 0
 
 
-def cmd_migrate(args) -> int:
-    """Run data migrations."""
+def _run_merge_workspaces(conn, *, dry_run: bool, verbose: bool) -> int:
+    """The ``migrate --merge-workspaces`` flow: backfill remotes, then merge dups.
+
+    A two-step sequence — the step-log progress shape (sibling of ``doctor
+    --fix``). On a Unicode TTY the steps render as a live ``ProgressConsumer``
+    step-log (spinner → ``✓``); a pipe / non-Unicode locale keeps the original
+    plain "Step 1… / Step 2…" prints. The status callouts that summarise the run
+    land *after* the live region closes, so they never tear the live frame.
+    """
     from siftd.api.migrations import (
         backfill_git_remotes,
         merge_duplicate_workspaces,
         verify_workspace_identity,
     )
+    from siftd.output.progress_view import ProgressConsumer, ProgressEvent
+
+    backfill_group = "backfill git remotes"
+    merge_group = "merge workspaces"
+
+    def _backfill_summary(stats: dict) -> str:
+        return (
+            f"{backfill_group}: {stats['updated']} updated, "
+            f"{stats['checked']} checked, "
+            f"{stats['skipped_missing'] + stats['skipped_no_git']} skipped"
+        )
+
+    consumer = ProgressConsumer(shape="steps")
+    if not consumer.active:
+        return _run_merge_workspaces_plain(
+            conn,
+            dry_run=dry_run,
+            verbose=verbose,
+            backfill=backfill_git_remotes,
+            merge=merge_duplicate_workspaces,
+            verify=verify_workspace_identity,
+            backfill_group=backfill_group,
+            merge_group=merge_group,
+        )
+
+    # Live step-log. Each step starts as a pending spinner, resolves to ✓ with a
+    # summary message; the producers' per-row events update the in-flight line.
+    summaries: dict[str, dict] = {}
+    with consumer:
+        consumer.feed(ProgressEvent(group=backfill_group, status="progress", terminal=True))
+        stats = backfill_git_remotes(conn, on_progress=consumer.feed, group=backfill_group, dry_run=dry_run)
+        summaries["backfill"] = stats
+        consumer.feed(ProgressEvent(
+            group=backfill_group, status="done", message=_backfill_summary(stats), terminal=True
+        ))
+
+        ws_status = verify_workspace_identity(conn)
+        if ws_status["duplicate_groups"] == 0:
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="skipped",
+                message=f"{merge_group}: no duplicates", terminal=True,
+            ))
+        else:
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="progress",
+                message=f"{merge_group}: {ws_status['duplicate_groups']} group(s)",
+                terminal=True,
+            ))
+            merge_stats = merge_duplicate_workspaces(
+                conn, on_progress=consumer.feed, group=merge_group, dry_run=dry_run
+            )
+            summaries["merge"] = merge_stats
+            verb = "would merge" if dry_run else "merged"
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="done",
+                message=f"{merge_group}: {verb} {merge_stats['workspaces_merged']} workspace(s)",
+                terminal=True,
+            ))
+
+    # Summary callouts, after the region closes (they'd tear the live frame).
+    if "merge" not in summaries:
+        status.info("No duplicate workspaces found.")
+        return 0
+    merge_stats = summaries["merge"]
+    if dry_run:
+        status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+        status.info("Run without --dry-run to apply changes.")
+    else:
+        status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
+        status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
+    return 0
+
+
+def _run_merge_workspaces_plain(
+    conn, *, dry_run, verbose, backfill, merge, verify, backfill_group, merge_group
+) -> int:
+    """The non-TTY plain path for ``--merge-workspaces`` (the original prints)."""
+    from siftd.output.progress_view import ProgressEvent
+
+    # Step 1: Backfill git remotes
+    print("Step 1: Backfilling git remote URLs for existing workspaces...")
+
+    def on_backfill_progress(event: ProgressEvent) -> None:
+        if verbose and event.message:
+            print(event.message)
+
+    stats = backfill(conn, on_progress=on_backfill_progress, group=backfill_group, dry_run=dry_run)
+    print(f"  Checked: {stats['checked']}")
+    print(f"  Updated: {stats['updated']}")
+    print(f"  Skipped (path missing): {stats['skipped_missing']}")
+    print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+
+    # Step 2: Find and optionally merge duplicates
+    print("\nStep 2: Finding duplicate workspaces...")
+    ws_status = verify(conn)
+
+    if ws_status["duplicate_groups"] == 0:
+        status.info("No duplicate workspaces found.")
+        return 0
+
+    status.info(
+        f"Found {ws_status['duplicate_groups']} groups with "
+        f"{ws_status['duplicate_workspaces']} workspaces sharing git remotes."
+    )
+
+    if dry_run:
+        print("\n[Dry run] Would merge the following workspaces:")
+
+    def on_merge_progress(event: ProgressEvent) -> None:
+        if event.message:
+            print(event.message)
+
+    merge_stats = merge(conn, on_progress=on_merge_progress, group=merge_group, dry_run=dry_run)
+
+    if dry_run:
+        status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+        status.info("Run without --dry-run to apply changes.")
+    else:
+        status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
+        status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    """Run data migrations."""
+    from siftd.api.migrations import verify_workspace_identity
 
     db = resolve_db(args)
 
@@ -627,49 +760,9 @@ def cmd_migrate(args) -> int:
     conn = open_database(db)
 
     if args.merge_workspaces:
-        # Step 1: Backfill git remotes
-        print("Step 1: Backfilling git remote URLs for existing workspaces...")
-
-        def on_backfill_progress(msg):
-            if args.verbose:
-                print(msg)
-
-        stats = backfill_git_remotes(conn, on_progress=on_backfill_progress, dry_run=args.dry_run)
-        print(f"  Checked: {stats['checked']}")
-        print(f"  Updated: {stats['updated']}")
-        print(f"  Skipped (path missing): {stats['skipped_missing']}")
-        print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
-
-        # Step 2: Find and optionally merge duplicates
-        print("\nStep 2: Finding duplicate workspaces...")
-        ws_status = verify_workspace_identity(conn)
-
-        if ws_status["duplicate_groups"] == 0:
-            status.info("No duplicate workspaces found.")
-            conn.close()
-            return 0
-
-        status.info(
-            f"Found {ws_status['duplicate_groups']} groups with "
-            f"{ws_status['duplicate_workspaces']} workspaces sharing git remotes."
-        )
-
-        if args.dry_run:
-            print("\n[Dry run] Would merge the following workspaces:")
-
-        def on_merge_progress(msg):
-            print(msg)
-
-        merge_stats = merge_duplicate_workspaces(
-            conn, on_progress=on_merge_progress, dry_run=args.dry_run
-        )
-
-        if args.dry_run:
-            status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
-            status.info("Run without --dry-run to apply changes.")
-        else:
-            status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
-            status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
+        rc = _run_merge_workspaces(conn, dry_run=args.dry_run, verbose=args.verbose)
+        conn.close()
+        return rc
     else:
         # Show current status
         ws_status = verify_workspace_identity(conn)
