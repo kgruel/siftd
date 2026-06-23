@@ -105,6 +105,17 @@ class _PushProgress:
         self._bytes += size_bytes
         self._emit(terminal=True)
 
+    def done(self) -> None:
+        """All windows posted — emit the resolved (✓) frame.
+
+        Without this the last event a push emits is a ``window_done`` (status
+        ``progress``), so the bar deposited into scrollback resolves to a spinner
+        at 100% rather than a check — pull already emits its own done. The fields
+        match the final ``window_done`` (same index/total/tally), so the renderer
+        just swaps the glyph.
+        """
+        self._emit(terminal=True, status="done")
+
 
 def _is_http_remote(remote: SyncRemote) -> bool:
     """Check if remote uses HTTP transport (URL-based detection)."""
@@ -1016,6 +1027,8 @@ def _sync_push_http(
 
                 cursor_ts = win_before or now
                 update_last_push(remote.name, cursor_ts, filter_signature=current_sig)
+
+    progress.done()  # resolve the bar to ✓ now that every window has posted
 
     last_push_updated = should_update_cursor and total_conversations > 0
     return PushResult(

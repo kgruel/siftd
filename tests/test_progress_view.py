@@ -92,6 +92,33 @@ def test_bars_done_status_shows_ok_glyph():
     assert "✓" in _render(c._block())
 
 
+def test_done_renders_a_full_bar_and_ok_glyph_even_after_a_sweep():
+    # finding #2: push emits done after a bisection (total stays None). The
+    # resolved frame must be a full bar + ✓ — not a spinner stuck on a partial
+    # sweep window (the old final-frame deposited into scrollback).
+    c = ProgressConsumer(shape="bars", bar_width=20, label_width=8)
+    c.feed(ProgressEvent(group="windows", total=None))  # in-flight sweep
+    c.feed(ProgressEvent(group="windows", total=None, status="done"))  # resolved
+    text = _render(c._block())
+    assert "✓" in text
+    assert text.count("━") == 20  # a full bar, not a partial sweep window
+    assert "⠋" not in text  # no spinner on a resolved frame
+
+
+def test_determinate_in_flight_carries_the_shimmer_tier():
+    # The dc.html loading + sweep: an in-flight determinate bar gets the brighter
+    # metric_strong window over the dim metric fill (the theme is applied by the
+    # autouse fixture).
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    c = ProgressConsumer(shape="bars", bar_width=24, label_width=8)
+    c.feed(ProgressEvent(group="claude", index=12, total=24))
+    fgs = {cell.style.fg for row in c._block()._rows for cell in row}
+    assert ds.metric_strong.fg in fgs  # the shimmer window is present
+    assert ds.metric.fg in fgs  # riding the dim fill
+
+
 def test_bars_error_status_shows_error_glyph():
     c = ProgressConsumer(shape="bars")
     c.feed(ProgressEvent(group="x", index=1, total=4, status="error"))

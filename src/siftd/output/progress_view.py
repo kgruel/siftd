@@ -120,10 +120,10 @@ class ProgressConsumer:
         g.status = event.status
         if event.message is not None:
             g.message = event.message
-        # Indeterminate groups animate the sweep off the event stream itself;
-        # one tick per event keeps the window moving without a timer thread.
-        if g.total is None:
-            g.frame += 1
+        # The frame advances one tick per event (no timer thread). It drives both
+        # the indeterminate sweep (total is None) and the determinate shimmer (the
+        # brighter window riding a known-fraction bar).
+        g.frame += 1
         if self._live.active:
             self._live.update(self._block(), force=event.terminal)
 
@@ -180,28 +180,47 @@ class ProgressConsumer:
                 segments.append((f"{prefix}{key} ", None))
                 segments.append((str(value), ds.metric))
 
-            if g.status == "error":
-                glyph, gstyle = ic.error, pal.error
-            elif g.status in ("done", "skipped"):
-                glyph, gstyle = ic.ok, pal.success
-            else:
-                glyph, gstyle = spinner_glyph(), pal.accent
+            # The done/total count rides ahead of the tally on a determinate bar;
+            # an indeterminate (total is None) group has no honest denominator.
+            count = (f"{g.index or 0}/{g.total}", pal.muted) if g.total else None
+            lead = [count, ("  ", None)] if count else []
 
-            if g.total is None:
+            if g.status in ("done", "skipped"):
+                # A clean resolved frame for scrollback: a full bar with ✓, no
+                # shimmer and no sweep. push now emits done (it used to leave a
+                # spinner stuck at 100%); pull already did.
+                rows.append(bar_row(
+                    g.label, 1.0, label_width=label_width, bar_width=bar_width,
+                    segments=[*lead, *segments], glyph=ic.ok, glyph_style=pal.success,
+                    label_style=pal.muted, fill_style=ds.metric,
+                    filled_char="━", empty_char="─",
+                ))
+            elif g.total is None:
+                # Indeterminate: a solid window sweeping an empty track. An error
+                # freezes it with ✗; otherwise it animates with the spinner mark.
+                glyph, gstyle = (ic.error, pal.error) if g.status == "error" else (spinner_glyph(), pal.accent)
                 rows.append(sweep_row(
                     g.label, g.frame, label_width=label_width, bar_width=bar_width,
                     segments=segments, glyph=glyph, glyph_style=gstyle,
                     label_style=pal.muted, fill_style=ds.metric,
                     filled_char="━", empty_char="─",  # match the determinate thin rule
                 ))
-            else:
-                done = g.index or 0
-                frac = (done / g.total) if g.total else 0.0
-                count = (f"{done}/{g.total}", pal.muted)
+            elif g.status == "error":
+                # Determinate but failed: freeze the bare fill (no shimmer) with ✗.
                 rows.append(bar_row(
-                    g.label, frac, label_width=label_width, bar_width=bar_width,
-                    segments=[count, ("  ", None), *segments],
-                    glyph=glyph, glyph_style=gstyle, label_style=pal.muted,
+                    g.label, (g.index or 0) / g.total, label_width=label_width, bar_width=bar_width,
+                    segments=[*lead, *segments], glyph=ic.error, glyph_style=pal.error,
+                    label_style=pal.muted, fill_style=ds.metric,
+                    filled_char="━", empty_char="─",
+                ))
+            else:
+                # Determinate, in flight: the fill shows progress and the brighter
+                # shimmer window rides across it (the dc.html loading + sweep).
+                rows.append(bar_row(
+                    g.label, (g.index or 0) / g.total, label_width=label_width, bar_width=bar_width,
+                    segments=[*lead, *segments], glyph=spinner_glyph(), glyph_style=pal.accent,
+                    label_style=pal.muted, frame=g.frame, fill_style=ds.metric,
+                    empty_style=pal.muted, shimmer_style=ds.metric_strong,
                     filled_char="━", empty_char="─",  # a thin rule, not a full block
                 ))
         return join_vertical(*rows)

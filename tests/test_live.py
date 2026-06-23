@@ -226,6 +226,65 @@ def test_sweep_row_uses_given_fill_chars():
     assert "━" in text  # the lit window is drawn somewhere on the track
 
 
+def test_sweep_window_is_always_win_wide_and_toroidal():
+    # The heart of the finding-#1 fix: the lit window is exactly `win` cells at
+    # every frame — never the growing-from-the-left nub that read as a determinate
+    # fill. It wraps at the seam (toroidal) rather than shrinking off an edge.
+    from siftd.output.live import _sweep_window
+
+    width, win = 20, 5
+    for frame in range(2 * width):
+        assert len(_sweep_window(frame, width, win)) == win
+    near_seam = _sweep_window(width - 2, width, win)  # straddles both ends
+    assert 0 in near_seam and width - 1 in near_seam
+
+
+def test_sweep_row_lit_count_is_constant_across_frames():
+    # Row-level guard for finding #1: the count of lit cells never grows as the
+    # window enters (the old code lit 1, 2, 3… cells, reading as a fill).
+    counts = {
+        _render_plain(
+            sweep_row("x", f, label_width=2, bar_width=20, filled_char="━", empty_char="─")
+        ).count("━")
+        for f in range(12)
+    }
+    assert len(counts) == 1  # one constant lit-width across every frame
+
+
+def test_bar_row_shimmer_recolors_the_window_over_the_fill():
+    # The dc.html "loading + sweep": a brighter window (metric_strong) rides the
+    # determinate fill (metric) over an empty track (muted) — three distinct tiers,
+    # the window leading the fill at frame 0.
+    from painted import current_palette, use_theme
+
+    from siftd.output.theme import domain_styles, siftd_theme
+
+    with use_theme(siftd_theme):
+        ds, pal = domain_styles(), current_palette()
+        block = bar_row(
+            "ingest", 0.5, label_width=6, bar_width=24, frame=0,
+            fill_style=ds.metric, empty_style=pal.muted, shimmer_style=ds.metric_strong,
+            filled_char="━", empty_char="─",
+        )
+        fgs = [
+            cell.style.fg
+            for cell in block._rows[0]
+            if getattr(cell, "char", "") in ("━", "─")
+        ]
+    assert ds.metric_strong.fg in fgs  # the brighter window
+    assert ds.metric.fg in fgs  # the dim fill behind it
+    assert pal.muted.fg in fgs  # the empty track
+    assert fgs[0] == ds.metric_strong.fg  # the window leads the fill at frame 0
+
+
+def test_bar_row_without_shimmer_is_unchanged():
+    # The shimmer is strictly opt-in (needs both frame and shimmer_style); the
+    # plain path stays painted's progress_bar so existing consumers are untouched.
+    plain = _render_plain(bar_row("x", 0.5, label_width=2, bar_width=10, filled_char="━", empty_char="─"))
+    only_frame = _render_plain(bar_row("x", 0.5, label_width=2, bar_width=10, frame=3, filled_char="━", empty_char="─"))
+    assert plain == only_frame  # frame alone (no shimmer_style) changes nothing
+
+
 # --- helpers ---------------------------------------------------------------
 
 

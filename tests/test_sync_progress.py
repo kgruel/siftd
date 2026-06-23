@@ -83,6 +83,27 @@ class TestPushProgressAccumulator:
         p.start()          # swallows, disables the sink
         p.window_done(1, 1)  # no further calls, no raise
 
+    def test_done_emits_a_terminal_done_matching_the_final_window(self):
+        # finding #2: push must emit a resolved (done) frame so the bar deposited
+        # into scrollback shows ✓, not a spinner. The fields match the last
+        # window_done so the renderer only swaps the glyph.
+        seen: list[ProgressEvent] = []
+        p = _PushProgress(seen.append, windows_total=2)
+        p.window_done(5, 100)
+        p.window_done(3, 50)
+        p.done()
+        assert seen[-1].status == "done"
+        assert seen[-1].terminal is True
+        assert seen[-1].index == 2  # the last window's index
+        assert seen[-1].tally == {"conversations": 8, "bytes": 150}
+
+    def test_done_after_bisection_stays_indeterminate(self):
+        seen: list[ProgressEvent] = []
+        p = _PushProgress(seen.append, windows_total=3)
+        p.bisecting()
+        p.done()
+        assert seen[-1].status == "done" and seen[-1].total is None
+
 
 # --- sync_push loop-level emission -----------------------------------------
 
@@ -107,8 +128,9 @@ class TestSyncPushEmitsProgress:
 
         result = sync_push(_db(tmp_path), _remote(), on_progress=seen.append)
         assert result.conversations == 7
-        # start (index 0) then the window completing (index 1, with tally).
+        # start (index 0) → window completing (index 1) → done (the resolved ✓).
         assert seen[0].index == 0
+        assert seen[-1].status == "done"  # finding #2: push resolves the bar
         assert seen[-1].index == 1
         assert seen[-1].tally == {"conversations": 7, "bytes": 140}
         assert all(e.total == 1 for e in seen)  # no bisection → determinate
