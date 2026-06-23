@@ -21,13 +21,15 @@ This module owns the siftd POLICY painted has no concept of:
     ``force=True`` and always paint.
   - **cursor safety** — the cursor is restored even if the body raises.
 
-Two consumers share this policy, each owning its own block shape: ``ingest``
-(per-adapter progress bars) and ``doctor --fix`` (a spinner step-log). The
-shared substance is the InPlaceRenderer-driving policy, not the block shapes —
-so the row builders here (``bar_row`` / ``text_row``) are thin compositions of
-painted primitives (``progress_bar`` / ``Line``) the consumers fill in. The
-bars and glyphs inherit the ambient NORD palette + IconSet, so colour and
-ASCII degradation come for free.
+Consumers share this policy, each owning its own block shape: ``ingest``
+(per-adapter progress bars), ``doctor --fix`` (a spinner step-log), and the
+generic ``ProgressEvent`` consumer (``output.progress_view``, both shapes over
+the one contract). The shared substance is the InPlaceRenderer-driving policy,
+not the block shapes — so the row builders here (``bar_row`` for a determinate
+fraction, ``sweep_row`` for an indeterminate sweep, ``text_row`` for a step
+line) are thin compositions of painted primitives (``progress_bar`` / ``Line`` /
+``Cell``) the consumers fill in. The bars and glyphs inherit the ambient palette
++ IconSet, so colour and ASCII degradation come for free.
 """
 
 from __future__ import annotations
@@ -232,6 +234,72 @@ def bar_row(
     if glyph:
         trailing.append(Span("  ", plain))
         trailing.append(Span(glyph, glyph_style or plain))
+    trail_line = Line(spans=tuple(trailing))
+    parts.append(trail_line.to_block(trail_line.width))
+
+    return join_horizontal(*parts)
+
+
+def sweep_row(
+    label: str,
+    frame: int,
+    *,
+    label_width: int,
+    bar_width: int,
+    window: float = 0.24,
+    segments: list[tuple[str, Style | None]] | None = None,
+    glyph: str = "",
+    glyph_style: Style | None = None,
+    label_style: Style | None = None,
+    fill_style: Style | None = None,
+    track_style: Style | None = None,
+    filled_char: str | None = None,
+    empty_char: str | None = None,
+) -> Block:
+    """An *indeterminate* bar row: a lit window slides across an empty track.
+
+    The companion to ``bar_row`` for work whose total is unknown or growing
+    (``ProgressEvent.total is None`` — push's bisection). Where ``bar_row`` fills
+    from the left to a fraction, this draws a fixed-width lit window (``window``
+    of the bar) whose left edge advances with ``frame`` and wraps — the dc.html
+    panel-02 "sweep" treatment, frame-driven in scrollback (the steady event
+    stream ticks ``frame``). No percentage is shown; nothing here implies a known
+    denominator. Glyphs/segments mirror ``bar_row`` so the two read as siblings.
+    """
+    from painted import Block, Cell, Line, Span, Style, current_icons, current_palette, join_horizontal
+
+    pal_default = Style()
+    pal = current_palette()
+    ic = current_icons()
+    # Same colour logic as bar_row's accent-fill / muted-empty: the lit window
+    # rides the ambient palette by default; a consumer wanting the amber "gold"
+    # thread (the dc.html sweep) passes ``fill_style=domain_styles().metric``.
+    fill = fill_style or pal.accent
+    track = track_style or pal.muted
+    fill_ch = filled_char or ic.progress_fill
+    empty_ch = empty_char or ic.progress_empty
+
+    width = max(1, bar_width)
+    win = max(1, min(width, round(width * window)))
+    # The window's left edge sweeps 0 .. width (inclusive) then wraps, so it
+    # enters from the left and fully exits the right before re-entering.
+    span = width + win
+    start = frame % span - win  # may be negative while the window is entering
+    cells = [
+        Cell(fill_ch, fill) if start <= i < start + win else Cell(empty_ch, track)
+        for i in range(width)
+    ]
+    bar = Block([cells], width)
+
+    label_line = Line(spans=(Span(f"{label:<{label_width}}  ", label_style or pal_default),))
+    parts = [label_line.to_block(label_line.width), bar]
+
+    trailing: list[Span] = [Span("  ", pal_default)]
+    for text, style in segments or []:
+        trailing.append(Span(text, style or pal_default))
+    if glyph:
+        trailing.append(Span("  ", pal_default))
+        trailing.append(Span(glyph, glyph_style or pal_default))
     trail_line = Line(spans=tuple(trailing))
     parts.append(trail_line.to_block(trail_line.width))
 

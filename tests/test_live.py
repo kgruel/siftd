@@ -12,7 +12,7 @@ import io
 
 import pytest
 
-from siftd.output.live import LiveRegion, bar_row, spinner_glyph, text_row
+from siftd.output.live import LiveRegion, bar_row, spinner_glyph, sweep_row, text_row
 
 
 class _FakeTTY(io.StringIO):
@@ -197,6 +197,33 @@ def test_bar_row_degrades_to_ascii_under_ascii_icons():
         block = bar_row("x", 1.0, label_width=2, bar_width=6)
     text = _render_plain(block)
     assert "█" not in text and "░" not in text  # no Unicode bar glyphs
+
+
+# --- the sweep row (indeterminate bar) -------------------------------------
+
+
+def test_sweep_row_is_one_line_with_label_and_glyph():
+    block = sweep_row(
+        "windows", 3, label_width=8, bar_width=12,
+        segments=[("conversations ", None), ("30", None)], glyph="OK",
+    )
+    assert block.height == 1
+    text = _render_plain(block)
+    assert "windows" in text and "conversations" in text and "OK" in text
+
+
+def test_sweep_row_window_moves_with_frame():
+    # The lit window's column position changes between frames — that is the sweep.
+    a = _render_plain(sweep_row("x", 0, label_width=2, bar_width=20))
+    b = _render_plain(sweep_row("x", 6, label_width=2, bar_width=20))
+    assert a != b
+
+
+def test_sweep_row_uses_given_fill_chars():
+    block = sweep_row("x", 5, label_width=2, bar_width=20, filled_char="━", empty_char="─")
+    text = _render_plain(block)
+    assert "█" not in text and "░" not in text  # honored the thin-rule override
+    assert "━" in text  # the lit window is drawn somewhere on the track
 
 
 # --- helpers ---------------------------------------------------------------

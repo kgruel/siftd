@@ -9,6 +9,7 @@ from .models import (
     ToolCall,
     Usage,
 )
+from .progress import ProgressEvent, ProgressSink
 from .search_types import (
     ConversationSearchSummary,
     ScoreBreakdown,
@@ -32,6 +33,9 @@ __all__ = [
     "Usage",
     # Source
     "Source",
+    # Progress
+    "ProgressEvent",
+    "ProgressSink",
     # Search
     "ScoreBreakdown",
     "SearchChunk",
