@@ -174,7 +174,7 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
     from siftd.output.listing import print_definitions, print_heading
 
     if args.dry_run:
-        print_heading("[dry run] install plan")
+        print_heading("[Dry run] Install plan")
         rows = [("Detected", method_label), ("Would run", cmd_str)]
         if cwd:
             rows.append(("In directory", str(cwd)))
@@ -354,7 +354,7 @@ def _install_skill(args) -> int:
         if args.dry_run:
             from siftd.output.listing import print_definitions, print_heading
 
-            print_heading("[dry run] skill install plan")
+            print_heading("[Dry run] Skill install plan")
             print_definitions([
                 ("Harness", info["display_name"]),
                 ("Source", str(skill_source)),
@@ -400,7 +400,7 @@ def _install_skill(args) -> int:
         if args.dry_run:
             from siftd.output.listing import print_definitions, print_heading
 
-            print_heading("[dry run] instructions install plan")
+            print_heading("[Dry run] Instructions install plan")
             print_definitions([
                 ("Harness", info["display_name"]),
                 ("Target", str(target)),
@@ -438,7 +438,7 @@ def _install_plugin(args) -> int:
     if args.dry_run:
         from siftd.output.listing import print_definitions, print_heading
 
-        print_heading("[dry run] plugin install plan")
+        print_heading("[Dry run] Plugin install plan")
         print_definitions([
             ("Source", str(source_path)),
             ("Target", str(target)),

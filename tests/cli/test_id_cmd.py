@@ -113,9 +113,9 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "conversation" in output
+        assert "Conversation" in output
         assert c[:8] in output
-        assert "workspace" in output
+        assert "Workspace" in output
         assert "siftd query" in output
 
     def test_prompt_event_classification(self, id_test_db, capsys):
@@ -125,10 +125,10 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "event" in output
+        assert "Event" in output
         assert p[:8] in output
-        assert "conversation" in output
-        assert "turn" in output
+        assert "Conversation" in output
+        assert "Turn" in output
         assert "siftd query" in output
 
     def test_response_event_classification(self, id_test_db, capsys):
@@ -138,10 +138,10 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "event" in output
+        assert "Event" in output
         assert r[:8] in output
-        assert "conversation" in output
-        assert "turn" in output
+        assert "Conversation" in output
+        assert "Turn" in output
         assert "siftd query" in output
 
     def test_tool_call_event_classification(self, id_test_db, capsys):
@@ -151,9 +151,9 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "event" in output
+        assert "Event" in output
         assert tc[:8] in output
-        assert "turn" in output
+        assert "Turn" in output
 
     def test_conversation_prefix_classification(self, id_test_db, capsys):
         """siftd id <conversation_prefix> classifies as conversation."""
@@ -162,7 +162,7 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "conversation" in output
+        assert "Conversation" in output
         assert c[:8] in output
 
     def test_event_prefix_classification(self, id_test_db, capsys):
@@ -172,7 +172,7 @@ class TestIdClassification:
         assert rc == 0
 
         output = capsys.readouterr().out
-        assert "event" in output
+        assert "Event" in output
         assert r[:8] in output
 
     def test_unknown_id_returns_error(self, id_test_db):

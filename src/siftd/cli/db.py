@@ -18,7 +18,7 @@ from pathlib import Path
 
 from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
-from siftd.output import status
+from siftd.output import fmt_count, status
 
 
 def _database_artifacts(db_path: Path) -> list[Path]:
@@ -81,11 +81,11 @@ def cmd_db_info(args) -> int:
             "Path": str(db),
             "Size": [
                 (f"{size_bytes / 1024:.1f} KB (", None),
-                (f"{size_bytes:,}", ds.metric),
+                (fmt_count(size_bytes), ds.metric),
                 (" bytes)", None),
             ],
-            "Page size": [(f"{page_size:,}", ds.metric), (" bytes", None)],
-            "Page count": [(f"{page_count:,}", ds.metric)],
+            "Page size": [(fmt_count(page_size), ds.metric), (" bytes", None)],
+            "Page count": [(fmt_count(page_count), ds.metric)],
             "Journal mode": journal_mode,
             "Schema version": str(user_version),
             "FTS5 index": "yes" if fts_exists else "no",
@@ -316,10 +316,10 @@ def cmd_db_restore(args) -> int:
         # None is the all-clear ✓; a downgrade earns a warning-coloured ⚠.
         glyph, glyph_style = severity_mark("warning" if downgrade else None, as_ascii=as_ascii)
         count_rows = [
-            [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+            [tbl, fmt_count(src_counts.get(tbl, 0)), fmt_count(tgt_counts.get(tbl, 0))]
             for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
         ]
-        print_heading("[dry run] restore preview")
+        print_heading("[Dry run] Restore preview")
         print_definitions([
             ("Source", str(source)),
             ("Target", str(db)),
@@ -437,7 +437,7 @@ def cmd_db_merge(args) -> int:
         status.error(f"Merge failed: {e}")
         return 1
 
-    prefix = "[dry run] " if dry_run else ""
+    prefix = "[Dry run] " if dry_run else ""
     status.confirm(f"{prefix}Merged from: {source}")
     conv_parts = [f"{result['conversations']} new"]
     if result["replaced_conversations"]:
@@ -545,10 +545,10 @@ def cmd_db_receive(args) -> int:
             ok_glyph, ok_style = severity_mark(None, as_ascii=as_ascii)  # all-clear ✓
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
             count_rows = [
-                [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+                [tbl, fmt_count(src_counts.get(tbl, 0)), fmt_count(tgt_counts.get(tbl, 0))]
                 for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
             ]
-            print_heading("[dry run] receive preview")
+            print_heading("[Dry run] Receive preview")
             print_definitions([
                 ("Target", target_state),
                 ("Preflight", [(ok_glyph, ok_style), (" ok", None)]),

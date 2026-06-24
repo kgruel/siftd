@@ -2,6 +2,7 @@
 
 from siftd.output.common import (
     fmt_ago,
+    fmt_count,
     fmt_model,
     fmt_timestamp,
     fmt_tokens,
@@ -19,6 +20,7 @@ from siftd.output.table import (
 )
 
 __all__ = [
+    "fmt_count",
     "fmt_tokens",
     "fmt_workspace",
     "fmt_ago",

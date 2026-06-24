@@ -24,7 +24,7 @@ class TestShow:
         cid = _first_conv_id(test_db)
         rc = main(["--db", str(test_db), "show", cid, "--summary"])
         assert rc == 0
-        assert "Conversation:" in capsys.readouterr().out
+        assert "Conversation" in capsys.readouterr().out
 
     def test_show_full_conversation(self, test_db, capsys):
         cid = _first_conv_id(test_db)
@@ -38,7 +38,7 @@ class TestShow:
         cid = _first_conv_id(test_db)
         rc = main(["--db", str(test_db), "show", cid[:12], "--summary"])
         assert rc == 0
-        assert "Conversation:" in capsys.readouterr().out
+        assert "Conversation" in capsys.readouterr().out
 
     def test_show_not_found(self, test_db, capsys):
         cid = _first_conv_id(test_db)

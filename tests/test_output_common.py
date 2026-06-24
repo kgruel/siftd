@@ -288,8 +288,8 @@ def test_print_refs_content_filter(capsys):
 def test_print_refs_content_filter_no_match(capsys):
     refs = [FakeRef("a.py", "/a.py", "r", content="aaa")]
     print_refs_content(refs, filter_basenames=["missing.py"])
-    out = capsys.readouterr().out
-    assert "No file references matching" in out
+    # The empty-state routes through status.info → stderr.
+    assert "No file references matching" in capsys.readouterr().err
 
 
 # --- split_match_segments (the painted-free FTS marker splitter) ---

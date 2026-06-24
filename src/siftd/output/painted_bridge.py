@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.output._id_format import short_id
 from siftd.output.common import (
+    fmt_count,
     fmt_timestamp,
     fmt_tokens,
     fmt_workspace,
@@ -460,8 +461,8 @@ def render_narrative_block(
     Delegates to walk_narrative() for fidelity gating (what to show),
     PaintedEmitter for rendering (how to show it).
     """
-    from siftd.output.narrative import walk_narrative
     from siftd.output.theme import domain_styles
+    from siftd.serialization.narrative import walk_narrative
 
     ds = domain_styles(fidelity)
     effective_tool_chars = tool_chars or _tool_density(fidelity)
@@ -545,14 +546,14 @@ def conversation_header_pairs(detail, ds: DomainStyles) -> list[tuple[str, list[
     total_tokens = detail.total_input_tokens + detail.total_output_tokens
 
     header_pairs: list[tuple[str, list[tuple[str, Style]]]] = [
-        ("Conversation:", [(detail.id, ds.identifier)]),
+        ("Conversation", [(detail.id, ds.identifier)]),
     ]
     if ws_name:
-        header_pairs.append(("Workspace:", [(ws_name, ds.workspace)]))
-    header_pairs.append(("Started:", [(started, ds.temporal)]))
-    header_pairs.append(("Model:", [(detail.model or "unknown", ds.model)]))
+        header_pairs.append(("Workspace", [(ws_name, ds.workspace)]))
+    header_pairs.append(("Started", [(started, ds.temporal)]))
+    header_pairs.append(("Model", [(detail.model or "unknown", ds.model)]))
     header_pairs.append((
-        "Tokens:",
+        "Tokens",
         [
             (fmt_tokens(total_tokens), ds.metric_strong),
             (
@@ -562,7 +563,7 @@ def conversation_header_pairs(detail, ds: DomainStyles) -> list[tuple[str, list[
         ],
     ))
     if detail.tags:
-        header_pairs.append(("Tags:", [(", ".join(detail.tags), ds.tag)]))
+        header_pairs.append(("Tags", [(", ".join(detail.tags), ds.tag)]))
     return header_pairs
 
 
@@ -579,8 +580,8 @@ def render_conversation_summary_block(detail, *, fidelity: Fidelity) -> Block:
 
     ds = domain_styles(fidelity)
     pairs = conversation_header_pairs(detail, ds)
-    pairs.append(("Turns:", [(str(len(detail.turns)), ds.metric)]))
-    return definitions(pairs, indent=0, label_style=ds.temporal)
+    pairs.append(("Turns", [(fmt_count(len(detail.turns)), ds.metric)]))
+    return definitions(pairs, indent=0)
 
 
 def render_query_detail_block(
@@ -600,7 +601,7 @@ def render_query_detail_block(
     parts: list[Block] = []
 
     header_pairs = conversation_header_pairs(detail, ds)
-    parts.append(definitions(header_pairs, indent=0, label_style=ds.temporal))
+    parts.append(definitions(header_pairs, indent=0))
     parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
@@ -679,21 +680,21 @@ def render_peek_detail_block(
         exchanges_text = f"{shown_exchanges} shown / {total_exchanges} total"
 
     header_pairs: list[tuple[str, list[tuple[str, Style]]]] = [
-        ("Session:", [(info.session_id, ds.identifier)]),
+        ("Session", [(info.session_id, ds.identifier)]),
     ]
     if ws_name:
-        header_pairs.append(("Workspace:", [(ws_name, ds.workspace)]))
+        header_pairs.append(("Workspace", [(ws_name, ds.workspace)]))
     if started:
-        header_pairs.append(("Started:", [(started, ds.temporal)]))
+        header_pairs.append(("Started", [(started, ds.temporal)]))
     if last_activity:
-        header_pairs.append(("Last activity:", [(last_activity, ds.temporal)]))
-    header_pairs.append(("Model:", [(info.model or "unknown", ds.model)]))
-    header_pairs.append(("Adapter:", [(info.adapter_name or "unknown", ds.adapter)]))
-    header_pairs.append(("Exchanges:", [(exchanges_text, ds.metric)]))
+        header_pairs.append(("Last activity", [(last_activity, ds.temporal)]))
+    header_pairs.append(("Model", [(info.model or "unknown", ds.model)]))
+    header_pairs.append(("Adapter", [(info.adapter_name or "unknown", ds.adapter)]))
+    header_pairs.append(("Exchanges", [(exchanges_text, ds.metric)]))
     if getattr(info, "parent_session_id", None):
-        header_pairs.append(("Parent:", [(info.parent_session_id, ds.identifier)]))
-    header_pairs.append(("File:", [(str(info.file_path), ds.workspace)]))
-    parts.append(definitions(header_pairs, indent=0, label_style=ds.temporal))
+        header_pairs.append(("Parent", [(info.parent_session_id, ds.identifier)]))
+    header_pairs.append(("File", [(str(info.file_path), ds.workspace)]))
+    parts.append(definitions(header_pairs, indent=0))
     parts.append(_blank_block())
 
     width, ascii_mode = _body_render_ctx()
@@ -912,13 +913,13 @@ def render_list_block(
     if depth >= 1:
         cols.extend([
             Col("model", lambda c: fmt_model(c.model) if c.model else "", style=ds.model),
-            Col("turns", lambda c: str(c.prompt_count), style=ds.metric, align=Align.END),
+            Col("turns", lambda c: fmt_count(c.prompt_count), style=ds.metric, align=Align.END),
             Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=ds.metric, align=Align.END),
         ])
     if depth >= 3:
         cols.extend([
             Col("cost", lambda c: _fmt_cost(c), style=ds.metric, align=Align.END),
-            Col("responses", lambda c: str(c.response_count), style=ds.metric, align=Align.END),
+            Col("responses", lambda c: fmt_count(c.response_count), style=ds.metric, align=Align.END),
             Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=ds.tag),
         ])
 

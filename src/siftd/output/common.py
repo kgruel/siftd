@@ -136,6 +136,17 @@ def fmt_tokens(n: int) -> str:
     return str(n)
 
 
+def fmt_count(n: int) -> str:
+    """Format an exact integer for display with digit grouping: 46590 -> '46,590'.
+
+    The house formatter for user-facing counts (conversations, files, row counts)
+    — the exact-count sibling of ``fmt_tokens`` (which abbreviates to k/M/B). One
+    point of control so every count reads the same; small values are unaffected
+    (``fmt_count(5) == '5'``).
+    """
+    return f"{n:,}"
+
+
 def fmt_workspace(path: str | None) -> str:
     """Format workspace path for display. Shows (root) for root/empty paths."""
     if path is None:
@@ -291,7 +302,11 @@ def print_refs_content(
         unique = [r for r in unique if r.basename.lower() in filter_set]
         if not unique:
             names = ", ".join(filter_basenames)
-            print(f"No file references matching: {names}")
+            # Lazy import: output.status imports from this module, so a top-level
+            # import would cycle. By call time both modules are fully loaded.
+            from siftd.output import status
+
+            status.info(f"No file references matching: {names}")
             return
 
     op_labels = {"r": "read", "w": "write", "e": "edit"}

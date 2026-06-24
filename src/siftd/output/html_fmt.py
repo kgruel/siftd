@@ -179,7 +179,8 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         no_header: bool
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens
-    from siftd.output.narrative import HtmlEmitter, walk_narrative
+    from siftd.output.narrative import HtmlEmitter
+    from siftd.serialization.narrative import walk_narrative
 
     if hasattr(result, "turns"):
         detail = result
@@ -1003,7 +1004,8 @@ def _render_turn_blocks(
     each entry {id, name, target, status, turn} anchors a body ``.tool-call``).
     """
     from siftd.output.common import fmt_timestamp
-    from siftd.output.narrative import HtmlEmitter, walk_narrative
+    from siftd.output.narrative import HtmlEmitter
+    from siftd.serialization.narrative import walk_narrative
 
     trace = mode == "trace"
 

@@ -394,7 +394,7 @@ def test_cli_dry_run(tmp_path, capsys):
     assert rc == 0
 
     out = capsys.readouterr().out
-    assert "[dry run]" in out
+    assert "[Dry run]" in out
 
     conn = sqlite3.connect(str(target))
     count = conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0]

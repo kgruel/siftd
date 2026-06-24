@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from siftd.api import open_database
 from siftd.cli._common import resolve_db
-from siftd.output import fmt_model, fmt_workspace, status
+from siftd.output import fmt_count, fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
@@ -228,10 +228,10 @@ class _IngestTextRenderer:
     @staticmethod
     def _format_totals_line(stats: IngestStats) -> str:
         return (
-            f"{stats.conversations:,} conversations"
-            f"  {stats.prompts:,} prompts"
-            f"  {stats.responses:,} responses"
-            f"  {stats.tool_calls:,} tool_calls"
+            f"{fmt_count(stats.conversations)} conversations"
+            f"  {fmt_count(stats.prompts)} prompts"
+            f"  {fmt_count(stats.responses)} responses"
+            f"  {fmt_count(stats.tool_calls)} tool_calls"
         )
 
     def _format_line(self, event: IngestEvent) -> str:
@@ -508,7 +508,7 @@ def cmd_backfill(args) -> int:
             ds = domain_styles()
             print_heading(f"Tagged {total} tool calls")
             print_definitions(
-                (f"shell:{category}", [(str(count), ds.metric)])
+                (f"shell:{category}", [(fmt_count(count), ds.metric)])
                 for category, count in sorted(counts.items(), key=lambda x: -x[1])
             )
         else:
@@ -545,11 +545,11 @@ def cmd_backfill(args) -> int:
 
         ds = domain_styles()
         rows = [
-            ("Filtered", [(str(result.filtered), ds.metric)]),
-            ("Skipped (no change)", [(str(result.skipped), ds.metric)]),
+            ("Filtered", [(fmt_count(result.filtered), ds.metric)]),
+            ("Skipped (no change)", [(fmt_count(result.skipped), ds.metric)]),
         ]
         if result.errors:
-            rows.append(("Errors", [(str(result.errors), ds.metric)]))
+            rows.append(("Errors", [(fmt_count(result.errors), ds.metric)]))
         print_definitions(rows)
         if dry_run and result.filtered:
             status.info("Run without --dry-run to apply changes.")
@@ -574,10 +574,10 @@ def cmd_backfill(args) -> int:
 
             ds = domain_styles()
             print_definitions([
-                ("Checked", [(str(stats["checked"]), ds.metric)]),
-                ("Updated", [(str(stats["updated"]), ds.metric)]),
-                ("Skipped (path missing)", [(str(stats["skipped_missing"]), ds.metric)]),
-                ("Skipped (no git remote)", [(str(stats["skipped_no_git"]), ds.metric)]),
+                ("Checked", [(fmt_count(stats["checked"]), ds.metric)]),
+                ("Updated", [(fmt_count(stats["updated"]), ds.metric)]),
+                ("Skipped (path missing)", [(fmt_count(stats["skipped_missing"]), ds.metric)]),
+                ("Skipped (no git remote)", [(fmt_count(stats["skipped_no_git"]), ds.metric)]),
             ])
             if dry_run and stats["updated"]:
                 status.info("Run without --dry-run to apply changes.")
@@ -692,10 +692,10 @@ def _run_merge_workspaces_plain(
             print(event.message)
 
     stats = backfill(conn, on_progress=on_backfill_progress, group=backfill_group, dry_run=dry_run)
-    print(f"  Checked: {stats['checked']}")
-    print(f"  Updated: {stats['updated']}")
-    print(f"  Skipped (path missing): {stats['skipped_missing']}")
-    print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+    print(f"  Checked: {fmt_count(stats['checked'])}")
+    print(f"  Updated: {fmt_count(stats['updated'])}")
+    print(f"  Skipped (path missing): {fmt_count(stats['skipped_missing'])}")
+    print(f"  Skipped (no git remote): {fmt_count(stats['skipped_no_git'])}")
 
     # Step 2: Find and optionally merge duplicates
     print("\nStep 2: Finding duplicate workspaces...")
@@ -753,15 +753,15 @@ def cmd_migrate(args) -> int:
         ds = domain_styles()
         print_heading("Workspace identity status")
         rows = [
-            ("Total workspaces", [(str(ws_status["total"]), ds.metric)]),
-            ("With git remote", [(str(ws_status["with_remote"]), ds.metric)]),
-            ("Without git remote", [(str(ws_status["without_remote"]), ds.metric)]),
+            ("Total workspaces", [(fmt_count(ws_status["total"]), ds.metric)]),
+            ("With git remote", [(fmt_count(ws_status["with_remote"]), ds.metric)]),
+            ("Without git remote", [(fmt_count(ws_status["without_remote"]), ds.metric)]),
         ]
         if ws_status["duplicate_groups"] > 0:
             rows.append((
                 "Duplicate groups",
                 [
-                    (str(ws_status["duplicate_groups"]), ds.metric),
+                    (fmt_count(ws_status["duplicate_groups"]), ds.metric),
                     (f" ({ws_status['duplicate_workspaces']} workspaces)", None),
                 ],
             ))
@@ -1026,7 +1026,7 @@ def _doctor_fix(args) -> int:
         conn.close()
         return 0
 
-    print(f"Applying {len(actionable)} fix(es):\n")
+    print(f"Applying {fmt_count(len(actionable))} fix(es):\n")
 
     steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
     errors = _run_fix_steps(steps, conn, db)
@@ -1229,7 +1229,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     if not findings:
-        print("No issues found.")
+        status.info("No issues found.")
         return 0
 
     findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
@@ -1246,7 +1246,10 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     warning_count = sum(1 for f in findings if f.severity == "warning")
     info_count = sum(1 for f in findings if f.severity == "info")
     print()
-    print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
+    print(
+        f"Found {fmt_count(len(findings))} issue(s): {fmt_count(error_count)} error, "
+        f"{fmt_count(warning_count)} warning, {fmt_count(info_count)} info"
+    )
 
     if show_fixes:
         fixable = [f for f in findings if f.fix_available and f.fix_command]

@@ -16,7 +16,7 @@ from siftd.api import (
 from siftd.api.sessions import is_session_registered
 from siftd.api.sessions import queue_tag as queue_pending_tag
 from siftd.cli._common import print_ambiguous_error, resolve_db
-from siftd.output import status
+from siftd.output import fmt_count, status
 from siftd.output._id_format import short_id
 from siftd.paths import ensure_dirs, session_id_file
 
@@ -225,7 +225,7 @@ def _cmd_tag_list(args, db: Path) -> int:
 
         from siftd.output.format_registry import select_format
 
-        print(f"Conversations tagged '{tag_name}' (showing {len(conversations)}):")
+        print(f"Conversations tagged '{tag_name}' (showing {fmt_count(len(conversations))}):")
         fmt = select_format(
             json_mode=getattr(args, "json", False),
             is_tty=sys.stdout.isatty(),
@@ -309,17 +309,17 @@ def _cmd_tag_list(args, db: Path) -> int:
     for tag in tags:
         counts = []
         if tag.conversation_count:
-            counts.append(f"{tag.conversation_count} conversations")
+            counts.append(f"{fmt_count(tag.conversation_count)} conversations")
         if tag.workspace_count:
-            counts.append(f"{tag.workspace_count} workspaces")
+            counts.append(f"{fmt_count(tag.workspace_count)} workspaces")
         if tag.tool_call_count:
-            counts.append(f"{tag.tool_call_count} tool_calls")
+            counts.append(f"{fmt_count(tag.tool_call_count)} tool_calls")
         if tag.exchange_count:
-            counts.append(f"{tag.exchange_count} exchanges")
+            counts.append(f"{fmt_count(tag.exchange_count)} exchanges")
         if tag.prompt_count:
-            counts.append(f"{tag.prompt_count} prompts")
+            counts.append(f"{fmt_count(tag.prompt_count)} prompts")
         if tag.response_count:
-            counts.append(f"{tag.response_count} responses")
+            counts.append(f"{fmt_count(tag.response_count)} responses")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
         print(f"  {tag.name}{desc}{count_str}")
@@ -388,9 +388,9 @@ def _cmd_tag_list_by_workspace(args, db: Path) -> int:
         return 0
 
     for ws_data in workspaces:
-        print(f"{ws_data['workspace']} ({ws_data['total']} total)")
+        print(f"{ws_data['workspace']} ({fmt_count(ws_data['total'])} total)")
         for tag in ws_data["tags"]:
-            print(f"  {tag['name']} ({tag['count']} {tag['target_kind']}s)")
+            print(f"  {tag['name']} ({fmt_count(tag['count'])} {tag['target_kind']}s)")
         print()
 
     return 0
@@ -528,17 +528,17 @@ def _cmd_tag_delete(args, db: Path) -> int:
     if total_associations > 0 and not force:
         parts = []
         if tag_info.conversation_count:
-            parts.append(f"{tag_info.conversation_count} conversations")
+            parts.append(f"{fmt_count(tag_info.conversation_count)} conversations")
         if tag_info.workspace_count:
-            parts.append(f"{tag_info.workspace_count} workspaces")
+            parts.append(f"{fmt_count(tag_info.workspace_count)} workspaces")
         if tag_info.tool_call_count:
-            parts.append(f"{tag_info.tool_call_count} tool_calls")
+            parts.append(f"{fmt_count(tag_info.tool_call_count)} tool_calls")
         if tag_info.exchange_count:
-            parts.append(f"{tag_info.exchange_count} exchanges")
+            parts.append(f"{fmt_count(tag_info.exchange_count)} exchanges")
         if tag_info.prompt_count:
-            parts.append(f"{tag_info.prompt_count} prompts")
+            parts.append(f"{fmt_count(tag_info.prompt_count)} prompts")
         if tag_info.response_count:
-            parts.append(f"{tag_info.response_count} responses")
+            parts.append(f"{fmt_count(tag_info.response_count)} responses")
         status.error(
             f"Tag '{tag_name}' is applied to {', '.join(parts)}.",
             hint="Use --force to delete.",
@@ -557,17 +557,17 @@ def _cmd_tag_delete(args, db: Path) -> int:
         return 1
     parts = []
     if tag_info.conversation_count:
-        parts.append(f"{tag_info.conversation_count} conversations")
+        parts.append(f"{fmt_count(tag_info.conversation_count)} conversations")
     if tag_info.workspace_count:
-        parts.append(f"{tag_info.workspace_count} workspaces")
+        parts.append(f"{fmt_count(tag_info.workspace_count)} workspaces")
     if tag_info.tool_call_count:
-        parts.append(f"{tag_info.tool_call_count} tool_calls")
+        parts.append(f"{fmt_count(tag_info.tool_call_count)} tool_calls")
     if tag_info.exchange_count:
-        parts.append(f"{tag_info.exchange_count} exchanges")
+        parts.append(f"{fmt_count(tag_info.exchange_count)} exchanges")
     if tag_info.prompt_count:
-        parts.append(f"{tag_info.prompt_count} prompts")
+        parts.append(f"{fmt_count(tag_info.prompt_count)} prompts")
     if tag_info.response_count:
-        parts.append(f"{tag_info.response_count} responses")
+        parts.append(f"{fmt_count(tag_info.response_count)} responses")
     if parts:
         status.confirm(f"Deleted tag '{tag_name}' (was applied to {', '.join(parts)})")
     else:
