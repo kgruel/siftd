@@ -736,10 +736,10 @@ def _run_merge_workspaces_plain(
             print(event.message)
 
     stats = backfill(conn, on_progress=on_backfill_progress, group=backfill_group, dry_run=dry_run)
-    print(f"  Checked: {stats['checked']}")
-    print(f"  Updated: {stats['updated']}")
-    print(f"  Skipped (path missing): {stats['skipped_missing']}")
-    print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+    print(f"  Checked: {fmt_count(stats['checked'])}")
+    print(f"  Updated: {fmt_count(stats['updated'])}")
+    print(f"  Skipped (path missing): {fmt_count(stats['skipped_missing'])}")
+    print(f"  Skipped (no git remote): {fmt_count(stats['skipped_no_git'])}")
 
     # Step 2: Find and optionally merge duplicates
     print("\nStep 2: Finding duplicate workspaces...")
@@ -1084,7 +1084,7 @@ def _doctor_fix(args) -> int:
         conn.close()
         return 0
 
-    print(f"Applying {len(actionable)} fix(es):\n")
+    print(f"Applying {fmt_count(len(actionable))} fix(es):\n")
 
     steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
     errors = _run_fix_steps(steps, conn, db)
@@ -1304,7 +1304,10 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     warning_count = sum(1 for f in findings if f.severity == "warning")
     info_count = sum(1 for f in findings if f.severity == "info")
     print()
-    print(f"Found {len(findings)} issue(s): {error_count} error, {warning_count} warning, {info_count} info")
+    print(
+        f"Found {fmt_count(len(findings))} issue(s): {fmt_count(error_count)} error, "
+        f"{fmt_count(warning_count)} warning, {fmt_count(info_count)} info"
+    )
 
     if show_fixes:
         fixable = [f for f in findings if f.fix_available and f.fix_command]

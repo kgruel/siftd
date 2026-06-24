@@ -105,9 +105,9 @@ def _query_event_detail(args, *, conn=None) -> int:
         return 0
 
     # Compact text rendering — keep it minimal; agents will use --json. The themed
-    # key:value listing: event/conversation ids ride ds.identifier, the token line
-    # rides the amber metric thread, counts ride ds.metric. label_style=ds.temporal
-    # matches the conversation-detail header so the two reads are one family.
+    # listing: event/conversation ids ride ds.identifier, the token line rides the
+    # amber metric thread, counts ride ds.metric. Colon-free accent labels via the
+    # definitions() house style — the same the conversation-detail header uses.
     from siftd.output.listing import print_definitions
     from siftd.output.theme import domain_styles
 
