@@ -63,7 +63,8 @@ def make_args(**kwargs):
         "context": None,
         "select": "all",
         "sort": "score",
-        "mode": "chunks",
+        "mode": "auto",
+        "view": "chunks",
         "workspace": None,
         "model": None,
         "since": None,
@@ -176,12 +177,12 @@ class TestSearchSearch:
         assert "A search query is required" in captured.err
 
     def test_missing_embed_db_shows_hint(self, populated_db, tmp_path, capsys):
-        """Missing embeddings database shows helpful message when --semantic used."""
+        """Missing embeddings database shows helpful message when --mode=semantic used."""
         args = make_args(
             query=["test"],
             db=str(populated_db["db_path"]),
             embed_db=str(tmp_path / "nonexistent_embed.db"),
-            semantic=True,  # Explicitly request semantic mode to trigger error
+            mode="semantic",  # Explicitly request the semantic engine to trigger the error
         )
 
         result = cmd_search(args)
@@ -203,8 +204,8 @@ class TestSearchSearch:
         captured = capsys.readouterr()
 
         assert result == 1
-        assert "Database not found" in captured.out
-        assert "ingest" in captured.out
+        assert "Database not found" in captured.err
+        assert "ingest" in captured.err
 
 
 class TestSearchFilters:
@@ -315,18 +316,28 @@ class TestSearchServeDelegation:
         # Force delegation eligibility regardless of DB path checks.
         monkeypatch.setattr("siftd.cli.search._can_delegate_to_serve", lambda *a, **k: True)
 
-        fake_results = [
-            {
-                "chunk_id": "01HXFAKECHUNK000000000000",
-                "conversation_id": indexed_db["conv1_id"],
-                "chunk_type": "exchange",
-                "text": "delegated result",
-                "score": 0.9,
-                "source_ids": [],
-                "breakdown": None,
-            }
-        ]
-        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda *a, **k: fake_results)
+        # try_serve returns the serve_fmt wire-SearchView envelope (the CLI
+        # reconstructs a SearchView from it via from_wire), not a bare chunk list.
+        fake_body = {
+            "view": "chunks",
+            "n_skipped": 0,
+            "empty_reason": None,
+            "result_count": 1,
+            "results": [
+                {
+                    "chunk_id": "01HXFAKECHUNK000000000000",
+                    "conversation_id": indexed_db["conv1_id"],
+                    "chunk_type": "exchange",
+                    "display_label": "",
+                    "text": "delegated result",
+                    "score": 0.9,
+                    "conversation": {"started_at": None, "workspace": None},
+                    "source_ids": [],
+                    "turn_index": None,
+                }
+            ],
+        }
+        monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda *a, **k: fake_body)
 
         # If local semantic path is used, this would be called.
         import siftd.embeddings as embeddings
@@ -459,20 +470,20 @@ class TestSearchFlagValidation:
         assert "--refs is not supported with --json" in captured.err
 
     def test_json_with_thread_warns_but_succeeds(self, indexed_db, capsys):
-        """--json with --mode=thread warns to stderr but outputs valid JSON."""
+        """--json with --view=thread warns to stderr but outputs valid JSON."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
             json=True,
-            mode="thread",
+            view="thread",
         )
 
         result = cmd_search(args)
         captured = capsys.readouterr()
 
         assert result == 0
-        assert "--mode=thread is ignored with --json output" in captured.err
+        assert "--view=thread is ignored with --json output" in captured.err
         # Output should still be valid JSON
         import json
         data = json.loads(captured.out)
@@ -644,7 +655,7 @@ class TestSearchThreadMode:
         return {"db_path": db_path, "embed_db_path": embed_db_path}
 
     def test_thread_mode_returns_more_than_limit(self, multi_chunk_db, capsys):
-        """--mode=thread should not trim results to --limit.
+        """--view=thread should not trim results to --limit.
 
         The widened candidate pool (40+) should be preserved for the thread
         formatter to group by conversation, rather than being trimmed early.
@@ -654,7 +665,7 @@ class TestSearchThreadMode:
             db=str(multi_chunk_db["db_path"]),
             embed_db=str(multi_chunk_db["embed_db_path"]),
             limit=3,  # Request only 3, but thread mode should get more
-            mode="thread",
+            view="thread",
             json=True,  # JSON for easy counting
         )
 
@@ -678,7 +689,7 @@ class TestSearchThreadMode:
             db=str(multi_chunk_db["db_path"]),
             embed_db=str(multi_chunk_db["embed_db_path"]),
             limit=3,
-            mode="chunks",
+            view="chunks",
             json=True,
         )
 
@@ -748,13 +759,13 @@ class TestSortAxisValidation:
     """Tests for --sort axis: parser-time rejection of invalid combinations."""
 
     def test_sort_time_with_mode_conversations_rejected(self, indexed_db, capsys):
-        """--sort=time with --mode=conversations exits 2 before execution."""
+        """--sort=time with --view=conversations exits 2 before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
             sort="time",
-            mode="conversations",
+            view="conversations",
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -762,16 +773,16 @@ class TestSortAxisValidation:
         captured = capsys.readouterr()
 
         assert exc_info.value.code == 2
-        assert "--mode=conversations is incompatible with --sort=time" in captured.err
+        assert "--view=conversations is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_mode_thread_rejected(self, indexed_db, capsys):
-        """--sort=time with --mode=thread exits 2 before execution."""
+        """--sort=time with --view=thread exits 2 before execution."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
             embed_db=str(indexed_db["embed_db_path"]),
             sort="time",
-            mode="thread",
+            view="thread",
         )
 
         with pytest.raises(SystemExit) as exc_info:
@@ -779,10 +790,10 @@ class TestSortAxisValidation:
         captured = capsys.readouterr()
 
         assert exc_info.value.code == 2
-        assert "--mode=thread is incompatible with --sort=time" in captured.err
+        assert "--view=thread is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_json_chunks_valid(self, indexed_db, capsys):
-        """--sort=time with --json and default --mode=chunks is valid."""
+        """--sort=time with --json and default --view=chunks is valid."""
         args = make_args(
             query=["error"],
             db=str(indexed_db["db_path"]),
@@ -798,7 +809,7 @@ class TestSortAxisValidation:
         assert "incompatible" not in captured.err
 
     def test_sort_time_chunks_mode_valid(self, indexed_db, capsys, monkeypatch):
-        """--sort=time with default --mode=chunks succeeds without any warning."""
+        """--sort=time with default --view=chunks succeeds without any warning."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(indexed_db["db_path"].parent / "empty_config"))
 
         args = make_args(
