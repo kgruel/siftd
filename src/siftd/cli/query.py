@@ -113,49 +113,49 @@ def _query_event_detail(args, *, conn=None) -> int:
 
     ds = domain_styles()
     pairs: list[tuple[str, list[tuple[str, object]]]] = [
-        ("Event:", [(detail.id, ds.identifier)]),
-        ("Kind:", [(detail.kind, ds.model)]),
-        ("Conversation:", [(detail.conversation_id, ds.identifier)]),
+        ("Event", [(detail.id, ds.identifier)]),
+        ("Kind", [(detail.kind, ds.model)]),
+        ("Conversation", [(detail.conversation_id, ds.identifier)]),
     ]
     if detail.parent_id:
-        pairs.append(("Parent:", [(detail.parent_id, ds.identifier)]))
+        pairs.append(("Parent", [(detail.parent_id, ds.identifier)]))
     if detail.external_id:
-        pairs.append(("External ID:", [(detail.external_id, ds.identifier)]))
+        pairs.append(("External ID", [(detail.external_id, ds.identifier)]))
     if detail.timestamp:
-        pairs.append(("Timestamp:", [(str(detail.timestamp), ds.temporal)]))
+        pairs.append(("Timestamp", [(str(detail.timestamp), ds.temporal)]))
     if detail.tags:
-        pairs.append(("Tags:", [(", ".join(detail.tags), ds.tag)]))
+        pairs.append(("Tags", [(", ".join(detail.tags), ds.tag)]))
     if detail.kind == "response" and detail.kind_specific:
         ks = detail.kind_specific
         if ks.get("model"):
-            pairs.append(("Model:", [(ks["model"], ds.model)]))
+            pairs.append(("Model", [(ks["model"], ds.model)]))
         in_toks = ks.get("input_tokens") or 0
         out_toks = ks.get("output_tokens") or 0
         if in_toks or out_toks:
             pairs.append((
-                "Tokens:",
+                "Tokens",
                 [(f"{fmt_tokens(in_toks)} in / {fmt_tokens(out_toks)} out", ds.metric)],
             ))
         children = ks.get("tool_calls") or []
         if children:
-            pairs.append(("Tool calls:", [(fmt_count(len(children)), ds.metric)]))
+            pairs.append(("Tool calls", [(fmt_count(len(children)), ds.metric)]))
     if detail.kind == "tool_call" and detail.kind_specific:
         ks = detail.kind_specific
         if ks.get("tool_name"):
             pairs.append((
-                "Tool:",
+                "Tool",
                 [(f"{ks['tool_name']} ({ks.get('status') or 'unknown'})", ds.tool_name)],
             ))
     if include_neighbors and detail.neighbors:
         nb = detail.neighbors
         if nb.get("prev_event_id"):
-            pairs.append(("Prev:", [(nb["prev_event_id"], ds.identifier)]))
+            pairs.append(("Prev", [(nb["prev_event_id"], ds.identifier)]))
         if nb.get("next_event_id"):
-            pairs.append(("Next:", [(nb["next_event_id"], ds.identifier)]))
+            pairs.append(("Next", [(nb["next_event_id"], ds.identifier)]))
     if detail.content_blocks:
-        pairs.append(("Content blocks:", [(fmt_count(len(detail.content_blocks)), ds.metric)]))
+        pairs.append(("Content blocks", [(fmt_count(len(detail.content_blocks)), ds.metric)]))
 
-    print_definitions(pairs, indent=0, label_style=ds.temporal)
+    print_definitions(pairs, indent=0)
     return 0
 
 
@@ -378,16 +378,15 @@ def _emit_stats_footer(view_convs: int, view_tokens: int, corpus, corpus_tokens:
     print_definitions(
         [
             (
-                "Conversations:",
+                "Conversations",
                 [(f"{fmt_count(view_convs)} / {fmt_count(corpus.total_conversations)} corpus", ds.metric)],
             ),
             (
-                "View tokens:",
+                "View tokens",
                 [(f"{fmt_tokens(view_tokens)} / {fmt_tokens(corpus_tokens)} corpus", ds.metric)],
             ),
         ],
         indent=0,
-        label_style=ds.temporal,
     )
 
 
