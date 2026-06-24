@@ -306,6 +306,19 @@ def _cmd_tag_list(args, db: Path) -> int:
             status.info(f"No tags found with prefix: {prefix}")
             return 0
 
+    # The tag name takes the teal `tag` role (the same colour the detail views
+    # give it), the description reads plain, the counts recede to muted — a
+    # parenthetical sentence, not a clean metric cell. Plain text is unchanged
+    # from the former raw print() so a piped/NO_COLOR listing reads identically.
+    from painted import current_palette, join_vertical, print_block
+
+    from siftd.output.common import should_use_ansi
+    from siftd.output.row import row_line
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    p = current_palette()
+    rows = []
     for tag in tags:
         counts = []
         if tag.conversation_count:
@@ -322,8 +335,14 @@ def _cmd_tag_list(args, db: Path) -> int:
             counts.append(f"{fmt_count(tag.response_count)} responses")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
-        print(f"  {tag.name}{desc}{count_str}")
+        line = row_line(
+            [(tag.name, ds.tag), (desc, None), (count_str, p.muted)],
+            indent="  ",
+        )
+        rows.append(line.to_block(line.width))
 
+    if rows:
+        print_block(join_vertical(*rows), use_ansi=should_use_ansi())
     return 0
 
 

@@ -47,9 +47,13 @@ class TestLaneGrouping:
             assert cmd in out
 
     def test_usage_line_is_clean(self, capsys):
-        """No giant {cmd,cmd,...} brace in usage — just <command>."""
+        """No giant {cmd,cmd,...} brace in usage — just <command>.
+
+        The brand masthead now leads the surface, so find the ``usage:`` line
+        rather than assuming it is first.
+        """
         out = _root_help(capsys)
-        usage = out.splitlines()[0]
+        usage = next(line for line in out.splitlines() if line.startswith("usage:"))
         assert "<command>" in usage
         assert "{" not in usage
 

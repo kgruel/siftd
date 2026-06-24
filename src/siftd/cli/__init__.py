@@ -93,16 +93,121 @@ _PLUMBING: frozenset[str] = frozenset(
 )
 
 
-def _lanes_epilog() -> str:
-    width = max(len(name) for name, _ in _LANES)
-    lines = ["lanes:"]
-    lines += [f"  {name:<{width}}  {cmds.replace(' ', ' · ')}" for name, cmds in _LANES]
-    lines += [
-        "",
-        "Run 'siftd <command> --help' for details.",
-        "Advanced (hidden): " + ", ".join(sorted(_PLUMBING)),
+# The one-line summary the masthead carries. The root parser sets no
+# ``description``, so the summary appears exactly once (in the masthead) —
+# single-sourced here for both the ``--help`` masthead and the ``--version``
+# sentence.
+_SUMMARY = "Aggregate and query LLM conversation logs"
+
+
+def _render_block_to_str(block) -> str:
+    """Render a painted ``Block`` to a string, ANSI-gated on the real stdout.
+
+    The root ``--help`` is assembled by wrapping argparse's plain body with
+    rendered brand blocks (masthead above, lane legend + footer below), so the
+    blocks must become strings. ``should_use_ansi(sys.stdout)`` keys the colour
+    to the eventual destination even though the block renders into a buffer.
+    """
+    import io
+
+    from painted import print_block
+
+    from siftd.output.common import should_use_ansi
+
+    buf = io.StringIO()
+    print_block(block, buf, use_ansi=should_use_ansi(sys.stdout))
+    return buf.getvalue()
+
+
+def _lane_command_segments(cmds: str):
+    """Style a lane's command list: names ``secondary``, ``·`` separators muted."""
+    from painted import current_palette
+
+    from siftd.output.theme import domain_styles
+
+    p = current_palette()
+    secondary = domain_styles().summary
+    segments: list[tuple[str, object]] = []
+    for i, cmd in enumerate(cmds.split()):
+        if i:
+            segments.append((" · ", p.muted))
+        segments.append((cmd, secondary))
+    return segments
+
+
+def _root_masthead_block(*, as_ascii: bool):
+    """The masthead: the ``sift▪d`` mark + version + summary on one line.
+
+    The mark leads, the version recedes (muted), the summary follows (secondary)
+    set off by an em-dash (``-`` on a non-Unicode stream). The only place the
+    summary appears, so a ``grep`` for it stays single-hit.
+    """
+    from painted import current_palette
+
+    from siftd.output.mark import wordmark_segments
+    from siftd.output.row import row_line
+    from siftd.output.theme import domain_styles
+
+    p = current_palette()
+    dash = " - " if as_ascii else " — "
+    segments = wordmark_segments(as_ascii=as_ascii) + [
+        (" ", None),
+        (_get_version(), p.muted),
+        (dash, p.muted),
+        (_SUMMARY, domain_styles().summary),
     ]
-    return "\n".join(lines)
+    line = row_line(segments)
+    return line.to_block(line.width)
+
+
+def _root_lanes_block():
+    """The lane legend: a muted ``lanes:`` intro over the label→commands grid.
+
+    Lane labels take the structure weight (bold cream); the grid recurses the
+    same ``definitions`` atom the report surfaces use. The plain text is
+    byte-identical to the former epilog, so the listing reads unchanged when
+    colour is stripped.
+    """
+    from painted import current_palette, join_vertical
+
+    from siftd.output.listing import definitions, lines
+
+    p = current_palette()
+    letters = p.text.merge(p.accent)  # bold cream — the structure role
+    intro = lines(["lanes:"], indent=0, style=p.muted)
+    grid = definitions(
+        [(name, _lane_command_segments(cmds)) for name, cmds in _LANES],
+        indent=2,
+        gutter=2,
+        label_style=letters,
+    )
+    return join_vertical(intro, grid)
+
+
+def _root_footer_block():
+    """The footer: the ``--help`` pointer (typed command in the literal hue) over
+    the hidden-plumbing line, both muted — plain text unchanged from the epilog.
+    """
+    from painted import current_palette, join_vertical
+
+    from siftd.output.listing import lines
+    from siftd.output.theme import domain_styles
+
+    p = current_palette()
+    pointer = lines(
+        [[
+            ("Run '", p.muted),
+            ("siftd <command> --help", domain_styles().code),
+            ("' for details.", p.muted),
+        ]],
+        indent=0,
+    )
+    hidden = lines(
+        ["Advanced (hidden): " + ", ".join(sorted(_PLUMBING))],
+        indent=0,
+        style=p.muted,
+    )
+    return join_vertical(pointer, hidden)
 
 
 def _hide_plumbing(subparsers) -> None:
@@ -118,6 +223,99 @@ def _hide_plumbing(subparsers) -> None:
     subparsers._choices_actions = [
         a for a in actions if getattr(a, "dest", None) not in _PLUMBING
     ]
+
+
+class _RootParser(argparse.ArgumentParser):
+    """Root parser whose ``--help`` leads with the brand mark.
+
+    argparse owns the body (usage, the command listing, options); this wraps it
+    with the rendered masthead above and the styled lane legend + footer below —
+    the Phase-2 brand layer. Leaf/branch help stays stock argparse for now. All
+    three help entry points (``siftd``, ``siftd -h``, ``siftd --help``) route
+    through ``format_help``.
+    """
+
+    def format_help(self) -> str:
+        from siftd.output.common import prefers_ascii
+
+        as_ascii = prefers_ascii(sys.stdout)
+        masthead = _render_block_to_str(_root_masthead_block(as_ascii=as_ascii))
+        body = super().format_help()
+        lanes = _render_block_to_str(_root_lanes_block())
+        footer = _render_block_to_str(_root_footer_block())
+        return (
+            masthead.rstrip("\n") + "\n\n"
+            + body.strip("\n") + "\n\n"
+            + lanes.rstrip("\n") + "\n\n"
+            + footer.rstrip("\n") + "\n"
+        )
+
+
+class _VersionAction(argparse.Action):
+    """``--version`` → the branded lockup + capability line, then exit."""
+
+    def __init__(
+        self,
+        option_strings,
+        dest=argparse.SUPPRESS,
+        default=argparse.SUPPRESS,
+        help=None,  # noqa: A002 — argparse Action contract uses `help`
+    ):
+        super().__init__(
+            option_strings=option_strings, dest=dest, default=default, nargs=0, help=help
+        )
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        _render_version()
+        parser.exit()
+
+
+def _render_version() -> None:
+    """Print the ``--version`` surface to stdout.
+
+    The ``sift▪d`` lockup (interactive only — piped/ASCII output goes straight to
+    the facts, where the collapsed mark would just double the sentence's "siftd"),
+    the version sentence, and a capability line (python · sqlite · embeddings).
+    """
+    import sqlite3
+
+    from painted import current_palette, join_vertical, print_block
+
+    from siftd.api import embeddings_available
+    from siftd.output.common import prefers_ascii, should_use_ansi
+    from siftd.output.mark import wordmark
+    from siftd.output.row import row_line
+    from siftd.output.theme import domain_styles
+
+    as_ascii = prefers_ascii()
+    p = current_palette()
+    ds = domain_styles()
+    dash = " - " if as_ascii else " — "
+
+    sentence = row_line([
+        ("siftd ", ds.summary),
+        (_get_version(), p.muted),
+        (dash, p.muted),
+        (_SUMMARY, ds.summary),
+    ])
+    ready = embeddings_available()
+    py = f"{sys.version_info.major}.{sys.version_info.minor}"
+    capability = row_line([
+        ("python ", p.muted), (py, p.muted), (" · ", p.muted),
+        ("sqlite ", p.muted), (sqlite3.sqlite_version, p.muted), (" · ", p.muted),
+        ("embeddings ", p.muted),
+        ("ready" if ready else "not installed", p.success if ready else p.muted),
+    ])
+
+    blocks = []
+    if not as_ascii:
+        wm = wordmark()
+        blocks.append(wm.to_block(wm.width))
+    blocks.extend([
+        sentence.to_block(sentence.width),
+        capability.to_block(capability.width),
+    ])
+    print_block(join_vertical(*blocks), use_ansi=should_use_ansi())
 
 
 def main(argv=None) -> int:
@@ -148,16 +346,15 @@ def main(argv=None) -> int:
         from painted import ASCII_ICONS, use_icons
 
         use_icons(ASCII_ICONS)
-    parser = argparse.ArgumentParser(
-        prog="siftd",
-        description="Aggregate and query LLM conversation logs",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=_lanes_epilog(),
-    )
+    # No description/epilog: the brand masthead (the summary's only home) and the
+    # styled lane legend + footer are rendered by _RootParser.format_help, which
+    # wraps argparse's body. _SUMMARY is single-sourced for the masthead so a
+    # grep for it stays single-hit.
+    parser = _RootParser(prog="siftd")
     parser.add_argument(
         "--version",
-        action="version",
-        version=f"siftd {_get_version()}",
+        action=_VersionAction,
+        help="show program's version number and exit",
     )
     parser.add_argument(
         "--db",
@@ -165,7 +362,13 @@ def main(argv=None) -> int:
         help=f"Database path (default: {db_path()})",
     )
 
-    subparsers = parser.add_subparsers(dest="command", metavar="<command>")
+    # parser_class is pinned to vanilla ArgumentParser: add_subparsers defaults it
+    # to the parent's class, which would make every subcommand a _RootParser and
+    # leak the brand masthead/lanes onto leaf/branch --help. Root-only is the
+    # Phase-2 scope; leaf/branch help stays stock argparse until the help adapter.
+    subparsers = parser.add_subparsers(
+        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
+    )
 
     # Registered in lane order so the help listing reads top-to-bottom as the
     # lanes do. Multi-command builders (data, meta, sessions) span lanes; the

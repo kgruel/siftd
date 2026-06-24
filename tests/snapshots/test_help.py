@@ -56,7 +56,12 @@ def run_siftd(*args: str) -> str:
         timeout=30,
         env=env,
     )
-    return result.stdout
+    # The brand masthead bakes the running version into root --help; normalize it
+    # so a version bump doesn't churn the snapshot (this pins help STRUCTURE, not
+    # the version number — the same reason HOME is normalized to ~).
+    from siftd.cli._common import _get_version
+
+    return result.stdout.replace(f"siftd {_get_version()}", "siftd X.Y.Z")
 
 
 # All subcommands to test

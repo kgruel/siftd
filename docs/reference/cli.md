@@ -5,9 +5,9 @@ _Auto-generated from `--help` output._
 ## siftd
 
 ```
-usage: siftd [-h] [--version] [--db PATH] <command> ...
+siftd 0.9.1 - Aggregate and query LLM conversation logs
 
-Aggregate and query LLM conversation logs
+usage: siftd [-h] [--version] [--db PATH] <command> ...
 
 positional arguments:
   <command>

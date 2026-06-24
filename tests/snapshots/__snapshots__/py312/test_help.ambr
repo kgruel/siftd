@@ -35,9 +35,9 @@
 # ---
 # name: TestHelpSnapshots.test_root_help
   '''
-  usage: siftd [-h] [--version] [--db PATH] <command> ...
+  siftd X.Y.Z - Aggregate and query LLM conversation logs
   
-  Aggregate and query LLM conversation logs
+  usage: siftd [-h] [--version] [--db PATH] <command> ...
   
   positional arguments:
     <command>
