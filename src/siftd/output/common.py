@@ -302,7 +302,11 @@ def print_refs_content(
         unique = [r for r in unique if r.basename.lower() in filter_set]
         if not unique:
             names = ", ".join(filter_basenames)
-            print(f"No file references matching: {names}")
+            # Lazy import: output.status imports from this module, so a top-level
+            # import would cycle. By call time both modules are fully loaded.
+            from siftd.output import status
+
+            status.info(f"No file references matching: {names}")
             return
 
     op_labels = {"r": "read", "w": "write", "e": "edit"}

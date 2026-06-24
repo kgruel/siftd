@@ -1287,7 +1287,7 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
     findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
 
     if not findings:
-        print("No issues found.")
+        status.info("No issues found.")
         return 0
 
     findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
