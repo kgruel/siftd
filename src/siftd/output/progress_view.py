@@ -170,20 +170,36 @@ class ProgressConsumer:
         label_width = self._label_width or max(12, max(len(g.label) for g in items))
         bar_width = self._bar_width or max(10, min(28, term_width() - label_width - 44))
 
+        # Shared column widths so a multi-group block (ingest's per-adapter rows)
+        # aligns vertically: each tally key's value right-aligns to the widest
+        # value under that key across all groups, and the done/total count to the
+        # widest count. A single-group caller (push) is unaffected — max-of-one is
+        # the value's own width.
+        tally_w: dict[str, int] = {}
+        for g in items:
+            for key, value in g.tally.items():
+                tally_w[key] = max(tally_w.get(key, 0), len(str(value)))
+        count_w = max((len(f"{g.index or 0}/{g.total}") for g in items if g.total), default=0)
+
         rows = []
         for g in items:
-            # Trailing tally cells: amber metric thread with a gold ▪ marker
-            # (the dc.html "kept ▪ 37"). A free mapping — every cell is formatted.
+            # Trailing tally cells: amber metric thread (the dc.html "kept 37"),
+            # each value right-aligned to its column's shared width. A free
+            # mapping — every cell is formatted; nobody branches on keys.
             segments: list[tuple[str, Style | None]] = []
             for i, (key, value) in enumerate(g.tally.items()):
                 prefix = "  " if i else ""
                 segments.append((f"{prefix}{key} ", None))
-                segments.append((str(value), ds.metric))
+                segments.append((f"{value!s:>{tally_w[key]}}", ds.metric))
 
-            # The done/total count rides ahead of the tally on a determinate bar;
-            # an indeterminate (total is None) group has no honest denominator.
-            count = (f"{g.index or 0}/{g.total}", pal.muted) if g.total else None
-            lead = [count, ("  ", None)] if count else []
+            # The done/total count rides ahead of the tally on a determinate bar,
+            # right-aligned to the widest count; an indeterminate (total is None)
+            # group has no honest denominator.
+            if g.total:
+                count_text = f"{g.index or 0}/{g.total}"
+                lead = [(f"{count_text:>{count_w}}", pal.muted), ("  ", None)]
+            else:
+                lead = []
 
             if g.status in ("done", "skipped"):
                 # A clean resolved frame for scrollback: a full bar with ✓, no

@@ -133,6 +133,20 @@ def test_bars_groups_render_in_first_seen_order():
     assert text.index("zzz") < text.index("aaa")
 
 
+def test_bars_align_tally_and_count_widths_across_groups():
+    # Multi-group (ingest's per-adapter shape): each tally value right-aligns to
+    # the widest value under its key across groups, and the count to the widest
+    # count, so the stat columns line up vertically. A single-group caller is
+    # unaffected — max-of-one is the value's own width.
+    c = ProgressConsumer(shape="bars", bar_width=10, label_width=8)
+    c.feed(ProgressEvent(group="a", index=5, total=9, tally={"new": 3}))
+    c.feed(ProgressEvent(group="b", index=120, total=400, tally={"new": 1000}))
+    text = _render(c._block())
+    # "new"'s value 3 pads to width 4 (under 1000); 5/9 pads to width 7 (under 120/400).
+    assert "new    3" in text and "new 1000" in text
+    assert "    5/9" in text and "120/400" in text
+
+
 # --- shape: bars, indeterminate (the sweep) --------------------------------
 
 

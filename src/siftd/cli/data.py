@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
 import sys
 from pathlib import Path
@@ -16,7 +15,7 @@ from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
     from siftd.ingestion import IngestEvent, IngestStats
-    from siftd.output.live import LiveRegion
+    from siftd.output.progress_view import ProgressConsumer, ProgressEvent
 
 
 class _AdapterCounts:
@@ -62,11 +61,11 @@ class _IngestTextRenderer:
         self.quiet = quiet
         self._counts: dict[str, _AdapterCounts] = {}
         self._started: set[str] = set()
-        self._live: LiveRegion | None = None  # attached for the TTY bars
+        self._consumer: ProgressConsumer | None = None  # attached for the TTY bars
 
-    def attach_live(self, live: LiveRegion) -> None:
-        """Attach the live region whose bars replace per-file streaming on a TTY."""
-        self._live = live
+    def attach_consumer(self, consumer: ProgressConsumer) -> None:
+        """Attach the progress consumer whose bars replace per-file streaming on a TTY."""
+        self._consumer = consumer
 
     def handle_event(self, event: IngestEvent) -> None:
         counts = self._counts.setdefault(event.adapter, _AdapterCounts(event.total))
@@ -80,12 +79,12 @@ class _IngestTextRenderer:
         # Live tier: every adapter gets a re-painting progress bar; the per-file
         # scroll is gone. Force a paint past the throttle on a new adapter, an
         # error, or completion — the moments worth not dropping.
-        if self._live is not None and self._live.active:
+        if self._consumer is not None and self._consumer.active:
             new_adapter = event.adapter not in self._started
             self._started.add(event.adapter)
             done = bool(counts.total) and counts.processed >= counts.total
             force = new_adapter or event.status == "error" or done
-            self._live.update(self._bars_block(), force=force)
+            self._consumer.feed(self._progress_event(event.adapter, counts, done=done, terminal=force))
             return
 
         if event.status != "skipped":
@@ -98,70 +97,33 @@ class _IngestTextRenderer:
         if counts.processed == counts.total and event.adapter in self._started:
             self._print_adapter_done(event.adapter, counts)
 
-    def finalize_live(self) -> None:
-        """Deposit the final bar frame into scrollback (no-op when not live)."""
-        if self._live is not None and self._live.active:
-            self._live.finalize(self._bars_block())
+    @staticmethod
+    def _progress_event(
+        adapter: str, counts: _AdapterCounts, *, done: bool, terminal: bool
+    ) -> ProgressEvent:
+        """Fold one adapter's running counts into a generic ``ProgressEvent``.
 
-    def _bars_block(self):
-        """All started adapters as one block of re-painting progress-bar rows."""
-        from painted import Block, current_icons, current_palette, join_vertical
+        The per-file ``IngestEvent`` stream maps onto the shared bars contract so
+        ingest, push and migrate paint through one consumer: the new/upd/skip
+        running counts become the amber tally (``err`` joins only when it fires —
+        a non-zero error count surfaces as the row's ``✗`` glyph, the count itself
+        staying on the uniform metric thread); ``total or None`` lets a zero-total
+        adapter draw the indeterminate sweep rather than a ``0/0`` bar.
+        """
+        from siftd.output.progress_view import ProgressEvent
 
-        from siftd.output.common import term_width
-        from siftd.output.live import bar_row, spinner_glyph
-        from siftd.output.theme import domain_styles
-
-        pal = current_palette()
-        ic = current_icons()
-        ds = domain_styles()
-        items = [(n, c) for n, c in self._counts.items() if n in self._started]
-        if not items:
-            return Block.empty(0, 0)
-
-        label_width = max(12, max(len(n) for n, _ in items))
-        bar_width = max(10, min(28, term_width() - label_width - 44))
-
-        # Shared column widths so every row's stats align vertically — the
-        # progress fraction and each count right-align to the widest in the set.
-        prog = {n: f"{c.processed}/{c.total or 0}" for n, c in items}
-        prog_w = max(len(s) for s in prog.values())
-        new_w = max(len(str(c.new)) for _, c in items)
-        upd_w = max(len(str(c.updated_total)) for _, c in items)
-        skip_w = max(len(str(c.skipped)) for _, c in items)
-        any_err = any(c.error for _, c in items)
-        err_w = max((len(str(c.error)) for _, c in items), default=1)
-
-        rows = []
-        for name, c in items:
-            total = c.total or 0
-            frac = (c.processed / total) if total else 0.0
-            done = bool(total) and c.processed >= total
-            if done and c.error:
-                glyph, gstyle = ic.error, pal.error
-            elif done:
-                glyph, gstyle = ic.ok, pal.success
-            else:
-                glyph, gstyle = spinner_glyph(), pal.accent
-            # The counts join the amber metric thread (consistent with the summary
-            # table and the query/peek lists); the progress fraction stays a muted
-            # caption. err keeps the error severity hue — a non-zero error count is
-            # a signal, not a neutral quantity.
-            segments = [
-                (f"{prog[name]:>{prog_w}}  ", pal.muted),
-                ("new ", None), (f"{c.new:>{new_w}}", ds.metric),
-                ("  upd ", None), (f"{c.updated_total:>{upd_w}}", ds.metric),
-                ("  skip ", None), (f"{c.skipped:>{skip_w}}", ds.metric),
-            ]
-            # Show the err column for every row when any adapter errored, so the
-            # structure stays consistent down the set (0 where clean).
-            if any_err:
-                segments += [("  err ", None), (f"{c.error:>{err_w}}", pal.error)]
-            rows.append(bar_row(
-                name, frac, label_width=label_width, bar_width=bar_width,
-                segments=segments, glyph=glyph, glyph_style=gstyle, label_style=pal.muted,
-                filled_char="━", empty_char="─",  # a thin rule, not a full block
-            ))
-        return join_vertical(*rows)
+        tally = {"new": counts.new, "upd": counts.updated_total, "skip": counts.skipped}
+        if counts.error:
+            tally["err"] = counts.error
+        status = "error" if (done and counts.error) else "done" if done else "progress"
+        return ProgressEvent(
+            group=adapter,
+            index=counts.processed,
+            total=counts.total or None,
+            tally=tally,
+            status=status,
+            terminal=terminal,
+        )
 
     def _print_adapter_done(self, adapter: str, counts: _AdapterCounts) -> None:
         parts = [
@@ -457,28 +419,24 @@ def cmd_ingest(args) -> int:
             print("\nIngesting...")
 
     # On a Unicode TTY, per-adapter progress bars re-paint in place; a pipe /
-    # --json / non-UTF-8 locale leaves the region inactive and the renderer
-    # falls back to its plain streaming (or quiet) path.
+    # --json / non-UTF-8 locale leaves the consumer inactive and the renderer
+    # falls back to its plain streaming (or quiet) path. The consumer owns the
+    # live region: ``with consumer`` deposits the final bar frame on a clean exit
+    # and restores the cursor on any exit (the same shape push/pull use).
     from siftd.output.live import LiveRegion
+    from siftd.output.progress_view import ProgressConsumer
 
-    live = LiveRegion(enabled=not quiet and not json_mode)
+    consumer = ProgressConsumer(shape="bars", live=LiveRegion(enabled=not quiet and not json_mode))
     if not json_mode:
-        renderer.attach_live(live)  # type: ignore[union-attr]
+        renderer.attach_consumer(consumer)  # type: ignore[union-attr]
     try:
-        with live:
-            try:
-                result = run_ingest(
-                    db_path=db,
-                    adapter_names=args.adapter,
-                    scan_paths=args.path,
-                    on_event=renderer.handle_event,
-                )
-            finally:
-                # Deposit the final frame even if ingest raised; never let this
-                # mask the real error (the cursor restore is __exit__'s job).
-                if not json_mode:
-                    with contextlib.suppress(Exception):
-                        renderer.finalize_live()  # type: ignore[union-attr]
+        with consumer:
+            result = run_ingest(
+                db_path=db,
+                adapter_names=args.adapter,
+                scan_paths=args.path,
+                on_event=renderer.handle_event,
+            )
     except AdapterSelectionError as exc:
         message = str(exc)
         if json_mode:
@@ -726,8 +684,6 @@ def _run_merge_workspaces_plain(
     conn, *, dry_run, verbose, backfill, merge, verify, backfill_group, merge_group
 ) -> int:
     """The non-TTY plain path for ``--merge-workspaces`` (the original prints)."""
-    from siftd.output.progress_view import ProgressEvent
-
     # Step 1: Backfill git remotes
     print("Step 1: Backfilling git remote URLs for existing workspaces...")
 
@@ -1010,53 +966,39 @@ def _doctor_list(args) -> int:
 def _run_fix_steps(steps: list, conn, db) -> int:
     """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
 
-    Dissolves the two hand-rolled ``\\r``-overwrite spinners onto the shared live
-    region: on a Unicode TTY each step shows a spinner line that resolves in
-    place to ``✓``/``✗``; a pipe / non-Unicode locale prints the resolved lines
-    plainly (ascii-aware), keeping the per-step feedback the ``\\r`` form gave.
+    The two hand-rolled ``\\r``-overwrite spinners dissolve onto the generic
+    ``ProgressConsumer(shape="steps")`` — each step feeds a pending spinner that
+    resolves in place to ``✓``/``✗`` on a Unicode TTY; a pipe / non-Unicode locale
+    prints the resolved lines plainly (ascii-aware), keeping the per-step feedback
+    the ``\\r`` form gave. A failing step is reported, not raised.
     """
-    from painted import ASCII_ICONS, Block, current_icons, current_palette, join_vertical
+    from painted import ASCII_ICONS, current_icons
 
     from siftd.output.common import supports_unicode
-    from siftd.output.live import LiveRegion, spinner_glyph, text_row
+    from siftd.output.progress_view import ProgressConsumer, ProgressEvent
 
-    pal = current_palette()
-    ic = current_icons()
-    plain_icons = ic if supports_unicode() else ASCII_ICONS
-    outcomes: list[tuple[str, str]] = []  # (severity, text)
+    plain_icons = current_icons() if supports_unicode() else ASCII_ICONS
     errors = 0
 
-    def _glyph(severity: str):
-        return (ic.ok, pal.success) if severity == "success" else (ic.error, pal.error)
-
-    def block(pending: str | None = None) -> Block:
-        rows = []
-        for severity, text in outcomes:
-            g, gs = _glyph(severity)
-            rows.append(text_row([(f"  {g} ", gs), (text, None)]))
-        if pending is not None:
-            rows.append(text_row([(f"  {spinner_glyph()} ", pal.accent), (f"{pending}...", pal.muted)]))
-        return join_vertical(*rows) if rows else Block.empty(0, 0)
-
-    live = LiveRegion()
-    with live:
+    consumer = ProgressConsumer(shape="steps")
+    with consumer:
         for label, fn in steps:
-            if live.active:
-                live.update(block(pending=label), force=True)
+            # A pending spinner row for the in-flight step; the prior steps' rows
+            # stay resolved (the consumer keeps per-group state).
+            if consumer.active:
+                consumer.feed(ProgressEvent(group=label, message=label, status="progress", terminal=True))
             try:
                 result = fn(conn, db)
-                outcomes.append(("success", f"{label}: {result}"))
+                outcome, text = "done", f"{label}: {result}"
             except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
-                outcomes.append(("error", f"{label}: {e}"))
+                outcome, text = "error", f"{label}: {e}"
                 errors += 1
-            # Active: the next step's pending frame (or finalize, for the last
-            # step) repaints this resolved row — no separate post-resolve update.
-            if not live.active:
-                severity, text = outcomes[-1]
-                mark = plain_icons.ok if severity == "success" else plain_icons.error
+            if consumer.active:
+                # Resolve the row in place (✓/✗) by re-feeding the same group.
+                consumer.feed(ProgressEvent(group=label, message=text, status=outcome, terminal=True))
+            else:
+                mark = plain_icons.ok if outcome == "done" else plain_icons.error
                 print(f"  {mark} {text}")
-        if live.active:
-            live.finalize(block())
     return errors
 
 
