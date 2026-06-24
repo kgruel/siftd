@@ -31,6 +31,7 @@ string wraps under its column instead of running off the line.
 
 from __future__ import annotations
 
+import io
 import sys
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
@@ -239,6 +240,24 @@ def _option_row(action: argparse.Action, fmt: argparse.HelpFormatter) -> OptionR
 # --- rendering --------------------------------------------------------------
 
 
+class _AnsiBuffer(io.StringIO):
+    """A ``StringIO`` that reports as a TTY so painted detects the *real* terminal's
+    colour depth.
+
+    argparse needs ``format_help`` to return a string, so the page is rendered into
+    a buffer. painted keys colour depth off the buffer's ``isatty()`` — a plain
+    buffer reports ``False`` → ``ColorDepth.NONE`` → forced-ANSI downsamples cream
+    to white(37), gold to yellow(33), and mid-tones to a malformed ``\\x1b[38m`` that
+    terminals render as the default (grey) foreground — the washed-out help. We only
+    use this when the *destination* is already a colour TTY (``should_use_ansi``), so
+    deferring to painted's env-based detection (``COLORTERM``/``TERM``) yields the
+    same truecolour the rest of the CLI emits when writing straight to stdout.
+    """
+
+    def isatty(self) -> bool:
+        return True
+
+
 def render_help(page: HelpPage, *, stream: TextIO | None = None) -> str:
     """Render a ``HelpPage`` to a string, ANSI/ASCII keyed to ``stream``.
 
@@ -248,16 +267,17 @@ def render_help(page: HelpPage, *, stream: TextIO | None = None) -> str:
     ``COLUMNS``), matching argparse's own usage wrapping. Trailing whitespace is
     stripped per line so the block's right-pad never leaks into the output.
     """
-    import io
-
     from painted import print_block
 
     from siftd.output.common import prefers_ascii, should_use_ansi, term_width
 
     out = stream if stream is not None else sys.stdout
+    use_ansi = should_use_ansi(out)
     block = _compose(page, term_width(), prefers_ascii(out))
-    buf = io.StringIO()
-    print_block(block, buf, use_ansi=should_use_ansi(out))
+    # A tty-reporting buffer for the colour path so painted emits the terminal's
+    # true depth (see _AnsiBuffer); a plain buffer for the piped/plain path.
+    buf: io.StringIO = _AnsiBuffer() if use_ansi else io.StringIO()
+    print_block(block, buf, use_ansi=use_ansi)
     text = "\n".join(line.rstrip() for line in buf.getvalue().split("\n"))
     return text.rstrip("\n") + "\n"
 

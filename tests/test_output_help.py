@@ -268,6 +268,24 @@ def test_no_color_env_strips_ansi_on_tty(monkeypatch):
     assert "\x1b[" not in render_help(page, stream=_FakeTTY())
 
 
+def test_color_renders_at_terminal_depth_not_downsampled(monkeypatch):
+    """Colour must emit the terminal's true depth, not downsample.
+
+    Regression: render_help renders into a buffer (format_help must return a str);
+    a plain buffer reports isatty()=False, so painted forced-ANSI to ColorDepth.NONE
+    and downsampled truecolour to 16-colour (cream→37) plus a malformed bare-38 SGR
+    that terminals show as default grey. The tty-reporting buffer must defer to the
+    terminal's COLORTERM, emitting 38;2;r;g;b on a truecolour TTY.
+    """
+    monkeypatch.setenv("COLORTERM", "truecolor")
+    monkeypatch.setenv("COLUMNS", "80")
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    _root, choices = _root_and_choices()
+    out = render_help(HelpPage.from_argparse(choices["query"]), stream=_FakeTTY())
+    assert "\x1b[38;2;" in out  # truecolour SGR
+    assert "\x1b[38m" not in out  # not the malformed bare-38 downsample artifact
+
+
 # --- the design law: only existing roles, no new hue -----------------------
 
 
