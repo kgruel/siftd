@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.output._id_format import short_id
 from siftd.output.common import (
+    fmt_count,
     fmt_timestamp,
     fmt_tokens,
     fmt_workspace,
@@ -579,7 +580,7 @@ def render_conversation_summary_block(detail, *, fidelity: Fidelity) -> Block:
 
     ds = domain_styles(fidelity)
     pairs = conversation_header_pairs(detail, ds)
-    pairs.append(("Turns", [(str(len(detail.turns)), ds.metric)]))
+    pairs.append(("Turns", [(fmt_count(len(detail.turns)), ds.metric)]))
     return definitions(pairs, indent=0)
 
 
@@ -912,13 +913,13 @@ def render_list_block(
     if depth >= 1:
         cols.extend([
             Col("model", lambda c: fmt_model(c.model) if c.model else "", style=ds.model),
-            Col("turns", lambda c: str(c.prompt_count), style=ds.metric, align=Align.END),
+            Col("turns", lambda c: fmt_count(c.prompt_count), style=ds.metric, align=Align.END),
             Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=ds.metric, align=Align.END),
         ])
     if depth >= 3:
         cols.extend([
             Col("cost", lambda c: _fmt_cost(c), style=ds.metric, align=Align.END),
-            Col("responses", lambda c: str(c.response_count), style=ds.metric, align=Align.END),
+            Col("responses", lambda c: fmt_count(c.response_count), style=ds.metric, align=Align.END),
             Col("tags", lambda c: ", ".join(c.tags) if c.tags else "", style=ds.tag),
         ])
 

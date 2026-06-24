@@ -13,7 +13,7 @@ from siftd.cli._common import (
     print_ambiguous_error,
     resolve_db,
 )
-from siftd.output import fmt_tokens, status
+from siftd.output import fmt_count, fmt_tokens, status
 from siftd.output.painted_bridge import emit_output
 
 
@@ -138,7 +138,7 @@ def _query_event_detail(args, *, conn=None) -> int:
             ))
         children = ks.get("tool_calls") or []
         if children:
-            pairs.append(("Tool calls:", [(str(len(children)), ds.metric)]))
+            pairs.append(("Tool calls:", [(fmt_count(len(children)), ds.metric)]))
     if detail.kind == "tool_call" and detail.kind_specific:
         ks = detail.kind_specific
         if ks.get("tool_name"):
@@ -153,7 +153,7 @@ def _query_event_detail(args, *, conn=None) -> int:
         if nb.get("next_event_id"):
             pairs.append(("Next:", [(nb["next_event_id"], ds.identifier)]))
     if detail.content_blocks:
-        pairs.append(("Content blocks:", [(str(len(detail.content_blocks)), ds.metric)]))
+        pairs.append(("Content blocks:", [(fmt_count(len(detail.content_blocks)), ds.metric)]))
 
     print_definitions(pairs, indent=0, label_style=ds.temporal)
     return 0
@@ -379,7 +379,7 @@ def _emit_stats_footer(view_convs: int, view_tokens: int, corpus, corpus_tokens:
         [
             (
                 "Conversations:",
-                [(f"{view_convs:,} / {corpus.total_conversations:,} corpus", ds.metric)],
+                [(f"{fmt_count(view_convs)} / {fmt_count(corpus.total_conversations)} corpus", ds.metric)],
             ),
             (
                 "View tokens:",

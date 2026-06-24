@@ -6,7 +6,7 @@ from pathlib import Path
 
 from siftd.api import list_workspaces
 from siftd.cli._common import resolve_db
-from siftd.output import status
+from siftd.output import fmt_count, status
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 
 
@@ -144,15 +144,15 @@ def cmd_status(args) -> int:
     report.section(
         "Counts",
         {
-            "Conversations": [(str(stats.counts.conversations), ds.metric_strong)],
-            "Prompts": [(str(stats.counts.prompts), ds.metric)],
-            "Responses": [(str(stats.counts.responses), ds.metric)],
-            "Tool calls": [(str(stats.counts.tool_calls), ds.metric)],
-            "Harnesses": [(str(stats.counts.harnesses), ds.metric)],
-            "Workspaces": [(str(stats.counts.workspaces), ds.metric)],
-            "Tools": [(str(stats.counts.tools), ds.metric)],
-            "Models": [(str(stats.counts.models), ds.metric)],
-            "Ingested files": [(str(stats.counts.ingested_files), ds.metric)],
+            "Conversations": [(fmt_count(stats.counts.conversations), ds.metric_strong)],
+            "Prompts": [(fmt_count(stats.counts.prompts), ds.metric)],
+            "Responses": [(fmt_count(stats.counts.responses), ds.metric)],
+            "Tool calls": [(fmt_count(stats.counts.tool_calls), ds.metric)],
+            "Harnesses": [(fmt_count(stats.counts.harnesses), ds.metric)],
+            "Workspaces": [(fmt_count(stats.counts.workspaces), ds.metric)],
+            "Tools": [(fmt_count(stats.counts.tools), ds.metric)],
+            "Models": [(fmt_count(stats.counts.models), ds.metric)],
+            "Ingested files": [(fmt_count(stats.counts.ingested_files), ds.metric)],
         },
     )
     report.section(
@@ -164,13 +164,13 @@ def cmd_status(args) -> int:
         last_activity = fmt_timestamp(w.last_activity)
         last_str = f" (last {last_activity})" if last_activity else ""
         workspaces.append(
-            (w.path, [(str(w.conversation_count), ds.metric), (f" conversations{last_str}", None)])
+            (w.path, [(fmt_count(w.conversation_count), ds.metric), (f" conversations{last_str}", None)])
         )
     report.section("Workspaces (top 10)", workspaces)
     report.lines_section("Models", list(stats.models))
     report.section(
         "Tools (top 10 by usage)",
-        [(t.name, [(str(t.usage_count), ds.metric)]) for t in stats.top_tools],
+        [(t.name, [(fmt_count(t.usage_count), ds.metric)]) for t in stats.top_tools],
     )
     coverage = [
         (
@@ -202,13 +202,13 @@ def cmd_status(args) -> int:
     if stats.harness_counts:
         report.section(
             "Harness activity",
-            [(hc.name, [(str(hc.conversation_count), ds.metric)]) for hc in stats.harness_counts],
+            [(hc.name, [(fmt_count(hc.conversation_count), ds.metric)]) for hc in stats.harness_counts],
         )
 
     if stats.top_tags:
         report.section(
             "Tags (top 5)",
-            [(tag.name, [(str(tag.count), ds.metric)]) for tag in stats.top_tags],
+            [(tag.name, [(fmt_count(tag.count), ds.metric)]) for tag in stats.top_tags],
         )
 
     if stats.last_ingest_at:
@@ -313,7 +313,7 @@ def cmd_workspaces(args) -> int:
             (
                 name,
                 [
-                    (str(row["convs"]), ds.metric),
+                    (fmt_count(row["convs"]), ds.metric),
                     (f" conversations{last_str}", None),
                 ],
             )

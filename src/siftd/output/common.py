@@ -136,6 +136,17 @@ def fmt_tokens(n: int) -> str:
     return str(n)
 
 
+def fmt_count(n: int) -> str:
+    """Format an exact integer for display with digit grouping: 46590 -> '46,590'.
+
+    The house formatter for user-facing counts (conversations, files, row counts)
+    — the exact-count sibling of ``fmt_tokens`` (which abbreviates to k/M/B). One
+    point of control so every count reads the same; small values are unaffected
+    (``fmt_count(5) == '5'``).
+    """
+    return f"{n:,}"
+
+
 def fmt_workspace(path: str | None) -> str:
     """Format workspace path for display. Shows (root) for root/empty paths."""
     if path is None:
