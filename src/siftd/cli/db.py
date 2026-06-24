@@ -319,7 +319,7 @@ def cmd_db_restore(args) -> int:
             [tbl, fmt_count(src_counts.get(tbl, 0)), fmt_count(tgt_counts.get(tbl, 0))]
             for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
         ]
-        print_heading("[dry run] restore preview")
+        print_heading("[Dry run] Restore preview")
         print_definitions([
             ("Source", str(source)),
             ("Target", str(db)),
@@ -437,7 +437,7 @@ def cmd_db_merge(args) -> int:
         status.error(f"Merge failed: {e}")
         return 1
 
-    prefix = "[dry run] " if dry_run else ""
+    prefix = "[Dry run] " if dry_run else ""
     status.confirm(f"{prefix}Merged from: {source}")
     conv_parts = [f"{result['conversations']} new"]
     if result["replaced_conversations"]:
@@ -548,7 +548,7 @@ def cmd_db_receive(args) -> int:
                 [tbl, fmt_count(src_counts.get(tbl, 0)), fmt_count(tgt_counts.get(tbl, 0))]
                 for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
             ]
-            print_heading("[dry run] receive preview")
+            print_heading("[Dry run] Receive preview")
             print_definitions([
                 ("Target", target_state),
                 ("Preflight", [(ok_glyph, ok_style), (" ok", None)]),

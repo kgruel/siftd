@@ -183,7 +183,7 @@ def cmd_status(args) -> int:
         (h.name, f"{h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
         for h in stats.token_coverage.by_harness
     )
-    report.section("Token Coverage", coverage)
+    report.section("Token coverage", coverage)
 
     earliest, latest = stats.activity_window
     if earliest or latest:
