@@ -88,23 +88,23 @@ def cmd_id(args) -> int:
             ws_name = fmt_workspace(context.get("workspace")) if context.get("workspace") else "unknown"
             started = fmt_timestamp(context.get("started_at")) if context.get("started_at") else None
             pairs: list[tuple[str, str | list[tuple[str, Style]]]] = [
-                ("conversation", [(short_id(full_id), ds.identifier)]),
-                ("workspace", ws_name),
+                ("Conversation", [(short_id(full_id), ds.identifier)]),
+                ("Workspace", ws_name),
             ]
             if started:
-                pairs.append(("started", started))
-            pairs.append(("view", [(f"siftd query {full_id}", ds.identifier)]))
+                pairs.append(("Started", started))
+            pairs.append(("View", [(f"siftd query {full_id}", ds.identifier)]))
             print_definitions(pairs)
         elif kind == "event":
             conv_id = context.get("conversation_id", "")
             turn = context.get("turn")
             pairs = [
-                ("event", [(short_id(full_id), ds.identifier)]),
-                ("conversation", [(short_id(conv_id), ds.identifier)]),
+                ("Event", [(short_id(full_id), ds.identifier)]),
+                ("Conversation", [(short_id(conv_id), ds.identifier)]),
             ]
             if turn is not None:
-                pairs.append(("turn", str(turn)))
-            pairs.append(("view", [(f"siftd query {full_id}", ds.identifier)]))
+                pairs.append(("Turn", str(turn)))
+            pairs.append(("View", [(f"siftd query {full_id}", ds.identifier)]))
             print_definitions(pairs)
         return 0
 

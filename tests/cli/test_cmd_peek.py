@@ -184,8 +184,8 @@ class TestPeekDetailMode:
 
         # The detail header is an aligned definitions() block, so the value sits
         # a padded gutter past the label — match label + value, not a fixed gap.
-        assert re.search(r"Session:\s+abc123", out)
-        assert re.search(rf"Started:\s+{re.escape(expected_started)}", out)
+        assert re.search(r"Session\s+abc123", out)
+        assert re.search(rf"Started\s+{re.escape(expected_started)}", out)
         assert f"[user] {expected_turn}" in out
         assert f"[assistant] {expected_turn} (30 tok)" in out
         assert "Doing it." in out
@@ -275,8 +275,8 @@ class TestPeekFollowMode:
 
         # The detail header is an aligned definitions() block, so the value sits
         # a padded gutter past the label — match label + value, not a fixed gap.
-        assert re.search(r"Session:\s+abc123", out)
-        assert re.search(rf"Started:\s+{re.escape(expected_started)}", out)
+        assert re.search(r"Session\s+abc123", out)
+        assert re.search(rf"Started\s+{re.escape(expected_started)}", out)
         assert f"[user] {expected_initial_turn}" in out
         assert f"[assistant] {expected_initial_turn} (30 tok)" in out
         assert f"[assistant] {expected_live_turn} (11 tok)" in out

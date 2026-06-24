@@ -1275,7 +1275,7 @@ class TestRenderQueryDetailBlock:
             detail, turns=[turn], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "Conversation:" in text
+        assert "Conversation" in text
         assert "01DETAIL" in text
         assert "project" in text
         assert "[user]" in text
@@ -1332,7 +1332,7 @@ class TestRenderQueryDetailBlock:
             detail, turns=[], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "Conversation:" in text
+        assert "Conversation" in text
 
 
 @dataclass
@@ -1377,7 +1377,7 @@ class TestRenderPeekDetailBlock:
             detail, exchanges=[exchange], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "Session:" in text
+        assert "Session" in text
         assert "sess001" in text
         assert "my-project" in text
         assert "[user]" in text
@@ -1414,7 +1414,7 @@ class TestRenderPeekDetailBlock:
             detail, exchanges=[], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "Session:" in text
+        assert "Session" in text
 
     def test_prompt_only_exchange(self):
         from siftd.output.painted_bridge import render_peek_detail_block
@@ -1436,7 +1436,7 @@ class TestRenderPeekDetailBlock:
             detail, exchanges=[], fidelity=Fidelity(depth=1)
         )
         text = _block_to_text(result)
-        assert "Parent:" in text
+        assert "Parent" in text
         assert "parent001" in text
 
 
