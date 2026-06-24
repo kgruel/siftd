@@ -70,7 +70,8 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         no_header: bool — omit session header (default: False)
     """
     from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
-    from siftd.output.narrative import MarkdownEmitter, walk_narrative
+    from siftd.output.narrative import MarkdownEmitter
+    from siftd.serialization.narrative import walk_narrative
 
     if hasattr(result, "turns"):
         detail = result

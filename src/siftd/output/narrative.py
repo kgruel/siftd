@@ -1,28 +1,16 @@
 """Presentation-layer emitters for narrative rendering.
 
-The narrative walker, protocol, and JsonEmitter have moved to
-siftd.serialization.narrative. This module re-exports them for
-backward compatibility and provides presentation-specific emitters
-(MarkdownEmitter, etc.).
+The narrative walker (``walk_narrative``), its protocol, and the machine emitters
+(``JsonEmitter``, ``NarrativeEmitter``) live in ``siftd.serialization.narrative``.
+This module owns the presentation-specific emitters — ``MarkdownEmitter`` and
+``HtmlEmitter``.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from siftd.output.common import truncate_text
 
-# Re-export from serialization layer for backward compatibility
-from siftd.serialization.narrative import (
-    JsonEmitter,
-    NarrativeEmitter,
-    walk_narrative,
-)
-
-if TYPE_CHECKING:
-    pass
-
-__all__ = ["JsonEmitter", "MarkdownEmitter", "NarrativeEmitter", "walk_narrative"]
+__all__ = ["HtmlEmitter", "MarkdownEmitter"]
 
 
 class MarkdownEmitter:

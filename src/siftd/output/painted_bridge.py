@@ -461,8 +461,8 @@ def render_narrative_block(
     Delegates to walk_narrative() for fidelity gating (what to show),
     PaintedEmitter for rendering (how to show it).
     """
-    from siftd.output.narrative import walk_narrative
     from siftd.output.theme import domain_styles
+    from siftd.serialization.narrative import walk_narrative
 
     ds = domain_styles(fidelity)
     effective_tool_chars = tool_chars or _tool_density(fidelity)
