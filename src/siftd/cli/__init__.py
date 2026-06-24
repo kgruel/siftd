@@ -100,116 +100,6 @@ _PLUMBING: frozenset[str] = frozenset(
 _SUMMARY = "Aggregate and query LLM conversation logs"
 
 
-def _render_block_to_str(block) -> str:
-    """Render a painted ``Block`` to a string, ANSI-gated on the real stdout.
-
-    The root ``--help`` is assembled by wrapping argparse's plain body with
-    rendered brand blocks (masthead above, lane legend + footer below), so the
-    blocks must become strings. ``should_use_ansi(sys.stdout)`` keys the colour
-    to the eventual destination even though the block renders into a buffer.
-    """
-    import io
-
-    from painted import print_block
-
-    from siftd.output.common import should_use_ansi
-
-    buf = io.StringIO()
-    print_block(block, buf, use_ansi=should_use_ansi(sys.stdout))
-    return buf.getvalue()
-
-
-def _lane_command_segments(cmds: str):
-    """Style a lane's command list: names ``secondary``, ``·`` separators muted."""
-    from painted import current_palette
-
-    from siftd.output.theme import domain_styles
-
-    p = current_palette()
-    secondary = domain_styles().summary
-    segments: list[tuple[str, object]] = []
-    for i, cmd in enumerate(cmds.split()):
-        if i:
-            segments.append((" · ", p.muted))
-        segments.append((cmd, secondary))
-    return segments
-
-
-def _root_masthead_block(*, as_ascii: bool):
-    """The masthead: the ``sift▪d`` mark + version + summary on one line.
-
-    The mark leads, the version recedes (muted), the summary follows (secondary)
-    set off by an em-dash (``-`` on a non-Unicode stream). The only place the
-    summary appears, so a ``grep`` for it stays single-hit.
-    """
-    from painted import current_palette
-
-    from siftd.output.mark import wordmark_segments
-    from siftd.output.row import row_line
-    from siftd.output.theme import domain_styles
-
-    p = current_palette()
-    dash = " - " if as_ascii else " — "
-    segments = wordmark_segments(as_ascii=as_ascii) + [
-        (" ", None),
-        (_get_version(), p.muted),
-        (dash, p.muted),
-        (_SUMMARY, domain_styles().summary),
-    ]
-    line = row_line(segments)
-    return line.to_block(line.width)
-
-
-def _root_lanes_block():
-    """The lane legend: a muted ``lanes:`` intro over the label→commands grid.
-
-    Lane labels take the structure weight (bold cream); the grid recurses the
-    same ``definitions`` atom the report surfaces use. The plain text is
-    byte-identical to the former epilog, so the listing reads unchanged when
-    colour is stripped.
-    """
-    from painted import current_palette, join_vertical
-
-    from siftd.output.listing import definitions, lines
-
-    p = current_palette()
-    letters = p.text.merge(p.accent)  # bold cream — the structure role
-    intro = lines(["lanes:"], indent=0, style=p.muted)
-    grid = definitions(
-        [(name, _lane_command_segments(cmds)) for name, cmds in _LANES],
-        indent=2,
-        gutter=2,
-        label_style=letters,
-    )
-    return join_vertical(intro, grid)
-
-
-def _root_footer_block():
-    """The footer: the ``--help`` pointer (typed command in the literal hue) over
-    the hidden-plumbing line, both muted — plain text unchanged from the epilog.
-    """
-    from painted import current_palette, join_vertical
-
-    from siftd.output.listing import lines
-    from siftd.output.theme import domain_styles
-
-    p = current_palette()
-    pointer = lines(
-        [[
-            ("Run '", p.muted),
-            ("siftd <command> --help", domain_styles().code),
-            ("' for details.", p.muted),
-        ]],
-        indent=0,
-    )
-    hidden = lines(
-        ["Advanced (hidden): " + ", ".join(sorted(_PLUMBING))],
-        indent=0,
-        style=p.muted,
-    )
-    return join_vertical(pointer, hidden)
-
-
 def _hide_plumbing(subparsers) -> None:
     """Drop plumbing commands from the parent --help listing without
     unregistering them: they stay in ``choices``, so ``siftd <plumbing>`` and the
@@ -225,30 +115,62 @@ def _hide_plumbing(subparsers) -> None:
     ]
 
 
-class _RootParser(argparse.ArgumentParser):
-    """Root parser whose ``--help`` leads with the brand mark.
+class _BrandSubParsersAction(argparse._SubParsersAction):
+    """Sub-parsers action that seeds each sub-command's ``description`` from its
+    one-line ``help``.
 
-    argparse owns the body (usage, the command listing, options); this wraps it
-    with the rendered masthead above and the styled lane legend + footer below —
-    the Phase-2 brand layer. Leaf/branch help stays stock argparse for now. All
-    three help entry points (``siftd``, ``siftd -h``, ``siftd --help``) route
-    through ``format_help``.
+    argparse keeps the ``help=`` one-liner on the *parent* (in ``_choices_actions``),
+    so a sub-parser can't see its own summary when it renders its ``--help``. Copying
+    it to ``description`` at registration gives every command a breadcrumb summary
+    with zero per-builder edits. ``_HelpfulParser`` registers this action, and since
+    every parser in the tree is a ``_HelpfulParser`` (the inherited ``parser_class``),
+    the copy applies tree-wide, nested branches included.
     """
 
-    def format_help(self) -> str:
-        from siftd.output.common import prefers_ascii
+    def add_parser(self, name, **kwargs):
+        if "help" in kwargs and "description" not in kwargs:
+            kwargs["description"] = kwargs["help"]
+        return super().add_parser(name, **kwargs)
 
-        as_ascii = prefers_ascii(sys.stdout)
-        masthead = _render_block_to_str(_root_masthead_block(as_ascii=as_ascii))
-        body = super().format_help()
-        lanes = _render_block_to_str(_root_lanes_block())
-        footer = _render_block_to_str(_root_footer_block())
-        return (
-            masthead.rstrip("\n") + "\n\n"
-            + body.strip("\n") + "\n\n"
-            + lanes.rstrip("\n") + "\n\n"
-            + footer.rstrip("\n") + "\n"
-        )
+
+class _HelpfulParser(argparse.ArgumentParser):
+    """Every parser in the tree — its ``--help`` renders through the one help grammar.
+
+    ``format_help`` derives a ``HelpPage`` from the live parser and renders it
+    (``output.help``): the mark/breadcrumb, usage, weighted groups, and footer. The
+    root (a single-word ``prog``) carries the version + lane grouping + hidden line;
+    a branch lists its sub-commands; a leaf lists its argument groups + epilog. All
+    three help entry points (``siftd [-h|--help]``) route through here. ``__init__``
+    registers ``_BrandSubParsersAction`` so ``add_subparsers`` populates descriptions.
+    """
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.register("action", "parsers", _BrandSubParsersAction)
+
+    def add_subparsers(self, **kwargs):
+        # Default the command placeholder to <command> so a branch's usage line
+        # reads `siftd db [-h] <command> ...` instead of argparse dumping the full
+        # {info,stats,…17 choices…} brace. The root sets this explicitly; nested
+        # branches (db, auth, db remote) inherit it here rather than each repeating
+        # it. Display-only — dest/parsing are unaffected.
+        kwargs.setdefault("metavar", "<command>")
+        return super().add_subparsers(**kwargs)
+
+    def format_help(self) -> str:
+        from siftd.output.help import HelpPage, render_help
+
+        if len(self.prog.split()) == 1:  # the root
+            page = HelpPage.from_argparse(
+                self,
+                version=_get_version(),
+                summary=_SUMMARY,
+                lanes=_LANES,
+                hidden=tuple(sorted(_PLUMBING)),
+            )
+        else:
+            page = HelpPage.from_argparse(self)
+        return render_help(page, stream=sys.stdout)
 
 
 class _VersionAction(argparse.Action):
@@ -318,6 +240,62 @@ def _render_version() -> None:
     print_block(join_vertical(*blocks), use_ansi=should_use_ansi())
 
 
+def _build_parser() -> argparse.ArgumentParser:
+    """Construct the root parser: every command registered, plumbing de-listed.
+
+    Extracted from ``main`` so tests can introspect the command tree (e.g. assert
+    every registered sub-command is assigned to a lane or to ``_PLUMBING``, so none
+    silently vanishes from ``--help``). No description/epilog: the whole help
+    surface — masthead, usage, lanes, footer — is composed by
+    ``_HelpfulParser.format_help`` via ``output.help``, which derives a HelpPage
+    from this parser; ``_SUMMARY`` is single-sourced (passed to the page) so it
+    appears exactly once, in the masthead.
+    """
+    parser = _HelpfulParser(prog="siftd")
+    parser.add_argument(
+        "--version",
+        action=_VersionAction,
+        help="show program's version number and exit",
+    )
+    parser.add_argument(
+        "--db",
+        metavar="PATH",
+        help=f"Database path (default: {db_path()})",
+    )
+
+    # parser_class propagates the help grammar to the whole tree: add_subparsers
+    # defaults a nested parser_class to the parent's class, so pinning it here once
+    # makes every leaf and branch a _HelpfulParser whose --help renders through the
+    # one renderer (and registers _BrandSubParsersAction, populating descriptions).
+    subparsers = parser.add_subparsers(
+        dest="command", metavar="<command>", parser_class=_HelpfulParser
+    )
+
+    # Registered in lane order so the help listing reads top-to-bottom as the
+    # lanes do. Multi-command builders (data, meta, sessions) span lanes; the
+    # lane legend is the authoritative lane view. Plumbing verbs are hidden
+    # from the listing by _hide_plumbing() below but remain fully runnable.
+    build_query_parser(subparsers)
+    build_show_parser(subparsers)
+    build_report_parser(subparsers)
+    build_search_parser(subparsers)
+    build_peek_parser(subparsers)
+    build_tags_parser(subparsers)
+    build_export_parser(subparsers)
+    build_data_parser(subparsers)  # ingest (+ backfill/migrate/copy hidden) + doctor
+    build_meta_parser(subparsers)  # config + adapters
+    build_db_parser(subparsers)
+    build_serve_parser(subparsers)
+    build_auth_parser(subparsers)
+    build_install_parser(subparsers)
+    build_sessions_parser(subparsers)  # register, session-id (hidden)
+    build_id_parser(subparsers)  # hidden
+    build_upgrade_parser(subparsers)  # hidden
+
+    _hide_plumbing(subparsers)
+    return parser
+
+
 def main(argv=None) -> int:
     _configure_cli_logging()
     _relax_output_encoding()
@@ -346,52 +324,7 @@ def main(argv=None) -> int:
         from painted import ASCII_ICONS, use_icons
 
         use_icons(ASCII_ICONS)
-    # No description/epilog: the brand masthead (the summary's only home) and the
-    # styled lane legend + footer are rendered by _RootParser.format_help, which
-    # wraps argparse's body. _SUMMARY is single-sourced for the masthead so a
-    # grep for it stays single-hit.
-    parser = _RootParser(prog="siftd")
-    parser.add_argument(
-        "--version",
-        action=_VersionAction,
-        help="show program's version number and exit",
-    )
-    parser.add_argument(
-        "--db",
-        metavar="PATH",
-        help=f"Database path (default: {db_path()})",
-    )
-
-    # parser_class is pinned to vanilla ArgumentParser: add_subparsers defaults it
-    # to the parent's class, which would make every subcommand a _RootParser and
-    # leak the brand masthead/lanes onto leaf/branch --help. Root-only is the
-    # Phase-2 scope; leaf/branch help stays stock argparse until the help adapter.
-    subparsers = parser.add_subparsers(
-        dest="command", metavar="<command>", parser_class=argparse.ArgumentParser
-    )
-
-    # Registered in lane order so the help listing reads top-to-bottom as the
-    # lanes do. Multi-command builders (data, meta, sessions) span lanes; the
-    # epilog legend is the authoritative lane view. Plumbing verbs are hidden
-    # from the listing by _hide_plumbing() below but remain fully runnable.
-    build_query_parser(subparsers)
-    build_show_parser(subparsers)
-    build_report_parser(subparsers)
-    build_search_parser(subparsers)
-    build_peek_parser(subparsers)
-    build_tags_parser(subparsers)
-    build_export_parser(subparsers)
-    build_data_parser(subparsers)  # ingest (+ backfill/migrate/copy hidden) + doctor
-    build_meta_parser(subparsers)  # config + adapters
-    build_db_parser(subparsers)
-    build_serve_parser(subparsers)
-    build_auth_parser(subparsers)
-    build_install_parser(subparsers)
-    build_sessions_parser(subparsers)  # register, session-id (hidden)
-    build_id_parser(subparsers)  # hidden
-    build_upgrade_parser(subparsers)  # hidden
-
-    _hide_plumbing(subparsers)
+    parser = _build_parser()
 
     args, unknowns = parser.parse_known_args(argv)
     if unknowns:

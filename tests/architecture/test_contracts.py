@@ -6,6 +6,7 @@ is stable.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -187,37 +188,26 @@ class TestCommandReferences:
         import re
         from pathlib import Path
 
-        # Get valid subcommands by parsing --help output
+        # Get valid subcommands by parsing --help output. Pin COLUMNS so the
+        # 'Advanced (hidden): …' line never wraps — its continuation would drop
+        # plumbing commands from the parse and make this test width-dependent.
+        env = {**os.environ, "COLUMNS": "80"}
         result = subprocess.run(
             ["uv", "run", "siftd", "--help"],
             capture_output=True,
             text=True,
+            env=env,
         )
         assert result.returncode == 0, f"Failed to get help: {result.stderr}"
 
-        # Extract subcommands from help output
-        # Help format shows commands like: "  ingest    Ingest logs..."
+        # Extract subcommands from the terse inline lane legend: each lane is one
+        # row, `  EXPLORE   query · search · …`, the names following the (uppercase)
+        # lane label and ·-separated.
         valid_subcommands = set()
-        in_commands_section = False
         for line in result.stdout.splitlines():
-            # Look for the commands section
-            if "positional arguments:" in line.lower() or "{" in line:
-                in_commands_section = True
-                continue
-            if in_commands_section:
-                # Commands are indented with 2 spaces, format: "  cmd  description"
-                match = re.match(r"^\s{2,4}(\w[\w-]*)\s", line)
-                if match:
-                    valid_subcommands.add(match.group(1))
-                # Stop at next section
-                if line.strip() and not line.startswith(" "):
-                    in_commands_section = False
-
-        # Also extract from the {cmd1,cmd2,...} pattern if present
-        brace_match = re.search(r"\{([^}]+)\}", result.stdout)
-        if brace_match:
-            for cmd in brace_match.group(1).split(","):
-                valid_subcommands.add(cmd.strip())
+            match = re.match(r"^ {2}[A-Z][A-Z]+ {2,}(.+)$", line)
+            if match:
+                valid_subcommands.update(p.strip() for p in match.group(1).split("·") if p.strip())
 
         # Plumbing commands are hidden from the lane listing but remain valid;
         # the help advertises them on the epilog 'Advanced (hidden): ...' line.

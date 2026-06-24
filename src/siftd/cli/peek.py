@@ -405,29 +405,12 @@ def build_peek_parser(subparsers) -> None:
         help="Inspect live sessions from disk (bypasses SQLite)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
-  siftd peek                    # list latest 10 sessions
-  siftd peek -n 5               # list latest 5 sessions
-  siftd peek --all              # list all sessions (no time limit)
-  siftd peek --all -n 50        # list all, but only first 50
-  siftd peek -w myproject       # filter by workspace name
-  siftd peek c520f862           # detail view for session (last 5 exchanges)
-  siftd peek c520 --exchanges 10  # show last 10 exchanges
-  siftd peek c520 --thinking    # show thinking blocks inline
-  siftd peek c520 --tools       # show tool inputs/results inline when available
-  siftd peek c520 --brief       # compact detail view (80 char truncation)
-  siftd peek c520 -b            # short alias for --brief
-  siftd peek c520 --full        # show full text (no truncation)
-  siftd peek c520 -F            # short alias for --full
-  siftd peek c520 --tail        # raw JSONL tail
-  siftd peek c520 --tail --json # tail as JSON array
-  siftd peek --main-only        # exclude subagent sessions
-  siftd peek --children abc123  # show children of parent session
-  siftd peek --last-response    # output last assistant response (raw text)
-  siftd peek --last-prompt      # output last user prompt (raw text)
-  siftd peek c520 --last-response  # last response from specific session
-  siftd peek c520 --follow      # follow a live session in real time
-  siftd peek --follow            # follow most recent active session
-  siftd peek --follow --json    # follow as NDJSON (one object per line)
+  siftd peek                     # latest sessions (active, last 2h)
+  siftd peek --all -n 50         # all sessions, first 50
+  siftd peek -w myproject        # filter by workspace name
+  siftd peek c520f862            # detail view (last 5 exchanges)
+  siftd peek c520 --follow       # follow a live session in real time
+  siftd peek --last-response     # output the last assistant response (raw)
 
 NOTE: Session content may contain sensitive information (API keys, credentials, etc.).""",
     )
@@ -435,19 +418,19 @@ NOTE: Session content may contain sensitive information (API keys, credentials, 
 
     p_peek.add_argument("session_id", nargs="?", help="Session ID prefix for detail view")
 
-    add_output_args(p_peek, json=True, limit=True, limit_default=None)
-    add_fidelity_args(p_peek, full=True, brief=True, chars=True, thinking=True)
-
-    # peek-specific session filters
-    session_group = p_peek.add_argument_group("session filters")
+    # peek-specific session filters — the "filters" section (first, like the others)
+    session_group = p_peek.add_argument_group("filters")
     session_group.add_argument("-w", "--workspace", metavar="SUBSTR", help="Filter by workspace name substring")
     session_group.add_argument("--branch", metavar="SUBSTR", help="Filter by worktree branch substring")
     session_group.add_argument("--all", action="store_true", help="Include inactive sessions (not just last 2 hours)")
     session_group.add_argument("--main-only", action="store_true", help="Only show main sessions (exclude subagents)")
     session_group.add_argument("--children", metavar="ID", help="Show only children of the specified parent session")
 
-    # peek-specific detail/follow controls
-    detail_group = p_peek.add_argument_group("detail and follow")
+    add_output_args(p_peek, json=True, limit=True, limit_default=None)
+    add_fidelity_args(p_peek, full=True, brief=True, chars=True, thinking=True)
+
+    # peek-specific detail/follow controls — join the "view" section
+    detail_group = p_peek.add_argument_group("view")
     detail_group.add_argument("--exchanges", type=int, metavar="N", help="Detail mode: number of exchanges to show (default: 5)")
     detail_group.add_argument("--tools", action="store_true", help="Show tool inputs/results inline when available")
     detail_group.add_argument("-f", "--follow", action="store_true", help="Follow a live session in real time (like tail -f)")

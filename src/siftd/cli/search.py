@@ -552,60 +552,18 @@ def build_search_parser(subparsers) -> None:
         "search",
         help="Search conversations (auto-selects FTS5 or semantic based on what's installed)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Unified search: auto-selects the best available search mechanism.
-- With embeddings installed: hybrid search (FTS5 recall + semantic reranking)
-- Without embeddings: FTS5 keyword search (install embeddings: siftd install embed)
+        epilog="""Auto-selects the engine: hybrid (FTS5 + semantic) when embeddings are
+installed, else FTS5 keyword search. Install embeddings: siftd install embed
 
 examples:
-  # search (auto-selects best available mode)
-  siftd search "error handling"                        # hybrid or FTS5 (auto)
-  siftd search -w myproject "auth flow"                # filter by workspace
-  siftd search --since 2024-06 "testing"               # filter by date
+  siftd search "error handling"                   # auto (hybrid or FTS5)
+  siftd search -w myproject "auth flow"           # filter by workspace
+  siftd search --since 7d "testing"               # filter by date
+  siftd search "design decision" --view thread    # narrative: top conversations
+  siftd search "why X" --around why --turns -2:+2 # window around a phrase match
+  siftd search -l research: "auth flow"           # search within tagged conversations
 
-  # explicit engine selection
-  siftd search --mode fts "error handling"             # force FTS5 keyword search
-  siftd search --mode semantic "auth flow"             # force semantic search
-
-  # refine
-  siftd search "design decision" --view=thread         # narrative: top conversations expanded
-  siftd search "why we chose X" --around "why" --turns -2:+2  # ±2 turns around phrase
-  siftd search "event sourcing" --view=conversations   # rank whole conversations, not chunks
-  siftd search "when first discussed Y" --select=first # earliest match above threshold
-  siftd search --threshold 0.7 "architecture"          # only high-relevance results
-
-  # inspect
-  siftd search -v "chunking"                           # full chunk text
-  siftd search --full "chunking"                       # complete prompt+response exchange
-  siftd search --refs "authelia"                       # file references + content
-  siftd search --refs HANDOFF.md "setup"               # filter refs to specific file
-
-  # filter by tags
-  siftd search -l research:auth "auth flow"            # search within tagged conversations
-  siftd search -l research: -l useful: "pattern"       # OR — any research: or useful: tag
-  siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
-  siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
-
-  # filter by tool use
-  siftd search --tool shell.execute "test failure"     # only conversations that ran a shell
-  siftd search --tool-tag shell:vcs "merge conflict"   # conversations with a git-tagged tool call
-
-  # save useful results for future retrieval
-  siftd tag 01HX... research:auth                   # bookmark a conversation
-  siftd tag --last research:architecture            # tag most recent conversation
-  siftd query -l research:auth                      # retrieve tagged conversations
-
-  # tuning
-  siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-  siftd search --sort=time "chunking"                   # sort by time instead of score
-
-  # diversity vs relevance (MMR reranking)
-  siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
-  siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
-  siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown
-  siftd search --json "auth" | jq '.results[0].turn_index'  # turn index for drill-in
-
-note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N instead.
-  Example: --context 2 → --around "phrase" --turns -2:+2""",
+(--context was removed; use --around PHRASE --turns -N:+N)""",
     )
 
     # Positional argument
@@ -622,7 +580,7 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
     add_output_args(p_search, json=True, limit=True, limit_default=10)
     add_fidelity_args(p_search, full=True)
 
-    search_display = p_search.add_argument_group("search display")
+    search_display = p_search.add_argument_group("output")
     search_display.add_argument("-v", "--verbose", action="store_true", help="Show full chunk text")
     search_display.add_argument("--format", metavar="NAME", help="Use named formatter (built-in or drop-in plugin)")
 
@@ -630,8 +588,8 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
     # Note: --context was removed in v0.9.x; use --around PHRASE --turns -N:+N instead.
     add_anchor_window_args(p_search, anchors=frozenset({"around"}), windows=frozenset({"turns"}))
 
-    # Result modes — three orthogonal axes
-    mode_group = p_search.add_argument_group("result modes")
+    # Result modes — three orthogonal axes; join the "view" section
+    mode_group = p_search.add_argument_group("view")
     mode_group.add_argument(
         "--select",
         choices=["all", "first"],
@@ -656,7 +614,7 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
     mode_group.add_argument("--refs", nargs="?", const=True, metavar="FILES", help="Show file references; optionally filter by comma-separated basenames")
 
     # Engine selection
-    engine_group = p_search.add_argument_group("search engine")
+    engine_group = p_search.add_argument_group("search")
     engine_group.add_argument(
         "--mode",
         type=_engine_mode,
@@ -665,30 +623,30 @@ note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N inste
         help="Search engine: auto (default), fts, semantic, or hybrid. auto picks hybrid when embeddings are installed, else fts.",
     )
 
-    # Search tuning
-    tuning_group = p_search.add_argument_group("search tuning")
+    # Search tuning — join the "search" section
+    tuning_group = p_search.add_argument_group("search")
     tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
     tuning_group.add_argument("--raw-fts", action="store_true", help="Pass query directly to FTS5 without tokenization (advanced: skips OR fallback)")
 
-    # Diversity (MMR reranking)
-    diversity_group = p_search.add_argument_group("diversity")
+    # Diversity (MMR reranking) — join the "ranking" section
+    diversity_group = p_search.add_argument_group("ranking")
     diversity_group.add_argument("--no-diversity", action="store_true", help="Disable MMR reranking for deterministic pure relevance order")
     diversity_group.add_argument("--lambda", type=float, default=0.7, dest="lambda_", metavar="FLOAT", help="MMR lambda: 1.0=relevance, 0.0=diversity (default: 0.7)")
 
-    # Recency boost
-    recency_group = p_search.add_argument_group("recency")
+    # Recency boost — join the "ranking" section
+    recency_group = p_search.add_argument_group("ranking")
     recency_group.add_argument("--recency", action="store_true", help="Boost recent results (exponential decay, mild 15%% boost)")
     recency_group.add_argument("--recency-half-life", type=float, default=30.0, metavar="DAYS", help="Days until recency boost decays to half (default: 30)")
     recency_group.add_argument("--recency-max-boost", type=float, default=1.15, metavar="MULT", help="Max boost multiplier for today's results (default: 1.15)")
 
-    # Scope options
-    scope_group = p_search.add_argument_group("scope")
+    # Scope options — join the "ranking" section
+    scope_group = p_search.add_argument_group("ranking")
     scope_group.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
     scope_group.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd search/query results)")
 
     # Index management
-    index_group = p_search.add_argument_group("index management")
+    index_group = p_search.add_argument_group("index")
     index_group.add_argument("--index", action="store_true", help="Build/update embeddings index")
     index_group.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
     index_group.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")

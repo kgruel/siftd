@@ -272,25 +272,14 @@ def _inline(children, ds, base_style, ascii_mode: bool) -> list[tuple[str, Any]]
 def _wrap_segments(segments, width, first_prefix, cont_prefix) -> list:
     """Word-wrap ``(text, Style)`` segments to ``width``, prefixing each line.
 
-    ``first_prefix`` / ``cont_prefix`` are ``[(text, Style)]`` segment lists (the
-    body indent, plus a list marker on the first line of an item). Reuses the
-    shared span-aware word wrap so inline emphasis survives wrap boundaries.
+    Thin delegator to the leaf ``output.row.wrap_segments`` (the one home for the
+    aligned-continuation word-wrap, shared with the help body). ``first_prefix`` /
+    ``cont_prefix`` are ``[(text, Style)]`` segment lists (the body indent, plus a
+    list marker on the first line of an item).
     """
-    from painted.core._text_width import display_width
+    from siftd.output.row import wrap_segments
 
-    from siftd.output.painted_bridge import _wrap_spans
-
-    _, Line, Span, _, _, _ = _pp()
-    spans = [Span(t, s) for t, s in segments if t]
-    pfx_w = sum(display_width(t) for t, _ in first_prefix)
-    avail = max(1, (width or 80) - pfx_w)
-    wrapped = _wrap_spans(spans, avail) if spans else [Line(spans=())]
-    out: list = []
-    for i, ln in enumerate(wrapped):
-        pfx = first_prefix if i == 0 else cont_prefix
-        pspans = tuple(Span(t, s) for t, s in pfx if t)
-        out.append(Line(spans=pspans + ln.spans))
-    return out
+    return wrap_segments(segments, width, first_prefix, cont_prefix)
 
 
 def _split_list_item(item):

@@ -71,3 +71,72 @@ def test_width_is_wcwidth_correct():
 def test_all_empty_is_a_zero_width_line():
     assert row_line([]).width == 0
     assert row_line([("", None)]).width == 0
+
+
+# --- wrap_spans / wrap_segments -------------------------------------------
+# The styled word-wrap promoted here from painted_bridge/markdown_render; now the
+# single home shared by the markdown body, search snippets, and the help body.
+# These pin the contract all three rely on so a change can't silently shift them.
+
+from painted import Span  # noqa: E402
+
+from siftd.output.row import wrap_spans, wrap_segments  # noqa: E402
+
+
+def _line_text(line) -> str:
+    return "".join(sp.text for sp in line.spans)
+
+
+def test_wrap_spans_word_wraps_to_width():
+    lines = wrap_spans([Span("alpha beta gamma", Style())], 11)
+    assert [_line_text(ln).rstrip() for ln in lines] == ["alpha beta", "gamma"]
+    assert all(ln.width <= 11 for ln in lines)
+
+
+def test_wrap_spans_hard_splits_an_overlong_token():
+    # A single token wider than the whole line is hard-split, never overflowed —
+    # the branch the help usage packer leans on for a too-wide mutex group.
+    lines = wrap_spans([Span("a" * 20, Style())], 5)
+    assert all(ln.width <= 5 for ln in lines)
+    assert "".join(_line_text(ln) for ln in lines) == "a" * 20
+    assert len(lines) == 4
+
+
+def test_wrap_spans_preserves_style_across_boundaries():
+    red = Style(fg=1)
+    lines = wrap_spans([Span("xxxx yyyy", red)], 4)
+    for ln in lines:
+        for sp in ln.spans:
+            if sp.text.strip():
+                assert sp.style == red
+
+
+def test_wrap_spans_is_wcwidth_correct():
+    # Wide (CJK) glyphs count two columns, so a width-4 line holds two of them.
+    lines = wrap_spans([Span("日" * 5, Style())], 4)
+    assert all(ln.width <= 4 for ln in lines)
+    assert "".join(_line_text(ln) for ln in lines) == "日" * 5
+
+
+def test_wrap_segments_reserves_first_prefix_width():
+    # The first prefix's display width is reserved out of the budget so the wrapped
+    # run never collides with an aligned key column.
+    lines = wrap_segments([("one two three", Style())], 12, [("KEY ", Style())])
+    assert _line_text(lines[0]).startswith("KEY ")
+    assert all(ln.width <= 12 for ln in lines)
+
+
+def test_wrap_segments_none_style_does_not_crash():
+    # The load-bearing guard the promotion ADDED: the originals passed Span(t, None)
+    # which crashes in to_block; wrap_segments coerces None -> plain so a help row
+    # (which may hand a None style) renders instead of raising.
+    lines = wrap_segments([("plain text here", None)], 8, [("  ", None)])
+    assert lines  # rendered, no AttributeError
+    block = lines[0].to_block(lines[0].width)  # the call that crashed on Span(_, None)
+    assert block.height == 1
+
+
+def test_wrap_segments_empty_input_is_one_prefixed_line():
+    lines = wrap_segments([], 20, [("> ", Style())])
+    assert len(lines) == 1
+    assert _line_text(lines[0]) == "> "

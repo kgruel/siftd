@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from siftd.cli import _LANES, _PLUMBING, main
+from siftd.cli import _LANES, _PLUMBING, _build_parser, main
 
 
 def _root_help(capsys) -> str:
@@ -20,15 +20,23 @@ def _root_help(capsys) -> str:
 
 
 def _listed_commands(help_text: str) -> set[str]:
-    """Command names offered in the listing (above the lanes legend)."""
-    listing = help_text.split("lanes:")[0]
-    return {m.group(1) for line in listing.splitlines() if (m := re.match(r"    (\S+)  ", line))}
+    """Command names offered in the terse inline lane legend.
+
+    Each lane is one row — ``  EXPLORE   query · search · …`` — so the names follow
+    the (uppercase) lane label and are ``·``-separated. Collect them across lanes.
+    """
+    names: set[str] = set()
+    for line in help_text.splitlines():
+        m = re.match(r"  [A-Z][A-Z]+ {2,}(.+)$", line)
+        if m:
+            names.update(p.strip() for p in m.group(1).split("·") if p.strip())
+    return names
 
 
 class TestLaneGrouping:
     def test_lane_legend_present(self, capsys):
         out = _root_help(capsys)
-        assert "lanes:" in out
+        # Each lane is a weighted group label heading its commands (no "lanes:" intro).
         for lane, _cmds in _LANES:
             assert lane in out
 
@@ -56,6 +64,27 @@ class TestLaneGrouping:
         usage = next(line for line in out.splitlines() if line.startswith("usage:"))
         assert "<command>" in usage
         assert "{" not in usage
+
+    def test_every_command_is_laned_or_plumbing(self):
+        """Every registered sub-command must be in a lane or in _PLUMBING.
+
+        Otherwise it is invisible in `siftd --help` (neither listed under a lane
+        nor advertised on the 'Advanced (hidden)' line) while still being runnable.
+        Pinning the partition forces a lane/plumbing decision when a command is
+        added, and catches a lane referencing a removed/renamed command.
+        """
+        import argparse
+
+        parser = _build_parser()
+        sub = next(
+            a for a in parser._actions if isinstance(a, argparse._SubParsersAction)
+        )
+        registered = set(sub.choices)
+        laned = {c for _label, cmds in _LANES for c in cmds.split()}
+        assert registered == laned | _PLUMBING, (
+            f"unlaned (vanish from --help): {registered - laned - _PLUMBING}; "
+            f"stale lane/plumbing refs: {(laned | _PLUMBING) - registered}"
+        )
 
     @pytest.mark.parametrize("cmd", sorted(_PLUMBING))
     def test_hidden_command_still_runnable(self, cmd, capsys):

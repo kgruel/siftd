@@ -67,6 +67,15 @@ class DomainStyles:
     label: Style         # section headers, field labels
     summary: Style       # summary hints, overflow indicators
     separator: Style     # visual dividers
+    faint: Style         # tertiary chrome BELOW the muted floor — help defaults
+                         # ((default 10)), example comments, the breadcrumb chevron
+                         # and the version dash. A second, dimmer grey that buys the
+                         # help surface the design concept's tonal depth (muted for
+                         # connective tissue, faint for the things that recede
+                         # further). Deliberately recessive: on a near-black
+                         # terminal it sits close to the substrate (the point — it's
+                         # tertiary), which is why muted, not this, stays the floor
+                         # for anything that must stay legible.
 
 
 # Cream — the warm body foreground. The one identity tone with two homes: the
@@ -139,6 +148,22 @@ _SIFTD_THEME, _ROUNDED = _make_theme()
 siftd_theme: Theme = _SIFTD_THEME
 
 
+def structure_style() -> Style:
+    """The structure role — bold cream (``palette.text`` merged with ``palette.accent``).
+
+    Deliberately *not* a ``DomainStyles`` field: it composes two roles the theme
+    already owns — the cream body substrate and the weight-only accent — enacting
+    the "structure pops by weight, not colour" law rather than naming a new role.
+    Named here so the one concept (group labels, the breadcrumb's command, the
+    wordmark's letters, sub-command names) has a single definition the help
+    renderer, the mark, and any role-fidelity test can anchor on.
+    """
+    from painted import current_palette
+
+    p = current_palette()
+    return p.text.merge(p.accent)
+
+
 def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
     """Build domain styles from the ambient palette.
 
@@ -167,6 +192,8 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
     amber_dim = Style(fg="#a8884a")    # inline metrics — warmed+raised from #8a7a3a
     secondary = Style(fg="#a89a82")    # third weight (fg→muted) — warmed from cool grey
     teal = Style(fg="#5ba8a0")         # tags, agents
+    faint = Style(fg="#56564e")        # tertiary chrome BELOW the muted floor (help
+                                       # defaults, example comments, chevron/dash)
 
     # Thinking prominence: secondary italic by default, cream when explicitly shown
     thinking_visible = fidelity is not None and fidelity.shows("thinking")
@@ -208,4 +235,5 @@ def domain_styles(fidelity: Fidelity | None = None) -> DomainStyles:
         label=secondary,
         summary=secondary,
         separator=p.muted,
+        faint=faint,
     )

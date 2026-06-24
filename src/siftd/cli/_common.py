@@ -146,7 +146,10 @@ def add_fidelity_args(
     """
     if not any([full, brief, chars, thinking, tools, tool_chars]):
         return
-    g = parser.add_argument_group("fidelity")
+    # "view" — how much of each conversation to render. Merges with the navigation
+    # group (also titled "view") in the help renderer so anchors/turns sit beside
+    # the fidelity switches as one section.
+    g = parser.add_argument_group("view")
     if full:
         g.add_argument("-F", "--full", action="store_true", help="Full text (no truncation)")
     if brief:
@@ -262,7 +265,7 @@ def add_anchor_window_args(
     unknown_windows = windows - _ALL_WINDOWS
     if unknown_windows:
         raise ValueError(f"unknown windows: {unknown_windows!r}; valid: {_ALL_WINDOWS!r}")
-    g = parser.add_argument_group("navigation")
+    g = parser.add_argument_group("view")  # merges with fidelity into one section
     anchor = g.add_mutually_exclusive_group()
     if "from-start" in anchors:
         anchor.add_argument(

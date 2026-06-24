@@ -25,12 +25,21 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from painted import Line, Style
 
 # U+25AA BLACK SMALL SQUARE — the gold speck between t and d. A nugget, not a dot
 # (the lane legend's separator is the middot ·); the smallest filled square reads
 # as a speck at cell size.
 GRAIN = "▪"
+
+# U+203A SINGLE RIGHT-POINTING ANGLE QUOTATION MARK — the breadcrumb separator
+# between the mark and each command on the path (``sift▪d › db › restore``). It
+# degrades to a plain ``>`` where Unicode can't render (a pipe, a LANG=C TTY),
+# matching how the grain collapses — the chevron is siftd-identity chrome, so like
+# the grain it owns its own degradation (painted's IconSet has no slot for it).
+CHEVRON = "›"
 
 
 def wordmark_segments(*, as_ascii: bool | None = None) -> list[tuple[str, Style | None]]:
@@ -66,3 +75,38 @@ def wordmark(*, as_ascii: bool | None = None) -> Line:
     from siftd.output.row import row_line
 
     return row_line(wordmark_segments(as_ascii=as_ascii))
+
+
+def breadcrumb_segments(
+    tail: Sequence[str], *, as_ascii: bool | None = None
+) -> list[tuple[str, Style | None]]:
+    """The ``sift▪d › cmd › subcmd`` breadcrumb as ``(text, style)`` segments.
+
+    The mark leads (the grain still the one gold speck), then each path step after
+    the program name follows a muted ``›`` chevron, the step itself in the
+    structure role — bold cream, ``palette.text.merge(palette.accent)``, the same
+    weight the lane labels and group titles take. ``tail`` is the path *below*
+    ``siftd`` (``("search",)`` for a leaf, ``("db", "restore")`` for a nested
+    branch). With an empty ``tail`` this is just the mark. The chevron degrades to
+    ``>`` on a non-Unicode / piped stream (``prefers_ascii``), in step with the
+    grain; ``as_ascii`` defaults to the live stdout capability.
+    """
+    from siftd.output.common import prefers_ascii
+    from siftd.output.theme import domain_styles, structure_style
+
+    ascii_form = prefers_ascii() if as_ascii is None else as_ascii
+    structure = structure_style()  # bold cream — the structure role
+    chevron = domain_styles().faint  # the recessive tier, below muted
+    sep = f" {'>' if ascii_form else CHEVRON} "
+    segments = wordmark_segments(as_ascii=ascii_form)
+    for step in tail:
+        segments.append((sep, chevron))
+        segments.append((step, structure))
+    return segments
+
+
+def breadcrumb(tail: Sequence[str], *, as_ascii: bool | None = None) -> Line:
+    """The ``sift▪d › cmd`` breadcrumb as a composable ``Line`` (see segments)."""
+    from siftd.output.row import row_line
+
+    return row_line(breadcrumb_segments(tail, as_ascii=as_ascii))
