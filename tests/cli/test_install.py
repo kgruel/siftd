@@ -119,9 +119,9 @@ class TestInstallPluginDryRun:
         assert rc == 0
         assert not (fake_home / ".claude" / "plugins" / "siftd").exists()
         captured = capsys.readouterr()
-        assert "Source:" in captured.out
-        assert "Target:" in captured.out
-        assert "Scope:" in captured.out
+        assert "Source" in captured.out
+        assert "Target" in captured.out
+        assert "Scope" in captured.out
 
 
 class TestInstallPluginPermissions:
@@ -214,7 +214,7 @@ class TestInstallSkill:
         assert rc == 0
         assert not (fake_home / ".claude" / "skills" / "siftd").exists()
         captured = capsys.readouterr()
-        assert "Source:" in captured.out
+        assert "Source" in captured.out
 
     def test_plugin_install_removes_standalone_skill(self, tmp_path, monkeypatch):
         """Installing plugin removes standalone skill to avoid duplicates."""
@@ -403,7 +403,7 @@ class TestInstallHelpers:
             success_msg="ok",
         )
         assert rc == 1
-        assert "not found" in capsys.readouterr().out
+        assert "not found" in capsys.readouterr().err
 
     def test_cmd_install_help_and_unknown(self, capsys):
         rc = cmd_install(SimpleNamespace(extra=None))
@@ -490,7 +490,7 @@ class TestInstallRemainingBranches:
             success_msg="ok",
         )
         assert rc == 0
-        assert "Warning: Installation completed" in capsys.readouterr().err
+        assert "Installation completed" in capsys.readouterr().err
 
     def test_install_skill_and_plugin_error_branches(self, tmp_path, monkeypatch):
         # _install_skill: missing bundled files

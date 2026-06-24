@@ -1,193 +1,201 @@
-"""Painted rendering for doctor checks — progress and findings."""
+"""Painted rendering for doctor checks — the live activity bar and the report.
+
+Two surfaces, both single-column and typographic (no borders):
+
+  - ``render_progress_block`` — the **live panel**: one determinate activity bar
+    whose label narrates the check that most recently resolved, with a spinner
+    glyph that advances per resolved check (settling to ✓), over an issue feed
+    (warnings / info / errors) that builds up beneath as checks land. No
+    passed/pending lists and no running tally — those belong to the report. The
+    bar is replaced by the report on finalize, so it "disappears when finished".
+  - ``render_findings_block`` — the **settled report**, composed as a
+    :class:`~siftd.output.listing.StatusReport` and deposited as the final frame,
+    so doctor's verdict reads as one family with ``cmd_status`` et al.
+
+The bar is the shared live primitive (``output.live.bar_row``, the same one
+push/pull and ingest use); the severity vocabulary (glyph + style + order) is the
+shared one in ``output.status``. Doctor is just a consumer of both.
+
+Dropping the old two-column ROUNDED-bordered layout also dissolved a crash class:
+that layout derived column widths by subtraction (``left_width = tw - …``), which
+went negative on a degenerate pty (0 reported columns) and crashed painted. A
+single-column feed has no subtraction-derived widths, so the crash cannot recur,
+and the non-Unicode border-garbling disappears with the border.
+"""
 
 from __future__ import annotations
 
-import os
+from typing import TYPE_CHECKING
 
-from siftd.doctor.checks import Finding
+from siftd.output.common import term_width
+from siftd.output.row import row_line
 
+# The severity vocabulary lives in the output layer (output.status, beside the
+# callout severity map) so every surface that lays out its own marks reaches it
+# without a ``cli -> doctor`` import; doctor is just another consumer.
+from siftd.output.status import severity_glyph, severity_mark, severity_rank
 
-def _painted():
-    from painted import Block, Line, Span, Style, border, join_horizontal, join_vertical
+if TYPE_CHECKING:
+    from painted import Block, Style
 
-    return Block, Line, Span, Style, border, join_horizontal, join_vertical
+    from siftd.doctor.checks import Finding
 
-
-def _line(*parts):
-    _, Line, Span, _, _, _, _ = _painted()
-    spans = tuple(Span(text, style) for text, style in parts if text)
-    return Line(spans=spans)
-
-
-def _line_block(parts, width):
-    """Build a line from (text, style) pairs and pad/truncate to exact width."""
-    _, Line, Span, _, _, _, _ = _painted()
-    spans = tuple(Span(text, style) for text, style in parts if text)
-    line = Line(spans=spans)
-    if line.width > width:
-        line = line.truncate(width)
-    return line.to_block(width)
+__all__ = ["render_findings_block", "render_progress_block", "severity_glyph"]
 
 
-def _severity_icon(severity: str | None) -> tuple[str, str]:
-    if severity == "error":
-        return "✗", "error"
-    if severity == "warning":
-        return "⚠", "warning"
-    if severity == "info":
-        return "ℹ", "muted"
-    return "✓", "success"
+def _fit(segments: list[tuple[str, Style | None]], width: int) -> Block:
+    """One row of ``(text, style)`` segments, truncated to ``width`` columns.
+
+    Keeps a long message from overflowing the terminal and tearing the in-place
+    frame; the settled report (which the terminal soft-wraps) does not truncate.
+    painted's block ``truncate`` appends the ambient ``IconSet.ellipsis`` (an
+    honest, ASCII-degrading cut) and is a no-op when the row already fits.
+    """
+    from painted import truncate
+
+    line = row_line(segments)
+    return truncate(line.to_block(line.width), width)
 
 
-def _max_severity(findings: list[Finding]) -> str | None:
-    if not findings:
-        return None
-    order = {"error": 0, "warning": 1, "info": 2}
-    return min(findings, key=lambda f: order.get(f.severity, 3)).severity
+def _clip(text: str, width: int) -> str:
+    """Truncate a bar label to ``width`` display columns with the IconSet ellipsis.
+
+    ``bar_row`` left-pads the label but does not truncate it, so a long check name
+    would push the bar off the right edge; this clips it first (display-width
+    correct, not ``len()``).
+    """
+    from painted import current_icons
+    from painted.core._text_width import display_width
+
+    if display_width(text) <= width:
+        return text
+    ellipsis = current_icons().ellipsis
+    budget = width - display_width(ellipsis)
+    if budget <= 0:
+        return ellipsis if width >= display_width(ellipsis) else ""
+    out, used = "", 0
+    for ch in text:
+        cw = display_width(ch)
+        if used + cw > budget:
+            break
+        out += ch
+        used += cw
+    return out + ellipsis
 
 
-def _style_for(key: str):
-    from painted import current_palette
+def _issue_segments(finding: Finding) -> list[tuple[str, Style | None]]:
+    """The shared issue line — ``<glyph> check: message`` — one definition for the
+    live feed and the settled report (so the two read identically)."""
+    from painted import Style
 
-    p = current_palette()
-    return {"error": p.error, "warning": p.warning, "success": p.success, "muted": p.muted}[key]
+    glyph, style = severity_mark(finding.severity)
+    return [(f"{glyph} ", style), (f"{finding.check}: ", Style(bold=True)), (finding.message, None)]
 
 
-def _term_width() -> int:
-    try:
-        return os.get_terminal_size().columns
-    except OSError:
-        return 80
+def _summary_segments(
+    findings: list[Finding], total_checks: int
+) -> list[tuple[str, Style | None]]:
+    """The severity tally as ``(text, style)`` segments — ``⚠ 1 warning  ✓ 13 passed``.
+
+    The report's verdict line. ``passed`` is ``total_checks`` minus the distinct
+    checks with findings.
+    """
+    parts: list[tuple[str, Style | None]] = []
+    for sev in ("error", "warning", "info"):
+        count = sum(1 for f in findings if f.severity == sev)
+        if count:
+            glyph, style = severity_mark(sev)
+            parts.append((f"{glyph} {count} {sev}", style))
+    passed = total_checks - len({f.check for f in findings})
+    if passed > 0:
+        glyph, style = severity_mark(None)
+        parts.append((f"{glyph} {passed} passed", style))
+
+    segments: list[tuple[str, Style | None]] = []
+    for i, part in enumerate(parts):
+        if i:
+            segments.append(("  ", None))
+        segments.append(part)
+    return segments
 
 
 def render_progress_block(
     check_names: list[str],
     completed: dict[str, list[Finding]],
-    spinner_frame: int,
+    *,
+    current: str | None = None,
 ):
-    """Render two-column progress: issues left, passed+pending right in border.
+    """The live progress panel — a determinate activity bar over an issue feed.
 
-    Layout (constrained to terminal width):
-        ████████████████████████████████████  12/17
+    Layout (constrained to terminal width, no borders)::
 
-        ⚠ ingest-errors                   ┃ ╭─────────────────────╮
-          ↳ 4 file(s) failed              ┃ │ ✓ embeddings-avail  │
-        ℹ blob-migration                  ┃ │ ✓ cost-coverage     │
-          ↳ siftd migrate blobs           ┃ │ ✓ freelist          │
-                                          ┃ │ · fts-stale         │
-                                          ┃ │ · config-valid      │
-                                          ┃ ╰─────────────────────╯
-        Run siftd doctor fix to apply fixes
+        cost-coverage  ━━━━━━━━━━━━━─────────  11/17  ⠋
+
+        ⚠ ingest-errors: 8 file(s) failed
+        ℹ blob-migration: Legacy blob layout detected; migrate when convenient
+
+    ``current`` is the check that most recently resolved (checks run concurrently,
+    so this is the latest activity, not a single in-flight check). The bar fills to
+    the fraction done; the trailing glyph is a spinner (advancing once per resolved
+    check) until the run settles to ✓. Warnings/info/errors accumulate beneath it.
+    Repainted per check completion; ``finalize`` then replaces the whole panel with
+    the settled report, so the bar disappears when finished.
     """
-    Block, Line, Span, Style, border_fn, join_horizontal, join_vertical = _painted()
-    from painted import ROUNDED
-    from painted.views import ProgressState, progress_bar
+    from painted import Block, current_icons, current_palette, join_vertical
+    from painted.core._text_width import display_width
 
-    tw = _term_width()
+    from siftd.output.live import bar_row, spinner_glyph
+    from siftd.output.theme import domain_styles
+
+    pal = current_palette()
+    ic = current_icons()
+    ds = domain_styles()
+
+    tw = max(term_width(), 20)
     total = len(check_names)
     done = len(completed)
-    pct = done / total if total > 0 else 0.0
+    fraction = done / total if total > 0 else 0.0
+    settled = total > 0 and done >= total
 
-    # --- Column widths ---
-    right_inner = max(22, tw * 3 // 10)  # ~30% for the bordered box (inner)
-    right_outer = right_inner + 2  # border adds 2
-    left_width = tw - right_outer - 1  # remaining space, 1 for separator
-
-    # --- Progress bar (full width at top) ---
-    bar_width = min(tw - 10, 50)
-    bar = progress_bar(
-        ProgressState(pct),
-        width=bar_width,
-        filled_style=_style_for("success"),
-        empty_style=Style(dim=True),
-    )
-    muted = _style_for("muted")
-    count_str = f" {done}/{total}"
-    pad_left = _line((" ", Style())).to_block(1)
-    count_block = _line((count_str, muted)).to_block(len(count_str))
-    bar_block = join_horizontal(pad_left, bar, count_block)
-
-    # --- Classify checks ---
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    issues = []  # (name, findings, severity)
-    passed = []  # names
-    pending = []  # names
-
-    for name in check_names:
-        if name in completed:
-            findings = completed[name]
-            if findings:
-                sev = _max_severity(findings)
-                issues.append((name, findings, sev))
-            else:
-                passed.append(name)
-        else:
-            pending.append(name)
-
-    issues.sort(key=lambda x: severity_order.get(x[2] or "", 3))
-
-    # --- Build left column (issues) ---
-    left_blocks = []
-    for name, findings, sev in issues:
-        icon, key = _severity_icon(sev)
-        style = _style_for(key)
-        left_blocks.append(_line_block([(f" {icon} ", style), (name, Style(bold=True))], left_width))
-        if findings:
-            left_blocks.append(_line_block([("   ↳ ", muted), (findings[0].message, muted)], left_width))
-            if findings[0].fix_command:
-                dim = Style(dim=True)
-                left_blocks.append(_line_block([("   ↳ ", dim), (findings[0].fix_command, dim)], left_width))
-
-    # --- Build right column (passed + pending, bordered) ---
-    right_lines = []
-    ok_style = _style_for("success")
-    for name in passed:
-        right_lines.append(_line_block([(" ✓ ", ok_style), (name, ok_style)], right_inner))
-    for name in pending:
-        dim = Style(dim=True)
-        right_lines.append(_line_block([(" · ", dim), (name, dim)], right_inner))
-
-    if not right_lines:
-        right_lines.append(Block.empty(right_inner, 1))
-
-    right_content = join_vertical(*right_lines)
-    right_bordered = border_fn(right_content, ROUNDED, style=muted)
-
-    # --- Pad columns to same height ---
-    left_h = sum(b.height for b in left_blocks) if left_blocks else 0
-    right_h = right_bordered.height
-    max_h = max(left_h, right_h, 1)
-
-    if left_blocks:
-        left_col = join_vertical(*left_blocks)
+    # Widths: the label column is the widest check name (capped) so the bar never
+    # jumps as the current check changes; the bar takes the rest. The label is
+    # stolen from first when the terminal is too narrow for a >=6-wide bar — so no
+    # width is ever derived negative (the crash class stays dissolved).
+    if settled:
+        glyph, glyph_style, frac = ic.ok, pal.success, 1.0
     else:
-        left_col = Block.empty(left_width, 0)
+        # The spinner advances once per resolved check (done) — discrete activity
+        # tied to real progress, not a faked continuous animation.
+        glyph, glyph_style, frac = spinner_glyph(done), pal.accent, fraction
+    count = f"{done}/{total}"
+    # leading gap + two trailing gaps around segments + the trailing glyph.
+    reserve = display_width(count) + display_width(glyph) + 6
+    max_name = max((display_width(n) for n in check_names), default=8)
+    label_width = min(max_name, 24)
+    bar_width = tw - label_width - reserve
+    if bar_width < 6:
+        label_width = max(1, tw - reserve - 6)
+        bar_width = max(1, tw - label_width - reserve)
 
-    if left_col.height < max_h:
-        left_col = join_vertical(left_col, Block.empty(left_width, max_h - left_col.height))
+    label = _clip(current if current else "checking…", label_width)
+    bar = bar_row(
+        label, frac, label_width=label_width, bar_width=bar_width,
+        segments=[(count, pal.muted)], glyph=glyph, glyph_style=glyph_style,
+        label_style=pal.muted, fill_style=ds.metric, empty_style=pal.muted,
+        filled_char="━", empty_char="─",
+    )
 
-    if right_bordered.height < max_h:
-        right_bordered = join_vertical(right_bordered, Block.empty(right_outer, max_h - right_bordered.height))
+    parts: list[Block] = [bar]
 
-    columns = join_horizontal(left_col, right_bordered)
-
-    parts = [bar_block, Block.empty(tw, 1), columns]
-
-    # Hint at bottom when done
-    has_fixes = any(f.fix_available for name in completed for f in completed[name])
-    if has_fixes and done == total:
-        parts.append(Block.empty(tw, 1))
-        parts.append(_line_block(
-            [(" Run ", Style(dim=True)), ("siftd doctor fix", muted), (" to apply fixes", Style(dim=True))],
-            tw,
-        ))
+    issues = sorted(
+        (f for fs in completed.values() for f in fs),
+        key=lambda f: (severity_rank(f.severity), f.check),
+    )
+    if issues:
+        parts.append(Block.empty(0, 1))
+        parts.extend(_fit(_issue_segments(f), tw) for f in issues)
 
     return join_vertical(*parts)
-
-
-# ---------------------------------------------------------------------------
-# Final findings block (for non-TTY / show_fixes mode)
-# ---------------------------------------------------------------------------
 
 
 def render_findings_block(
@@ -195,68 +203,45 @@ def render_findings_block(
     show_fixes: bool = False,
     total_checks: int = 0,
 ):
-    """Render final findings list (used for plain painted output without progress)."""
-    Block, Line, Span, Style, _, _, join_vertical = _painted()
-    muted = _style_for("muted")
+    """The settled findings report as a ``StatusReport`` block — the final frame.
+
+    The issue feed (the same ``<glyph> check: message`` line the live panel uses,
+    with a ``↳`` fix-command continuation), the severity tally as a note, and —
+    when ``show_fixes`` — a "To fix" section. Composed from the same
+    report-structure atoms ``cmd_status`` uses, so doctor's verdict reads as one
+    family.
+    """
+    from painted import current_palette
+
+    from siftd.output.listing import StatusReport
+
+    muted = current_palette().muted
+    report = StatusReport()
 
     if not findings:
-        ok_style = _style_for("success")
-        line = _line((" ✓ ", ok_style), ("All checks passed.", ok_style))
-        summary = _render_summary(findings, total_checks)
-        return join_vertical(line.to_block(line.width), summary)
+        glyph, style = severity_mark(None)
+        message = f"All {total_checks} checks passed." if total_checks else "All checks passed."
+        report.note([(f"{glyph} ", style), (message, style)])
+        return report.to_block()
 
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    sorted_findings = sorted(findings, key=lambda f: (severity_order.get(f.severity, 3), f.check))
-
-    lines = []
-    for f in sorted_findings:
-        icon, key = _severity_icon(f.severity)
-        icon_style = _style_for(key)
-        lines.append(_line(
-            (f" {icon} ", icon_style),
-            (f"{f.check}: ", Style(bold=True)),
-            (f.message, Style()),
-        ))
+    ordered = sorted(findings, key=lambda f: (severity_rank(f.severity), f.check))
+    items: list[list[tuple[str, Style | None]]] = []
+    for f in ordered:
+        items.append(_issue_segments(f))
         if f.fix_command and not show_fixes:
-            lines.append(_line(("     ↳ ", muted), (f.fix_command, muted)))
+            items.append([("  ↳ ", muted), (f.fix_command, muted)])
+    report.note(*items)
 
-    blocks = [ln.to_block(ln.width) for ln in lines]
-    blocks.append(Block.empty(0, 1))
-    blocks.append(_render_summary(findings, total_checks))
+    report.note(_summary_segments(findings, total_checks))
 
     if show_fixes:
-        fixable = [f for f in sorted_findings if f.fix_available and f.fix_command]
-        if fixable:
-            fix_lines = [_line((" To fix:", Style(bold=True)))]
-            seen = set()
-            for f in fixable:
-                if f.fix_command not in seen:
-                    fix_lines.append(_line(("   ", Style()), (f.fix_command, muted)))
-                    seen.add(f.fix_command)
-            blocks.append(Block.empty(0, 1))
-            blocks.extend(ln.to_block(ln.width) for ln in fix_lines)
+        seen: set[str] = set()
+        commands: list[str] = []
+        for f in ordered:
+            if f.fix_available and f.fix_command and f.fix_command not in seen:
+                commands.append(f.fix_command)
+                seen.add(f.fix_command)
+        if commands:
+            report.lines_section("To fix", commands)
 
-    return join_vertical(*blocks)
-
-
-def _render_summary(findings: list[Finding], total_checks: int):
-    _, _, Span, Style, _, _, _ = _painted()
-    from painted import Line
-
-    error_count = sum(1 for f in findings if f.severity == "error")
-    warning_count = sum(1 for f in findings if f.severity == "warning")
-    info_count = sum(1 for f in findings if f.severity == "info")
-    passed = total_checks - len({f.check for f in findings})
-
-    parts = [Span(" ", Style())]
-    if error_count > 0:
-        parts.append(Span(f"✗ {error_count} error  ", _style_for("error")))
-    if warning_count > 0:
-        parts.append(Span(f"⚠ {warning_count} warning  ", _style_for("warning")))
-    if info_count > 0:
-        parts.append(Span(f"ℹ {info_count} info  ", _style_for("muted")))
-    if passed > 0:
-        parts.append(Span(f"✓ {passed} passed", _style_for("success")))
-
-    line = Line(spans=tuple(parts))
-    return line.to_block(line.width)
+    return report.to_block()

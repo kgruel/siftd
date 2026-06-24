@@ -2,11 +2,11 @@
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 from siftd.api import list_workspaces
 from siftd.cli._common import resolve_db
+from siftd.output import status
 from siftd.paths import cache_dir, config_dir, config_file, data_dir, db_path
 
 
@@ -56,8 +56,7 @@ def cmd_status(args) -> int:
         try:
             stats = execute(op)
         except FileNotFoundError as e:
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
 
     # JSON output
@@ -128,82 +127,104 @@ def cmd_status(args) -> int:
         print(json.dumps(out, indent=2))
         return 0
 
-    print(f"Database: {stats.db_path}")
-    print(f"Size: {stats.db_size_bytes / 1024:.1f} KB")
+    from siftd.output.listing import StatusReport
+    from siftd.output.theme import domain_styles
 
-    print("\n--- Counts ---")
-    print(f"  Conversations: {stats.counts.conversations}")
-    print(f"  Prompts: {stats.counts.prompts}")
-    print(f"  Responses: {stats.counts.responses}")
-    print(f"  Tool calls: {stats.counts.tool_calls}")
-    print(f"  Harnesses: {stats.counts.harnesses}")
-    print(f"  Workspaces: {stats.counts.workspaces}")
-    print(f"  Tools: {stats.counts.tools}")
-    print(f"  Models: {stats.counts.models}")
-    print(f"  Ingested files: {stats.counts.ingested_files}")
-
-    print("\n--- Harnesses ---")
-    for h in stats.harnesses:
-        print(f"  {h.name} ({h.source}, {h.log_format})")
-
-    print("\n--- Workspaces (top 10) ---")
+    ds = domain_styles()
+    report = StatusReport()
+    report.preamble(
+        {
+            "Database": str(stats.db_path),
+            "Size": f"{stats.db_size_bytes / 1024:.1f} KB",
+        }
+    )
+    # Counts join the amber metric thread (consistent with the query/peek lists
+    # and the ingest summary table). Conversations — the primary entity every
+    # other count is a child or dimension of — takes the bright grand-total tier.
+    report.section(
+        "Counts",
+        {
+            "Conversations": [(str(stats.counts.conversations), ds.metric_strong)],
+            "Prompts": [(str(stats.counts.prompts), ds.metric)],
+            "Responses": [(str(stats.counts.responses), ds.metric)],
+            "Tool calls": [(str(stats.counts.tool_calls), ds.metric)],
+            "Harnesses": [(str(stats.counts.harnesses), ds.metric)],
+            "Workspaces": [(str(stats.counts.workspaces), ds.metric)],
+            "Tools": [(str(stats.counts.tools), ds.metric)],
+            "Models": [(str(stats.counts.models), ds.metric)],
+            "Ingested files": [(str(stats.counts.ingested_files), ds.metric)],
+        },
+    )
+    report.section(
+        "Harnesses",
+        [(h.name, f"({h.source}, {h.log_format})") for h in stats.harnesses],
+    )
+    workspaces = []
     for w in stats.top_workspaces:
         last_activity = fmt_timestamp(w.last_activity)
         last_str = f" (last {last_activity})" if last_activity else ""
-        print(f"  {w.path}: {w.conversation_count} conversations{last_str}")
+        workspaces.append(
+            (w.path, [(str(w.conversation_count), ds.metric), (f" conversations{last_str}", None)])
+        )
+    report.section("Workspaces (top 10)", workspaces)
+    report.lines_section("Models", list(stats.models))
+    report.section(
+        "Tools (top 10 by usage)",
+        [(t.name, [(str(t.usage_count), ds.metric)]) for t in stats.top_tools],
+    )
+    coverage = [
+        (
+            "Responses with tokens",
+            f"{stats.token_coverage.with_tokens}/{stats.token_coverage.responses} "
+            f"({stats.token_coverage.pct_with_tokens:.2f}%)",
+        ),
+    ]
+    coverage.extend(
+        (h.name, f"{h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
+        for h in stats.token_coverage.by_harness
+    )
+    report.section("Token Coverage", coverage)
 
-    print("\n--- Models ---")
-    for model in stats.models:
-        print(f"  {model}")
-
-    print("\n--- Tools (top 10 by usage) ---")
-    for t in stats.top_tools:
-        print(f"  {t.name}: {t.usage_count}")
-
-    print("\n--- Token Coverage ---")
-    total = stats.token_coverage.responses
-    with_tokens = stats.token_coverage.with_tokens
-    pct = stats.token_coverage.pct_with_tokens
-    print(f"  Responses with tokens: {with_tokens}/{total} ({pct:.2f}%)")
-    for h in stats.token_coverage.by_harness:
-        print(f"  {h.name}: {h.with_tokens}/{h.responses} ({h.pct_with_tokens:.2f}%)")
-
-    # Activity window + ingest recency
     earliest, latest = stats.activity_window
     if earliest or latest:
         earliest_fmt = fmt_timestamp(earliest)
         latest_fmt = fmt_timestamp(latest)
-        print("\n--- Activity window ---")
+        window = None
         if earliest_fmt and latest_fmt:
-            print(f"  Conversations: {earliest_fmt} -> {latest_fmt}")
+            window = f"{earliest_fmt} -> {latest_fmt}"
         elif earliest_fmt:
-            print(f"  Conversations: {earliest_fmt} -> (unknown)")
+            window = f"{earliest_fmt} -> (unknown)"
         elif latest_fmt:
-            print(f"  Conversations: (unknown) -> {latest_fmt}")
+            window = f"(unknown) -> {latest_fmt}"
+        if window is not None:
+            report.section("Activity window", {"Conversations": window})
 
     if stats.harness_counts:
-        print("\n--- Harness activity ---")
-        for hc in stats.harness_counts:
-            print(f"  {hc.name}: {hc.conversation_count}")
+        report.section(
+            "Harness activity",
+            [(hc.name, [(str(hc.conversation_count), ds.metric)]) for hc in stats.harness_counts],
+        )
 
     if stats.top_tags:
-        print("\n--- Tags (top 5) ---")
-        for tag in stats.top_tags:
-            print(f"  {tag.name}: {tag.count}")
+        report.section(
+            "Tags (top 5)",
+            [(tag.name, [(str(tag.count), ds.metric)]) for tag in stats.top_tags],
+        )
 
     if stats.last_ingest_at:
-        print("\n--- Ingest ---")
-        print(f"  Last ingest: {fmt_timestamp(stats.last_ingest_at)}")
+        report.section("Ingest", {"Last ingest": fmt_timestamp(stats.last_ingest_at)})
 
-    # Features status
     from siftd.api import embeddings_available
 
-    print("\n--- Features ---")
-    if embeddings_available():
-        print("  Embeddings: installed")
-    else:
-        print("  Embeddings: not installed (run: siftd install embed)")
-
+    report.section(
+        "Features",
+        {
+            "Embeddings": "installed"
+            if embeddings_available()
+            else "not installed (run: siftd install embed)"
+        },
+    )
+    report.render()
     return 0
 
 
@@ -256,8 +277,7 @@ def cmd_workspaces(args) -> int:
             if args.json:
                 print("[]")
                 return 0
-            print(str(e))
-            print("Run 'siftd ingest' to create it.")
+            status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
 
     if args.json:
@@ -275,24 +295,48 @@ def cmd_workspaces(args) -> int:
         return 0
 
     if not rows:
-        print("No workspaces found.")
+        status.info("No workspaces found.")
         return 0
 
+    from siftd.output.listing import print_definitions
+    from siftd.output.theme import domain_styles
+
+    # Aligned workspace -> count listing; the conversation count joins the amber
+    # metric thread (consistent with query/peek and the status Workspaces section).
+    ds = domain_styles()
+    pairs = []
     for row in rows:
         name = fmt_workspace(row["path"])
         last_activity = fmt_timestamp(row["last_activity"])
-        last_str = f"  last {last_activity}" if last_activity else ""
-        print(f"{name}  {row['convs']} conversations{last_str}")
+        last_str = f" (last {last_activity})" if last_activity else ""
+        pairs.append(
+            (
+                name,
+                [
+                    (str(row["convs"]), ds.metric),
+                    (f" conversations{last_str}", None),
+                ],
+            )
+        )
+    print_definitions(pairs)
 
     return 0
 
 
 def cmd_path(args) -> int:
     """Show XDG paths."""
-    print(f"Data directory:   {data_dir()}")
-    print(f"Config directory: {config_dir()}")
-    print(f"Cache directory:  {cache_dir()}")
-    print(f"Database:         {db_path()}")
+    from siftd.output.listing import print_definitions
+
+    # Aligned key:value listing — the atom pads the labels by display width
+    # (the hand-spaced colons were doing this by hand).
+    print_definitions(
+        {
+            "Data directory": str(data_dir()),
+            "Config directory": str(config_dir()),
+            "Cache directory": str(cache_dir()),
+            "Database": str(db_path()),
+        }
+    )
     return 0
 
 
@@ -320,12 +364,12 @@ def cmd_config(args) -> int:
             print(json.dumps(prefixes, indent=2, sort_keys=True))
             return 0
         if not prefixes:
-            print("No tag prefixes defined.")
+            status.info("No tag prefixes defined.")
             return 0
-        # Sorted name → prefix mapping; one per line.
-        width = max(len(name) for name in prefixes)
-        for name in sorted(prefixes):
-            print(f"  {name:<{width}}  {prefixes[name]}")
+        from siftd.output.listing import print_definitions
+
+        # Sorted name → prefix mapping, one aligned pair per line.
+        print_definitions([(name, prefixes[name]) for name in sorted(prefixes)])
         return 0
 
     # siftd config get <key>
@@ -336,7 +380,7 @@ def cmd_config(args) -> int:
             return 1
         value = get_config(args.key)
         if value is None:
-            print(f"Key not set: {args.key}")
+            status.error(f"Key not set: {args.key}")
             return 1
         print(value)
         return 0
@@ -350,11 +394,11 @@ def cmd_config(args) -> int:
         try:
             set_config(args.key, args.value)
         except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            status.error(str(exc))
             return 1
         # Re-read to show stored value (confirms type coercion)
         stored = get_config(args.key)
-        print(f"Set {args.key} = {stored}")
+        status.confirm(f"Set {args.key} = {stored}")
         return 0
 
     # siftd config append <key> <value>
@@ -366,12 +410,12 @@ def cmd_config(args) -> int:
         try:
             changed = append_config_list(args.key, args.value)
         except ValueError as exc:
-            print(str(exc))
+            status.error(str(exc))
             return 1
         if changed:
-            print(f"Appended {args.value} to {args.key}")
+            status.confirm(f"Appended {args.value} to {args.key}")
         else:
-            print(f"Value already present for {args.key}")
+            status.info(f"Value already present for {args.key}")
         return 0
 
     # siftd config remove <key> <value>
@@ -383,19 +427,18 @@ def cmd_config(args) -> int:
         try:
             changed = remove_config_list(args.key, args.value)
         except ValueError as exc:
-            print(str(exc))
+            status.error(str(exc))
             return 1
         if not changed:
-            print(f"Value not found for {args.key}: {args.value}")
+            status.error(f"Value not found for {args.key}: {args.value}")
             return 1
-        print(f"Removed {args.value} from {args.key}")
+        status.confirm(f"Removed {args.value} from {args.key}")
         return 0
 
     # siftd config (show all)
     path = config_file()
     if not path.exists():
-        print("No config file found.")
-        print(f"Create one at: {path}")
+        status.info("No config file found.", hint=f"Create one at: {path}")
         return 0
 
     doc = load_config()
@@ -414,7 +457,7 @@ def cmd_adapters(args) -> int:
         if args.json:
             print("[]")
         else:
-            print("No adapters found.")
+            status.info("No adapters found.")
         return 0
 
     # JSON output

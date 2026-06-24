@@ -10,9 +10,12 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
-    format_table,
-    print_indented,
+    prefers_ascii,
     print_refs_content,
+    role_label,
+    should_use_ansi,
+    split_match_segments,
+    supports_unicode,
     truncate_text,
 )
 
@@ -107,30 +110,95 @@ def test_truncate_text():
     assert truncate_text("hello world", 5, suffix="~") == "hello~"
 
 
-# --- format_table ---
+# --- supports_unicode ---
 
 
-def test_format_table_alignment():
-    result = format_table(["Name", "Val"], [["a", "long"], ["bb", "x"]])
-    lines = result.split("\n")
-    assert len(lines) == 4
-    assert "Name" in lines[0]
-    assert "---" in lines[1] or "──" in lines[1]
+def test_supports_unicode(monkeypatch):
+    class _Std:
+        def __init__(self, encoding):
+            self.encoding = encoding
+
+    monkeypatch.setattr("sys.stdout", _Std("utf-8"))
+    assert supports_unicode() is True
+
+    monkeypatch.setattr("sys.stdout", _Std("ascii"))
+    assert supports_unicode() is False
+
+    # Missing/None encoding degrades to the ASCII assumption (False).
+    monkeypatch.setattr("sys.stdout", _Std(None))
+    assert supports_unicode() is False
 
 
-# --- print_indented ---
+# --- prefers_ascii ---
 
 
-def test_print_indented(capsys):
-    print_indented("line1\nline2\nline3")
-    out = capsys.readouterr().out
-    assert out == "  line1\n  line2\n  line3\n"
+def test_prefers_ascii(monkeypatch):
+    import io
+
+    class _Std:
+        def __init__(self, encoding, tty):
+            self.encoding = encoding
+            self._tty = tty
+
+        def isatty(self):
+            return self._tty
+
+    # A non-TTY (a pipe) always prefers ASCII, even with a UTF-8 encoding.
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", False))
+    assert prefers_ascii() is True
+
+    # A UTF-8 TTY is the one case that earns the Unicode forms.
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", True))
+    assert prefers_ascii() is False
+
+    # A non-UTF-8 TTY (LANG=C) is a TTY but can't encode the glyphs → ASCII.
+    monkeypatch.setattr("sys.stdout", _Std("ascii", True))
+    assert prefers_ascii() is True
+
+    # An explicit stream drives the isatty() check; encoding capability still
+    # tracks sys.stdout (the established couplet this names).
+    class _Pipe(io.StringIO):
+        def isatty(self) -> bool:
+            return False
+
+    monkeypatch.setattr("sys.stdout", _Std("utf-8", True))
+    assert prefers_ascii(_Pipe()) is True
 
 
-def test_print_indented_custom_prefix(capsys):
-    print_indented("hello", indent=">> ")
-    out = capsys.readouterr().out
-    assert out == ">> hello\n"
+# --- should_use_ansi (NO_COLOR) ---
+
+
+def test_should_use_ansi_honors_tty_and_no_color(monkeypatch):
+    import io
+
+    class _Std(io.StringIO):
+        def __init__(self, tty):
+            super().__init__()
+            self._tty = tty
+
+        def isatty(self) -> bool:
+            return self._tty
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    # A TTY without NO_COLOR gets colour; a pipe never does.
+    monkeypatch.setattr("sys.stdout", _Std(True))
+    assert should_use_ansi() is True
+    monkeypatch.setattr("sys.stdout", _Std(False))
+    assert should_use_ansi() is False
+
+    # NO_COLOR (non-empty, the widely-adopted reading) disables colour on a TTY —
+    # painted itself never checks the var, so this is the lever that honours it.
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.setattr("sys.stdout", _Std(True))
+    assert should_use_ansi() is False
+
+    # An empty NO_COLOR does not disable (non-empty reading).
+    monkeypatch.setenv("NO_COLOR", "")
+    assert should_use_ansi() is True
+
+    # An explicit stream drives the isatty() check.
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    assert should_use_ansi(_Std(False)) is False
 
 
 # --- format_refs_annotation ---
@@ -222,3 +290,60 @@ def test_print_refs_content_filter_no_match(capsys):
     print_refs_content(refs, filter_basenames=["missing.py"])
     out = capsys.readouterr().out
     assert "No file references matching" in out
+
+
+# --- split_match_segments (the painted-free FTS marker splitter) ---
+
+
+def test_split_match_segments_balanced():
+    assert split_match_segments("API >>>error<<<: 500") == [
+        ("API ", False),
+        ("error", True),
+        (": 500", False),
+    ]
+
+
+def test_split_match_segments_multiple_and_adjacent():
+    # Two spread matches, then two adjacent matches with no literal between.
+    assert split_match_segments(">>>a<<< mid >>>b<<<>>>c<<<") == [
+        ("a", True),
+        (" mid ", False),
+        ("b", True),
+        ("c", True),
+    ]
+
+
+def test_split_match_segments_unbalanced_open_stays_literal():
+    # A dangling open marker (e.g. snippet truncated mid-pair) is NOT consumed —
+    # it stays literal text so real content '>>>' (a REPL prompt) is never eaten.
+    assert split_match_segments("foo >>>bar baz") == [("foo >>>bar baz", False)]
+
+
+def test_split_match_segments_no_markers_is_one_literal():
+    assert split_match_segments("just text") == [("just text", False)]
+
+
+def test_split_match_segments_empty_falls_back_to_one_literal():
+    assert split_match_segments("") == [("", False)]
+
+
+# --- role_label (casing + abbreviation, shared by detail + search) ---
+
+
+def test_role_label_full_lowercases():
+    assert role_label("USER") == "user"
+    assert role_label("Assistant") == "assistant"
+    assert role_label("user") == "user"
+
+
+def test_role_label_abbrev_only_collapses_assistant():
+    assert role_label("assistant", abbrev=True) == "asst"
+    assert role_label("ASSISTANT", abbrev=True) == "asst"
+    # user and everything else stay full even when abbreviated.
+    assert role_label("user", abbrev=True) == "user"
+    assert role_label("tool", abbrev=True) == "tool"
+
+
+def test_role_label_unknown_role_passthrough():
+    assert role_label("System") == "system"
+    assert role_label("System", abbrev=True) == "system"

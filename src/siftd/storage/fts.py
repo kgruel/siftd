@@ -5,7 +5,14 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Literal
 
+from siftd.domain.search_types import MATCH_CLOSE, MATCH_ELLIPSIS, MATCH_OPEN
+
 log = logging.getLogger(__name__)
+
+# The snippet() expression wrapping matched terms in the shared marker pair. Built
+# from the canonical domain constants so the producer agrees with the output-layer
+# parsers (split_match_segments) on one definition of the delimiters.
+_SNIPPET_EXPR = f"snippet(content_fts, 0, '{MATCH_OPEN}', '{MATCH_CLOSE}', '{MATCH_ELLIPSIS}', 64)"
 
 
 @dataclass(frozen=True)
@@ -182,12 +189,12 @@ def search_content(
     if sanitized.fts_query is None:
         return []
     cur = conn.execute(
-        """
+        f"""
         SELECT
             content_fts.conversation_id,
             content_fts.event_id,
             e.kind,
-            snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
+            {_SNIPPET_EXPR} as snippet,
             content_fts.rank
         FROM content_fts
         JOIN events e ON e.id = content_fts.event_id
@@ -320,10 +327,10 @@ def fts5_best_hit_for_conversation(
 ) -> dict | None:
     """Return the best (lowest-rank) hit for a conversation, including snippet."""
     cur = conn.execute(
-        """
+        f"""
         SELECT
             e.kind,
-            snippet(content_fts, 0, '>>>', '<<<', '...', 64) as snippet,
+            {_SNIPPET_EXPR} as snippet,
             content_fts.rank
         FROM content_fts
         JOIN events e ON e.id = content_fts.event_id

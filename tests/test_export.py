@@ -431,7 +431,7 @@ class TestExportCLI:
         assert result == 1
 
         captured = capsys.readouterr()
-        assert "No conversations found" in captured.out
+        assert "No conversations found" in captured.err
 
     def test_export_generic_db_error_message(self, test_db, monkeypatch, capsys):
         import sqlite3

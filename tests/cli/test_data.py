@@ -1,5 +1,6 @@
 """Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy)."""
 
+import io
 import json
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,14 @@ from conftest import FIXTURES_DIR
 import siftd.cli.data as data_cli
 from siftd.cli import main
 from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
+from siftd.output.live import LiveRegion
+
+
+class _FakeTTY(io.StringIO):
+    """A StringIO that claims to be a terminal (drives the live path active)."""
+
+    def isatty(self) -> bool:
+        return True
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -163,7 +172,8 @@ class TestIngestTextRenderer:
         renderer = _IngestTextRenderer(verbose=False)
         stats = FakeStats(files_found=0, conversations=0, prompts=0, responses=0, tool_calls=0)
         renderer.print_summary(stats)
-        assert "No files found" in capsys.readouterr().out
+        # Empty-states route through the status vocabulary (ℹ, stderr).
+        assert "No files found" in capsys.readouterr().err
 
     def test_print_summary_all_up_to_date(self, capsys):
         renderer = _IngestTextRenderer(verbose=False)
@@ -173,11 +183,12 @@ class TestIngestTextRenderer:
             counts.add("skipped", "unchanged")
         renderer._counts["test_adapter"] = counts
         stats = FakeStats(
-            files_found=5, files_ingested=0, files_replaced=0,
+            files_found=5, files_ingested=0, files_replaced=0, files_errored=0,
             conversations=0, prompts=0, responses=0, tool_calls=0,
         )
         renderer.print_summary(stats)
-        assert "all up to date" in capsys.readouterr().out
+        # Empty-states route through the status vocabulary (ℹ, stderr).
+        assert "all up to date" in capsys.readouterr().err
 
     def test_print_summary_quiet_shows_totals_line(self, capsys):
         renderer = _IngestTextRenderer(verbose=False, quiet=True)
@@ -190,6 +201,88 @@ class TestIngestTextRenderer:
         out = capsys.readouterr().out
         assert "2 conversations" in out
         assert "4 prompts" in out
+
+    def test_print_summary_table_shows_per_adapter_content(self, capsys):
+        # The summary pivots to per-adapter CONTENT yield (from by_harness) —
+        # not the file disposition the bars already carried.
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=5, files_errored=0, conversations=3, prompts=8, responses=8, tool_calls=2,
+            by_harness={
+                "claude_code": {"conversations": 2, "prompts": 6, "responses": 6, "tool_calls": 2},
+                "aider": {"conversations": 1, "prompts": 2, "responses": 2, "tool_calls": 0},
+            },
+        )
+        renderer.print_summary(stats)
+        out = capsys.readouterr().out
+        for header in ("ADAPTER", "CONVERSATIONS", "PROMPTS", "RESPONSES", "TOOL_CALLS"):
+            assert header in out
+        assert "NEW" not in out and "SKIPPED" not in out  # no longer file disposition
+        assert "claude_code" in out and "aider" in out
+        assert "3 conversations" in out  # grand-total footer
+
+    def test_print_summary_table_excludes_adapters_with_no_content(self, capsys):
+        # An all-skip adapter yields nothing → no row in the content table.
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=10, files_errored=0, conversations=2, prompts=4, responses=4, tool_calls=1,
+            by_harness={
+                "claude_code": {"conversations": 2, "prompts": 4, "responses": 4, "tool_calls": 1},
+                "vscode": {"conversations": 0, "prompts": 0, "responses": 0, "tool_calls": 0},
+            },
+        )
+        renderer.print_summary(stats)
+        out = capsys.readouterr().out
+        assert "claude_code" in out
+        assert "vscode" not in out
+
+    def test_print_summary_warns_when_errors_and_nothing_landed(self, capsys):
+        # Files errored and nothing new ingested → a warning, not "all up to date".
+        renderer = _IngestTextRenderer(verbose=False)
+        stats = FakeStats(
+            files_found=3, files_errored=2,
+            conversations=0, prompts=0, responses=0, tool_calls=0,
+        )
+        renderer.print_summary(stats)
+        err = capsys.readouterr().err
+        assert "errored" in err
+        assert "all up to date" not in err
+
+    def test_active_ingest_bars_paint_to_tty(self, monkeypatch):
+        # The active live path: handle_event drives _bars_block through the REAL
+        # InPlaceRenderer (against a fake-TTY sink), finalize_live deposits.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        stream = _FakeTTY()
+        live = LiveRegion(stream=stream)
+        assert live.active
+        renderer = _IngestTextRenderer(verbose=False)
+        renderer.attach_live(live)
+        with live:
+            renderer.handle_event(FakeEvent(adapter="claude_code", status="ingested", index=1, total=2))
+            renderer.handle_event(
+                FakeEvent(adapter="claude_code", status="skipped", reason="unchanged", index=2, total=2)
+            )
+            renderer.finalize_live()
+        out = stream.getvalue()
+        assert "━" in out  # a (thin) progress bar was painted
+        assert "claude_code" in out  # the adapter label rode the bar row
+
+    def test_finalize_live_noop_when_inactive_or_empty(self, monkeypatch):
+        renderer = _IngestTextRenderer(verbose=False)
+        renderer.finalize_live()  # no live attached → no-op, no raise
+
+        inactive = LiveRegion(stream=io.StringIO())  # not a TTY
+        renderer.attach_live(inactive)
+        with inactive:
+            renderer.finalize_live()  # inactive → guarded no-op
+
+        # Active but zero adapters started → _bars_block is empty; finalize on an
+        # empty Block must not raise.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        live = LiveRegion(stream=_FakeTTY())
+        renderer.attach_live(live)
+        with live:
+            renderer.finalize_live()
 
     def test_status_label_mapping(self):
         assert _IngestTextRenderer._status_label("ingested") == "new"
@@ -429,7 +522,7 @@ class TestCmdBackfill:
         rc = main(["--db", str(test_db), "backfill", "--filter-binary"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Filtered:" in out
+        assert "Filtered" in out
 
     def test_backfill_dry_run_warning_without_filter_binary(self, test_db, capsys):
         """--dry-run without --filter-binary warns."""
@@ -451,14 +544,14 @@ class TestCmdMigrate:
         assert rc == 0
         out = capsys.readouterr().out
         assert "Workspace identity status" in out
-        assert "Total workspaces:" in out
+        assert "Total workspaces" in out
 
     def test_migrate_missing_db(self, tmp_path, capsys):
         """Migrate with missing database returns error."""
         rc = main(["--db", str(tmp_path / "missing.db"), "migrate"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "not found" in out.lower() or "Database" in out
+        err = capsys.readouterr().err
+        assert "not found" in err.lower() or "Database" in err
 
     def test_migrate_merge_workspaces_dry_run(self, test_db, capsys):
         """--merge-workspaces --dry-run runs without modifying data."""
@@ -503,8 +596,8 @@ class TestCmdCopy:
         main(["copy", "adapter", "claude_code"])
         rc = main(["copy", "adapter", "claude_code"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Error" in out
+        err = capsys.readouterr().err
+        assert err.strip()  # an error callout was reported to stderr
 
     def test_copy_adapter_force_overwrite(self, tmp_path, monkeypatch, capsys):
         """siftd copy adapter --force overwrites existing."""
@@ -519,15 +612,15 @@ class TestCmdCopy:
         rc = main(["copy", "adapter", "--all"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "Copied adapters:" in out
+        assert "Copied adapters" in out
 
     def test_copy_nonexistent_adapter(self, tmp_path, monkeypatch, capsys):
         """siftd copy adapter <bad-name> returns error."""
         monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
         rc = main(["copy", "adapter", "nonexistent_xyz"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Error" in out
+        err = capsys.readouterr().err
+        assert err.strip()  # an error callout was reported to stderr
 
 
 # ---------------------------------------------------------------------------
@@ -618,8 +711,9 @@ class TestCmdDoctor:
         """siftd doctor fix --pending-tags runs cleanup."""
         rc = main(["--db", str(test_db), "doctor", "fix", "--pending-tags"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "stale" in out.lower() or "clean" in out.lower()
+        captured = capsys.readouterr()
+        text = (captured.out + captured.err).lower()
+        assert "stale" in text or "clean" in text
 
     def test_doctor_fix_pending_tags_json(self, test_db, capsys):
         """siftd doctor fix --pending-tags --json returns JSON."""
@@ -643,6 +737,37 @@ class TestCmdDoctor:
 
 
 class TestDataDirectBranches:
+    def test_run_fix_steps_plain_log_and_error_count(self, capsys):
+        # Non-TTY (capsys): the dissolved spinner prints a plain step-log and
+        # returns the error count. A failing step is reported, not raised.
+        def boom(conn, db):
+            raise RuntimeError("nope")
+
+        steps = [("Good", lambda conn, db: "did 3"), ("Bad", boom)]
+        errors = data_cli._run_fix_steps(steps, conn=None, db=None)
+        assert errors == 1
+        out = capsys.readouterr().out
+        assert "Good: did 3" in out
+        assert "Bad: nope" in out
+
+    def test_run_fix_steps_active_paints_spinner_log(self, monkeypatch, capsys):
+        # Active TTY: the dissolved spinner paints through the real InPlaceRenderer
+        # (pending → resolved in place) rather than the plain per-step print.
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+        def boom(conn, db):
+            raise RuntimeError("nope")
+
+        errors = data_cli._run_fix_steps(
+            [("Good", lambda conn, db: "ok"), ("Bad", boom)], conn=None, db=None
+        )
+        assert errors == 1
+        out = capsys.readouterr().out
+        assert "Good: ok" in out and "Bad: nope" in out
+        # A live frame was painted (spinner and/or resolved glyph), not a plain log.
+        assert "⠋" in out or "✓" in out
+
     def test_copy_query_and_formatter_branches(self, monkeypatch, capsys):
         monkeypatch.setattr("siftd.api.list_builtin_queries", lambda: [])
         rc = data_cli.cmd_copy(SimpleNamespace(resource_type="query", name=None, force=False, all=True))
@@ -713,45 +838,94 @@ class TestDataDirectBranches:
         assert data_cli._doctor_run_json(args, None, False, Path(test_db)) == 1
         assert data_cli._doctor_run_plain(args, None, False, Path(test_db)) == 1
 
-        class _R:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_a):
-                return False
-
-            def render(self, *_a, **_k):
-                return None
-
-            def finalize(self, *_a, **_k):
-                return None
-
-        class _Theme:
-            def __enter__(self):
-                return None
-
-            def __exit__(self, *_a):
-                return False
-
-        monkeypatch.setitem(
-            __import__("sys").modules,
-            "painted",
-            SimpleNamespace(InPlaceRenderer=_R, use_theme=lambda *_a, **_k: _Theme()),
-        )
+        # The painted path with a non-TTY stdout: LiveRegion is inactive, so it
+        # paints nothing and just returns the exit code (run_checks → no findings
+        # → 0). The active render path is exercised separately below.
         monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
-        monkeypatch.setattr("siftd.doctor.view.render_progress_block", lambda *_a, **_k: "blk")
-        monkeypatch.setitem(__import__("sys").modules, "siftd.output.theme", SimpleNamespace(siftd_theme=object()))
         monkeypatch.setattr("siftd.api.run_checks", lambda **k: [])
         monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
         assert data_cli._doctor_run_painted(args, ["c1"], False, Path(test_db)) == 0
 
+    def test_doctor_run_painted_active_paints_panel_and_report(self, monkeypatch):
+        """The active live path: a real LiveRegion + the real view renderers paint
+        to a fake TTY. on_check_done drives the panel frames; finalize deposits the
+        settled findings report (the check name + tally land in the stream)."""
+        from siftd.doctor.checks import Finding
+
+        monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
+        stream = _FakeTTY()
+        monkeypatch.setattr("sys.stdout", stream)
+
+        warning = Finding(
+            check="ingest-errors", severity="warning",
+            message="claude_code: 8 file(s) failed", fix_available=True,
+            fix_command="siftd doctor --verbose",
+        )
+
+        def fake_run_checks(*, checks, db_path, deep, fast, on_check_done):
+            on_check_done("schema-current", [])  # a clean check → passed
+            on_check_done("ingest-errors", [warning])  # an issue
+            return [warning]
+
+        monkeypatch.setattr("siftd.api.run_checks", fake_run_checks)
+        monkeypatch.setattr(
+            "siftd.api.list_checks",
+            lambda: [SimpleNamespace(name="schema-current"), SimpleNamespace(name="ingest-errors")],
+        )
+        saved: list = []
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: saved.append(findings))
+
+        args = SimpleNamespace(db=None, json=False, strict=False, no_hints=False)
+        rc = data_cli._doctor_run_painted(args, None, False, None)
+
+        assert rc == 0  # a warning, non-strict → does not fail
+        out = stream.getvalue()
+        assert "ingest-errors" in out  # the issue surfaced (panel + report)
+        assert "passed" in out  # the report's severity tally (a report-only token)
+        assert "1 passed" in out  # tally counts the clean check → the report deposited
+        assert saved == [[warning]]  # the filtered findings were cached for `doctor fix`
+
+    def test_doctor_run_painted_return_codes(self, monkeypatch):
+        """The painted path's strict/error return contract (inactive stdout isolates
+        the return logic from rendering): an error fails non-strict; a warning fails
+        only under --strict. The full-stack strict test uses --json, a different path."""
+        from siftd.doctor.checks import Finding
+
+        monkeypatch.setattr("siftd.doctor.fixes.save_findings_cache", lambda findings: None)
+        monkeypatch.setattr("siftd.api.list_checks", lambda: [SimpleNamespace(name="c1")])
+
+        def run_returning(findings):
+            def _run(*, checks, db_path, deep, fast, on_check_done):
+                return findings
+            return _run
+
+        error = Finding(check="c1", severity="error", message="bad", fix_available=False)
+        warning = Finding(check="c1", severity="warning", message="careful", fix_available=False)
+
+        # error → fail even non-strict
+        monkeypatch.setattr("siftd.api.run_checks", run_returning([error]))
+        args = SimpleNamespace(db=None, json=False, strict=False, no_hints=False)
+        assert data_cli._doctor_run_painted(args, None, False, None) == 1
+
+        # warning → passes non-strict, fails under --strict
+        monkeypatch.setattr("siftd.api.run_checks", run_returning([warning]))
+        assert data_cli._doctor_run_painted(SimpleNamespace(db=None, json=False, strict=False, no_hints=False), None, False, None) == 0
+        assert data_cli._doctor_run_painted(SimpleNamespace(db=None, json=False, strict=True, no_hints=False), None, False, None) == 1
+
     def test_migrate_merge_verbose_and_dry_run_outputs(self, test_db, monkeypatch, capsys):
+        from siftd.domain.progress import ProgressEvent
+
+        def _emit(on_progress, group, text):
+            # The producers emit ProgressEvents (not raw strings) since the
+            # progress contract; the verbose plain sink prints event.message.
+            on_progress(ProgressEvent(group=group, message=text, status="progress"))
+
         monkeypatch.setattr(
             "siftd.api.migrations.backfill_git_remotes",
-            lambda conn, on_progress, dry_run: (on_progress("progress"), {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0})[1],
+            lambda conn, on_progress, group, dry_run: (_emit(on_progress, group, "progress"), {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0})[1],
         )
         monkeypatch.setattr("siftd.api.migrations.verify_workspace_identity", lambda conn: {"duplicate_groups": 1, "duplicate_workspaces": 2, "total": 2, "with_remote": 1, "without_remote": 1})
-        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn, on_progress, dry_run: (on_progress("merging"), {"workspaces_merged": 1, "conversations_moved": 2})[1])
+        monkeypatch.setattr("siftd.api.migrations.merge_duplicate_workspaces", lambda conn, on_progress, group, dry_run: (_emit(on_progress, group, "merging"), {"workspaces_merged": 1, "conversations_moved": 2})[1])
         rc = main(["--db", str(test_db), "migrate", "--merge-workspaces", "--dry-run", "-v"])
         assert rc == 0
         out = capsys.readouterr().out
@@ -783,8 +957,9 @@ class TestDataDirectBranches:
         )
         rc = main(["--db", str(test_db), "backfill", "--filter-binary", "--dry-run"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "Errors" in out and "Run without --dry-run" in out
+        captured = capsys.readouterr()
+        assert "Errors" in captured.out  # the count breakdown stays on stdout
+        assert "Run without --dry-run" in captured.err  # the hint is status -> stderr
 
     def test_copy_all_and_error_paths(self, monkeypatch):
         class _CopyErr(Exception):
@@ -881,11 +1056,27 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.cli.data._doctor_run_painted", lambda *a, **k: 7)
 
         class _Std:
+            encoding = "utf-8"  # a Unicode-capable TTY routes to painted
+
             def isatty(self):
                 return True
 
         monkeypatch.setattr(data_cli.sys, "stdout", _Std())
         assert data_cli._doctor_run(SimpleNamespace(db=str(test_db), json=False), None, False) == 7
+
+        # An ASCII-only TTY (e.g. a non-UTF-8 locale) degrades to the plain path
+        # rather than rendering garbled box-drawing glyphs.
+        monkeypatch.setattr("siftd.cli.data._doctor_run_plain", lambda *a, **k: 9)
+
+        class _AsciiStd:
+            encoding = "ascii"
+
+            def isatty(self):
+                return True
+
+        monkeypatch.setattr(data_cli.sys, "stdout", _AsciiStd())
+        assert data_cli._doctor_run(SimpleNamespace(db=str(test_db), json=False), None, False) == 9
+
         monkeypatch.setattr("siftd.cli.data._doctor_run_painted", real_painted)
         monkeypatch.setattr(data_cli.sys, "stdout", real_stdout)
 
@@ -933,7 +1124,7 @@ class TestDataDirectBranches:
         # migrate merge non-dry-run summary lines (505/506)
         monkeypatch.setattr(
             "siftd.api.migrations.backfill_git_remotes",
-            lambda conn, on_progress, dry_run: {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0},
+            lambda conn, on_progress, group, dry_run: {"checked": 1, "updated": 1, "skipped_missing": 0, "skipped_no_git": 0},
         )
         monkeypatch.setattr(
             "siftd.api.migrations.verify_workspace_identity",
@@ -941,7 +1132,7 @@ class TestDataDirectBranches:
         )
         monkeypatch.setattr(
             "siftd.api.migrations.merge_duplicate_workspaces",
-            lambda conn, on_progress, dry_run: {"workspaces_merged": 2, "conversations_moved": 5},
+            lambda conn, on_progress, group, dry_run: {"workspaces_merged": 2, "conversations_moved": 5},
         )
         rc = main(["--db", str(test_db), "migrate", "--merge-workspaces"])
         assert rc == 0
@@ -955,8 +1146,9 @@ class TestDataDirectBranches:
         )
         rc = main(["--db", str(test_db), "migrate"])
         assert rc == 0
-        out = capsys.readouterr().out
-        assert "Duplicate groups: 2" in out and "--merge-workspaces" in out
+        captured = capsys.readouterr()
+        assert "Duplicate groups" in captured.out  # breakdown stays on stdout (now a gutter-aligned listing row)
+        assert "--merge-workspaces" in captured.err  # the hint is status -> stderr
 
         # copy formatter usage listing lines (636-641)
         monkeypatch.setattr("siftd.api.list_builtin_formatters", lambda: ["markdown", "json"])

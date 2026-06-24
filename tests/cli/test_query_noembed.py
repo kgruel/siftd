@@ -225,10 +225,10 @@ def test_stats_corpus_aware(monkeypatch, capsys, tmp_path):
 
     out = capsys.readouterr().out
     # view count / corpus count
-    assert "View: 2 / 12,438 corpus" in out
+    assert "2 / 12,438 corpus" in out
     # token totals present (exact formatting via fmt_tokens)
     assert "corpus" in out
-    assert "view tokens:" in out
+    assert "View tokens:" in out
 
 
 def test_stats_corpus_aware_workspace_filter(monkeypatch, capsys, tmp_path):
@@ -263,8 +263,8 @@ def test_stats_corpus_aware_workspace_filter(monkeypatch, capsys, tmp_path):
     assert rc == 0
 
     out = capsys.readouterr().out
-    assert "View: 1 / 12,438 corpus" in out
-    assert "view tokens:" in out
+    assert "1 / 12,438 corpus" in out
+    assert "View tokens:" in out
 
 
 def test_stats_corpus_aware_empty_view_shows_stats(monkeypatch, capsys, tmp_path):
@@ -284,10 +284,10 @@ def test_stats_corpus_aware_empty_view_shows_stats(monkeypatch, capsys, tmp_path
     rc = cmd_query(_args(stats=True, workspace="/w", db=str(tmp_path / "db.sqlite")))
     assert rc == 0
 
-    out = capsys.readouterr().out
-    assert "No conversations found." in out
-    assert "View: 0 / 12,438 corpus" in out
-    assert "view tokens: 0 /" in out
+    captured = capsys.readouterr()
+    assert "No conversations found." in captured.err  # empty-state note -> stderr
+    assert "0 / 12,438 corpus" in captured.out  # --stats result -> stdout
+    assert "View tokens:" in captured.out
 
 
 def test_no_hints_suppresses_hint_caveats(monkeypatch, capsys, tmp_path):

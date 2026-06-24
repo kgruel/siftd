@@ -8,13 +8,27 @@ from pathlib import Path
 
 
 def print_ambiguous_error(exc) -> None:
-    """Print a user-facing error for AmbiguousPrefix to stderr."""
-    print(f"Error: prefix {exc.prefix!r} matches {exc.total} conversations:", file=sys.stderr)
-    for mid in exc.matched_ids:
-        print(f"  {mid}", file=sys.stderr)
+    """Print a user-facing error for AmbiguousPrefix to stderr.
+
+    An enumerated-body error: the matched ids ride a ``lines()`` block, since a
+    callout's ``detail``/``hint`` flatten newlines and can't carry a list. The
+    ``status.error`` subject frames them with the disambiguation remedy as its
+    hint. All to stderr so a piped stdout / ``--json`` payload stays clean.
+    """
+    from painted import print_block
+
+    from siftd.output import status
+    from siftd.output.common import should_use_ansi
+    from siftd.output.listing import lines
+
+    status.error(
+        f"Prefix {exc.prefix!r} matches {exc.total} conversations:",
+        hint="Disambiguate with a longer prefix or full ID.",
+    )
+    body: list[str] = list(exc.matched_ids)
     if exc.total > len(exc.matched_ids):
-        print(f"  ... and {exc.total - len(exc.matched_ids)} more", file=sys.stderr)
-    print("Disambiguate with a longer prefix or full ID.", file=sys.stderr)
+        body.append(f"... and {exc.total - len(exc.matched_ids)} more")
+    print_block(lines(body), sys.stderr, use_ansi=should_use_ansi(sys.stderr))
 
 
 def resolve_db(args) -> Path:
@@ -304,9 +318,11 @@ def deprecation_notice(old: str, new: str) -> None:
     if old in _DEPRECATION_EMITTED:
         return
     _DEPRECATION_EMITTED.add(old)
-    print(
-        f"note: '{old}' is deprecated and will be removed in a future release; use '{new}'.",
-        file=sys.stderr,
+    from siftd.output import status
+
+    status.warning(
+        f"'{old}' is deprecated and will be removed in a future release.",
+        hint=f"Use '{new}' instead.",
     )
 
 

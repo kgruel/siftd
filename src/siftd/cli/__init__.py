@@ -42,6 +42,40 @@ def _configure_cli_logging() -> None:
         logger.setLevel(logging.INFO)
 
 
+def _relax_output_encoding() -> None:
+    """Let stdout/stderr tolerate content the terminal's codec can't encode.
+
+    Conversation bodies carry arbitrary Unicode — em-dashes, emoji, CJK. On a
+    strict-ASCII stream (LANG=C, or PYTHONIOENCODING=ascii) Python's default
+    ``errors='strict'`` raises ``UnicodeEncodeError`` mid-render, crashing query,
+    peek, search and every other content surface. Switching the *stream's* error
+    handler to ``backslashreplace`` degrades the offending character to a visible,
+    reversible escape (``\\u2014``) instead of crashing.
+
+    This is application I/O policy and belongs here, at the entry point, beside
+    ``use_theme`` — a stream's error handler is owned by whoever owns the stream
+    (us), so painted (correctly) never reconfigures one it's handed. It's also the
+    *only* correct lever for arbitrary user content: ``prefers_ascii`` glyph
+    routing governs only the decorative characters siftd's own renderer emits,
+    not data passing through. ``encoding`` is left untouched (only the error
+    handler changes), and machine output is unaffected — ``--format json``
+    serializes ASCII-safe via ``json.dumps``' ``ensure_ascii`` default.
+
+    Best-effort: pytest capture and some redirects replace the streams with
+    objects that lack ``reconfigure`` (skipped) or that reject it (caught); either
+    way the stream keeps its existing policy rather than the hardening step itself
+    becoming a crash source.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="backslashreplace")
+        except (ValueError, OSError):
+            pass
+
+
 # Top-level command lanes — the story `siftd --help` tells. The lane legend
 # rides the epilog; the per-command descriptions remain in the listing above it.
 _LANES: tuple[tuple[str, str], ...] = (
@@ -88,6 +122,32 @@ def _hide_plumbing(subparsers) -> None:
 
 def main(argv=None) -> int:
     _configure_cli_logging()
+    _relax_output_encoding()
+    # Apply siftd's NORD palette process-wide so every painted surface — status,
+    # query, search, show, peek, tables, doctor — renders in one theme. Setter
+    # semantics: persists for the rest of the process. The print_block sites
+    # honour TTY + NO_COLOR (output/common.should_use_ansi) — painted itself only
+    # checks isatty — so the palette is inert when piped or colour is disabled.
+    # Imported lazily to keep painted off the module-import path.
+    from painted import use_theme
+
+    from siftd.output import status
+    from siftd.output.theme import siftd_theme
+
+    use_theme(siftd_theme)
+    # One glyph-degradation control point (the icon twin of the theme lever):
+    # use_theme installed the ambient IconSet (the default Unicode set); override
+    # it to ASCII when stdout can't render Unicode (a pipe or a LANG=C TTY) so
+    # every glyph consumer — the search rank rail, spinners, rules — degrades from
+    # here rather than threading an ascii flag through each call. prefers_ascii
+    # keys off the live sys.stdout; a per-stream exception (a stderr surface)
+    # scope-overrides with its own use_icons.
+    from siftd.output.common import prefers_ascii
+
+    if prefers_ascii():
+        from painted import ASCII_ICONS, use_icons
+
+        use_icons(ASCII_ICONS)
     parser = argparse.ArgumentParser(
         prog="siftd",
         description="Aggregate and query LLM conversation logs",
@@ -149,7 +209,7 @@ def main(argv=None) -> int:
     except SchemaUpgradeRequiredError as e:
         # Auto-upgrade path can fire from any read-only subcommand. Catch here
         # so users see the friendly message rather than a Python traceback.
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     # Post-command: passive update check (non-blocking)

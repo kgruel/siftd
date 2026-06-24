@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -10,11 +11,12 @@ from typing import TYPE_CHECKING
 
 from siftd.api import open_database
 from siftd.cli._common import resolve_db
-from siftd.output import fmt_model, fmt_workspace
+from siftd.output import fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
 if TYPE_CHECKING:
     from siftd.ingestion import IngestEvent, IngestStats
+    from siftd.output.live import LiveRegion
 
 
 class _AdapterCounts:
@@ -60,6 +62,11 @@ class _IngestTextRenderer:
         self.quiet = quiet
         self._counts: dict[str, _AdapterCounts] = {}
         self._started: set[str] = set()
+        self._live: LiveRegion | None = None  # attached for the TTY bars
+
+    def attach_live(self, live: LiveRegion) -> None:
+        """Attach the live region whose bars replace per-file streaming on a TTY."""
+        self._live = live
 
     def handle_event(self, event: IngestEvent) -> None:
         counts = self._counts.setdefault(event.adapter, _AdapterCounts(event.total))
@@ -68,6 +75,17 @@ class _IngestTextRenderer:
         counts.add(event.status, event.reason)
 
         if self.quiet:
+            return
+
+        # Live tier: every adapter gets a re-painting progress bar; the per-file
+        # scroll is gone. Force a paint past the throttle on a new adapter, an
+        # error, or completion — the moments worth not dropping.
+        if self._live is not None and self._live.active:
+            new_adapter = event.adapter not in self._started
+            self._started.add(event.adapter)
+            done = bool(counts.total) and counts.processed >= counts.total
+            force = new_adapter or event.status == "error" or done
+            self._live.update(self._bars_block(), force=force)
             return
 
         if event.status != "skipped":
@@ -79,6 +97,71 @@ class _IngestTextRenderer:
 
         if counts.processed == counts.total and event.adapter in self._started:
             self._print_adapter_done(event.adapter, counts)
+
+    def finalize_live(self) -> None:
+        """Deposit the final bar frame into scrollback (no-op when not live)."""
+        if self._live is not None and self._live.active:
+            self._live.finalize(self._bars_block())
+
+    def _bars_block(self):
+        """All started adapters as one block of re-painting progress-bar rows."""
+        from painted import Block, current_icons, current_palette, join_vertical
+
+        from siftd.output.common import term_width
+        from siftd.output.live import bar_row, spinner_glyph
+        from siftd.output.theme import domain_styles
+
+        pal = current_palette()
+        ic = current_icons()
+        ds = domain_styles()
+        items = [(n, c) for n, c in self._counts.items() if n in self._started]
+        if not items:
+            return Block.empty(0, 0)
+
+        label_width = max(12, max(len(n) for n, _ in items))
+        bar_width = max(10, min(28, term_width() - label_width - 44))
+
+        # Shared column widths so every row's stats align vertically — the
+        # progress fraction and each count right-align to the widest in the set.
+        prog = {n: f"{c.processed}/{c.total or 0}" for n, c in items}
+        prog_w = max(len(s) for s in prog.values())
+        new_w = max(len(str(c.new)) for _, c in items)
+        upd_w = max(len(str(c.updated_total)) for _, c in items)
+        skip_w = max(len(str(c.skipped)) for _, c in items)
+        any_err = any(c.error for _, c in items)
+        err_w = max((len(str(c.error)) for _, c in items), default=1)
+
+        rows = []
+        for name, c in items:
+            total = c.total or 0
+            frac = (c.processed / total) if total else 0.0
+            done = bool(total) and c.processed >= total
+            if done and c.error:
+                glyph, gstyle = ic.error, pal.error
+            elif done:
+                glyph, gstyle = ic.ok, pal.success
+            else:
+                glyph, gstyle = spinner_glyph(), pal.accent
+            # The counts join the amber metric thread (consistent with the summary
+            # table and the query/peek lists); the progress fraction stays a muted
+            # caption. err keeps the error severity hue — a non-zero error count is
+            # a signal, not a neutral quantity.
+            segments = [
+                (f"{prog[name]:>{prog_w}}  ", pal.muted),
+                ("new ", None), (f"{c.new:>{new_w}}", ds.metric),
+                ("  upd ", None), (f"{c.updated_total:>{upd_w}}", ds.metric),
+                ("  skip ", None), (f"{c.skipped:>{skip_w}}", ds.metric),
+            ]
+            # Show the err column for every row when any adapter errored, so the
+            # structure stays consistent down the set (0 where clean).
+            if any_err:
+                segments += [("  err ", None), (f"{c.error:>{err_w}}", pal.error)]
+            rows.append(bar_row(
+                name, frac, label_width=label_width, bar_width=bar_width,
+                segments=segments, glyph=glyph, glyph_style=gstyle, label_style=pal.muted,
+                filled_char="━", empty_char="─",  # a thin rule, not a full block
+            ))
+        return join_vertical(*rows)
 
     def _print_adapter_done(self, adapter: str, counts: _AdapterCounts) -> None:
         parts = [
@@ -98,70 +181,87 @@ class _IngestTextRenderer:
 
     def print_summary(self, stats: IngestStats) -> None:
         """Print final ingestion summary."""
-        active = [
-            (name, counts)
-            for name, counts in self._counts.items()
-            if counts.new > 0 or counts.updated_total > 0 or counts.error > 0
-        ]
-
         has_content = (
             stats.conversations or stats.prompts
             or stats.responses or stats.tool_calls
         )
 
-        if not active:
-            if stats.files_found == 0:
-                if not self.quiet:
-                    print("\nNo files found.")
-            else:
-                if not self.quiet:
-                    msg = f"\n{stats.files_found} files scanned, all up to date."
-                    if self.verbose:
-                        all_reasons: dict[str, int] = {}
-                        for counts in self._counts.values():
-                            for reason, count in counts.skip_reasons.items():
-                                all_reasons[reason] = all_reasons.get(reason, 0) + count
-                        if all_reasons:
-                            parts = ", ".join(
-                                f"{reason} {count}"
-                                for reason, count in sorted(all_reasons.items())
-                            )
-                            msg += f" ({parts})"
-                    print(msg)
+        if not has_content:
+            # Nothing landed — an empty-state note (the bars already showed the
+            # per-adapter skip/err disposition). Don't claim "up to date" if
+            # files actually errored.
+            if not self.quiet:
+                if stats.files_found == 0:
+                    status.info("No files found.")
+                elif stats.files_errored:
+                    status.warning(f"{stats.files_errored} file(s) errored; nothing new ingested.")
+                else:
+                    detail = self._skip_reasons_detail() if self.verbose else None
+                    status.info(f"{stats.files_found} files scanned, all up to date.", detail=detail)
             return
 
         if self.quiet:
-            if has_content:
-                print(self._format_totals_line(stats))
+            print(self._format_totals_line(stats))
             return
 
-        # Per-adapter table
+        # Per-adapter content yield + grand-total footer, deposited below the
+        # bars (which already carried the new/upd/skip disposition).
         print()
-        name_w = max(len(name) for name, _ in active)
-        new_w = max(len(str(c.new)) for _, c in active)
-        upd_w = max(len(str(c.updated_total)) for _, c in active)
-        skip_w = max(len(str(c.skipped)) for _, c in active)
+        self._print_summary_table(stats)
 
-        for name, c in active:
-            line = (
-                f"{name:<{name_w}}"
-                f"  {c.new:>{new_w}} new"
-                f"  {c.updated_total:>{upd_w}} updated"
-                f"  {c.skipped:>{skip_w}} skipped"
-            )
-            if self.verbose and c.skip_reasons:
-                reasons = ", ".join(
-                    f"{reason} {count}"
-                    for reason, count in sorted(c.skip_reasons.items())
-                )
-                line += f" ({reasons})"
-            if c.error:
-                line += f"  {c.error} error"
-            print(line)
+    def _print_summary_table(self, stats: IngestStats) -> None:
+        from painted import Align, current_palette, join_vertical, print_block
 
-        indent = " " * name_w
-        print(f"{indent}  ──")
-        print(f"{indent}  {self._format_totals_line(stats)}")
+        from siftd.output.live import text_row
+        from siftd.output.table import Col, render_table, table_budget
+        from siftd.output.theme import domain_styles
+
+        pal = current_palette()
+        ds = domain_styles()
+        # Per-adapter content from stats.by_harness — only adapters that actually
+        # yielded something (an all-skip adapter contributes no rows here).
+        yielded = [
+            (name, h)
+            for name, h in stats.by_harness.items()
+            if h.get("conversations") or h.get("prompts")
+            or h.get("responses") or h.get("tool_calls")
+        ]
+        # The per-adapter counts join the amber metric thread, consistent with the
+        # query/peek lists; the ADAPTER name stays plain (the row label) and the
+        # totals recap below stays muted (a sentence, not a single headline figure).
+        cols = [
+            Col("ADAPTER", lambda it: it[0], fill=True, min_width=10),
+            Col("CONVERSATIONS", lambda it: str(it[1].get("conversations", 0)),
+                align=Align.END, style=ds.metric),
+            Col("PROMPTS", lambda it: str(it[1].get("prompts", 0)),
+                align=Align.END, style=ds.metric),
+            Col("RESPONSES", lambda it: str(it[1].get("responses", 0)),
+                align=Align.END, style=ds.metric),
+            Col("TOOL_CALLS", lambda it: str(it[1].get("tool_calls", 0)),
+                align=Align.END, style=ds.metric),
+        ]
+
+        budget, as_ascii = table_budget()
+        table_block = render_table(cols, yielded, width=budget, as_ascii=as_ascii)
+        totals = text_row([("  " + self._format_totals_line(stats), pal.muted)])
+        parts = [table_block, totals]
+        if self.verbose:
+            detail = self._skip_reasons_detail()
+            if detail:
+                parts.append(text_row([("  skipped: " + detail, pal.muted)]))
+        from siftd.output.common import should_use_ansi
+
+        print_block(join_vertical(*parts), use_ansi=should_use_ansi())
+
+    def _skip_reasons_detail(self) -> str | None:
+        """Aggregate skip-reason breakdown across all adapters, or None."""
+        all_reasons: dict[str, int] = {}
+        for counts in self._counts.values():
+            for reason, count in counts.skip_reasons.items():
+                all_reasons[reason] = all_reasons.get(reason, 0) + count
+        if not all_reasons:
+            return None
+        return ", ".join(f"{reason} {count}" for reason, count in sorted(all_reasons.items()))
 
     @staticmethod
     def _format_totals_line(stats: IngestStats) -> str:
@@ -326,10 +426,9 @@ def cmd_ingest(args) -> int:
                 print(f"Using database: {db}")
 
     if not json_mode and auto_quiet:
-        print(
-            "Note: ingest output quieted (not a TTY). "
-            "Pass -v to force verbose output, or -q to silence this hint.",
-            file=sys.stderr,
+        status.info(
+            "ingest output quieted (not a TTY). "
+            "Pass -v to force verbose output, or -q to silence this hint."
         )
 
     # Handle --rebuild-fts flag
@@ -356,19 +455,36 @@ def cmd_ingest(args) -> int:
     if not json_mode:
         if not quiet:
             print("\nIngesting...")
+
+    # On a Unicode TTY, per-adapter progress bars re-paint in place; a pipe /
+    # --json / non-UTF-8 locale leaves the region inactive and the renderer
+    # falls back to its plain streaming (or quiet) path.
+    from siftd.output.live import LiveRegion
+
+    live = LiveRegion(enabled=not quiet and not json_mode)
+    if not json_mode:
+        renderer.attach_live(live)  # type: ignore[union-attr]
     try:
-        result = run_ingest(
-            db_path=db,
-            adapter_names=args.adapter,
-            scan_paths=args.path,
-            on_event=renderer.handle_event,
-        )
+        with live:
+            try:
+                result = run_ingest(
+                    db_path=db,
+                    adapter_names=args.adapter,
+                    scan_paths=args.path,
+                    on_event=renderer.handle_event,
+                )
+            finally:
+                # Deposit the final frame even if ingest raised; never let this
+                # mask the real error (the cursor restore is __exit__'s job).
+                if not json_mode:
+                    with contextlib.suppress(Exception):
+                        renderer.finalize_live()  # type: ignore[union-attr]
     except AdapterSelectionError as exc:
         message = str(exc)
         if json_mode:
             renderer._emit({"type": "error", "message": message})
         else:
-            print(message)
+            status.error(message)
         return 1
 
     stats = result.stats
@@ -399,9 +515,9 @@ def cmd_ingest(args) -> int:
     else:
         if not quiet:
             for name in zero_discovery:
-                print(f"  note: Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+                status.info(f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
         for path, error in result.dropin_failures:
-            print(f"  warning: Drop-in adapter at '{path}' failed to load: {error}")
+            status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
     return 0
 
@@ -416,11 +532,10 @@ def cmd_backfill(args) -> int:
     if getattr(args, "dry_run", False) and not (
         getattr(args, "filter_binary", False) or getattr(args, "git_remote", False)
     ):
-        print("Note: --dry-run ignored without --filter-binary or --git-remote", file=sys.stderr)
+        status.info("--dry-run ignored without --filter-binary or --git-remote")
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     if args.shell_tags:
@@ -429,31 +544,37 @@ def cmd_backfill(args) -> int:
         counts = result.shell_tag_counts
         total = sum(counts.values())
         if counts:
-            print(f"Tagged {total} tool calls:")
-            for category, count in sorted(counts.items(), key=lambda x: -x[1]):
-                print(f"  shell:{category}: {count}")
+            from siftd.output.listing import print_definitions, print_heading
+            from siftd.output.theme import domain_styles
+
+            ds = domain_styles()
+            print_heading(f"Tagged {total} tool calls")
+            print_definitions(
+                (f"shell:{category}", [(str(count), ds.metric)])
+                for category, count in sorted(counts.items(), key=lambda x: -x[1])
+            )
         else:
-            print("No untagged shell commands found.")
+            status.info("No untagged shell commands found.")
     elif args.derivative_tags:
         print("Backfilling derivative conversation tags...")
         result = run_backfill(db_path=db, operation="derivative_tags")
         count = result.tagged_conversations
         if count:
-            print(f"Tagged {count} conversations as siftd:derivative.")
+            status.confirm(f"Tagged {count} conversations as siftd:derivative.")
         else:
-            print("No untagged derivative conversations found.")
+            status.info("No untagged derivative conversations found.")
     elif getattr(args, "models", False):
         print("Re-parsing model names to canonical form...")
         result = run_backfill(db_path=db, operation="models")
         if result.updated_models:
-            print(f"Canonicalized {result.updated_models} model name(s).")
-            print("Prices reproject on next open; cost refreshes on next ingest.")
+            status.confirm(f"Canonicalized {result.updated_models} model name(s).")
+            status.info("Prices reproject on next open; cost refreshes on next ingest.")
         else:
-            print("No model names needed canonicalizing.")
+            status.info("No model names needed canonicalizing.")
     elif getattr(args, "pricing", False):
         print("Repricing from the pricing reference (reproject + rebuild rollup)...")
         result = run_backfill(db_path=db, operation="pricing")
-        print(f"Repriced {result.repriced_rows} usage rows from the reference.")
+        status.confirm(f"Repriced {result.repriced_rows} usage rows from the reference.")
     elif args.filter_binary:
         dry_run = getattr(args, "dry_run", False)
         if dry_run:
@@ -461,12 +582,19 @@ def cmd_backfill(args) -> int:
         else:
             print("Filtering binary content from existing blobs...")
         result = run_backfill(db_path=db, operation="filter_binary", dry_run=dry_run)
-        print(f"  Filtered: {result.filtered}")
-        print(f"  Skipped (no change): {result.skipped}")
+        from siftd.output.listing import print_definitions
+        from siftd.output.theme import domain_styles
+
+        ds = domain_styles()
+        rows = [
+            ("Filtered", [(str(result.filtered), ds.metric)]),
+            ("Skipped (no change)", [(str(result.skipped), ds.metric)]),
+        ]
         if result.errors:
-            print(f"  Errors: {result.errors}")
+            rows.append(("Errors", [(str(result.errors), ds.metric)]))
+        print_definitions(rows)
         if dry_run and result.filtered:
-            print("\nRun without --dry-run to apply changes.")
+            status.info("Run without --dry-run to apply changes.")
     elif args.git_remote:
         from siftd.api.migrations import backfill_git_remotes
 
@@ -478,17 +606,23 @@ def cmd_backfill(args) -> int:
             else:
                 print("Backfilling git remote URLs for workspaces missing them...")
 
-            def on_progress(msg):
-                if getattr(args, "verbose", False):
-                    print(msg)
+            def on_progress(event):
+                if getattr(args, "verbose", False) and event.message:
+                    print(event.message)
 
             stats = backfill_git_remotes(conn, on_progress=on_progress, dry_run=dry_run)
-            print(f"  Checked: {stats['checked']}")
-            print(f"  Updated: {stats['updated']}")
-            print(f"  Skipped (path missing): {stats['skipped_missing']}")
-            print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+            from siftd.output.listing import print_definitions
+            from siftd.output.theme import domain_styles
+
+            ds = domain_styles()
+            print_definitions([
+                ("Checked", [(str(stats["checked"]), ds.metric)]),
+                ("Updated", [(str(stats["updated"]), ds.metric)]),
+                ("Skipped (path missing)", [(str(stats["skipped_missing"]), ds.metric)]),
+                ("Skipped (no git remote)", [(str(stats["skipped_no_git"]), ds.metric)]),
+            ])
             if dry_run and stats["updated"]:
-                print("\nRun without --dry-run to apply changes.")
+                status.info("Run without --dry-run to apply changes.")
         finally:
             conn.close()
     else:
@@ -496,83 +630,188 @@ def cmd_backfill(args) -> int:
         print("Backfilling response attributes (cache tokens)...")
         result = run_backfill(db_path=db, operation="response_attributes")
         count = result.inserted_attributes
-        print(f"Done. Inserted {count} attributes.")
+        status.confirm(f"Done. Inserted {count} attributes.")
 
     return 0
 
 
-def cmd_migrate(args) -> int:
-    """Run data migrations."""
+def _run_merge_workspaces(conn, *, dry_run: bool, verbose: bool) -> int:
+    """The ``migrate --merge-workspaces`` flow: backfill remotes, then merge dups.
+
+    A two-step sequence — the step-log progress shape (sibling of ``doctor
+    --fix``). On a Unicode TTY the steps render as a live ``ProgressConsumer``
+    step-log (spinner → ``✓``); a pipe / non-Unicode locale keeps the original
+    plain "Step 1… / Step 2…" prints. The status callouts that summarise the run
+    land *after* the live region closes, so they never tear the live frame.
+    """
     from siftd.api.migrations import (
         backfill_git_remotes,
         merge_duplicate_workspaces,
         verify_workspace_identity,
     )
+    from siftd.output.progress_view import ProgressConsumer, ProgressEvent
+
+    backfill_group = "backfill git remotes"
+    merge_group = "merge workspaces"
+
+    def _backfill_summary(stats: dict) -> str:
+        return (
+            f"{backfill_group}: {stats['updated']} updated, "
+            f"{stats['checked']} checked, "
+            f"{stats['skipped_missing'] + stats['skipped_no_git']} skipped"
+        )
+
+    consumer = ProgressConsumer(shape="steps")
+    if not consumer.active:
+        return _run_merge_workspaces_plain(
+            conn,
+            dry_run=dry_run,
+            verbose=verbose,
+            backfill=backfill_git_remotes,
+            merge=merge_duplicate_workspaces,
+            verify=verify_workspace_identity,
+            backfill_group=backfill_group,
+            merge_group=merge_group,
+        )
+
+    # Live step-log. Each step starts as a pending spinner, resolves to ✓ with a
+    # summary message; the producers' per-row events update the in-flight line.
+    summaries: dict[str, dict] = {}
+    with consumer:
+        consumer.feed(ProgressEvent(group=backfill_group, status="progress", terminal=True))
+        stats = backfill_git_remotes(conn, on_progress=consumer.feed, group=backfill_group, dry_run=dry_run)
+        summaries["backfill"] = stats
+        consumer.feed(ProgressEvent(
+            group=backfill_group, status="done", message=_backfill_summary(stats), terminal=True
+        ))
+
+        ws_status = verify_workspace_identity(conn)
+        if ws_status["duplicate_groups"] == 0:
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="skipped",
+                message=f"{merge_group}: no duplicates", terminal=True,
+            ))
+        else:
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="progress",
+                message=f"{merge_group}: {ws_status['duplicate_groups']} group(s)",
+                terminal=True,
+            ))
+            merge_stats = merge_duplicate_workspaces(
+                conn, on_progress=consumer.feed, group=merge_group, dry_run=dry_run
+            )
+            summaries["merge"] = merge_stats
+            verb = "would merge" if dry_run else "merged"
+            consumer.feed(ProgressEvent(
+                group=merge_group, status="done",
+                message=f"{merge_group}: {verb} {merge_stats['workspaces_merged']} workspace(s)",
+                terminal=True,
+            ))
+
+    # Summary callouts, after the region closes (they'd tear the live frame).
+    if "merge" not in summaries:
+        status.info("No duplicate workspaces found.")
+        return 0
+    merge_stats = summaries["merge"]
+    if dry_run:
+        status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+        status.info("Run without --dry-run to apply changes.")
+    else:
+        status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
+        status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
+    return 0
+
+
+def _run_merge_workspaces_plain(
+    conn, *, dry_run, verbose, backfill, merge, verify, backfill_group, merge_group
+) -> int:
+    """The non-TTY plain path for ``--merge-workspaces`` (the original prints)."""
+    from siftd.output.progress_view import ProgressEvent
+
+    # Step 1: Backfill git remotes
+    print("Step 1: Backfilling git remote URLs for existing workspaces...")
+
+    def on_backfill_progress(event: ProgressEvent) -> None:
+        if verbose and event.message:
+            print(event.message)
+
+    stats = backfill(conn, on_progress=on_backfill_progress, group=backfill_group, dry_run=dry_run)
+    print(f"  Checked: {stats['checked']}")
+    print(f"  Updated: {stats['updated']}")
+    print(f"  Skipped (path missing): {stats['skipped_missing']}")
+    print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
+
+    # Step 2: Find and optionally merge duplicates
+    print("\nStep 2: Finding duplicate workspaces...")
+    ws_status = verify(conn)
+
+    if ws_status["duplicate_groups"] == 0:
+        status.info("No duplicate workspaces found.")
+        return 0
+
+    status.info(
+        f"Found {ws_status['duplicate_groups']} groups with "
+        f"{ws_status['duplicate_workspaces']} workspaces sharing git remotes."
+    )
+
+    if dry_run:
+        print("\n[Dry run] Would merge the following workspaces:")
+
+    def on_merge_progress(event: ProgressEvent) -> None:
+        if event.message:
+            print(event.message)
+
+    merge_stats = merge(conn, on_progress=on_merge_progress, group=merge_group, dry_run=dry_run)
+
+    if dry_run:
+        status.confirm(f"[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
+        status.info("Run without --dry-run to apply changes.")
+    else:
+        status.confirm(f"Merged {merge_stats['workspaces_merged']} workspaces.")
+        status.confirm(f"Moved {merge_stats['conversations_moved']} conversations.")
+    return 0
+
+
+def cmd_migrate(args) -> int:
+    """Run data migrations."""
+    from siftd.api.migrations import verify_workspace_identity
 
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
 
     if args.merge_workspaces:
-        # Step 1: Backfill git remotes
-        print("Step 1: Backfilling git remote URLs for existing workspaces...")
-
-        def on_backfill_progress(msg):
-            if args.verbose:
-                print(msg)
-
-        stats = backfill_git_remotes(conn, on_progress=on_backfill_progress, dry_run=args.dry_run)
-        print(f"  Checked: {stats['checked']}")
-        print(f"  Updated: {stats['updated']}")
-        print(f"  Skipped (path missing): {stats['skipped_missing']}")
-        print(f"  Skipped (no git remote): {stats['skipped_no_git']}")
-
-        # Step 2: Find and optionally merge duplicates
-        print("\nStep 2: Finding duplicate workspaces...")
-        status = verify_workspace_identity(conn)
-
-        if status["duplicate_groups"] == 0:
-            print("  No duplicate workspaces found.")
-            conn.close()
-            return 0
-
-        print(
-            f"  Found {status['duplicate_groups']} groups with {status['duplicate_workspaces']} workspaces sharing git remotes."
-        )
-
-        if args.dry_run:
-            print("\n[Dry run] Would merge the following workspaces:")
-
-        def on_merge_progress(msg):
-            print(msg)
-
-        merge_stats = merge_duplicate_workspaces(
-            conn, on_progress=on_merge_progress, dry_run=args.dry_run
-        )
-
-        if args.dry_run:
-            print(f"\n[Dry run] Would merge {merge_stats['workspaces_merged']} workspaces.")
-            print("Run without --dry-run to apply changes.")
-        else:
-            print(f"\nMerged {merge_stats['workspaces_merged']} workspaces.")
-            print(f"Moved {merge_stats['conversations_moved']} conversations.")
+        rc = _run_merge_workspaces(conn, dry_run=args.dry_run, verbose=args.verbose)
+        conn.close()
+        return rc
     else:
         # Show current status
-        status = verify_workspace_identity(conn)
-        print("Workspace identity status:")
-        print(f"  Total workspaces: {status['total']}")
-        print(f"  With git remote: {status['with_remote']}")
-        print(f"  Without git remote: {status['without_remote']}")
-        if status["duplicate_groups"] > 0:
-            print(
-                f"  Duplicate groups: {status['duplicate_groups']} ({status['duplicate_workspaces']} workspaces)"
-            )
-            print("\nRun 'siftd migrate --merge-workspaces' to merge duplicates.")
+        from siftd.output.listing import print_definitions, print_heading
+        from siftd.output.theme import domain_styles
+
+        ws_status = verify_workspace_identity(conn)
+        ds = domain_styles()
+        print_heading("Workspace identity status")
+        rows = [
+            ("Total workspaces", [(str(ws_status["total"]), ds.metric)]),
+            ("With git remote", [(str(ws_status["with_remote"]), ds.metric)]),
+            ("Without git remote", [(str(ws_status["without_remote"]), ds.metric)]),
+        ]
+        if ws_status["duplicate_groups"] > 0:
+            rows.append((
+                "Duplicate groups",
+                [
+                    (str(ws_status["duplicate_groups"]), ds.metric),
+                    (f" ({ws_status['duplicate_workspaces']} workspaces)", None),
+                ],
+            ))
+        print_definitions(rows)
+        if ws_status["duplicate_groups"] > 0:
+            status.info("Run 'siftd migrate --merge-workspaces' to merge duplicates.")
 
     conn.close()
     return 0
@@ -600,7 +839,7 @@ def cmd_copy(args) -> int:
             # Copy all built-in adapters
             names = list_builtin_adapters()
             if not names:
-                print("No built-in adapters available.")
+                status.error("No built-in adapters available.")
                 return 1
             copied = []
             for n in names:
@@ -608,11 +847,12 @@ def cmd_copy(args) -> int:
                     dest = copy_adapter(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied adapters:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied adapters")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:
@@ -625,17 +865,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_adapter(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     elif resource_type == "query":
         if copy_all:
             names = list_builtin_queries()
             if not names:
-                print("No built-in queries available.")
+                status.error("No built-in queries available.")
                 return 1
             copied = []
             for n in names:
@@ -643,11 +883,12 @@ def cmd_copy(args) -> int:
                     dest = copy_query(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied queries:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied queries")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:
@@ -664,17 +905,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_query(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     elif resource_type == "formatter":
         if copy_all:
             names = list_builtin_formatters()
             if not names:
-                print("No built-in formatters available.")
+                status.error("No built-in formatters available.")
                 return 1
             copied = []
             for n in names:
@@ -682,11 +923,12 @@ def cmd_copy(args) -> int:
                     dest = copy_formatter(n, force=force)
                     copied.append((n, dest))
                 except CopyError as e:
-                    print(f"Error copying {n}: {e}")
+                    status.error(f"Could not copy {n}: {e}")
             if copied:
-                print("Copied formatters:")
-                for n, dest in copied:
-                    print(f"  {n} → {dest}")
+                from siftd.output.listing import print_definitions, print_heading
+
+                print_heading("Copied formatters")
+                print_definitions((n, str(dest)) for n, dest in copied)
             return 0
 
         if not name:
@@ -699,15 +941,17 @@ def cmd_copy(args) -> int:
 
         try:
             dest = copy_formatter(name, force=force)
-            print(f"Copied {name} → {dest}")
+            status.confirm(f"Copied {name} → {dest}")
             return 0
         except CopyError as e:
-            print(f"Error: {e}")
+            status.error(str(e))
             return 1
 
     else:
-        print(f"Unknown resource type: {resource_type}")
-        print("Supported: adapter, query, formatter")
+        status.error(
+            f"Unknown resource type: {resource_type}",
+            hint="Supported: adapter, query, formatter",
+        )
         return 1
 
 
@@ -718,8 +962,7 @@ def _doctor_fix_pending_tags(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     conn = open_database(db)
@@ -734,9 +977,9 @@ def _doctor_fix_pending_tags(args) -> int:
         print(json.dumps(out, indent=2))
     else:
         if sessions_deleted or tags_deleted:
-            print(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
+            status.confirm(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
         else:
-            print("No stale sessions or orphaned tags to clean up")
+            status.info("No stale sessions or orphaned tags to clean up")
 
     conn.close()
     return 0
@@ -754,7 +997,7 @@ def _doctor_list(args) -> int:
         ]
         print(json.dumps(out, indent=2))
         return 0
-    from siftd.output.common import print_table
+    from siftd.output import print_table
 
     rows = [
         [c.name, c.description, "[fix]" if c.has_fix else ""]
@@ -764,18 +1007,71 @@ def _doctor_list(args) -> int:
     return 0
 
 
+def _run_fix_steps(steps: list, conn, db) -> int:
+    """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
+
+    Dissolves the two hand-rolled ``\\r``-overwrite spinners onto the shared live
+    region: on a Unicode TTY each step shows a spinner line that resolves in
+    place to ``✓``/``✗``; a pipe / non-Unicode locale prints the resolved lines
+    plainly (ascii-aware), keeping the per-step feedback the ``\\r`` form gave.
+    """
+    from painted import ASCII_ICONS, Block, current_icons, current_palette, join_vertical
+
+    from siftd.output.common import supports_unicode
+    from siftd.output.live import LiveRegion, spinner_glyph, text_row
+
+    pal = current_palette()
+    ic = current_icons()
+    plain_icons = ic if supports_unicode() else ASCII_ICONS
+    outcomes: list[tuple[str, str]] = []  # (severity, text)
+    errors = 0
+
+    def _glyph(severity: str):
+        return (ic.ok, pal.success) if severity == "success" else (ic.error, pal.error)
+
+    def block(pending: str | None = None) -> Block:
+        rows = []
+        for severity, text in outcomes:
+            g, gs = _glyph(severity)
+            rows.append(text_row([(f"  {g} ", gs), (text, None)]))
+        if pending is not None:
+            rows.append(text_row([(f"  {spinner_glyph()} ", pal.accent), (f"{pending}...", pal.muted)]))
+        return join_vertical(*rows) if rows else Block.empty(0, 0)
+
+    live = LiveRegion()
+    with live:
+        for label, fn in steps:
+            if live.active:
+                live.update(block(pending=label), force=True)
+            try:
+                result = fn(conn, db)
+                outcomes.append(("success", f"{label}: {result}"))
+            except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
+                outcomes.append(("error", f"{label}: {e}"))
+                errors += 1
+            # Active: the next step's pending frame (or finalize, for the last
+            # step) repaints this resolved row — no separate post-resolve update.
+            if not live.active:
+                severity, text = outcomes[-1]
+                mark = plain_icons.ok if severity == "success" else plain_icons.error
+                print(f"  {mark} {text}")
+        if live.active:
+            live.finalize(block())
+    return errors
+
+
 def _doctor_fix(args) -> int:
     """Execute cached fixes from the last doctor run."""
     from siftd.doctor.fixes import clear_findings_cache, load_findings_cache
 
     cached = load_findings_cache()
     if not cached:
-        print("No pending fixes. Run 'siftd doctor' first to detect issues.", file=sys.stderr)
+        status.error("No pending fixes.", hint="Run 'siftd doctor' first to detect issues.")
         return 1
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     conn = open_database(db)
@@ -783,33 +1079,24 @@ def _doctor_fix(args) -> int:
     # Filter to fixes we know how to execute
     actionable = [entry for entry in cached if entry["fix_command"] in _FIX_REGISTRY]
     if not actionable:
-        print("No actionable fixes found in cache.")
+        status.info("No actionable fixes found in cache.")
         clear_findings_cache()
         conn.close()
         return 0
 
     print(f"Applying {len(actionable)} fix(es):\n")
 
-    errors = 0
-    for entry in actionable:
-        cmd = entry["fix_command"]
-        label, fn = _FIX_REGISTRY[cmd]
-        print(f"  ⠋ {label}...", end="", flush=True)
-        try:
-            result = fn(conn, db)
-            print(f"\r  ✓ {label}: {result}")
-        except Exception as e:
-            print(f"\r  ✗ {label}: {e}")
-            errors += 1
+    steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
+    errors = _run_fix_steps(steps, conn, db)
 
     conn.close()
     clear_findings_cache()
 
     print()
     if errors:
-        print(f"Done with {errors} error(s). Run 'siftd doctor' to verify.")
+        status.error(f"Done with {errors} error(s).", hint="Run 'siftd doctor' to verify.")
         return 1
-    print("All fixes applied. Run 'siftd doctor' to verify.")
+    status.confirm("All fixes applied.", hint="Run 'siftd doctor' to verify.")
     return 0
 
 
@@ -817,21 +1104,13 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
     """Run a specific fix directly by fix_command key (flag-discriminated form)."""
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.error(f"Database not found: {db}")
         return 1
 
     conn = open_database(db)
-    label, fn = _FIX_REGISTRY[fix_command]
-    print(f"  ⠋ {label}...", end="", flush=True)
-    try:
-        result = fn(conn, db)
-        print(f"\r  ✓ {label}: {result}")
-        conn.close()
-        return 0
-    except Exception as e:
-        print(f"\r  ✗ {label}: {e}")
-        conn.close()
-        return 1
+    errors = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
+    conn.close()
+    return 1 if errors else 0
 
 
 # Fix registry: maps fix_command → (label, callable(conn, db_path) → str)
@@ -934,11 +1213,13 @@ def _doctor_run(args, check_names: list[str] | None = None, show_fixes: bool = F
     if args.json:
         return _doctor_run_json(args, check_names, show_fixes, db, deep, fast)
 
-    # TTY — painted progress + themed findings
-    if sys.stdout.isatty():
+    # TTY with Unicode support — painted progress + themed findings
+    from siftd.output.common import supports_unicode
+
+    if sys.stdout.isatty() and supports_unicode():
         return _doctor_run_painted(args, check_names, show_fixes, db, deep, fast)
 
-    # Non-TTY (piped) — plain text, no progress
+    # Piped, or a terminal that can't render the Unicode glyphs — plain ASCII.
     return _doctor_run_plain(args, check_names, show_fixes, db, deep, fast)
 
 
@@ -956,8 +1237,7 @@ def _doctor_run_json(args, check_names, show_fixes, db, deep=False, fast=False) 
 
     findings = _filter_findings(findings, json_mode=True, drop_hints=getattr(args, "no_hints", False))
 
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+    findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
 
     error_count = sum(1 for f in findings if f.severity == "error")
     warning_count = sum(1 for f in findings if f.severity == "warning")
@@ -1010,13 +1290,13 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
         print("No issues found.")
         return 0
 
-    severity_order = {"error": 0, "warning": 1, "info": 2}
-    findings.sort(key=lambda f: (severity_order.get(f.severity, 3), f.check))
+    findings.sort(key=lambda f: (status.severity_rank(f.severity), f.check))
 
-    icons = {"info": "i", "warning": "!", "error": "x"}
+    from siftd.output.status import severity_glyph
+
     for finding in findings:
-        icon = icons.get(finding.severity, "?")
-        print(f"[{icon}] {finding.check}: {finding.message}")
+        glyph, _ = severity_glyph(finding.severity, as_ascii=True)
+        print(f"[{glyph}] {finding.check}: {finding.message}")
         if finding.fix_command and not show_fixes:
             print(f"    Fix: {finding.fix_command}")
 
@@ -1046,11 +1326,9 @@ def _doctor_run_plain(args, check_names, show_fixes, db, deep=False, fast=False)
 
 
 def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=False) -> int:
-    from painted import InPlaceRenderer, use_theme
-
     from siftd.api import list_checks, run_checks
-    from siftd.doctor.view import render_progress_block
-    from siftd.output.theme import siftd_theme
+    from siftd.doctor.view import render_findings_block, render_progress_block
+    from siftd.output.live import LiveRegion
 
     all_checks = list_checks()
     if check_names:
@@ -1061,18 +1339,27 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
         all_checks = [c for c in all_checks if getattr(c, "cost", "") != "deep"]
     check_names_ordered = [c.name for c in all_checks]
 
+    drop_hints = getattr(args, "no_hints", False)
     completed: dict[str, list] = {}
 
-    with use_theme(siftd_theme), InPlaceRenderer() as renderer:
+    # LiveRegion brings the shared gate + throttle + log-quiesce (checks log
+    # warnings mid-run; quiesce keeps them off the relative-addressed frame). The
+    # panel repaints on each check completion (on_check_done fires on this thread
+    # from run_checks' as_completed loop — no extra threading): the bar fills, the
+    # just-resolved check rides the label, issues accumulate. The settled report
+    # is deposited as the final frame. force=True per event: checks finish in
+    # bursts, so each completion is a moment, not a stream to throttle.
+    live = LiveRegion()
+    with live:
 
         def on_done(name, check_findings):
-            completed[name] = check_findings
-            block = render_progress_block(check_names_ordered, completed, len(completed))
-            renderer.render(block)
+            completed[name] = _filter_findings(check_findings, json_mode=False, drop_hints=drop_hints)
+            if live.active:
+                live.update(render_progress_block(check_names_ordered, completed, current=name), force=True)
 
-        # Show initial state
-        block = render_progress_block(check_names_ordered, completed, 0)
-        renderer.render(block)
+        if live.active:
+            # Show the empty bar from t=0 (before the first check resolves).
+            live.update(render_progress_block(check_names_ordered, completed), force=True)
 
         try:
             findings = run_checks(
@@ -1083,19 +1370,21 @@ def _doctor_run_painted(args, check_names, show_fixes, db, deep=False, fast=Fals
                 on_check_done=on_done,
             )
         except FileNotFoundError as e:
-            renderer.finalize()
+            live.finalize()
             print(str(e))
             return 1
         except ValueError as e:
-            renderer.finalize()
+            live.finalize()
             print(f"Error: {e}")
             return 1
 
-        # Finalize progress in place — it already shows the full layout
-        final_block = render_progress_block(check_names_ordered, completed, len(completed))
-        renderer.finalize(final_block)
-
-    findings = _filter_findings(findings, json_mode=False, drop_hints=getattr(args, "no_hints", False))
+        findings = _filter_findings(findings, json_mode=False, drop_hints=drop_hints)
+        if live.active:
+            live.finalize(
+                render_findings_block(
+                    findings, show_fixes=show_fixes, total_checks=len(check_names_ordered)
+                )
+            )
 
     # Cache fixable findings for `doctor fix`
     from siftd.doctor.fixes import save_findings_cache
@@ -1121,10 +1410,7 @@ def cmd_doctor(args) -> int:
             ("triggers", "--triggers"),
         ):
             if getattr(args, flag, False):
-                print(
-                    f"Note: {name} ignored without 'fix' subcommand",
-                    file=sys.stderr,
-                )
+                status.info(f"{name} ignored without 'fix' subcommand")
 
     # New subcommands: list, run, fix
     if action == "list":

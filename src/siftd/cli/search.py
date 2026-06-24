@@ -13,6 +13,7 @@ from pathlib import Path
 
 from siftd.cli._common import _parse_turns_range, add_anchor_window_args, resolve_db
 from siftd.cli._filters import extract_filter_args
+from siftd.output import status
 from siftd.paths import embeddings_db_path
 
 
@@ -67,26 +68,40 @@ def cmd_search(args) -> int:
     embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     # Index or rebuild mode — requires embeddings
     if args.index or args.rebuild:
         if not embeddings_available():
-            print("Semantic search requires the [embed] extra.", file=sys.stderr)
-            print()
-            print("Install with:")
-            print("  siftd install embed")
+            status.error(
+                "Semantic search requires the [embed] extra.",
+                hint="Install with: siftd install embed",
+            )
             return 1
         return _search_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
     # Search mode — need a query
     query = " ".join(args.query) if args.query else ""
     if not query:
-        print("Usage: siftd search <query>")
-        print("       siftd search --index     (build/update index)")
-        print("       siftd search --rebuild   (rebuild index from scratch)")
+        # A usage triplet can't ride a callout hint (it flattens newlines), so the
+        # examples travel on a lines() body — print_ambiguous_error's idiom — all
+        # to stderr so a piped stdout stays clean.
+        from painted import print_block
+
+        from siftd.output.common import should_use_ansi
+        from siftd.output.listing import lines
+
+        status.error("A search query is required.")
+        print_block(
+            lines([
+                "siftd search <query>",
+                "siftd search --index     (build/update index)",
+                "siftd search --rebuild   (rebuild index from scratch)",
+            ]),
+            sys.stderr,
+            use_ansi=should_use_ansi(sys.stderr),
+        )
         return 1
 
     # Validate axis combinations before any execution
@@ -102,12 +117,12 @@ def cmd_search(args) -> int:
 
     # --refs with --json is not supported (refs dump would break JSON validity)
     if args.json and args.refs:
-        print("Error: --refs is not supported with --json", file=sys.stderr)
+        status.error("--refs is not supported with --json")
         return 1
 
     # --view=thread with --json: warn and ignore (JSON formatter doesn't use thread grouping)
     if args.json and args.view == "thread":
-        print("Note: --view=thread is ignored with --json output", file=sys.stderr)
+        status.info("--view=thread is ignored with --json output")
 
     # Extract standard filters once for delegation and candidate resolution
     filters = extract_filter_args(args)
@@ -129,26 +144,28 @@ def cmd_search(args) -> int:
             if args.json:
                 print(json.dumps({"error": f"Mode '{requested_mode}' requires the [embed] extra. Install with: siftd install embed"}))
             else:
-                print(f"Mode '{requested_mode}' requires the [embed] extra.", file=sys.stderr)
-                print(file=sys.stderr)
-                print("Install with:", file=sys.stderr)
-                print("  siftd install embed", file=sys.stderr)
+                status.error(
+                    f"Mode '{requested_mode}' requires the [embed] extra.",
+                    hint="Install with: siftd install embed",
+                )
         else:
             if args.json:
                 print(json.dumps({"error": "No embeddings index found. Run 'siftd search --index' to build it."}))
             else:
-                print("No embeddings index found.", file=sys.stderr)
-                print("Run 'siftd search --index' to build it.", file=sys.stderr)
+                status.error(
+                    "No embeddings index found.",
+                    hint="Run 'siftd search --index' to build it.",
+                )
         return 1
 
     try:
         search_mode = resolve_search_mode(requested_mode, has_embeddings=has_embeddings)
     except EmbeddingsRequiredError:
         # Covered by the explicit pre-check above; defensive.
-        print(f"Mode '{requested_mode}' requires embeddings.", file=sys.stderr)
+        status.error(f"Mode '{requested_mode}' requires embeddings.")
         return 1
     except ValueError as e:
-        print(f"siftd: error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     # Explicit `--mode fts` uses the dedicated lean keyword path (which warns
@@ -179,7 +196,7 @@ def cmd_search(args) -> int:
             is_tty=sys.stdout.isatty(),
         )
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     fidelity = fidelity_from_args(args)
@@ -258,7 +275,7 @@ def cmd_search(args) -> int:
         try:
             view_result, caveats = execute_for_render(op)
         except (RuntimeError, ValueError) as e:
-            print(f"Error: {e}", file=sys.stderr)
+            status.error(str(e))
             return 1
 
     # Empty results: distinguish a genuinely empty engine result from a
@@ -268,25 +285,23 @@ def cmd_search(args) -> int:
             _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
         else:
             if view_result.empty_reason == "threshold":
-                print(f"No results above threshold {args.threshold} for: {query}")
+                status.info(f"No results above threshold {args.threshold} for: {query}")
             elif view_result.empty_reason == "first":
-                print(f"No results above relevance threshold for: {query}")
+                status.info(f"No results above relevance threshold for: {query}")
             else:
-                print(f"No results for: {query}")
-            for c in caveats:
-                print(f"note: {c.message}")
+                status.info(f"No results for: {query}")
+            status.caveats(caveats)
         return 0
 
     # --around dropped results whose conversation lacked the anchor phrase.
     if view_result.n_skipped > 0:
-        print(
-            f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
-            file=sys.stderr,
+        status.info(
+            f"filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation"
         )
 
     # Privacy warning for full content display
     if args.full or args.refs:
-        print("Note: Showing full content which may contain sensitive information.", file=sys.stderr)
+        status.info("Showing full content which may contain sensitive information.")
 
     # ctx "mode" = resolved engine (truthful report of what ran); the view shape
     # and the thread tier1/tier2 split ride the SearchView itself.
@@ -345,7 +360,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     if unsupported_flags:
         flags_str = ", ".join(unsupported_flags)
-        print(f"WARNING: {flags_str} ignored in FTS5 mode (requires embeddings)", file=sys.stderr)
+        status.warning(f"{flags_str} ignored in FTS5 mode (requires embeddings)")
 
     # Compose filters
     if filters is None:
@@ -363,7 +378,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             is_tty=sys.stdout.isatty(),
         )
     except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
     fidelity = Fidelity()
 
@@ -434,12 +449,11 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         except sqlite3.OperationalError as e:
             err_msg = str(e).lower()
             if "no such table" in err_msg and "fts" in err_msg:
-                print("FTS index not found. Run 'siftd ingest' first.", file=sys.stderr)
+                status.error("FTS index not found.", hint="Run 'siftd ingest' first.")
             elif "fts5" in err_msg or "syntax" in err_msg:
-                print(f"Invalid search query: {e}", file=sys.stderr)
-                print("Tip: Check your search query for syntax errors.", file=sys.stderr)
+                status.error(f"Invalid search query: {e}", hint="Check your search query for syntax errors.")
             else:
-                print(f"Database error: {e}", file=sys.stderr)
+                status.error(f"Database error: {e}")
             return 1
 
     import json as json_mod
@@ -463,15 +477,13 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
                 ]
             print(json_mod.dumps(out, indent=2))
         else:
-            print(f"No results for: {query}")
-            for c in caveats:
-                print(f"note: {c.message}")
+            status.info(f"No results for: {query}")
+            status.caveats(caveats)
         return 0
 
     if view_result.n_skipped > 0:
-        print(
-            f"note: filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation",
-            file=sys.stderr,
+        status.info(
+            f"filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation"
         )
 
     output = fmt.render_search(view_result, fidelity, query=query, mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
@@ -503,18 +515,17 @@ def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name
             verbose=verbose,
         )
     except FileNotFoundError as e:
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
+        status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
     except IncrementalCompatError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
     except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
+        status.error(str(e))
         return 1
 
     if result["chunks_added"] == 0 and verbose:
-        print(f"Index is up to date. ({result['total_chunks']} chunks)")
+        status.confirm(f"Index is up to date. ({result['total_chunks']} chunks)")
 
     return 0
 

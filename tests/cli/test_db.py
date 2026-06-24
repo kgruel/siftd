@@ -20,10 +20,10 @@ def test_db_info(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "info"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Path:" in out
-    assert "Size:" in out
-    assert "Schema version:" in out
-    assert "FTS5 index:" in out
+    assert "Path" in out
+    assert "Size" in out
+    assert "Schema version" in out
+    assert "FTS5 index" in out
 
 
 def test_db_stats(test_db, capsys):
@@ -31,7 +31,7 @@ def test_db_stats(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "stats"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Conversations:" in out
+    assert "Conversations" in out
 
 
 def test_db_workspaces(test_db, capsys):
@@ -45,7 +45,7 @@ def test_db_path(capsys):
     rc = main(["db", "path"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Data directory:" in out
+    assert "Data directory" in out
 
 
 def test_db_vacuum(test_db, capsys):
@@ -53,8 +53,8 @@ def test_db_vacuum(test_db, capsys):
     rc = main(["--db", str(test_db), "db", "vacuum"])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "Before:" in out
-    assert "After:" in out
+    assert "Before" in out
+    assert "After" in out
 
 
 def test_db_backup(test_db, tmp_path, capsys):
@@ -235,7 +235,7 @@ class TestDbRemoteSubcommands:
         monkeypatch.setattr("siftd.config_sync.get_sync_remotes", lambda: [])
         rc = main(["db", "remote", "list"])
         assert rc == 0
-        assert "No remotes configured" in capsys.readouterr().out
+        assert "No remotes configured" in capsys.readouterr().err
 
     def test_remote_list_with_entries(self, monkeypatch, capsys):
         monkeypatch.setattr(
@@ -277,7 +277,7 @@ class TestDbPushPull:
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: _remote_cfg())
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "push", "r"])
         assert rc == 1
-        assert "Database not found" in capsys.readouterr().out
+        assert "Database not found" in capsys.readouterr().err
 
     def test_push_sync_error(self, test_db, monkeypatch, capsys):
         from siftd.api.sync import SyncError
@@ -347,7 +347,7 @@ class TestDbPushPull:
         monkeypatch.setattr("siftd.api.sync.sync_push", lambda **kw: (_ for _ in ()).throw(FileNotFoundError("no db")))
         rc = main(["--db", str(test_db), "db", "push", "r"])
         assert rc == 1
-        assert "no db" in capsys.readouterr().out
+        assert "no db" in capsys.readouterr().err
 
         monkeypatch.setattr(
             "siftd.api.sync.sync_push",
@@ -505,7 +505,7 @@ class TestDbErrorPaths:
         monkeypatch.setattr("siftd.api.slice.slice_database", _missing)
         rc = main(["--db", str(test_db), "db", "slice", str(out), "--force"])
         assert rc == 1
-        assert "source gone" in capsys.readouterr().out
+        assert "source gone" in capsys.readouterr().err
 
     def test_merge_missing_db_source_runtime_and_detail_lines(self, test_db, tmp_path, monkeypatch, capsys):
         # source file missing
@@ -540,7 +540,11 @@ class TestDbErrorPaths:
         rc = main(["--db", str(test_db), "db", "merge", str(src)])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "replaced" in out and "Tags:" in out and "Workspaces:" in out
+        # Guard the values, not just the labels: conversation breakdown,
+        # tag count, and the workspace match note all render.
+        assert "replaced" in out
+        assert re.search(r"Tags\s+8 new", out)
+        assert "matched by git remote" in out
 
     def test_vacuum_saved_branch(self, monkeypatch, capsys):
         class _FakePath:
@@ -565,7 +569,7 @@ class TestDbErrorPaths:
 
         rc = main(["db", "vacuum"])
         assert rc == 0
-        assert "Saved:" in capsys.readouterr().out
+        assert "Saved" in capsys.readouterr().out
 
 
 class TestDbSchemaVersion:
@@ -576,8 +580,8 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(test_db), "db", "schema-version"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert f"Current version:  {SCHEMA_VERSION}" in out
-        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert f"Current version  {SCHEMA_VERSION}" in out
+        assert f"Target version   {SCHEMA_VERSION}" in out
         assert "up to date" in out
         assert "(applied)" in out
         assert "(pending)" not in out
@@ -598,8 +602,8 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(db), "db", "schema-version"])
         assert rc == 0
         out = capsys.readouterr().out
-        assert f"Current version:  {prev}" in out
-        assert f"Target version:   {SCHEMA_VERSION}" in out
+        assert f"Current version  {prev}" in out
+        assert f"Target version   {SCHEMA_VERSION}" in out
         assert "migration pending" in out
         assert f"v{SCHEMA_VERSION} (pending)" in out
         assert "siftd ingest" in out
@@ -635,15 +639,15 @@ class TestDbSchemaVersion:
         rc = main(["--db", str(db), "db", "schema-version"])
         assert rc == 1
         out = capsys.readouterr().out
-        assert f"Current version:  {future}" in out
+        assert f"Current version  {future}" in out
         assert "ERROR" in out
 
     def test_missing_db(self, tmp_path, capsys):
         """Non-existent DB returns 1 with a helpful message."""
         rc = main(["--db", str(tmp_path / "missing.db"), "db", "schema-version"])
         assert rc == 1
-        out = capsys.readouterr().out
-        assert "Database not found" in out
+        err = capsys.readouterr().err
+        assert "Database not found" in err
 
 
 class TestPullMergeErrorCli:
@@ -686,7 +690,7 @@ class TestDbRestoreDryRun:
         out = capsys.readouterr().out
         assert str(backup) in out
         assert str(new_db) in out
-        assert "schema version: v" in out
+        assert "Schema version" in out
         assert "target does not exist" in out
         assert "conversations" in out
 
@@ -703,7 +707,7 @@ class TestDbRestoreDryRun:
 
         out = capsys.readouterr().out
         assert str(test_db) in out
-        assert "schema version: v" in out
+        assert "Schema version" in out
         assert "(no change)" in out
         assert "conversations" in out
 
@@ -730,7 +734,11 @@ class TestDbRestoreDryRun:
 
         rc = main(["--db", str(test_db), "db", "restore", str(backup), "--dry-run"])
         assert rc == 0
-        assert "DOWNGRADE" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "DOWNGRADE" in out
+        # The warning glyph sits flush before the schema (one space) — pins the
+        # debt-3 segmented-value spacing/order so only colour, not text, changed.
+        assert "! v" in out  # ascii warning glyph + space + version
 
 
 class TestDbReceiveDryRun:
@@ -759,9 +767,10 @@ class TestDbReceiveDryRun:
 
         out = capsys.readouterr().out
         assert "dry run" in out.lower()
-        assert "preflight: ok" in out
+        assert "Preflight" in out
+        assert "+ ok" in out  # all-clear glyph + space + "ok" (debt-3 spacing pin)
         assert "conversations" in out
-        assert "(target:" in out
+        assert "incoming" in out and "target" in out
 
     def test_dry_run_target_unchanged(self, test_db, tmp_path, monkeypatch, capsys):
         import hashlib
@@ -792,7 +801,8 @@ class TestDbReceiveDryRun:
 
         out = capsys.readouterr().out
         # test_db fixture has 2 conversations; empty slice has 0.
-        assert re.search(r"conversations\s+0\s+\(target:\s+2\)", out)
+        # Table columns: table | incoming | target  ->  "conversations  0  2".
+        assert re.search(r"conversations\s+0\s+2", out)
 
     def test_dry_run_preflight_failure_exits_1_json_stderr(self, test_db, tmp_path, monkeypatch, capsys):
         from siftd.api.database import PreflightError

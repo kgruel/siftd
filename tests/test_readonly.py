@@ -124,7 +124,7 @@ class TestReadOnlyMode:
             os.chmod(db_path, stat.S_IRUSR | stat.S_IWUSR)
         assert rc == 1
         err = capsys.readouterr().err
-        assert "Error:" in err
+        assert "Traceback" not in err  # a clean error, not a Python traceback
         assert "not writable" in err
 
     def test_read_only_stale_writable_auto_upgrades(self, tmp_path):

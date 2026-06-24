@@ -9,17 +9,35 @@ from __future__ import annotations
 
 import sys
 
+from siftd.output import status
+
 
 def _require_issuer() -> str | None:
     from siftd.config import get_config
 
     issuer = get_config("auth.issuer")
     if not issuer:
-        print(
-            "No [auth].issuer configured. Configure device-code login first:\n"
-            "  siftd config set auth.issuer https://idp.example.com/...\n"
-            "  siftd config set auth.client_id <public-device-code-client-id>",
-            file=sys.stderr,
+        from painted import print_block
+
+        from siftd.output.common import should_use_ansi
+        from siftd.output.listing import lines
+
+        # An enumerated-remedy error: the two `config set` commands ride a
+        # lines() block — a callout's hint flattens newlines and can't carry a
+        # multi-line body. All to stderr so a piped stdout stays clean.
+        status.error(
+            "No [auth].issuer configured.",
+            hint="Configure device-code login first:",
+        )
+        print_block(
+            lines(
+                [
+                    "siftd config set auth.issuer https://idp.example.com/...",
+                    "siftd config set auth.client_id <public-device-code-client-id>",
+                ]
+            ),
+            sys.stderr,
+            use_ansi=should_use_ansi(sys.stderr),
         )
         return None
     return str(issuer)
@@ -43,9 +61,9 @@ def cmd_login(args) -> int:
     try:
         cred = device_login(issuer)
     except AuthLoginError as e:
-        print(f"Login failed: {e}", file=sys.stderr)
+        status.error(f"Login failed: {e}")
         return 1
-    print(f"Logged in to {issuer} ({_fmt_expiry(cred.expires_at)}).", file=sys.stderr)
+    status.confirm(f"Logged in to {issuer} ({_fmt_expiry(cred.expires_at)}).")
     return 0
 
 
@@ -57,16 +75,23 @@ def cmd_status(args) -> int:
         return 1
     cred = load(issuer)
     if cred is None:
-        print(f"Not logged in to {issuer}. Run `siftd auth login`.", file=sys.stderr)
+        status.error(f"Not logged in to {issuer}.", hint="Run `siftd auth login`.")
         return 1
     state = "stale (will refresh on next use)" if cred.is_stale() else "valid"
     has_refresh = "yes" if cred.refresh_token else "no"
+    from siftd.output.listing import StatusReport
     from siftd.paths import credential_file
 
-    print(f"Issuer:     {issuer}")
-    print(f"Status:     {state} ({_fmt_expiry(cred.expires_at)})")
-    print(f"Refreshable: {has_refresh}")
-    print(f"Stored at:  {credential_file(issuer)}")
+    report = StatusReport()
+    report.preamble(
+        {
+            "Issuer": issuer,
+            "Status": f"{state} ({_fmt_expiry(cred.expires_at)})",
+            "Refreshable": has_refresh,
+            "Stored at": str(credential_file(issuer)),
+        }
+    )
+    report.render()
     return 0
 
 
@@ -77,9 +102,9 @@ def cmd_logout(args) -> int:
     if not issuer:
         return 1
     if delete(issuer):
-        print(f"Logged out of {issuer}.", file=sys.stderr)
+        status.confirm(f"Logged out of {issuer}.")
     else:
-        print(f"No stored credential for {issuer}.", file=sys.stderr)
+        status.info(f"No stored credential for {issuer}.")
     return 0
 
 

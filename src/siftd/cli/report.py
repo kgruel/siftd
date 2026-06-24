@@ -16,14 +16,14 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
     optional `$KEY` substitution from KEY=VALUE entries in `var`.
     """
     from siftd.api import QueryError, list_query_files, run_query_file
-    from siftd.output import print_table
+    from siftd.output import print_table, status
     from siftd.paths import queries_dir
 
     # List mode: no name provided.
     if not name:
         query_files = list_query_files()
         if not query_files:
-            print(f"No reports found in {queries_dir()}")
+            status.info(f"No reports found in {queries_dir()}")
             return 0
         for qf in query_files:
             suffix = f"  (vars: {', '.join(qf.variables)})" if qf.variables else "  (no vars)"
@@ -36,7 +36,7 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         variables = {}
         for v in var:
             if "=" not in v:
-                print(f"Invalid --var format (expected key=value): {v}")
+                status.error(f"Invalid --var format (expected key=value): {v}")
                 return 1
             key, value = v.split("=", 1)
             variables[key] = value
@@ -44,25 +44,38 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
     try:
         result = run_query_file(name, variables, db_path=db)
     except FileNotFoundError as e:
-        if "Query file not found" in str(e):
-            print(f"Report not found: {e}")
-            print("Available reports:")
-            for qf in list_query_files():
-                print(f"  {qf.name}")
-            return 1
-        print(str(e))
-        print("Run 'siftd ingest' to create it.")
+        status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
     except QueryError as e:
-        if "Missing variables" in str(e):
+        msg = str(e)
+        if "Query file not found" in msg:
+            # Report not found — the LIVE path: run_query_file raises QueryError
+            # (not FileNotFoundError) for a missing report. status.error frames it;
+            # the available report names ride a lines() block (a callout hint
+            # flattens newlines), both to stderr so a piped stdout stays clean —
+            # the cli._common.print_ambiguous_error idiom.
+            import sys
+
+            from painted import print_block
+
+            from siftd.output.common import should_use_ansi
+            from siftd.output.listing import lines
+
+            status.error(f"Report not found: {name}", hint="Available reports:")
+            names = [qf.name for qf in list_query_files()]
+            if names:
+                print_block(lines(names), sys.stderr, use_ansi=should_use_ansi(sys.stderr))
+        elif "Missing variables" in msg:
             import re
 
-            match = re.search(r"Missing variables: (.+)", str(e))
+            match = re.search(r"Missing variables: (.+)", msg)
             missing = match.group(1).split(", ") if match else []
-            print(f"Report '{name}' requires variables not provided: {', '.join(missing)}")
-            print(f"Usage: siftd report {name} " + " ".join(f"--var {v}=<value>" for v in missing))
+            status.error(
+                f"Report '{name}' requires variables not provided: {', '.join(missing)}",
+                hint=f"siftd report {name} " + " ".join(f"--var {v}=<value>" for v in missing),
+            )
         else:
-            print(str(e))
+            status.error(msg)
         return 1
 
     # Format output.
@@ -70,7 +83,7 @@ def run_report(name: str | None, var: list[str] | None, db: Path | None) -> int:
         str_rows = [[str(v) if v is not None else "" for v in row] for row in result.rows]
         print_table(result.columns, str_rows)
     else:
-        print("OK (no results)")
+        status.info("No rows returned.")
 
     return 0
 
@@ -91,10 +104,12 @@ def build_report_parser(subparsers) -> None:
         "report",
         help="Run saved SQL reports (parameterized .sql queries)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Run saved SQL reports from ~/.config/siftd/queries/*.sql.
+        epilog="""Run saved SQL reports. Built-in reports work out of the box;
+.sql files in ~/.config/siftd/queries/ add your own or override a built-in
+(same filename wins).
 
 A report is a named .sql file with optional $KEY placeholders. Run without a
-name to list available reports. Copy the built-ins to customize:
+name to list available reports. To customize a built-in, copy it first:
   siftd copy query cost            # copy the 'cost' report to your queries dir
 
 examples:

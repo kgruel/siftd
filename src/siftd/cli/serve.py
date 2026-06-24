@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+from siftd.output import status
+
 
 def cmd_serve(args) -> int:
     """Start the HTTP team sync server."""
@@ -14,7 +16,7 @@ def cmd_serve(args) -> int:
     except ImportError as e:
         from siftd.cli.install import install_hint
 
-        print(f"{e} Install with: {install_hint('serve')}", file=sys.stderr)
+        status.error(str(e), hint=f"Install with: {install_hint('serve')}")
         return 1
 
     from pathlib import Path
@@ -67,11 +69,10 @@ def cmd_serve(args) -> int:
     is_public = host not in ("127.0.0.1", "::1", "localhost")
     auth_off = args.no_auth or not auth_config
     if is_public and auth_off and not getattr(args, "unsafe_public_no_auth", False):
-        print(
-            f"refusing to bind public address {host!r} with authentication disabled: "
-            "configure [serve.auth] (or pass --unsafe-public-no-auth to override). "
-            "An unauthenticated public server exposes the entire corpus for read and write.",
-            file=sys.stderr,
+        status.error(
+            f"refusing to bind public address {host!r} with authentication disabled",
+            hint="configure [serve.auth] (or pass --unsafe-public-no-auth to override); "
+            "an unauthenticated public server exposes the entire corpus for read and write.",
         )
         return 2
 
@@ -103,13 +104,11 @@ def cmd_serve(args) -> int:
             allow_live_endpoints=allow_live_endpoints,
         )
     except ValueError as e:
-        print(f"siftd serve: invalid configuration — {e}", file=sys.stderr)
+        status.error(f"invalid configuration — {e}")
         return 1
 
     import uvicorn
 
-    print(f"siftd serve — listening on {host}:{port}", file=sys.stderr)
-    print(f"  db: {db_path}", file=sys.stderr)
     if args.no_auth:
         auth_state = "disabled (--no-auth)"
     elif auth_config:
@@ -118,7 +117,25 @@ def cmd_serve(args) -> int:
             auth_state += " (browser SSO: auth-code+PKCE)"
     else:
         auth_state = "disabled (no [serve.auth] config)"
-    print(f"  auth: {auth_state}", file=sys.stderr)
+
+    # Startup banner — the listening facts as a key:value listing on the report
+    # atoms, sent to STDERR so a piped stdout stays clean (the server's own
+    # stdout is uvicorn's domain). The address rides the accent identifier role.
+    from painted import print_block
+
+    from siftd.output.common import should_use_ansi
+    from siftd.output.listing import definitions
+    from siftd.output.theme import domain_styles
+
+    status.info(f"siftd serve — listening on {host}:{port}")
+    banner = definitions(
+        [
+            ("url", [(f"http://{host}:{port}/", domain_styles().identifier)]),
+            ("db", str(db_path)),
+            ("auth", auth_state),
+        ]
+    )
+    print_block(banner, sys.stderr, use_ansi=should_use_ansi(sys.stderr))
 
     # Runtime discovery for CLI delegation: write serve state for `siftd search`.
     import json

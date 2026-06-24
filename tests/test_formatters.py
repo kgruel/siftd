@@ -241,23 +241,35 @@ class TestJsonRenderSearch:
         assert result["results"] == []
 
 
+def _search_text(output):
+    """Render a painted Block search result to plain text for assertions."""
+    if isinstance(output, str):
+        return output
+    import io
+
+    from painted import print_block
+
+    buf = io.StringIO()
+    print_block(output, buf, use_ansi=False)
+    return buf.getvalue()
+
+
 class TestTerminalRenderSearch:
-    """Tests for terminal_fmt.render_search."""
+    """Tests for terminal_fmt.render_search (painted Block output)."""
 
     def test_chunks_mode_output(self, enriched_results):
         from siftd.output import terminal_fmt
 
-        output = terminal_fmt.render_search(
-            enriched_results, Fidelity(), query="caching", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search(enriched_results, Fidelity(), query="caching", mode="chunks")
         )
 
-        assert isinstance(output, str)
         assert "Results for: caching" in output
-        # Score
-        assert "0.850" in output
-        # Chunk type
-        assert "USER" in output
-        assert "ASSISTAN" in output
+        # Score (now a 2dp quiet metric)
+        assert "0.85" in output
+        # Role labels (lowercased; assistant abbreviates to asst)
+        assert "[user]" in output
+        assert "[asst]" in output
         # Workspace
         assert "project" in output
 
@@ -266,57 +278,62 @@ class TestTerminalRenderSearch:
         from siftd.output import terminal_fmt
 
         fidelity = Fidelity(depth=3, chars=0)  # --full equivalent
-        output = terminal_fmt.render_search(
-            enriched_results, fidelity, query="caching", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search(enriched_results, fidelity, query="caching", mode="chunks")
         )
 
         assert "How do I implement caching?" in output
         assert "You can use Redis or in-memory caching..." in output
 
-    def test_default_truncation(self):
-        """Default fidelity truncates to 200 chars."""
+    def test_tail_results_collapse_and_truncate(self):
+        """Tail hits (beyond the top tier) collapse to a single truncated line.
+
+        The top tier shows full snippets now, so only the tail truncates.
+        """
         from siftd.output import terminal_fmt
 
         long_text = "x" * 500
-        results = [{
-            "conversation_id": "abc123",
-            "score": 0.8,
-            "chunk_type": "prompt",
-            "display_label": "USER",
-            "text": long_text,
-            "_workspace": "test",
-            "_started_at": "2024-01-15",
-        }]
+        results = [
+            {
+                "conversation_id": f"01CONV{i}0000000000000000000",
+                "score": 5.0 - i,
+                "chunk_type": "prompt",
+                "display_label": "USER",
+                "text": long_text if i == 4 else f"hit {i}",
+                "_workspace": "w",
+                "_started_at": "2024-01-15",
+            }
+            for i in range(5)
+        ]
 
-        output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search(results, Fidelity(), query="x", mode="chunks")
         )
 
-        # Should be truncated (200 chars + "...")
-        assert "..." in output
+        # The tail's long snippet is clipped to its one-line form; never shown whole.
         assert long_text not in output
 
     def test_conversations_mode(self, enriched_results):
         from siftd.output import terminal_fmt
 
         conv_results = _aggregate_conversations(enriched_results, limit=10)
-        output = terminal_fmt.render_search(
-            conv_results, Fidelity(), query="caching", view="conversations"
+        output = _search_text(
+            terminal_fmt.render_search(conv_results, Fidelity(), query="caching", view="conversations")
         )
 
         assert "Conversations for: caching" in output
-        assert "max=" in output
-        assert "mean=" in output
-        assert "[2 chunks]" in output
+        assert "(2 chunks)" in output
+        assert "0.85" in output  # max score
 
     def test_thread_mode(self, enriched_results):
         from siftd.output import terminal_fmt
 
         tier1, tier2 = _compute_thread_tiers(enriched_results)
-        output = terminal_fmt.render_search(
-            SearchView(results=enriched_results, view="thread", tier1=tier1, tier2=tier2),
-            Fidelity(),
-            query="caching",
+        output = _search_text(
+            terminal_fmt.render_search(
+                SearchView(results=enriched_results, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
+            )
         )
 
         assert "Results for: caching" in output
@@ -335,12 +352,12 @@ class TestTerminalRenderSearch:
              "display_label": "USER",
              "text": "Low relevance", "_workspace": "low", "_started_at": "2024-01-16"},
         ]
-
         tier1, tier2 = _compute_thread_tiers(results)
-        output = terminal_fmt.render_search(
-            SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
-            Fidelity(),
-            query="caching",
+        output = _search_text(
+            terminal_fmt.render_search(
+                SearchView(results=results, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
+            )
         )
 
         assert "More results:" in output
@@ -351,10 +368,11 @@ class TestTerminalRenderSearch:
 
         single = enriched_results[:1]
         tier1, tier2 = _compute_thread_tiers(single)
-        output = terminal_fmt.render_search(
-            SearchView(results=single, view="thread", tier1=tier1, tier2=tier2),
-            Fidelity(),
-            query="caching",
+        output = _search_text(
+            terminal_fmt.render_search(
+                SearchView(results=single, view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(), query="caching",
+            )
         )
 
         # Single result at mean goes to tier2
@@ -363,8 +381,8 @@ class TestTerminalRenderSearch:
     def test_empty_results(self):
         from siftd.output import terminal_fmt
 
-        output = terminal_fmt.render_search(
-            [], Fidelity(), query="nothing", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search([], Fidelity(), query="nothing", mode="chunks")
         )
 
         assert "Results for: nothing" in output
@@ -385,8 +403,8 @@ class TestTerminalRenderSearch:
         }]
 
         fidelity = Fidelity(depth=3, chars=0)
-        output = terminal_fmt.render_search(
-            results, fidelity, query="test", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search(results, fidelity, query="test", mode="chunks")
         )
 
         assert "Line one" in output
@@ -407,8 +425,8 @@ class TestTerminalRenderSearch:
             "_started_at": "2024-01-15",
         }]
 
-        output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", view="chunks"
+        output = _search_text(
+            terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
         )
 
         assert "No workspace" in output
@@ -430,17 +448,19 @@ class TestTerminalRenderSearch:
             ],
         }]
 
-        output = terminal_fmt.render_search(
-            results, Fidelity(depth=3, chars=0),
-            query="test", view="chunks",
+        output = _search_text(
+            terminal_fmt.render_search(
+                results, Fidelity(depth=3, chars=0), query="test", mode="chunks"
+            )
         )
 
         assert "> What is caching?" in output
         assert "Caching stores data." in output
 
     def test_context_displayed(self):
-        """Pre-enriched context exchanges are shown with markers."""
+        """Pre-enriched context exchanges mark the matched turn (caret, not >>>)."""
         from siftd.output import terminal_fmt
+        from siftd.output.common import prefers_ascii
 
         results = [{
             "conversation_id": "abc123",
@@ -457,11 +477,15 @@ class TestTerminalRenderSearch:
             ],
         }]
 
-        output = terminal_fmt.render_search(
-            results, Fidelity(), query="test", view="chunks",
+        output = _search_text(
+            terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
         )
 
-        assert ">>>" in output
+        # Matched-turn caret (▸ on a Unicode TTY, * degraded on this non-TTY
+        # capture) — the same prefers_ascii() gate the renderer uses.
+        caret = "*" if prefers_ascii() else "▸"
+        assert caret in output
+        assert ">>>" not in output
         assert "match prompt" in output
 
 

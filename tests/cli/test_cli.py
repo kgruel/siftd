@@ -1,10 +1,11 @@
 """CLI smoke tests — verify commands parse and run without import errors."""
 
+import sys
 
 import pytest
 from conftest import FIXTURES_DIR
 
-from siftd.cli import main
+from siftd.cli import _relax_output_encoding, main
 
 
 def test_help_exits_zero():
@@ -24,6 +25,27 @@ def test_query_with_db(test_db):
     """siftd --db <path> query lists conversations."""
     rc = main(["--db", str(test_db), "query"])
     assert rc == 0
+
+
+def test_main_installs_ascii_icons_on_nonunicode_stream(test_db, monkeypatch):
+    """main() drives the icon lever: when stdout can't render Unicode (a pipe or a
+    LANG=C TTY) the ambient IconSet becomes ASCII process-wide, so every glyph
+    consumer degrades from one control point."""
+    from painted import ASCII_ICONS, current_icons
+
+    monkeypatch.setattr("siftd.output.common.prefers_ascii", lambda *a, **k: True)
+    main(["--db", str(test_db), "query"])
+    assert current_icons() is ASCII_ICONS
+
+
+def test_main_keeps_unicode_icons_on_capable_tty(test_db, monkeypatch):
+    """On a Unicode-capable stream the lever doesn't fire — the ambient set stays
+    the default Unicode IconSet that use_theme installed (the rail keeps ◆/│/·)."""
+    from painted import IconSet, current_icons
+
+    monkeypatch.setattr("siftd.output.common.prefers_ascii", lambda *a, **k: False)
+    main(["--db", str(test_db), "query"])
+    assert current_icons() == IconSet()
 
 
 def test_unknown_subcommand():
@@ -227,7 +249,9 @@ class TestIngestCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        assert "unchanged" in captured.out
+        # An all-skipped run is an empty-state: the verbose skip-reason breakdown
+        # rides the status.info "all up to date" detail (ℹ, stderr).
+        assert "unchanged" in captured.err
 
     def test_ingest_unknown_adapter(self, tmp_path, capsys):
         """siftd ingest with unknown adapter returns error."""
@@ -241,7 +265,7 @@ class TestIngestCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "No adapters matched" in captured.out
+        assert "No adapters matched" in captured.err
 
 
 class TestBackfillCommand:
@@ -269,7 +293,7 @@ class TestBackfillCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "not found" in captured.out.lower() or "Database" in captured.out
+        assert "not found" in captured.err.lower() or "Database" in captured.err
 
 
 class TestQuerySqlCommand:
@@ -341,7 +365,7 @@ class TestQuerySqlCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "table" in captured.out.lower()  # Should mention missing var
+        assert "table" in captured.err.lower()  # Should mention missing var
 
     def test_query_sql_not_found(self, test_db, tmp_path, monkeypatch, capsys):
         """siftd query sql with unknown query returns error."""
@@ -353,10 +377,10 @@ class TestQuerySqlCommand:
 
         assert rc == 1
         captured = capsys.readouterr()
-        assert "not found" in captured.out.lower()
+        assert "not found" in captured.err.lower()
 
     def test_query_sql_empty_queries_dir(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql with no query files shows message."""
+        """siftd query sql with an empty user dir still lists the builtins."""
         queries = tmp_path / "queries"
         queries.mkdir()
         monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
@@ -365,8 +389,9 @@ class TestQuerySqlCommand:
 
         assert rc == 0
         captured = capsys.readouterr()
-        # 'query sql' now routes to the report subsystem (deprecated alias).
-        assert "No reports found" in captured.out
+        # 'query sql' now routes to the report subsystem (deprecated alias);
+        # builtins are always available even with an empty user dir.
+        assert "cost" in captured.out
 
 
 class TestAdaptersCommand:
@@ -461,3 +486,54 @@ class TestFTS5ErrorHandling:
         rc = main(["--db", str(test_db), "export", "-s", "hello"])
         # rc could be 0 (found) or 1 (not found), but not a crash
         assert rc in (0, 1)
+
+
+class TestRelaxOutputEncoding:
+    """The entry-point hardening that keeps non-ASCII conversation content from
+    crashing a strict-ASCII stream (LANG=C / PYTHONIOENCODING=ascii)."""
+
+    @staticmethod
+    def _ascii_stream():
+        import io
+
+        return io.TextIOWrapper(io.BytesIO(), encoding="ascii", errors="strict")
+
+    def test_degrades_non_ascii_content_instead_of_crashing(self, monkeypatch):
+        """Pins the mechanism: a strict-ASCII stream raises on a conversation
+        em-dash (the production crash); after relaxing, the same content becomes a
+        visible, reversible escape and the write survives."""
+        # Baseline — strict ASCII is exactly the crash the fix targets.
+        before = self._ascii_stream()
+        with pytest.raises(UnicodeEncodeError):
+            before.write("em-dash —")
+            before.flush()
+
+        out, err = self._ascii_stream(), self._ascii_stream()
+        monkeypatch.setattr(sys, "stdout", out)
+        monkeypatch.setattr(sys, "stderr", err)
+        _relax_output_encoding()
+
+        # Both streams now degrade rather than raise; encoding stays ASCII.
+        assert out.errors == "backslashreplace"
+        assert err.errors == "backslashreplace"
+        assert out.encoding == "ascii"
+
+        out.write("em-dash —\n")
+        out.flush()
+        assert out.buffer.getvalue().decode("ascii") == "em-dash \\u2014\n"
+
+    def test_tolerates_streams_that_lack_or_reject_reconfigure(self, monkeypatch):
+        """Best-effort: pytest capture / odd redirects either have no reconfigure
+        or reject it — the hardening step must never become its own crash."""
+        import io
+
+        class NoReconfigure(io.StringIO):
+            pass  # StringIO has no reconfigure → getattr returns None, skipped
+
+        class RejectsReconfigure(io.StringIO):
+            def reconfigure(self, **kwargs):
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "stdout", NoReconfigure())
+        monkeypatch.setattr(sys, "stderr", RejectsReconfigure())
+        _relax_output_encoding()  # must return cleanly, no exception

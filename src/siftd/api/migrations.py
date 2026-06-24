@@ -5,30 +5,71 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from siftd.domain.progress import ProgressSink
+
+
+def _line_shim(
+    group: str, on_progress: ProgressSink | None
+) -> Callable[[str], None] | None:
+    """Adapt the storage layer's per-row ``str`` callback to a ``ProgressSink``.
+
+    The storage functions (``storage.migrate_workspaces``) emit one line of
+    sub-step detail per workspace row — a stable, well-tested detail contract.
+    This lifts each line into a ``ProgressEvent`` on ``group`` so the API speaks
+    the one progress contract (per the dissolution ledger) while leaving storage
+    untouched. Returns ``None`` when there's no sink, so storage skips the
+    callback entirely (it already guards ``if on_progress``).
+    """
+    if on_progress is None:
+        return None
+
+    from siftd.domain.progress import ProgressEvent
+
+    def emit(line: str) -> None:
+        on_progress(ProgressEvent(group=group, message=line, status="progress"))
+
+    return emit
 
 
 def backfill_git_remotes(
     conn: sqlite3.Connection,
     *,
-    on_progress: Callable[[str], None] | None = None,
+    on_progress: ProgressSink | None = None,
+    group: str = "backfill git remotes",
     dry_run: bool = False,
 ) -> dict:
-    """Backfill git remote URLs for existing workspaces."""
+    """Backfill git remote URLs for existing workspaces.
+
+    ``on_progress`` receives a ``ProgressEvent`` per workspace row (the storage
+    line lifted onto ``group``); ``group`` names the step for the live consumer.
+    """
     from siftd.storage.migrate_workspaces import backfill_git_remotes as _backfill_git_remotes
 
-    return _backfill_git_remotes(conn, on_progress=on_progress, dry_run=dry_run)
+    return _backfill_git_remotes(
+        conn, on_progress=_line_shim(group, on_progress), dry_run=dry_run
+    )
 
 
 def merge_duplicate_workspaces(
     conn: sqlite3.Connection,
     *,
-    on_progress: Callable[[str], None] | None = None,
+    on_progress: ProgressSink | None = None,
+    group: str = "merge workspaces",
     dry_run: bool = False,
 ) -> dict:
-    """Merge workspaces that share the same git remote URL."""
+    """Merge workspaces that share the same git remote URL.
+
+    ``on_progress`` receives a ``ProgressEvent`` per merge line (lifted onto
+    ``group``); ``group`` names the step for the live consumer.
+    """
     from siftd.storage.migrate_workspaces import merge_duplicate_workspaces as _merge_duplicate_workspaces
 
-    return _merge_duplicate_workspaces(conn, on_progress=on_progress, dry_run=dry_run)
+    return _merge_duplicate_workspaces(
+        conn, on_progress=_line_shim(group, on_progress), dry_run=dry_run
+    )
 
 
 def verify_workspace_identity(conn: sqlite3.Connection) -> dict:

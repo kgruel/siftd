@@ -76,6 +76,25 @@ def _reset_caveat_producers():
     yield
     _caveats_mod._producers[:] = snapshot
 
+
+@pytest.fixture(autouse=True)
+def _reset_painted_icons():
+    """Restore painted's ambient IconSet around each test.
+
+    main() installs ASCII_ICONS process-wide when stdout can't render Unicode
+    (the icon-degradation lever). Under pytest, captured stdout is non-TTY, so the
+    first test that calls main() would leave ASCII icons set for every later test
+    via the contextvar setter — making glyph assertions order-dependent. Snapshot
+    and restore the ambient set the way _reset_caveat_producers guards the caveat
+    registry.
+    """
+    from painted import current_icons, use_icons
+
+    snapshot = current_icons()
+    yield
+    use_icons(snapshot)
+
+
 from siftd.domain.models import (
     ContentBlock,
     Conversation,

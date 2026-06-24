@@ -7,11 +7,15 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
-    format_table,
-    print_indented,
     print_refs_content,
-    print_table,
+    term_width,
     truncate_text,
+)
+from siftd.output.table import (
+    Col,
+    print_table,
+    render_string_table,
+    render_table,
 )
 
 __all__ = [
@@ -21,9 +25,11 @@ __all__ = [
     "fmt_timestamp",
     "fmt_model",
     "truncate_text",
-    "print_indented",
-    "format_table",
+    "term_width",
     "print_table",
+    "render_table",
+    "render_string_table",
+    "Col",
     "format_refs_annotation",
     "print_refs_content",
 ]

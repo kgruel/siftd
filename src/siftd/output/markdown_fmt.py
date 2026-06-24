@@ -8,6 +8,48 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from siftd.output._id_format import short_id
+from siftd.output.common import split_match_segments, truncate_text
+
+
+def _md_highlight(text: str) -> str:
+    """Render FTS5 match markers as ``**bold**``, stripping the raw delimiters.
+
+    The piped/file counterpart of the terminal's accent spans: matched terms (the
+    ``>>>…<<<`` runs the snippet() SQL embeds) become GFM bold instead of leaking
+    the literal markers.
+    """
+    return "".join(
+        f"**{seg}**" if is_match else seg
+        for seg, is_match in split_match_segments(text)
+        if seg
+    )
+
+
+def _md_truncate(text: str, limit: int) -> str:
+    """Highlight FTS matches and truncate to ``limit`` raw content characters.
+
+    Truncates on a marker-segment boundary — counting the underlying content, not
+    the ``**`` markup — so a cut can never strand a dangling ``>>>`` *or* a dangling
+    ``**``: every emitted segment is a complete ``**run**``. ``limit <= 0`` means no
+    truncation (full highlight, e.g. ``--full``).
+    """
+    if limit <= 0:
+        return _md_highlight(text)
+    out: list[str] = []
+    used = 0
+    for seg, is_match in split_match_segments(text):
+        if not seg:
+            continue
+        if used + len(seg) <= limit:
+            out.append(f"**{seg}**" if is_match else seg)
+            used += len(seg)
+        else:
+            piece = seg[: limit - used]
+            if piece:
+                out.append(f"**{piece}**" if is_match else piece)
+            out.append("...")
+            break
+    return "".join(out)
 
 if TYPE_CHECKING:
     from painted import Fidelity
@@ -76,9 +118,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         if prompt_text:
             lines.append(f"### {ts_prefix}User")
             lines.append("")
-            prompt = prompt_text.strip()
-            if fidelity.chars > 0 and len(prompt) > fidelity.chars:
-                prompt = prompt[:fidelity.chars] + "..."
+            prompt = truncate_text(prompt_text.strip(), fidelity.chars)
             lines.append(prompt)
             lines.append("")
 
@@ -159,7 +199,6 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             blockquote note section after the last result.
     """
     from siftd.domain.search_types import as_search_view
-    from siftd.output.common import truncate_text
 
     sv = as_search_view(result, view=context.get("view", "chunks"))
     results = sv.results
@@ -210,7 +249,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                         lines.append(response_text.strip())
                         lines.append("")
             else:
-                text = r.get("text", "").strip()
+                text = _md_highlight(r.get("text", "").strip())
                 if text:
                     lines.append(text)
                     lines.append("")
@@ -225,9 +264,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 ws = r.get("_workspace", "")
                 started = r.get("_started_at", "")
                 score = r.get("score", 0.0)
-                snippet = truncate_text(
-                    r.get("text", ""), 120
-                ).replace("\n", " ")
+                snippet = _md_truncate(r.get("text", ""), 120).replace("\n", " ")
                 lines.append(f"- **{short_id(conv_id)}** {score:.3f} — {ws} {started} — {snippet}")
             lines.append("")
 
@@ -257,7 +294,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                         lines.append("")
             elif context_data:
                 for pid, prompt_text, response_text, is_match in context_data:
-                    marker = "**>>>**" if is_match else ""
+                    marker = "**▸**" if is_match else ""
                     if prompt_text:
                         lines.append(f"> {marker} {prompt_text.strip()}")
                         lines.append("")
@@ -268,10 +305,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 chars = fidelity.chars
                 if chars == 0 and fidelity.depth < 2:
                     chars = 200
-                text = r.get("text", "")
-                if chars > 0:
-                    text = truncate_text(text, chars)
-                lines.append(text)
+                lines.append(_md_truncate(r.get("text", ""), chars))
                 lines.append("")
 
             turn_index = r.get("turn_index")

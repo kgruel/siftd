@@ -72,7 +72,9 @@ class TestTerminalRenderList:
         # header + separator + 2 data rows
         assert len(lines) == 4
         assert "id" in lines[0]
-        assert "─" in lines[1]
+        # Non-TTY (this capture, and real pipes) degrades the header rule ─→-,
+        # consistent with print_table — the list now wires as_ascii like it.
+        assert "-" in lines[1]
 
         # Data row: only id, timestamp, workspace
         assert "01ABCDEF" in lines[2]
@@ -98,7 +100,11 @@ class TestTerminalRenderList:
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" not in line  # old Xp/Yr format removed
-        assert "│    3│" in line    # turns = prompt_count, right-aligned
+        # turns = prompt_count, right-aligned in its gutter-separated column,
+        # sitting before the tokens column
+        import re
+
+        assert re.search(r"\s3\s+1\.2k", line), line
         assert "1.2k" in line
         # Cost lives at depth>=3; tags too
         assert "$" not in line
@@ -116,8 +122,44 @@ class TestTerminalRenderList:
         assert len(lines) == 4
         assert "id" in lines[0]
         assert "tags" in lines[0]
-        assert "─" in lines[1]
+        # Non-TTY degrades the header rule ─→- (consistent with print_table).
+        assert "-" in lines[1]
         assert "review, bug" in lines[2]
+
+    def test_render_list_is_langc_tty_safe(self, monkeypatch):
+        # A non-UTF-8 LANG=C TTY: the block-returning list renderer rides the
+        # shared table_budget() (like print_table), so it must drop the width
+        # budget — painted draws no … to crash a strict-ASCII stream — and degrade
+        # the rule ─→-. The representative end-to-end guard for the three direct
+        # render_table callers (query/peek lists, ingest summary), which their own
+        # non-TTY capsys tests never exercise (they only hit the isatty=False arm).
+        import io
+
+        from siftd.output import table
+        from siftd.output.terminal_fmt import render_list
+
+        class _TTY(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        monkeypatch.setattr("sys.stdout", _TTY())
+        monkeypatch.setattr(table, "prefers_ascii", lambda *a, **k: True)
+        monkeypatch.setattr(table, "term_width", lambda *a, **k: 20)
+        deep = FakeSummary(
+            id="01ABCDEF123456",
+            workspace_path="/a/very/deep/workspace/path/that/would/overflow",
+            model="claude-opus-4-5",
+            started_at="2026-03-15T10:30:00Z",
+            prompt_count=3,
+            response_count=5,
+            total_tokens=1234,
+            cost=0.034,
+            tags=["x"],
+        )
+        out = self._block_to_text(render_list([deep], Fidelity(depth=3)))
+        assert "…" not in out  # budget dropped → no painted ellipsis to crash
+        assert "─" not in out  # rule degraded...
+        assert "-" in out  # ...to ASCII
 
     def test_empty_list_returns_none(self):
         from siftd.output.terminal_fmt import render_list
@@ -312,16 +354,8 @@ class TestJsonRenderList:
 
 
 class TestFormatTable:
-    def test_returns_string(self):
-        from siftd.output.common import format_table
-
-        result = format_table(["a", "b"], [["1", "22"], ["333", "4"]])
-        lines = result.split("\n")
-        assert len(lines) == 4  # header + sep + 2 rows
-        assert "---" in lines[1]
-
     def test_print_table_delegates(self, capsys):
-        from siftd.output.common import print_table
+        from siftd.output import print_table
 
         print_table(["x"], [["y"]])
         captured = capsys.readouterr()
@@ -537,7 +571,7 @@ class TestMarkdownRenderSearch:
 
         chunk = _chunk_result(_context=[("p1", "Q?", "A!", True), ("p2", "Q2", "A2", False)])
         output = render_search([chunk], Fidelity(depth=1), query="q")
-        assert "**>>>**" in output  # matched entry
+        assert "**▸**" in output  # matched entry (caret marker, not the raw >>>)
         assert "Q?" in output
 
     def test_chunks_mode_text_truncation(self):
@@ -582,33 +616,48 @@ class TestMarkdownRenderSearch:
         assert "> **Note:** FTS stale" in output
 
 
+def _search_text(output):
+    """Render a painted Block search result to plain text for assertions."""
+    if isinstance(output, str):
+        return output
+    import io
+
+    from painted import print_block
+
+    buf = io.StringIO()
+    print_block(output, buf, use_ansi=False)
+    return buf.getvalue()
+
+
 class TestTerminalRenderSearch:
     def test_chunks_mode(self):
         from siftd.output.terminal_fmt import render_search
 
-        output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="test query", view="chunks"
+        output = _search_text(
+            render_search([_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks")
         )
         assert "Results for: test query" in output
         assert "01ABC123" in output
-        assert "0.850" in output
+        assert "0.85" in output
 
     def test_conversations_mode(self):
         from siftd.output.terminal_fmt import render_search
 
-        output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", view="conversations"
+        output = _search_text(
+            render_search([_conv_result()], Fidelity(depth=1), query="q", view="conversations")
         )
         assert "Conversations for: q" in output
-        assert "0.920" in output
+        assert "0.92" in output
 
     def test_thread_mode_with_exchanges(self):
         from siftd.output.terminal_fmt import render_search
 
         tier1 = [_chunk_result(_exchanges=[("p1", "What?", "That.")])]
-        output = render_search(
-            SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
-            Fidelity(depth=1), query="q",
+        output = _search_text(
+            render_search(
+                SearchView(results=[], view="thread", tier1=tier1, tier2=[]),
+                Fidelity(depth=1), query="q",
+            )
         )
         assert "[user] What?" in output
         assert "[asst] That." in output
@@ -624,9 +673,11 @@ class TestTerminalRenderSearch:
 
         tier1 = [_chunk_result(text="fallback", file_refs=[Ref("a.py", "/a.py", "r")])]
         tier2 = [_chunk_result(text="compact", score=0.4, file_refs=[Ref("b.py", "/b.py", "w")])]
-        output = render_search(
-            SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
-            Fidelity(depth=1), query="q",
+        output = _search_text(
+            render_search(
+                SearchView(results=[], view="thread", tier1=tier1, tier2=tier2),
+                Fidelity(depth=1), query="q",
+            )
         )
         assert "fallback" in output
         assert "refs:" in output
@@ -636,7 +687,7 @@ class TestTerminalRenderSearch:
         from siftd.output.terminal_fmt import render_search
 
         chunk = _chunk_result(_exchanges=[("p1", "Multi\nline", "Reply\nhere")])
-        output = render_search([chunk], Fidelity(depth=1), query="q")
+        output = _search_text(render_search([chunk], Fidelity(depth=1), query="q"))
         assert "> Multi" in output
         assert "Reply" in output
 
@@ -646,8 +697,14 @@ class TestTerminalRenderSearch:
         chunk = _chunk_result(
             _context=[("p1", "Multi\nline Q", "Response\ntext", True), ("p2", "Q2", None, False)]
         )
-        output = render_search([chunk], Fidelity(depth=1), query="q")
-        assert ">>>" in output
+        from siftd.output.common import prefers_ascii
+
+        output = _search_text(render_search([chunk], Fidelity(depth=1), query="q"))
+        # The matched turn is marked with a caret (▸ on a Unicode TTY, * degraded
+        # on this non-TTY capture) — replaces the old styleless >>> marker.
+        caret = "*" if prefers_ascii() else "▸"
+        assert caret in output
+        assert ">>>" not in output
         assert "Multi" in output
         assert "Response" in output
 
@@ -661,9 +718,19 @@ class TestTerminalRenderSearch:
             op: str
 
         chunk = _chunk_result(file_refs=[Ref("f.py", "/f.py", "r")])
-        output = render_search([chunk], Fidelity(depth=1), query="q")
+        output = _search_text(render_search([chunk], Fidelity(depth=1), query="q"))
         assert "refs:" in output
         assert "f.py(r)" in output
+
+    def test_match_markers_become_spans_not_literal(self):
+        """FTS >>>...<<< markers in the text render as spans, never literally."""
+        from siftd.output.terminal_fmt import render_search
+
+        chunk = _chunk_result(text="API >>>error<<<: 500")
+        output = _search_text(render_search([chunk], Fidelity(depth=1), query="error"))
+        assert ">>>" not in output
+        assert "<<<" not in output
+        assert "error" in output
 
     def test_caveats_note_appended(self):
         from siftd.doctor.checks import Finding
@@ -675,15 +742,15 @@ class TestTerminalRenderSearch:
             message="Embeddings index is stale — run siftd ingest",
             fix_available=True,
         )
-        output = render_search(
-            [_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat]
+        output = _search_text(
+            render_search([_chunk_result()], Fidelity(depth=1), query="q", caveats=[caveat])
         )
         assert "note: Embeddings index is stale — run siftd ingest" in output
 
     def test_no_caveats_no_note(self):
         from siftd.output.terminal_fmt import render_search
 
-        output = render_search([_chunk_result()], Fidelity(depth=1), query="q")
+        output = _search_text(render_search([_chunk_result()], Fidelity(depth=1), query="q"))
         assert "note:" not in output
 
     def test_caveats_note_in_conversations_mode(self):
@@ -693,8 +760,10 @@ class TestTerminalRenderSearch:
         caveat = Finding(
             check="fts-stale", severity="warning", message="FTS stale", fix_available=False
         )
-        output = render_search(
-            [_conv_result()], Fidelity(depth=1), query="q", view="conversations", caveats=[caveat]
+        output = _search_text(
+            render_search(
+                [_conv_result()], Fidelity(depth=1), query="q", mode="conversations", caveats=[caveat]
+            )
         )
         assert "note: FTS stale" in output
 

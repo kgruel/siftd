@@ -18,6 +18,7 @@ from pathlib import Path
 
 from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
+from siftd.output import status
 
 
 def _database_artifacts(db_path: Path) -> list[Path]:
@@ -46,8 +47,7 @@ def cmd_db_info(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api import open_database
@@ -65,17 +65,33 @@ def cmd_db_info(args) -> int:
         fts_exists = conn.execute(
             "SELECT 1 FROM sqlite_master WHERE type='table' AND name='content_fts'"
         ).fetchone() is not None
-
-        print(f"Path:           {db}")
-        print(f"Size:           {size_bytes / 1024:.1f} KB ({size_bytes:,} bytes)")
-        print(f"Page size:      {page_size:,} bytes")
-        print(f"Page count:     {page_count:,}")
-        print(f"Journal mode:   {journal_mode}")
-        print(f"Schema version: {user_version}")
-        print(f"FTS5 index:     {'yes' if fts_exists else 'no'}")
     finally:
         conn.close()
 
+    from siftd.output.listing import StatusReport
+    from siftd.output.theme import domain_styles
+
+    ds = domain_styles()
+    report = StatusReport()
+    # Counts ride the amber metric thread (the page/byte tallies); the KB size
+    # stays plain to match the sibling ``db vacuum`` report. Path / mode / version
+    # are plain facts.
+    report.preamble(
+        {
+            "Path": str(db),
+            "Size": [
+                (f"{size_bytes / 1024:.1f} KB (", None),
+                (f"{size_bytes:,}", ds.metric),
+                (" bytes)", None),
+            ],
+            "Page size": [(f"{page_size:,}", ds.metric), (" bytes", None)],
+            "Page count": [(f"{page_count:,}", ds.metric)],
+            "Journal mode": journal_mode,
+            "Schema version": str(user_version),
+            "FTS5 index": "yes" if fts_exists else "no",
+        }
+    )
+    report.render()
     return 0
 
 
@@ -84,8 +100,7 @@ def cmd_db_schema_version(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api import open_database
@@ -103,6 +118,9 @@ def cmd_db_schema_version(args) -> int:
     pending = info["pending"]
     all_migrations = info["all_migrations"]
 
+    from siftd.output.listing import StatusReport
+    from siftd.output.status import severity_mark
+
     if current > target:
         if getattr(args, "json", False):
             print(json.dumps({
@@ -113,37 +131,49 @@ def cmd_db_schema_version(args) -> int:
                 ),
             }))
         else:
-            print(f"Current version:  {current}")
-            print(f"Target version:   {target}")
-            print(
-                f"Status:           ERROR: DB version {current} exceeds supported "
-                f"max {target} — upgrade siftd."
+            glyph, sev_style = severity_mark("error")
+            report = StatusReport()
+            report.preamble(
+                {
+                    "Current version": str(current),
+                    "Target version": str(target),
+                    "Status": [(
+                        f"{glyph} ERROR: DB version {current} exceeds supported "
+                        f"max {target} — upgrade siftd.",
+                        sev_style,
+                    )],
+                }
             )
+            report.render()
         return 1
 
     if getattr(args, "json", False):
         print(json.dumps(info))
         return 0
 
-    print(f"Current version:  {current}")
-    print(f"Target version:   {target}")
     if not pending:
-        print("Status:           up to date")
+        status_text, severity = "up to date", None
     elif len(pending) == 1:
-        print("Status:           1 migration pending")
+        status_text, severity = "1 migration pending", "warning"
     else:
-        print(f"Status:           {len(pending)} migrations pending")
+        status_text, severity = f"{len(pending)} migrations pending", "warning"
+    glyph, sev_style = severity_mark(severity)
 
-    print()
-    print("Registered migrations:")
-    for v in all_migrations:
-        label = "pending" if v > current else "applied"
-        print(f"  v{v} ({label})")
-
+    report = StatusReport()
+    report.preamble(
+        {
+            "Current version": str(current),
+            "Target version": str(target),
+            "Status": [(f"{glyph} {status_text}", sev_style)],
+        }
+    )
+    report.lines_section(
+        "Registered migrations",
+        [f"v{v} ({'pending' if v > current else 'applied'})" for v in all_migrations],
+    )
     if pending:
-        print()
-        print("Run 'siftd ingest' to apply pending migrations.")
-
+        report.note("Run 'siftd ingest' to apply pending migrations.")
+    report.render()
     return 0
 
 
@@ -173,7 +203,7 @@ def cmd_db_vacuum(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.db_missing(db)
         return 1
 
     size_before = db.stat().st_size
@@ -189,13 +219,20 @@ def cmd_db_vacuum(args) -> int:
 
     size_after = db.stat().st_size
     saved = size_before - size_after
-    print(f"Before: {size_before / 1024:.1f} KB")
-    print(f"After:  {size_after / 1024:.1f} KB")
-    if saved > 0:
-        print(f"Saved:  {saved / 1024:.1f} KB ({saved / size_before * 100:.1f}%)")
-    else:
-        print("No space reclaimed (database already compact).")
 
+    from siftd.output.listing import StatusReport
+
+    pairs = {
+        "Before": f"{size_before / 1024:.1f} KB",
+        "After": f"{size_after / 1024:.1f} KB",
+    }
+    if saved > 0:
+        pairs["Saved"] = f"{saved / 1024:.1f} KB ({saved / size_before * 100:.1f}%)"
+    report = StatusReport()
+    report.preamble(pairs)
+    if saved <= 0:
+        report.note("No space reclaimed (database already compact).")
+    report.render()
     return 0
 
 
@@ -204,13 +241,12 @@ def cmd_db_backup(args) -> int:
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
+        status.db_missing(db)
         return 1
 
     target = Path(args.output)
     if target.exists() and not args.force:
-        print(f"Target already exists: {target}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Target already exists: {target}", hint="Use --force to overwrite.")
         return 1
 
     if target.exists():
@@ -221,7 +257,7 @@ def cmd_db_backup(args) -> int:
     backup_database(db, target)
 
     size = target.stat().st_size
-    print(f"Backed up to: {target} ({size / 1024:.1f} KB)")
+    status.confirm(f"Backed up to: {target} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -230,14 +266,14 @@ def cmd_db_restore(args) -> int:
     source = Path(args.input)
 
     if not source.exists():
-        print(f"Backup file not found: {source}", file=sys.stderr)
+        status.error(f"Backup file not found: {source}")
         return 1
 
     # Validate SQLite magic bytes
     with open(source, "rb") as f:
         header = f.read(16)
     if not header.startswith(b"SQLite format 3\x00"):
-        print(f"Not a valid SQLite database: {source}", file=sys.stderr)
+        status.error(f"Not a valid SQLite database: {source}")
         return 1
 
     db = resolve_db(args)
@@ -260,27 +296,46 @@ def cmd_db_restore(args) -> int:
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()
-        print(f"[dry run] source:         {source}")
-        print(f"[dry run] target:         {db}")
+        from siftd.output.common import prefers_ascii
+        from siftd.output.listing import print_definitions, print_heading
+        from siftd.output.status import severity_mark
+        from siftd.output.table import print_table
+
+        downgrade = False
         if tgt_schema_ver is None:
-            print(f"[dry run] schema version: v{src_schema_ver} (target does not exist)")
+            schema = f"v{src_schema_ver} (target does not exist)"
         elif tgt_schema_ver == src_schema_ver:
-            print(f"[dry run] schema version: v{src_schema_ver} (no change)")
+            schema = f"v{src_schema_ver} (no change)"
         elif src_schema_ver > tgt_schema_ver:
-            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (upgrade)")
+            schema = f"v{tgt_schema_ver} → v{src_schema_ver} (upgrade)"
         else:
-            print(f"[dry run] schema version: v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)")
-        print("[dry run] row counts (source  →  target):")
-        all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
-        for table in all_tables:
-            src_n = src_counts.get(table, 0)
-            tgt_n = tgt_counts.get(table, 0)
-            print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+            schema = f"v{tgt_schema_ver} → v{src_schema_ver} (DOWNGRADE)"
+            downgrade = True
+
+        as_ascii = prefers_ascii()
+        # None is the all-clear ✓; a downgrade earns a warning-coloured ⚠.
+        glyph, glyph_style = severity_mark("warning" if downgrade else None, as_ascii=as_ascii)
+        count_rows = [
+            [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+            for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
+        ]
+        print_heading("[dry run] restore preview")
+        print_definitions([
+            ("Source", str(source)),
+            ("Target", str(db)),
+            ("Schema version", [(glyph, glyph_style), (f" {schema}", None)]),
+        ])
+        print()
+        # The table's own header (table | source | target) is self-describing —
+        # no separate "row counts" heading.
+        if count_rows:
+            print_table(["table", "source", "target"], count_rows)
+        else:
+            print("  (no tables to compare)")
         return 0
 
     if db.exists() and not args.force:
-        print(f"Database already exists: {db}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Database already exists: {db}", hint="Use --force to overwrite.")
         return 1
 
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -289,7 +344,7 @@ def cmd_db_restore(args) -> int:
             artifact.unlink()
     shutil.copy2(source, db)
     size = db.stat().st_size
-    print(f"Restored to: {db} ({size / 1024:.1f} KB)")
+    status.confirm(f"Restored to: {db} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -300,14 +355,12 @@ def cmd_db_slice(args) -> int:
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     target = Path(args.output)
     if target.exists() and not args.force:
-        print(f"Target already exists: {target}", file=sys.stderr)
-        print("Use --force to overwrite.", file=sys.stderr)
+        status.error(f"Target already exists: {target}", hint="Use --force to overwrite.")
         return 1
 
     if target.exists():
@@ -335,12 +388,12 @@ def cmd_db_slice(args) -> int:
             rebuild_fts=rebuild_fts,
         )
     except FileNotFoundError as e:
-        print(str(e))
+        status.error(str(e))
         return 1
 
     count = result["conversations"]
     size = result["size_bytes"]
-    print(f"Sliced {count} conversation(s) to: {target} ({size / 1024:.1f} KB)")
+    status.confirm(f"Sliced {count} conversation(s) to: {target} ({size / 1024:.1f} KB)")
     return 0
 
 
@@ -349,21 +402,20 @@ def cmd_db_merge(args) -> int:
     source = Path(args.input)
 
     if not source.exists():
-        print(f"Source file not found: {source}", file=sys.stderr)
+        status.error(f"Source file not found: {source}")
         return 1
 
     # Validate SQLite magic bytes
     with open(source, "rb") as f:
         header = f.read(16)
     if not header.startswith(b"SQLite format 3\x00"):
-        print(f"Not a valid SQLite database: {source}", file=sys.stderr)
+        status.error(f"Not a valid SQLite database: {source}")
         return 1
 
     db = resolve_db(args)
 
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     from siftd.api.merge import merge_database
@@ -382,22 +434,26 @@ def cmd_db_merge(args) -> int:
             preflight=not args.no_preflight,
         )
     except RuntimeError as e:
-        print(f"Merge failed: {e}", file=sys.stderr)
+        status.error(f"Merge failed: {e}")
         return 1
 
     prefix = "[dry run] " if dry_run else ""
-    print(f"{prefix}Merged from: {source}")
+    status.confirm(f"{prefix}Merged from: {source}")
     conv_parts = [f"{result['conversations']} new"]
     if result["replaced_conversations"]:
         conv_parts.append(f"{result['replaced_conversations']} replaced")
     conv_parts.append(f"{result['skipped_conversations']} skipped")
-    print(f"  Conversations: {', '.join(conv_parts)}")
-    print(f"  Content blobs: {result['content_blobs']}")
+    fields = [
+        ("Conversations", ", ".join(conv_parts)),
+        ("Content blobs", str(result["content_blobs"])),
+    ]
     if result["tags"]:
-        print(f"  Tags:          {result['tags']} new")
+        fields.append(("Tags", f"{result['tags']} new"))
     if result["workspaces_matched"]:
-        print(f"  Workspaces:    {result['workspaces_matched']} matched by git remote")
+        fields.append(("Workspaces", f"{result['workspaces_matched']} matched by git remote"))
+    from siftd.output.listing import print_definitions
 
+    print_definitions(fields)
     return 0
 
 
@@ -480,15 +536,29 @@ def cmd_db_receive(args) -> int:
                 finally:
                     target_conn.close()
 
+            from siftd.output.common import prefers_ascii
+            from siftd.output.listing import print_definitions, print_heading
+            from siftd.output.status import severity_mark
+            from siftd.output.table import print_table
+
+            as_ascii = prefers_ascii()
+            ok_glyph, ok_style = severity_mark(None, as_ascii=as_ascii)  # all-clear ✓
             target_state = "would create new DB" if not db.exists() else "would merge into existing DB"
-            print(f"[dry run] {target_state}")
-            print("[dry run] preflight: ok")
-            print("[dry run] incoming rows (source  →  target):")
-            all_tables = dict.fromkeys(list(src_counts) + list(tgt_counts))
-            for table in all_tables:
-                src_n = src_counts.get(table, 0)
-                tgt_n = tgt_counts.get(table, 0)
-                print(f"  {table:<20s} {src_n:>8d}  (target: {tgt_n:>8d})")
+            count_rows = [
+                [tbl, str(src_counts.get(tbl, 0)), str(tgt_counts.get(tbl, 0))]
+                for tbl in dict.fromkeys(list(src_counts) + list(tgt_counts))
+            ]
+            print_heading("[dry run] receive preview")
+            print_definitions([
+                ("Target", target_state),
+                ("Preflight", [(ok_glyph, ok_style), (" ok", None)]),
+            ])
+            print()
+            # The table's own header (table | incoming | target) is self-describing.
+            if count_rows:
+                print_table(["table", "incoming", "target"], count_rows)
+            else:
+                print("  (no tables to compare)")
             return 0
 
         if getattr(args, "stage", False):
@@ -540,20 +610,30 @@ def cmd_db_process(args) -> int:
     results = process_inbox(db)
 
     if not results:
-        print("No staged payloads to process.")
+        status.info("No staged payloads to process.")
         return 0
 
+    # A severity-bearing result log: each payload's outcome carries its severity
+    # glyph (merged ✓ / skipped ℹ / error ✗). The log IS the command's answer, so
+    # it rides stdout whole — info/error override their default stderr stream so a
+    # `db process > log` redirect captures every outcome, not just the merges.
     errors = 0
     for r in results:
         if r["status"] == "done":
-            print(f"  {r['id']}: merged ({r.get('conversations', 0)} conversations)")
+            status.confirm(
+                f"{r['id']}: merged ({r.get('conversations', 0)} conversations)"
+            )
         elif r["status"] == "skipped":
-            print(f"  {r['id']}: skipped (claimed by another processor)")
+            status.info(f"{r['id']}: skipped (claimed by another processor)", stream=sys.stdout)
         else:
-            print(f"  {r['id']}: error — {r.get('error', 'unknown')}", file=sys.stderr)
+            status.error(f"{r['id']}: {r.get('error', 'unknown')}", stream=sys.stdout)
             errors += 1
 
-    print(f"Processed {len(results)} payload(s), {errors} error(s).")
+    summary = f"Processed {len(results)} payload(s), {errors} error(s)."
+    if errors:
+        status.warning(summary, stream=sys.stdout)
+    else:
+        status.confirm(summary)
     return 1 if errors else 0
 
 
@@ -656,8 +736,10 @@ def cmd_db_pull(args) -> int:
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
-        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        status.error(
+            f"Remote '{args.name}' not found.",
+            hint="Run 'siftd db remote list' to see configured remotes.",
+        )
         return 1
 
     remote = SyncRemote.from_config(remote_cfg)
@@ -673,32 +755,36 @@ def cmd_db_pull(args) -> int:
     if not dry_run:
         print(f"Pulling from {args.name} ({location})...", file=sys.stderr)
 
+    # Live transfer bar only on a real run (dry-run just queries the remote).
+    live, on_progress = _transfer_progress(enabled=not dry_run)
     try:
-        result = sync_pull(
-            db_path=db,
-            remote=remote,
-            since=getattr(args, "since", None),
-            pull_all=getattr(args, "pull_all", False),
-            workspace=getattr(args, "workspace", None),
-            tag=getattr(args, "tag", None),
-            no_tag=getattr(args, "no_tag", None),
-            owner=getattr(args, "owner", None),
-            dry_run=dry_run,
-        )
+        with live:
+            result = sync_pull(
+                db_path=db,
+                remote=remote,
+                since=getattr(args, "since", None),
+                pull_all=getattr(args, "pull_all", False),
+                workspace=getattr(args, "workspace", None),
+                tag=getattr(args, "tag", None),
+                no_tag=getattr(args, "no_tag", None),
+                owner=getattr(args, "owner", None),
+                dry_run=dry_run,
+                on_progress=on_progress,
+            )
     except SyncError as e:
-        print(f"Pull failed: {e}", file=sys.stderr)
+        status.error(f"Pull failed: {e}")
         return 1
 
     if result.conversations == 0:
-        print(f"Nothing new to pull from {args.name}.")
+        status.confirm(f"Nothing new to pull from {args.name}.")
         return 0
 
     size_kb = result.size_bytes / 1024
 
     if result.dry_run:
-        print(f"Would pull {result.conversations} conversations from {args.name} ({size_kb:.1f} KB)")
+        status.confirm(f"Would pull {result.conversations} conversations from {args.name} ({size_kb:.1f} KB)")
     else:
-        print(f"Pulled {result.conversations} conversations ({size_kb:.1f} KB)")
+        status.confirm(f"Pulled {result.conversations} conversations ({size_kb:.1f} KB)")
     return 0
 
 
@@ -723,9 +809,9 @@ def cmd_db_remote_add(args) -> int:
     set_sync_remote(name, host, path)
 
     if host:
-        print(f"Added remote '{name}': {host}:{path}")
+        status.confirm(f"Added remote '{name}': {host}:{path}")
     else:
-        print(f"Added remote '{name}': {path} (local)")
+        status.confirm(f"Added remote '{name}': {path} (local)")
     return 0
 
 
@@ -735,17 +821,27 @@ def cmd_db_remote_list(args) -> int:
 
     remotes = get_sync_remotes()
     if not remotes:
-        print("No remotes configured.")
-        print("Add one with: siftd db remote add <name> <host:path>")
+        status.info(
+            "No remotes configured.",
+            hint="Add one with: siftd db remote add <name> <host:path>",
+        )
         return 0
 
+    # name → location listing (wcwidth-correct alignment, replacing the ad-hoc
+    # ``:20s`` pad that misaligned on CJK); per-remote last-push/pull ride keyless
+    # sub-rows under each remote.
+    pairs: list[tuple[str, str]] = []
     for r in remotes:
         location = f"{r['host']}:{r['path']}" if r["host"] else f"{r['path']} (local)"
-        print(f"{r['name']:20s} {location}")
+        pairs.append((r["name"], location))
         if r["last_push"]:
-            print(f"{'':20s} last push: {r['last_push']}")
+            pairs.append(("", f"last push: {r['last_push']}"))
         if r.get("last_pull"):
-            print(f"{'':20s} last pull: {r['last_pull']}")
+            pairs.append(("", f"last pull: {r['last_pull']}"))
+
+    from siftd.output.listing import print_definitions
+
+    print_definitions(pairs)
     return 0
 
 
@@ -754,11 +850,34 @@ def cmd_db_remote_remove(args) -> int:
     from siftd.config_sync import remove_sync_remote
 
     if remove_sync_remote(args.name):
-        print(f"Removed remote '{args.name}'.")
+        status.confirm(f"Removed remote '{args.name}'.")
         return 0
     else:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
+        status.error(f"Remote '{args.name}' not found.")
         return 1
+
+
+def _transfer_progress(enabled: bool):
+    """Return ``(context, on_progress)`` for a push/pull transfer bar.
+
+    These are human commands (live bar OK), but ``cmd_db_push``/``cmd_db_pull``
+    write their status to **stderr** (the preamble + error/warning callouts) and
+    reserve stdout for the final success line / any piping. So the bar rides
+    stderr too — it sits with the preamble and never collides with stdout.
+
+    ``enabled`` is False for a dry-run (no per-window work) or any non-bar caller:
+    then the context is a no-op and ``on_progress`` is None, so sync runs bare.
+    """
+    import contextlib
+
+    from siftd.output.live import LiveRegion
+    from siftd.output.progress_view import ProgressConsumer
+
+    if enabled:
+        consumer = ProgressConsumer(shape="bars", live=LiveRegion(stream=sys.stderr))
+        if consumer.active:
+            return consumer, consumer.feed
+    return contextlib.nullcontext(), None
 
 
 def cmd_db_push(args) -> int:
@@ -768,8 +887,10 @@ def cmd_db_push(args) -> int:
 
     remote_cfg = get_sync_remote(args.name)
     if remote_cfg is None:
-        print(f"Remote '{args.name}' not found.", file=sys.stderr)
-        print("Run 'siftd db remote list' to see configured remotes.", file=sys.stderr)
+        status.error(
+            f"Remote '{args.name}' not found.",
+            hint="Run 'siftd db remote list' to see configured remotes.",
+        )
         return 1
 
     remote = SyncRemote.from_config(remote_cfg)
@@ -779,8 +900,7 @@ def cmd_db_push(args) -> int:
 
     db = resolve_db(args)
     if not db.exists():
-        print(f"Database not found: {db}")
-        print("Run 'siftd ingest' to create it.")
+        status.db_missing(db)
         return 1
 
     dry_run = getattr(args, "dry_run", False)
@@ -789,27 +909,31 @@ def cmd_db_push(args) -> int:
     if not dry_run:
         print(f"Pushing to {args.name} ({location})...", file=sys.stderr)
 
+    # Live transfer bar only on a real run (a dry-run does no per-window work).
+    live, on_progress = _transfer_progress(enabled=not dry_run)
     try:
-        result = sync_push(
-            db_path=db,
-            remote=remote,
-            since=getattr(args, "since", None),
-            push_all=getattr(args, "push_all", False),
-            workspace=getattr(args, "workspace", None),
-            tag=getattr(args, "tag", None),
-            no_tag=getattr(args, "no_tag", None),
-            owner=getattr(args, "owner", None),
-            dry_run=dry_run,
-        )
+        with live:
+            result = sync_push(
+                db_path=db,
+                remote=remote,
+                since=getattr(args, "since", None),
+                push_all=getattr(args, "push_all", False),
+                workspace=getattr(args, "workspace", None),
+                tag=getattr(args, "tag", None),
+                no_tag=getattr(args, "no_tag", None),
+                owner=getattr(args, "owner", None),
+                dry_run=dry_run,
+                on_progress=on_progress,
+            )
     except SyncError as e:
-        print(f"Push failed: {e}", file=sys.stderr)
+        status.error(f"Push failed: {e}")
         return 1
     except FileNotFoundError as e:
-        print(str(e))
+        status.error(str(e))
         return 1
 
     if result.conversations == 0:
-        print(f"Nothing new to push to {args.name}.")
+        status.confirm(f"Nothing new to push to {args.name}.")
         return 0
 
     size_kb = result.size_bytes / 1024
@@ -817,19 +941,18 @@ def cmd_db_push(args) -> int:
 
     if result.dry_run:
         window_hint = f" in {result.windows} windows" if result.windows > 1 else ""
-        print(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
+        status.confirm(f"Would push {result.conversations} conversations to {args.name} ({size_kb:.1f} KB){window_hint}")
     else:
         window_hint = f" ({result.windows} windows)" if result.windows > 1 else ""
         # Server-stamped ownership count: only authenticated HTTP pushes to a
         # server that reports it set this — None (older server, no auth,
         # local/SSH transport) omits the suffix rather than showing a fake 0.
         owned_hint = f", {result.owned} owned" if result.owned is not None else ""
-        print(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB{owned_hint}){suffix}{window_hint}")
+        status.confirm(f"Pushed {result.conversations} conversations ({size_kb:.1f} KB{owned_hint}){suffix}{window_hint}")
         if result.windows > 1 and not result.last_push_updated:
-            print(
-                f"  Partial push — some windows may not have completed.\n"
-                f"  Re-run 'siftd db push {args.name}' to resume from the last successful window.",
-                file=sys.stderr,
+            status.warning(
+                "Partial push — some windows may not have completed.",
+                hint=f"Re-run 'siftd db push {args.name}' to resume from the last successful window.",
             )
     return 0
 

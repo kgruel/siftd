@@ -11,6 +11,7 @@ from pathlib import Path
 
 from siftd.cli._common import _get_version
 from siftd.cli.install import METHOD_LABELS, detect_install_method
+from siftd.output import status
 from siftd.paths import state_dir
 
 _CHECK_INTERVAL_S = 86400  # 24 hours
@@ -144,10 +145,9 @@ def maybe_print_notice() -> None:
     current = _get_version()
     latest = cache.get("latest", "")
     if latest and _is_newer(latest, current):
-        print(
-            f"\nsiftd {latest} available (current: {current})"
-            " — run `siftd upgrade` to update",
-            file=sys.stderr,
+        status.info(
+            f"siftd {latest} available (current: {current})",
+            hint="Run `siftd upgrade` to update.",
         )
 
 
@@ -178,46 +178,48 @@ def cmd_upgrade(args) -> int:
 
     check_only = getattr(args, "check", False)
 
-    print(f"siftd {current} (installed via {method_label})", file=sys.stderr)
+    status.info(f"siftd {current} (installed via {method_label})")
 
     # Always fetch fresh when user explicitly runs upgrade
-    print("Checking PyPI for updates...", file=sys.stderr)
+    status.info("Checking PyPI for updates...")
     latest = _fetch_latest_version()
     if latest is None:
-        print("Error: Could not reach PyPI", file=sys.stderr)
+        status.error("Could not reach PyPI")
         return 1
 
     _write_cache(latest)
 
     if not _is_newer(latest, current):
-        print("Already up to date.", file=sys.stderr)
+        status.info("Already up to date.")
         return 0
 
-    print(f"Update available: {current} → {latest}", file=sys.stderr)
+    status.info(f"Update available: {current} → {latest}")
 
     if check_only:
         return 0
 
     if method == "editable":
-        print("Editable install detected — upgrade manually (git pull).", file=sys.stderr)
+        status.info("Editable install detected — upgrade manually (git pull).")
         return 0
 
     cmd = _upgrade_command(method)
     if cmd is None:
-        print(f"Don't know how to upgrade for install method '{method}'.", file=sys.stderr)
-        print("Try: pip install --upgrade siftd", file=sys.stderr)
+        status.error(
+            f"Don't know how to upgrade for install method '{method}'.",
+            hint="Try: pip install --upgrade siftd",
+        )
         return 1
 
     # Homebrew needs a tap update before upgrade to pull new formulae
     if method == "brew":
-        print("Running: brew update", file=sys.stderr)
+        status.info("Running: brew update")
         subprocess.run(["brew", "update"], capture_output=True)
 
-    print(f"Running: {' '.join(cmd)}", file=sys.stderr)
+    status.info(f"Running: {' '.join(cmd)}")
     try:
         result = subprocess.run(cmd)
     except FileNotFoundError:
-        print(f"Error: '{cmd[0]}' not found on PATH", file=sys.stderr)
+        status.error(f"'{cmd[0]}' not found on PATH")
         return 1
 
     # Write current version to cache so the post-command notice doesn't
@@ -225,6 +227,9 @@ def cmd_upgrade(args) -> int:
     # Next invocation runs the new binary and the background check refreshes.
     if result.returncode == 0:
         _write_cache(current)
+        status.confirm(f"Upgraded to {latest}.")
+    else:
+        status.error("Upgrade command failed.")
 
     return result.returncode
 
