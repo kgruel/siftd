@@ -21,15 +21,16 @@ This module owns the siftd POLICY painted has no concept of:
     ``force=True`` and always paint.
   - **cursor safety** — the cursor is restored even if the body raises.
 
-Consumers share this policy, each owning its own block shape: ``ingest``
-(per-adapter progress bars), ``doctor --fix`` (a spinner step-log), and the
-generic ``ProgressEvent`` consumer (``output.progress_view``, both shapes over
-the one contract). The shared substance is the InPlaceRenderer-driving policy,
-not the block shapes — so the row builders here (``bar_row`` for a determinate
-fraction, ``sweep_row`` for an indeterminate sweep, ``text_row`` for a step
-line) are thin compositions of painted primitives (``progress_bar`` / ``Line`` /
-``Cell``) the consumers fill in. The bars and glyphs inherit the ambient palette
-+ IconSet, so colour and ASCII degradation come for free.
+The one consumer over this policy is the generic ``ProgressConsumer``
+(``output.progress_view``); its two block **shapes** cover every caller —
+``"bars"`` (``ingest``'s per-adapter progress, push/pull's transfer) and
+``"steps"`` (``doctor --fix``'s spinner step-log, migrate's). The shared
+substance is the InPlaceRenderer-driving policy, not the block shapes — so the
+row builders here (``bar_row`` for a determinate fraction, ``sweep_row`` for an
+indeterminate sweep, ``text_row`` for a step line) are thin compositions of
+painted primitives (``progress_bar`` / ``Line`` / ``Cell``) the consumer fills
+in. The bars and glyphs inherit the ambient palette + IconSet, so colour and
+ASCII degradation come for free.
 """
 
 from __future__ import annotations

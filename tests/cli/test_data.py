@@ -13,6 +13,7 @@ import siftd.cli.data as data_cli
 from siftd.cli import main
 from siftd.cli.data import _AdapterCounts, _IngestJsonRenderer, _IngestTextRenderer
 from siftd.output.live import LiveRegion
+from siftd.output.progress_view import ProgressConsumer
 
 
 class _FakeTTY(io.StringIO):
@@ -249,40 +250,77 @@ class TestIngestTextRenderer:
         assert "all up to date" not in err
 
     def test_active_ingest_bars_paint_to_tty(self, monkeypatch):
-        # The active live path: handle_event drives _bars_block through the REAL
-        # InPlaceRenderer (against a fake-TTY sink), finalize_live deposits.
+        # The active live path: handle_event feeds the ProgressConsumer, which
+        # drives the REAL InPlaceRenderer (against a fake-TTY sink); `with
+        # consumer` deposits the final bar frame on a clean exit.
         monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
         stream = _FakeTTY()
-        live = LiveRegion(stream=stream)
-        assert live.active
+        consumer = ProgressConsumer(shape="bars", live=LiveRegion(stream=stream))
+        assert consumer.active
         renderer = _IngestTextRenderer(verbose=False)
-        renderer.attach_live(live)
-        with live:
+        renderer.attach_consumer(consumer)
+        with consumer:
             renderer.handle_event(FakeEvent(adapter="claude_code", status="ingested", index=1, total=2))
             renderer.handle_event(
                 FakeEvent(adapter="claude_code", status="skipped", reason="unchanged", index=2, total=2)
             )
-            renderer.finalize_live()
         out = stream.getvalue()
         assert "━" in out  # a (thin) progress bar was painted
         assert "claude_code" in out  # the adapter label rode the bar row
 
-    def test_finalize_live_noop_when_inactive_or_empty(self, monkeypatch):
+    def test_ingest_consumer_lifecycle_survives_empty_frames(self, monkeypatch):
         renderer = _IngestTextRenderer(verbose=False)
-        renderer.finalize_live()  # no live attached → no-op, no raise
 
-        inactive = LiveRegion(stream=io.StringIO())  # not a TTY
-        renderer.attach_live(inactive)
+        # Inactive consumer (not a TTY): attach + `with consumer` is a clean
+        # no-op even with no events fed.
+        inactive = ProgressConsumer(shape="bars", live=LiveRegion(stream=io.StringIO()))
+        renderer.attach_consumer(inactive)
         with inactive:
-            renderer.finalize_live()  # inactive → guarded no-op
+            pass
 
-        # Active but zero adapters started → _bars_block is empty; finalize on an
-        # empty Block must not raise.
+        # Active but zero adapters fed → the deposited final block is empty; the
+        # clean-exit finalize on an empty Block must not raise.
         monkeypatch.setattr("siftd.output.live.supports_unicode", lambda: True)
-        live = LiveRegion(stream=_FakeTTY())
-        renderer.attach_live(live)
-        with live:
-            renderer.finalize_live()
+        active = ProgressConsumer(shape="bars", live=LiveRegion(stream=_FakeTTY()))
+        renderer.attach_consumer(active)
+        with active:
+            pass
+
+    def test_progress_event_maps_error_adapter(self):
+        # The boundary helper: a completed adapter that hit a file error maps to a
+        # status="error" event (the row's ✗ glyph) with err in the amber tally —
+        # severity rides the glyph, the err count stays on the metric thread.
+        counts = _AdapterCounts(total=2)
+        counts.add("ingested", None)
+        counts.add("error", None)
+        ev = _IngestTextRenderer._progress_event("codex", counts, done=True, terminal=True)
+        assert ev.group == "codex"
+        assert ev.status == "error"
+        assert ev.index == 2 and ev.total == 2
+        assert ev.tally == {"new": 1, "upd": 0, "skip": 0, "err": 1}
+        assert ev.terminal is True
+
+    def test_progress_event_omits_err_clean_and_sweeps_zero_total(self):
+        # No errors → no err key, status progress while in flight.
+        counts = _AdapterCounts(total=2)
+        counts.add("ingested", None)
+        ev = _IngestTextRenderer._progress_event("aider", counts, done=False, terminal=False)
+        assert ev.status == "progress"
+        assert "err" not in ev.tally
+        assert ev.tally == {"new": 1, "upd": 0, "skip": 0}
+        # A zero-total adapter maps total→None so the consumer draws the
+        # indeterminate sweep instead of dividing by zero on a 0/0 bar.
+        zero = _AdapterCounts(total=0)
+        ev0 = _IngestTextRenderer._progress_event("x", zero, done=False, terminal=False)
+        assert ev0.total is None
+
+    def test_progress_event_done_clean_is_status_done(self):
+        counts = _AdapterCounts(total=3)
+        for _ in range(3):
+            counts.add("ingested", None)
+        ev = _IngestTextRenderer._progress_event("claude_code", counts, done=True, terminal=True)
+        assert ev.status == "done"  # done + no errors → ✓, not ✗
+        assert "err" not in ev.tally
 
     def test_status_label_mapping(self):
         assert _IngestTextRenderer._status_label("ingested") == "new"

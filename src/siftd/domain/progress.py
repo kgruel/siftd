@@ -29,13 +29,15 @@ from __future__ import annotations
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
-# TODO(progress-fold): ``IngestEvent`` (ingestion/orchestration.py) and its
-# renderer (cli/data.py:_IngestTextRenderer) predate this contract and stay
-# untouched for now — ingest is the most-tested path and ADAPT (not replace) is
-# the locked low-risk move. The eventual convergence: route ingest through the
-# generic consumer here (mapping IngestEvent → ProgressEvent at the boundary, or
-# folding the ingest-specific fields — workspace_path/model/summary — into a
-# subclass), so there is one progress type and one renderer rather than two.
+# NOTE(progress-fold): ``ingest``'s live bars now render through the generic
+# ``ProgressConsumer`` — ``cli/data.py:_IngestTextRenderer._progress_event`` maps
+# each ``IngestEvent`` onto a ``ProgressEvent`` at the boundary, so there is one
+# bar renderer rather than two. What stays distinct is the *event type*: the API
+# still emits ``IngestEvent``, whose richer fields (workspace_path / model /
+# summary) feed the plain streaming path and the final per-adapter content table
+# — neither of which is progress. Folding those into a ``ProgressEvent`` subclass
+# — one progress type end to end — is the remaining convergence; the renderer is
+# already shared.
 
 
 @dataclass(frozen=True)
