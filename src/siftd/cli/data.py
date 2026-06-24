@@ -1010,53 +1010,39 @@ def _doctor_list(args) -> int:
 def _run_fix_steps(steps: list, conn, db) -> int:
     """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
 
-    Dissolves the two hand-rolled ``\\r``-overwrite spinners onto the shared live
-    region: on a Unicode TTY each step shows a spinner line that resolves in
-    place to ``✓``/``✗``; a pipe / non-Unicode locale prints the resolved lines
-    plainly (ascii-aware), keeping the per-step feedback the ``\\r`` form gave.
+    The two hand-rolled ``\\r``-overwrite spinners dissolve onto the generic
+    ``ProgressConsumer(shape="steps")`` — each step feeds a pending spinner that
+    resolves in place to ``✓``/``✗`` on a Unicode TTY; a pipe / non-Unicode locale
+    prints the resolved lines plainly (ascii-aware), keeping the per-step feedback
+    the ``\\r`` form gave. A failing step is reported, not raised.
     """
-    from painted import ASCII_ICONS, Block, current_icons, current_palette, join_vertical
+    from painted import ASCII_ICONS, current_icons
 
     from siftd.output.common import supports_unicode
-    from siftd.output.live import LiveRegion, spinner_glyph, text_row
+    from siftd.output.progress_view import ProgressConsumer, ProgressEvent
 
-    pal = current_palette()
-    ic = current_icons()
-    plain_icons = ic if supports_unicode() else ASCII_ICONS
-    outcomes: list[tuple[str, str]] = []  # (severity, text)
+    plain_icons = current_icons() if supports_unicode() else ASCII_ICONS
     errors = 0
 
-    def _glyph(severity: str):
-        return (ic.ok, pal.success) if severity == "success" else (ic.error, pal.error)
-
-    def block(pending: str | None = None) -> Block:
-        rows = []
-        for severity, text in outcomes:
-            g, gs = _glyph(severity)
-            rows.append(text_row([(f"  {g} ", gs), (text, None)]))
-        if pending is not None:
-            rows.append(text_row([(f"  {spinner_glyph()} ", pal.accent), (f"{pending}...", pal.muted)]))
-        return join_vertical(*rows) if rows else Block.empty(0, 0)
-
-    live = LiveRegion()
-    with live:
+    consumer = ProgressConsumer(shape="steps")
+    with consumer:
         for label, fn in steps:
-            if live.active:
-                live.update(block(pending=label), force=True)
+            # A pending spinner row for the in-flight step; the prior steps' rows
+            # stay resolved (the consumer keeps per-group state).
+            if consumer.active:
+                consumer.feed(ProgressEvent(group=label, message=label, status="progress", terminal=True))
             try:
                 result = fn(conn, db)
-                outcomes.append(("success", f"{label}: {result}"))
+                outcome, text = "done", f"{label}: {result}"
             except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
-                outcomes.append(("error", f"{label}: {e}"))
+                outcome, text = "error", f"{label}: {e}"
                 errors += 1
-            # Active: the next step's pending frame (or finalize, for the last
-            # step) repaints this resolved row — no separate post-resolve update.
-            if not live.active:
-                severity, text = outcomes[-1]
-                mark = plain_icons.ok if severity == "success" else plain_icons.error
+            if consumer.active:
+                # Resolve the row in place (✓/✗) by re-feeding the same group.
+                consumer.feed(ProgressEvent(group=label, message=text, status=outcome, terminal=True))
+            else:
+                mark = plain_icons.ok if outcome == "done" else plain_icons.error
                 print(f"  {mark} {text}")
-        if live.active:
-            live.finalize(block())
     return errors
 
 
