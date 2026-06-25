@@ -101,12 +101,13 @@ Separate from conversation tags. Applied automatically during ingestion (e.g., s
 siftd backfill --shell-tags                  # categorize shell commands
 ```
 
-Queried via `siftd query --tool-tag` and `siftd tools`:
+Queried via `siftd query --tool-tag` (conversations) or `siftd tag list --on tool_call` (the category summary):
 ```bash
-siftd query --tool-tag shell:test            # conversations with test commands
-siftd tools                                  # shell command category summary
-siftd tools --by-workspace                   # breakdown by workspace
-siftd tools --prefix shell:                  # filter by tag prefix
+siftd query --tool-tag shell:test                    # conversations with test commands
+siftd tag list --on tool_call                        # shell command category summary
+siftd tag list --on tool_call --by-workspace         # breakdown by workspace
+siftd tag list --on tool_call --prefix shell:        # filter by tag prefix
 ```
+(The standalone `siftd tools` command was removed in 0.9.0 — use `tag list --on tool_call`.)
 
 Tool tags are not manually applied — they're derived from tool call content.

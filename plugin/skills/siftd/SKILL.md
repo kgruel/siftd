@@ -13,7 +13,7 @@ siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI, P
 
 When this skill is auto-loaded by research-intent detection (user did not type `/siftd`):
 
-1. Run a best-guess search with `--mode=thread` (add `-w <workspace>` if implied).
+1. Run a best-guess search with `--view=thread` (add `-w <workspace>` if implied).
 2. Summarize findings in natural language — do not dump raw output.
 3. Offer next steps: drill into a conversation (`siftd show <id>`), refine the search, or tag useful results (`siftd tag <id> research:<topic>`).
 
@@ -29,8 +29,8 @@ If the user invokes `/siftd:tag`, skip search — run `siftd tag --current <tags
 
 | User input | Command to run |
 |------------|----------------|
-| `/siftd "query"` | `siftd search "query" --mode=thread` |
-| `/siftd -w proj "query"` | `siftd search -w proj "query" --mode=thread` |
+| `/siftd "query"` | `siftd search "query" --view=thread` |
+| `/siftd -w proj "query"` | `siftd search -w proj "query" --view=thread` |
 | `/siftd --recent` | `siftd query -n 5` |
 | `/siftd --recent -w proj` | `siftd query -n 5 -w proj` |
 | `/siftd --genesis "concept"` | `siftd search --select=first --sort=time "concept"` |

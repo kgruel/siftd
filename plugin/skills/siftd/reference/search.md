@@ -2,28 +2,32 @@
 
 Semantic search over past conversations. Hybrid retrieval: FTS5 recall → embeddings rerank.
 
-## Output modes
+## Result shape (`--view`)
 
-Control how results render. Render modes (`--mode`) are mutually exclusive.
+Control how results render. Shapes (`--view`) are mutually exclusive. (This was
+`--mode` before 0.10.0 — `--mode` now selects the search *engine*; see "Search
+engine" below.)
 
-**Default** — ranked chunks with snippet, score, workspace, date:
+**Default** — `--view=chunks`: ranked chunks with snippet, score, workspace, date:
 ```bash
 siftd search "error handling"
 ```
 
-**`--mode=thread`** — two-tier narrative: top conversations expanded, rest as shortlist:
+**`--view=thread`** — two-tier narrative: top conversations expanded, rest as shortlist:
 ```bash
-siftd search "why we chose JWT" --mode=thread
+siftd search "why we chose JWT" --view=thread
 ```
-Best mode for research. Shows the reasoning in context, not isolated chunks.
+Best shape for research. Shows the reasoning in context, not isolated chunks.
 
-**Surrounding discussion** — to see the turns around a match, drill into the
-conversation with `show` and anchor on the phrase:
+**Surrounding discussion** — `--around PHRASE` + `--turns A:B` anchor on a phrase
+match and show the turns around it, inline in the search results:
 ```bash
-siftd show <id> --around "token refresh" --turns -3:+3
+siftd search "token refresh" --around "token refresh" --turns -3:+3
 ```
-Use when you found the right area but need the surrounding discussion. (The old
-`search --context N` was removed in 0.9.x — anchor on a phrase in `show` instead.)
+Use when you found the right area but need the surrounding discussion. `--turns`
+requires an anchor flag. (The old `search --context N` was removed in 0.9.x — use
+`--around PHRASE --turns -N:+N`.) The same anchoring also works on `siftd show <id>`
+when you already know the conversation.
 
 **`-v` / `--verbose`** — full chunk text instead of snippet:
 ```bash
@@ -35,7 +39,7 @@ Use when you need exact wording to quote or verify.
 ```bash
 siftd search --full "schema migration"
 ```
-Dumps entire exchanges. Useful for reproduction, too noisy for research. Prefer `--mode=thread`.
+Dumps entire exchanges. Useful for reproduction, too noisy for research. Prefer `--view=thread`.
 
 **`--refs [FILES]`** — file references from tool calls in matching conversations:
 ```bash
@@ -70,7 +74,7 @@ Narrow the candidate set before ranking. All filters compose with each other and
 **`-w` / `--workspace SUBSTR`** — filter by workspace path substring:
 ```bash
 siftd search -w myproject "auth flow"
-siftd search -w myproject --mode=thread "auth flow"   # workspace + output mode
+siftd search -w myproject --view=thread "auth flow"   # workspace + result shape
 ```
 The single most impactful filter. Always use when you know the project.
 
@@ -102,6 +106,17 @@ siftd search --all-tags research:auth --all-tags review "token rotation"
 siftd search --no-tag archived "error handling"
 ```
 
+**`-t` / `--tool NAME`** — filter to conversations that used a tool (canonical name):
+```bash
+siftd search -t shell.execute "flaky test"
+```
+
+**`--tool-tag NAME`** — filter by tool-call tag (e.g. `shell:vcs`, `shell:test`):
+```bash
+siftd search --tool-tag shell:vcs "rebase gone wrong"
+```
+Matching is conversation-level (any matching tool call in the conversation), consistent with `query --tool`.
+
 **`--threshold SCORE`** — cut results below relevance score:
 ```bash
 siftd search --threshold 0.7 "event sourcing"
@@ -113,6 +128,36 @@ Scores: 0.7+ on-topic, 0.6-0.7 tangential, <0.6 noise.
 siftd search -n 20 "error handling"
 ```
 
+## Search engine (`--mode`)
+
+Select which retrieval engine runs. (Before 0.10.0 this flag chose the result
+shape — that moved to `--view`.)
+
+**`--mode=auto`** (default) — hybrid (FTS5 + embeddings rerank) when embeddings are
+installed, else FTS5:
+```bash
+siftd search "chunking strategy"
+```
+
+**`--mode=semantic`** — pure embeddings search, skipping the FTS5 pre-filter:
+```bash
+siftd search --mode=semantic "chunking strategy"
+```
+Use when FTS5 keyword terms don't match your semantic intent. Requires the `[embed]`
+extra. (Replaces the removed `--embeddings-only` flag.)
+
+**`--mode=fts`** — keyword-only FTS5 search, no embeddings:
+```bash
+siftd search --mode=fts "TypeError"
+```
+Fast, exact, no model needed. Best for literal strings and identifiers.
+
+**`--mode=hybrid`** — force FTS5 + embeddings rerank explicitly (the same engine
+`auto` picks when embeddings are present).
+
+The output reports the engine that *actually ran* in its `mode` field — `auto`
+resolves to `fts`/`semantic`/`hybrid` honestly.
+
 ## Search modes
 
 Change the unit of search or the ranking strategy.
@@ -123,17 +168,11 @@ siftd search --select=first "event sourcing"
 ```
 Finds when a concept was first discussed. Combine with `--threshold` to control noise.
 
-**`--mode=conversations`** — aggregate scores per conversation, rank whole conversations:
+**`--view=conversations`** — aggregate scores per conversation, rank whole conversations:
 ```bash
-siftd search --mode=conversations "state management"
+siftd search --view=conversations "state management"
 ```
 Returns conversations, not chunks. Use when you want to find which session discussed a topic most.
-
-**`--embeddings-only`** — skip FTS5 recall, pure embeddings search:
-```bash
-siftd search --embeddings-only "chunking strategy"
-```
-Bypasses the FTS5 pre-filter. Useful when FTS5 terms don't match your semantic intent.
 
 **`--recall N`** — FTS5 conversation recall limit (default 80):
 ```bash
@@ -192,7 +231,7 @@ Filters, modes, and search options compose freely:
 
 ```bash
 # Research a decision in a specific project, narrative view
-siftd search -w myproject --mode=thread "why we chose JWT"
+siftd search -w myproject --view=thread "why we chose JWT"
 
 # Trace evolution of an idea over time in one workspace
 siftd search -w myproject --sort=time --since 2024-06 "state management"
@@ -201,7 +240,7 @@ siftd search -w myproject --sort=time --since 2024-06 "state management"
 siftd search --threshold 0.7 --refs "schema migration"
 
 # Search tagged conversations, narrative view for context
-siftd search -l research:auth --mode=thread "token rotation"
+siftd search -l research:auth --view=thread "token rotation"
 
 # Find earliest mention across all workspaces
 siftd search --select=first --threshold 0.65 "event sourcing"
@@ -211,7 +250,7 @@ siftd search -w projectA "caching strategy"
 siftd search -w projectB "caching strategy"
 
 # Exclude archived conversations, narrative view
-siftd search --no-tag archived --mode=thread "authentication redesign"
+siftd search --no-tag archived --view=thread "authentication redesign"
 
 # Date-filtered search
 siftd search --since 2025-01 "what should we do about"
