@@ -5,7 +5,7 @@ _Auto-generated from `--help` output._
 ## siftd
 
 ```
-siftd 0.10.0 - Aggregate and query LLM conversation logs
+siftd 0.10.1 - Aggregate and query LLM conversation logs
 
 usage: siftd [-h] [--version] [--db PATH] <command> ...
 

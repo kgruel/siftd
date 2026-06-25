@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-06-25
+
+### Fixed
+
+- **Bundled `siftd` skill updated for the 0.10.0 search surface** — the skill that
+  ships with the package (installed into Claude Code / Pi / Codex / Gemini via
+  `siftd install skill`) still documented the pre-0.10.0 CLI and would hand agents
+  broken commands. It now uses `--view` for the result shape and `--mode` for the
+  engine (`auto`/`fts`/`semantic`/`hybrid`), drops the removed `--embeddings-only`
+  (use `--mode=semantic`), documents `search --around/--turns` directly (the removed
+  `--context` is gone) plus the new `--tool`/`--tool-tag` filters, and replaces the
+  removed `siftd tools` command with `siftd tag list --on tool_call`.
+
 ## [0.10.0] - 2026-06-25
 
 > A UI-focused release in two halves — both reading surfaces rebuilt.
