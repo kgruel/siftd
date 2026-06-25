@@ -52,7 +52,11 @@ def format_type(t: Any) -> str:
         return origin_name
     if hasattr(t, "__name__"):
         return t.__name__
-    return str(t).replace("typing.", "")
+    # Normalize Python-version-specific module reprs so generated docs are stable
+    # across interpreters: 3.13 relocated pathlib.Path to pathlib._local.Path, so a
+    # `Path | None` union str()s differently on 3.13 vs the 3.12 publish env. Pin the
+    # public name (the str() fallback handles unions, which lack __name__).
+    return str(t).replace("typing.", "").replace("pathlib._local.", "pathlib.")
 
 
 def parse_docstring(doc: str | None) -> dict[str, Any]:
