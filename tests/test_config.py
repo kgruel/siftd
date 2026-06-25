@@ -119,7 +119,10 @@ class TestSchema:
     def test_is_str_list(self, val, expected):
         assert _is_str_list(val) is expected
 
-    @pytest.mark.parametrize("key,typ", [("serve.host", "string"), (_L, "list[string]")])
+    @pytest.mark.parametrize(
+        "key,typ",
+        [("serve.host", "string"), ("ui.theme", "string"), (_L, "list[string]")],
+    )
     def test_match(self, key, typ):
         assert _match_schema(key).expected == typ
 

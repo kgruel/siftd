@@ -117,6 +117,9 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "Max characters per turn in list view", "200"),
     _SchemaEntry("query.tool_chars", "int", _is_int_like,
                  "Max characters for tool content in detail view", "120"),
+    # UI
+    _SchemaEntry("ui.theme", "string", _is_str,
+                 "Terminal colour theme (values: siftd, nord); terminal only — does not affect the web UI", "siftd"),
     # Ingestion
     _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like,
                  "Skip binary content blobs during ingest", "true"),

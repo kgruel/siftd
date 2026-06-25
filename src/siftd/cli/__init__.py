@@ -299,18 +299,22 @@ def _build_parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     _configure_cli_logging()
     _relax_output_encoding()
-    # Apply siftd's NORD palette process-wide so every painted surface — status,
-    # query, search, show, peek, tables, doctor — renders in one theme. Setter
-    # semantics: persists for the rest of the process. The print_block sites
-    # honour TTY + NO_COLOR (output/common.should_use_ansi) — painted itself only
-    # checks isatty — so the palette is inert when piped or colour is disabled.
-    # Imported lazily to keep painted off the module-import path.
+    # Apply siftd's terminal theme process-wide so every painted surface — status,
+    # query, search, show, peek, tables, doctor — renders in one palette. The
+    # `ui.theme` config key selects the variant (siftd | nord); an unknown/unset
+    # name falls back to siftd's default (the doctor `config-valid` check is what
+    # flags a bad name, not this lookup). Setter semantics: persists for the rest of
+    # the process. The print_block sites honour TTY + NO_COLOR
+    # (output/common.should_use_ansi) — painted itself only checks isatty — so the
+    # palette is inert when piped or colour is disabled. Imported lazily to keep
+    # painted off the module-import path.
     from painted import use_theme
 
+    from siftd.config import get_config
     from siftd.output import status
-    from siftd.output.theme import siftd_theme
+    from siftd.output.theme import theme_for_name
 
-    use_theme(siftd_theme)
+    use_theme(theme_for_name(get_config("ui.theme")))
     # One glyph-degradation control point (the icon twin of the theme lever):
     # use_theme installed the ambient IconSet (the default Unicode set); override
     # it to ASCII when stdout can't render Unicode (a pipe or a LANG=C TTY) so

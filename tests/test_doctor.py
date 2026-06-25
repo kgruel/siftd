@@ -1177,6 +1177,46 @@ class TestConfigValidCheck:
         assert "nonexistent_formatter" in findings[0].message
         assert "valid" in findings[0].message.lower()
 
+    def test_valid_theme(self, check_context, monkeypatch, tmp_path):
+        """Returns no findings for a known ui.theme name."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ui]\ntheme = "nord"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+
+        findings = ConfigValidCheck().run(check_context)
+        assert findings == []
+
+    def test_unknown_theme(self, check_context, monkeypatch, tmp_path):
+        """Reports warning for an unknown ui.theme name."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ui]\ntheme = "dracula"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+
+        findings = ConfigValidCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].check == "config-valid"
+        assert findings[0].severity == "warning"
+        assert "dracula" in findings[0].message
+        assert "ui.theme" in findings[0].message
+
+    def test_theme_validation_mirrors_resolver_normalization(
+        self, check_context, monkeypatch, tmp_path
+    ):
+        """A non-canonical case/whitespace theme the resolver accepts is NOT flagged.
+
+        theme_for_name() normalizes (.strip().lower()), so 'Nord' renders the nord
+        theme; the doctor check must agree rather than warn on a value that works.
+        """
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[ui]\ntheme = "Nord"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+
+        assert ConfigValidCheck().run(check_context) == []
+
     def test_finding_structure(self, check_context):
         """Check has correct attributes."""
         check = ConfigValidCheck()

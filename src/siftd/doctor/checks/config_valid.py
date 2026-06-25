@@ -53,6 +53,12 @@ class ConfigValidCheck:
             if formatter is not None:
                 findings.extend(self._validate_formatter(str(formatter)))
 
+        ui_config = doc.get("ui", {})
+        if isinstance(ui_config, dict):
+            theme = ui_config.get("theme")
+            if theme is not None:
+                findings.extend(self._validate_theme(str(theme)))
+
         return findings
 
     def _validate_formatter(self, formatter_name: str) -> list[Finding]:
@@ -68,6 +74,25 @@ class ConfigValidCheck:
                     message=f"Unknown formatter '{formatter_name}' in config (valid: {', '.join(sorted(valid_names))})",
                     fix_available=False,
                     context={"formatter": formatter_name, "valid_formatters": valid_names},
+                )
+            ]
+        return []
+
+    def _validate_theme(self, theme_name: str) -> list[Finding]:
+        """Validate that the ui.theme name is a known terminal theme."""
+        from siftd.output.theme import THEME_NAMES
+
+        # Normalize exactly as theme_for_name() does (.strip().lower()) so the check
+        # mirrors the resolver — otherwise `ui.theme = "Nord"` renders fine but the
+        # doctor spuriously flags it, the inverse of the check's purpose.
+        if theme_name.strip().lower() not in THEME_NAMES:
+            return [
+                Finding(
+                    check=self.name,
+                    severity="warning",
+                    message=f"Unknown ui.theme '{theme_name}' in config (valid: {', '.join(THEME_NAMES)})",
+                    fix_available=False,
+                    context={"theme": theme_name, "valid_themes": list(THEME_NAMES)},
                 )
             ]
         return []

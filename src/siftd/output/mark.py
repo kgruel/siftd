@@ -54,15 +54,12 @@ def wordmark_segments(*, as_ascii: bool | None = None) -> list[tuple[str, Style 
     stdout capability (``prefers_ascii``); pass it to force the form (tests, or a
     known stream).
     """
-    from painted import current_palette
-
     from siftd.output.common import prefers_ascii
-    from siftd.output.theme import domain_styles
+    from siftd.output.theme import domain_styles, structure_style
 
     ascii_form = prefers_ascii() if as_ascii is None else as_ascii
-    palette = current_palette()
-    letters = palette.text.merge(palette.accent)  # bold cream — substrate + weight
-    grain = domain_styles().metric_strong          # the gold speck
+    letters = structure_style()            # the structure role — bold cream (substrate + weight)
+    grain = domain_styles().metric_strong  # the gold speck
     return [
         ("sift", letters),
         ("" if ascii_form else GRAIN, grain),
