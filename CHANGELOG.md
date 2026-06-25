@@ -7,6 +7,367 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-06-25
+
+> A UI-focused release in two halves — both reading surfaces rebuilt.
+>
+> **The web half** turns `siftd serve` into a real reading and analysis surface. The
+> web UI is rebuilt as a single-rail "Swiss" shell — one canonical content area,
+> URL-addressable state, light/dark tone — hosting first-class views: a conversation
+> **folio** that toggles between a prose *reading* view and an event-sequence
+> *trace*; a live **Sessions** view with sub-agent nesting; a Stats **reckoning**
+> dashboard; **Tags** and **Workspaces** index views (both with per-owner pins); and
+> a **Find** surface that runs the *actual* search engine over your facet filters,
+> with the whole query carried in a shareable URL.
+>
+> **The terminal half** rebuilds the CLI's output on [painted](https://pypi.org/project/painted/):
+> a bespoke "warm obsidian" theme (amber metric thread, cream body), a typographic
+> transcript feed that renders markdown and drops the old border boxes, a search
+> surface on a relevance rail, live progress bars, and a brand wordmark with a
+> DC-match help redesign — plus a config-swappable `ui.theme`.
+>
+> The search layer behind both is overhauled: the engine (`--mode`) is now cleanly
+> split from the result shape (`--view`), and the REST `/api/v1/search` route runs
+> the full post-processing recipe and returns a render-ready `SearchView`. Several
+> search flag/output/wire changes are **agent/script-facing** — see Breaking Changes
+> first.
+
+### Breaking Changes (migration)
+
+- **`siftd search`: `--mode` now selects the engine; result shape moves to `--view`** —
+  `--mode` is `auto`|`fts`|`semantic`|`hybrid` (default `auto` = hybrid when
+  embeddings are installed, else fts). The render shape (formerly `--mode
+  chunks|thread|conversations`) is now a separate `--view chunks|thread|conversations`
+  flag. The old `--fts`, `--semantic`, `--embeddings-only`, and `--debug-ids` flags
+  are **removed outright with no aliases**, and the legacy `--mode thread`/`--mode
+  conversations` values now error with a hint to use `--view`. Migrate:
+  `search --fts` → `search --mode fts`; `search --mode thread` → `search --view thread`.
+- **Search output reports the resolved engine in `mode`; render shape moves to `view`** —
+  search JSON/output now carries a first-class `mode` field naming the engine that
+  *actually ran* (`fts`/`semantic`/`hybrid`) plus a separate `view` field for the
+  render shape, uniformly across terminal, JSON, markdown, and serve. Previously
+  `mode` named the render shape — that meaning is now in `view`. Scripts reading the
+  search `mode` field must update (shape readers move to `view`).
+- **`/api/v1/search` runs the full recipe and returns a `SearchView` envelope** —
+  the REST search route now runs the same post-processing the CLI does
+  (engine chunks → threshold/select/trim/enrich/sort/view-shape/full/around) and
+  returns a render-ready `SearchView` (chunks/thread/conversations views plus
+  `tier1`/`tier2`/`n_skipped`/`empty_reason`) instead of flat chunks. The deprecated
+  `embeddings_only` query param is **removed** in favor of `mode`
+  (`auto`|`fts`|`semantic`|`hybrid`); new recipe params
+  `view`/`sort`/`select`/`threshold`/`full`/`around`/`turns` and the additive
+  `tool`/`tool_tag` filters (see Added) now travel on the wire. Defaults reproduce
+  the prior flat-chunks payload, but the wire contract is expanded/changed.
+
+> **UI route churn (not a machine contract).** The single-surface rewrite deletes
+> or repoints several htmx-driven HTML routes — the dead `/search` HTML route, the
+> standalone `/stats` and `/peek` pages (absorbed into `/dashboard` and the Sessions
+> view), the `/query?id=` detail branch, and the `/follow?poll=` fragment mode. A
+> direct hit to `/peek` or `/stats` now 404s. **None of this touches `/api/v1`** —
+> no documented JSON API contract changes here.
+
+### Added
+
+#### Swiss single-surface web UI
+
+- **Single-rail Swiss shell** — the served UI is one left-rail shell over a single
+  canonical content area (`#main`), replacing the old two-pane list/detail layout. A
+  CSS-variable skin supports a light/dark tone toggle; every view mounts into the one
+  swap target over a shared fragment. Deep links remap (`?id=` → Transcript, `?q=` →
+  Search, `?follow=` → Sessions), and conversation rows across the Find list and
+  search results open the detail view in place.
+- **URL-as-state navigation** — the active view and its state are encoded in a
+  canonical `/?view=<v>&<state>` address, so back/forward, refresh, shareable links,
+  and deep links are all refresh-safe. Direct GETs to internal fragment routes
+  (folio, dashboard, find, workspace, …) redirect to their canonical shell URL, and
+  every rail item, model-brush, and workspace-sort pushes a deep-linkable URL.
+
+#### The folio (conversation detail)
+
+- **Transcript folio** — the conversation detail view is a new editorial "folio": a
+  turn rail (scroll-spy "you are here"), a prose body (assistant *and* user turns
+  render as markdown, section headings read as editorial landmarks), and a tool
+  ledger. A ledger foot shows tokens, tool count, and cost — an em dash when usage is
+  unpriced, never a fabricated `$0` — and hosts the curation affordances: interactive
+  tag pills with an add input, plus Markdown/JSON export chips. The whole folio
+  reflows responsively (container-query driven) into a footer band on narrow surfaces.
+- **Folio reading/trace toggle** — the folio defaults to a *reading* view (prose,
+  tool I/O folded into the ledger) and toggles into a *trace* view that inlines tool
+  I/O in event sequence — each tool call a distinct collapsed card (info-blue call
+  rail into the result, explicit ▸/▾ caret), thinking shown the same way. Expanding a
+  tool result reveals the full output (no longer a 120-char preview), and trace mode
+  drops the reading line-length cap so code and tool output use the full width while
+  prose stays readable.
+
+#### Sessions (live + sub-agent nesting)
+
+- **Live Sessions view** — opens with a live zone of in-flight session cards
+  (workspace, branch, model, adapter, exchange count, age) above a day-grouped
+  timeline of ingested conversations; each day head shows session count, tokens,
+  cost, and a 24-hour activity histogram. Clicking a card or row opens the folio;
+  clicking a live card mounts the `/follow` tail. The standalone `/peek` page is gone
+  — its scan is absorbed here. On a public bind with live endpoints disabled, the
+  live zone and `/follow` are not served and the `?follow=` deep link degrades to the
+  Sessions view.
+- **Sub-agent nesting** — sub-agent conversations nest under their parent session as
+  collapsed, indented rows behind a rotating-chevron disclosure, with a per-parent
+  agent-count chip; expanding a caret reveals children without opening the parent.
+  Day totals fold each parent's sub-agents back in so token and cost numbers stay
+  complete. The Sessions list pages by top-level session (50 roots, each carrying its
+  full sub-agent set); a sub-agent whose parent is off-page still renders, flagged as
+  a sub row. Child rows label by agent type (plugin namespace stripped) and spawn
+  time, read from the Claude Code `agent-<id>.meta.json` sidecar at ingest and
+  persisted as a conversation attribute (reusing the polymorphic `attributes` table —
+  no new schema).
+- **Live follow renders as the folio** — the live-session follow view is the same
+  folio rendered from a live source: rail, ledger, and token foot advance together as
+  the session updates, the body stays pinned to the tail unless the reader scrolls
+  up, and curation (tags/export) is suppressed pre-ingest since it needs the DB.
+
+#### Stats reckoning dashboard
+
+- **Swiss Stats "reckoning" dashboard (`/dashboard`)** — a live, owner-scoped usage
+  dashboard. It opens with a standing block (period; three holdings —
+  conversations, tokens, cost — plus the in/out token ratio), an activity trend with
+  hour-of-day and day-of-week rhythm charts, an input-economy strip
+  (uncached / cache-read / cache-write split with a cache-hit headline, shown only
+  when the corpus reports cache tokens), two ranked accounts (model mix and workspace
+  mix with token-sized bars and honest per-row cost), and a colophon (coverage,
+  counts, active-days and longest-streak, last ingest). A Tokens|Cost measure toggle
+  redraws every chart with no round-trip. Replaces the old two-pane `/stats` fragment.
+- **Model brushing of the activity charts** — click a row in the dashboard's
+  Model-mix account and the activity trend, hour/weekday rhythm, and input-economy
+  strip re-scope to that model (charts relabel to "Activity · <model>", with a "show
+  all" reset); the model account itself stays the global ranking and acts as the
+  picker. Honoured via `/dashboard?model=<name>` only when the value names a real
+  model in the corpus — unknown values fall back to the unscoped view rather than an
+  empty scoped chart. The brush is a transient lens and does not push a deep-linkable
+  URL.
+
+#### Tags & Workspaces views
+
+- **Tags view (`/view/tags`)** — a pinned zone plus a "Most used" headline over a
+  namespace tree (flat tag names split on `:`). Each tag is ranked by its dominant
+  per-grain count shown with its true unit (e.g. `312 conv` vs `198 calls`, never a
+  grain-mix total). Clicking a tag drills into Find pre-filtered by that tag (a
+  `?tag=` deep link that prefills and selects the tag in the filter strip), so a
+  click lands on a refinable search surface rather than a dead table. Auto-applied
+  tags (`shell:*` categories + `siftd:derivative`) are demoted from the headline so
+  hand-curated tags surface, but remain in the namespace tree below.
+- **Workspaces view (`/view/workspaces`)** — a two-tier nav with a Pinned zone and a
+  Recent strip of cards over a sortable, client-filterable master list. Each row
+  drills into a per-workspace detail dashboard (stat grid + usage rows + session
+  drill) keyed on `?ws=`, showing the rollup's tokens and honest cost. Sort via
+  `?sort=` ∈ {sessions, recent, tokens, cost}, with the magnitude bar following the
+  active measure (dropped for recency). Viewing locally, a count-only caveat surfaces
+  duplicate workspaces and points at `siftd migrate --merge-workspaces`.
+- **Workspace detail gains cadence and subject tags** — the workspace-detail view
+  (HTML and the matching REST/wire payload) now carries a Cadence strip (a per-day
+  activity sparkline scoped to the workspace, peak day marked) and a "What it's
+  about" set of tag chips counting the workspace's conversation-level tags, each
+  drilling into Find scoped to that tag.
+- **Per-owner pins for tags and workspaces** — pin/unpin tags (`POST /tag/pin`, new
+  `tag_pins(owner, tag_id, pinned_at)` table) and workspaces (`POST /workspace/pin`,
+  new `workspace_pins` table); pinned items lift into the head of their view. Both
+  tables are created lazily on the next write-open (no `SCHEMA_VERSION` bump → no
+  forced backup of an existing DB) and reads guard on the table's presence. Pins are
+  owner-scoped and audited (`tag.pin`/`tag.unpin`); pinning requires the owner to
+  actually participate (use the tag / be in the workspace), and a workspace pin
+  cascades when the workspace is merged or removed.
+
+#### Find — the search engine over facets, with state in the URL
+
+- **Unified Find view (`/find`)** — the Swiss shell's Search slot is a working Find
+  view composing a content-search box with workspace/model/tag/date facet filters
+  over the conversation list. A meaningful content query routes through the real
+  search engine (hybrid when the server has embeddings, graceful fts fallback
+  otherwise) and renders ranked excerpt hits; an empty query keeps the facet-filtered
+  recency list. The control strip gains a result-shape toggle
+  (Excerpts/Thread/Conversations) and an embeddings-gated engine toggle
+  (Auto/Hybrid/Semantic/Keyword), with the running engine named honestly in the
+  header. An embed-path failure degrades to keyword search rather than 500-ing the
+  pane, and raw FTS5 punctuation in the box is sanitized so it can't trigger a query
+  error.
+- **Find opens as a search surface** — Find now opens on a search prompt rather than
+  a recency table. Typing runs the engine; a facet-only state (tag/workspace/model/
+  date, no term) still browses the filtered list so the Tags and Workspaces
+  drill-downs keep landing on conversations. The control strip is a two-state
+  builder↔bar — a full builder when nothing is engaged, collapsing to a compact
+  refinement bar with active facets shown as chips once a search or browse is showing
+  — all CSS-only, so the search box keeps focus while typing.
+- **Search state retained across navigation** — the full query (term, shape, engine,
+  workspace, model, tag, owner, and date facets) rides the shell URL, so clicking a
+  hit into the folio and pressing Back restores the prior results, and a refresh or
+  shared link reproduces the whole query and rebuilds every facet control.
+  Re-clicking the Search rail item resumes the last query rather than resetting;
+  clearing the box drops the memory for a fresh start.
+- **In-place context unfold in search results** — a chunks hit unfolds a window of
+  surrounding exchanges inline in the results list, so you can judge relevance
+  without leaving the page. The unfold widens through stepped rings (±2 → ±5 → ±10
+  turns) before deferring to the full folio, and multiple hits unfold independently.
+  The new `GET /find/context` route runs the same owner-scoped, anchored, windowed
+  read the CLI's `--at-turn`/`--around` drive; the current ring rides the control
+  URLs (no JS, CSP-clean), and a bad anchor or corrupt DB degrades to the collapsed
+  trigger rather than a 500.
+- **Search-hit unfold is a reading preview** — expanding a hit in place shows a
+  reading preview (prose and thinking via the folio's reading emitter, each turn
+  char-capped to a scannable excerpt) instead of inlining full tool I/O; the complete
+  trace is one event-precise "open in folio" jump away.
+- **Event-precise "open in folio" jump from search** — a search hit's folio jump
+  opens *trace* mode anchored at the matched event, so you land on the match instead
+  of the folio top. The matched event's ULID rides `mode=trace&event=<id>` through
+  the folio URL (chunks hit, thread-view tier-2 hit, and the unfold's last ring all
+  jump event-precisely), the page scrolls to and highlights the landed event, and a
+  hard reload re-lands. The entry-point rule: search opens trace, the list opens
+  reading; a reading-mode URL ignores any stale `event=`.
+- **Tool and tool-tag filters in search** — filter search by tool use. The CLI gains
+  `-t/--tool NAME` (canonical tool name, e.g. `shell.execute`) and `--tool-tag NAME`
+  (tool-call tag, e.g. `shell:vcs`) on `siftd search`; `/api/v1/search` accepts
+  matching `tool`/`tool_tag` query params; and Find adds a usage-ordered tool
+  dropdown that round-trips through the canonical URL. Matching is conversation-level
+  (any tool call in the conversation matches), consistent with `query --tool`.
+- **Sort, threshold, and full-text controls in Find** — Find surfaces three existing
+  search controls: a score/time sort toggle (time clamps to score for
+  thread/conversation shapes where it doesn't apply), a minimum-score threshold input
+  (with a distinct "No matches above the score threshold" empty state), and a
+  full-text checkbox that shows untruncated excerpts. All three ride the canonical
+  URL, with only non-default values appearing.
+- **Stats and Workspaces resume last selection** — re-clicking the Stats or
+  Workspaces rail item resumes the last model-brush or sort (like re-clicking Search
+  resumes the last query) instead of resetting to the bare view, while keeping
+  back/forward history intact.
+
+#### Output & wire
+
+- **`cost` field on conversation detail JSON** — `query <id>` JSON now carries a
+  `cost` field (from the rollup's canonical conversation stats at depth ≥ 3), and it
+  round-trips through the delegated wire form. `null` means "no priced usage" and is
+  preserved distinctly from a real `0.0` — additive (new key).
+
+#### Terminal UI — the painted refresh
+
+- **"Warm obsidian" terminal theme** — the CLI's output is rebuilt on
+  [painted](https://pypi.org/project/painted/) with a bespoke warm-dark theme: a
+  single **amber metric thread** that gilds every count and figure, a cream body
+  foreground (`palette.text`) for readable prose, and weight rather than colour as
+  the structural accent. Section headings, report surfaces, and entity listings all
+  draw from one shared vocabulary of atoms, so styling is consistent command to
+  command instead of hand-rolled per surface.
+- **Typographic transcript feed** — conversation bodies render as a typographic feed
+  rather than boxed panels: the thinking/tool border boxes are gone, replaced by
+  blank-line block breaks and a thinking label that pops, and **assistant and user
+  turns render as markdown**. A **grain gutter** runs a per-line rail down the left
+  encoding each line's kind (prose, code, thinking, tool I/O), and tool I/O wraps to
+  the content width so it aligns under the rail.
+- **Search surface on a relevance rail** — terminal `siftd search` is rebuilt on
+  painted spans with a relevance rank rail; the top hits are expanded to show their
+  full, word-wrapped, untruncated snippet while the tail collapses to one line each,
+  so the strongest matches are readable at a glance and the rest stay scannable.
+- **Live progress across long operations** — `siftd ingest` shows live progress bars,
+  `sync push`/`pull` show live transfer progress, and `doctor --fix` runs on the same
+  shared live region. All ride one generic `ProgressEvent`/`ProgressConsumer`
+  contract so every long operation reports progress the same way.
+- **Brand wordmark + DC-match help redesign** — `siftd --version` and the root
+  `--help` now carry a brand wordmark, and the whole help tree is rebuilt on one
+  unified grammar (root/branch/leaf) with a terse root, regrouped flags, and coloured
+  examples — rendered at the terminal's true colour depth.
+- **Config-swappable terminal theme** — `ui.theme` (`siftd` | `nord`) selects the
+  terminal colour theme; defaults to `siftd`. Terminal only — it does not affect the
+  web UI. Validated by `siftd doctor`.
+
+### Changed
+
+- **`siftd search --sort=time` now orders newest-first** — leads with the most recent
+  matching hit instead of the oldest, matching the intuitive reading of a time sort
+  and the browse list's default recency order; flows through CLI, REST, and the Find
+  UI. A script depending on the old oldest-first ordering will see different ordering
+  (flags/params unchanged).
+- **`GroupUsage.cost` is now `float | None`** — model-mix and workspace-mix rows with
+  no priced usage sum to `None` rather than a fabricated `$0`, carrying the same
+  NULL-means-unpriced invariant `ConversationDetail.cost` already uses. The dashboard
+  renders an em dash for unpriced rows, and coverage percentages floor instead of
+  rounding up (e.g. `99.8%`, never a false `100%`). This is a Python API type change
+  only — it does not appear on any JSON/REST wire.
+- **`TagInfo` gains `pinned` and `auto`** — the `TagInfo` dataclass (and thus the
+  `list_tags` JSON via `dataclasses.asdict`) gains two booleans: `pinned` (pinned for
+  the effective owner) and `auto` (name is in the closed auto-applied vocabulary —
+  `shell:*` categories plus `siftd:derivative`). Additive, defaults `False`.
+- **Dashboard reads through the stats cache** — repeat dashboard loads no longer
+  recompute the full-table stats sweep (~10s cold). The materialized stats cache
+  gains an owner dimension (so a tenant never reads cross-tenant totals) and an
+  opt-in DB-mtime freshness check (so a push-ingest or tag write invalidates it).
+  Repeat loads drop from ~10s to ~0.02s.
+- **`painted` dependency bumped to 0.4.0** — the terminal-UI refresh rides
+  [painted](https://pypi.org/project/painted/) 0.4.0 (from 0.1.7), adopted from PyPI,
+  for the theming, table width-budgeting, and live-progress substrate above.
+
+### Fixed
+
+- **`siftd serve` no longer freezes the event loop under slow reads** — every serve
+  read handler (JSON API and HTML UI) ran as an async coroutine doing synchronous
+  SQLite/filesystem work, so a single slow read stalled the whole server and
+  serialized concurrent requests. Read handlers now run in the threadpool
+  (`sync_to_thread`); write handlers that read the request body stay async.
+- **`/meta` model dropdown is fast** — the `/meta` endpoint called `get_stats()` —
+  full-table counts, token coverage, top tools — just to populate a model filter
+  dropdown (~17s cold on a large DB). It now uses a cheap `DISTINCT` projection (new
+  `api.stats.list_models()`), dropping cold `/meta` from 17.3s to 0.5s.
+- **Tool results stored under the `content` key now surface** — tool results saved as
+  `{"content": …}` (Claude Code and others) are now rendered. Previously shell/file-
+  read tools showed an empty result and the generic path truncated to a 200-char JSON
+  fallback regardless of the chars budget; file reads now surface their content,
+  non-string results render as clean JSON, and the last-resort fallback respects the
+  chars limit (full in the trace, capped in compact views). Shared with the CLI
+  presenters, so terminal `--tools` gains the same result visibility.
+- **Unpriced workspace cost shows an em dash, not a fabricated `$0.00`** — a workspace
+  with no priced usage renders its cost headline as `—` instead of a
+  self-contradicting `$0.00`. Cost is `None` end to end (the model-mix SQL no longer
+  COALESCEs cost to 0), so the headline can never disagree with the per-model rows
+  beneath it.
+- **Cache-bust served static assets** — siftd's own static assets (`siftd.css`,
+  `enhance.js`, `auth.js`) are versioned with a `?v=<mtime>` query so the browser
+  refetches when their bytes change — a CSS/JS edit lands on the next page load
+  instead of a stale cache surviving. Vendored, version-pinned assets are left alone.
+- **Stale per-owner stats cache under concurrent writes** — served-dashboard stats no
+  longer certify pre-write totals when a push lands mid-recompute. The cache
+  freshness stamp is captured *before* the multi-second stats sweep rather than at
+  write time, so a concurrent write leaves the stamp stale and the next read
+  recomputes instead of returning out-of-date per-owner figures.
+- **Cross-tenant tag-pin existence oracle** — pinning a tag now requires that the
+  owner actually uses it. Previously a tenant could pin another tenant's tag and
+  surface its name; the pin branch is now gated on owner participation (mirroring
+  workspace pins), while unpin stays unconditional and the unscoped see-everything
+  view keeps its existence-only guard.
+- **Unescaped id in the export not-found fragment** — the served `/export` not-found
+  fragment now HTML-escapes the reflected id, closing the lone escaping holdout among
+  the error fragments.
+- **Help renders at the terminal's true colour depth** — help previously rendered
+  through a buffer that reported no TTY, downsampling the warm palette to 16-colour
+  (and emitting malformed bare escapes that showed as terminal-default grey). Help
+  now defers to the terminal's real colour depth (`COLORTERM`/`TERM`), so it renders
+  in truecolour like every other surface.
+- **Non-ASCII content degrades instead of crashing** — content with non-ASCII bytes
+  on a strict-ASCII output stream now degrades gracefully rather than raising
+  `UnicodeEncodeError` mid-render.
+- **`NO_COLOR` honoured across all CLI output** — the `NO_COLOR` environment variable
+  is now respected at every `print_block` site, not just the table paths.
+- **`doctor --fix` survives a zero-column terminal** — the progress region floors its
+  width so a 0-column pty no longer crashes the fix run.
+
+### Internal
+
+- **Search post-processing recipe homed in `api.search.process_search_view`** — the
+  recipe was lifted out of the two CLI handlers into one place operating on
+  `SearchChunk` end-to-end with a single render-boundary conversion; both CLI paths
+  collapse onto it and the cli-private wrappers are deleted. No user-visible behavior
+  change on its own — the parity it enables surfaces through the serve and wire
+  changes above. This is the substrate the unified Find view and the
+  recipe-on-the-wire REST route consume.
+- **Golden adapter fixtures collapse to non-default fields** — adapter test golden
+  fixtures now encode only the fields a case exercises, omitting any field equal to
+  its dataclass default, so adding a new optional domain field no longer ripples a
+  mechanical edit across all 11 fixtures.
+
 ## [0.9.1] - 2026-06-11
 
 > Security-hardening release for `siftd serve`: findings F2–F9 from a serve-layer
