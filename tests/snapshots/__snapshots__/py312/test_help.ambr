@@ -1,10 +1,55 @@
 # serializer version: 1
+# name: TestHelpSnapshots.test_branch_subcommand_help[auth-status]
+  '''
+  siftd > auth > status
+  Show stored credential status
+  
+  usage: siftd auth status [-h]
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_branch_subcommand_help[db-path]
+  '''
+  siftd > db > path
+  Show XDG paths
+  
+  usage: siftd db path [-h]
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_branch_subcommand_help[db-stats]
+  '''
+  siftd > db > stats
+  Show database statistics
+  
+  usage: siftd db stats [-h] [--json]
+  
+  OPTIONS
+    --json  Output as JSON
+  
+  '''
+# ---
+# name: TestHelpSnapshots.test_branch_subcommand_help[db-workspaces]
+  '''
+  siftd > db > workspaces
+  List workspaces with conversation counts
+  
+  usage: siftd db workspaces [-h] [--json] [-n LIMIT]
+  
+  OPTIONS
+    --json             Output as JSON
+    -n, --limit LIMIT  Max workspaces (0 = all)
+  
+  '''
+# ---
 # name: TestHelpSnapshots.test_db_receive_help
   '''
+  siftd > db > receive
+  Receive a database from stdin and create-or-merge into the local database
+  
   usage: siftd db receive [-h] [--no-fts] [--stage] [--no-preflight] [--dry-run]
   
-  options:
-    -h, --help      show this help message and exit
+  OPTIONS
     --no-fts        Skip FTS5 index rebuild
     --stage         Stage payload in inbox for deferred merge (fast ACK)
     --no-preflight  Skip structural integrity checks on source database
@@ -21,49 +66,25 @@
 # ---
 # name: TestHelpSnapshots.test_db_restore_help
   '''
+  siftd > db > restore
+  Restore database from a backup file
+  
   usage: siftd db restore [-h] [--force] [--dry-run] input
   
-  positional arguments:
-    input       Backup file path
+  ARGUMENTS
+    input  Backup file path
   
-  options:
-    -h, --help  show this help message and exit
-    --force     Overwrite existing database
-    --dry-run   Preview restore without modifying database
+  OPTIONS
+    --force    Overwrite existing database
+    --dry-run  Preview restore without modifying database
   
   '''
 # ---
 # name: TestHelpSnapshots.test_root_help
   '''
+  siftd X.Y.Z - Aggregate and query LLM conversation logs
+  
   usage: siftd [-h] [--version] [--db PATH] <command> ...
-  
-  Aggregate and query LLM conversation logs
-  
-  positional arguments:
-    <command>
-      query     List and filter conversations by metadata
-      show      Read one conversation (or event) in detail
-      report    Run saved SQL reports (parameterized .sql queries)
-      search    Search conversations (auto-selects FTS5 or semantic based on
-                what's installed)
-      peek      Inspect live sessions from disk (bypasses SQLite)
-      tag       Manage tags: apply, remove, list, rename, delete
-      export    Export conversations as markdown or JSON
-      ingest    Ingest logs from all sources
-      doctor    Run health checks and maintenance
-      config    View or modify config settings
-      adapters  List discovered adapters
-      db        Database operations (info, schema-version, backup, restore,
-                vacuum, slice, merge, send, receive, remote, push, pull)
-      serve     Start the HTTP team sync server
-      auth      Acquire and manage a bearer token for a remote siftd serve
-      install   Install optional dependencies or bundled components
-  
-  options:
-    -h, --help  show this help message and exit
-    --version   show program's version number and exit
-    --db PATH   Database path (default:
-                ~/.local/share/siftd/siftd.db)
   
   lanes:
     EXPLORE   query · search · show · report · peek
@@ -80,36 +101,39 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[adapters]
   '''
+  siftd > adapters
+  List discovered adapters
+  
   usage: siftd adapters [-h] [--json]
   
-  options:
-    -h, --help  show this help message and exit
-    --json      Output as JSON
+  OPTIONS
+    --json  Output as JSON
   
   '''
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[backfill]
   '''
+  siftd > backfill
+  Backfill derived data from existing records
+  
   usage: siftd backfill [-h] [--models] [--pricing] [--shell-tags]
                         [--derivative-tags] [--filter-binary] [--git-remote]
                         [--dry-run]
   
-  options:
-    -h, --help         show this help message and exit
-    --models           Re-parse raw model names to canonical form (e.g. claude-
-                       haiku-4.5 -> claude-haiku-4-5)
-    --pricing          Reproject the pricing reference and rebuild the cost
-                       rollup (run after editing pricing.toml)
+  OPTIONS
+    --models           Re-parse raw model names to canonical form (e.g.
+                       claude-haiku-4.5 -> claude-haiku-4-5)
+    --pricing          Reproject the pricing reference and rebuild the cost rollup
+                       (run after editing pricing.toml)
     --shell-tags       Tag shell.execute calls with shell:* categories
     --derivative-tags  Tag conversations containing siftd search/query as
                        siftd:derivative
-    --filter-binary    Filter binary content (images, base64) from existing
-                       blobs
+    --filter-binary    Filter binary content (images, base64) from existing blobs
     --git-remote       Backfill git remote URLs for workspaces missing them (use
                        'siftd migrate --merge-workspaces' to also collapse
                        duplicates)
-    --dry-run          Preview changes without applying (use with --filter-
-                       binary or --git-remote)
+    --dry-run          Preview changes without applying (use with --filter-binary
+                       or --git-remote)
   
   examples:
     siftd backfill                    # backfill response attributes (cache tokens)
@@ -125,18 +149,21 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[config]
   '''
-  usage: siftd config [-h] [--json]
-                      [{get,set,path,append,remove,tag-prefixes}] [key] [value]
+  siftd > config
+  View or modify config settings
   
-  positional arguments:
-    {get,set,path,append,remove,tag-prefixes}
-                          Action to perform
-    key                   Config key (dotted path, e.g., serve.host)
-    value                 Value to use (for 'set', 'append', 'remove')
+  usage: siftd config [-h] [--json] [{get,set,path,append,remove,tag-prefixes}]
+                      [key] [value]
   
-  options:
-    -h, --help            show this help message and exit
-    --json                JSON output (currently used by 'tag-prefixes')
+  ARGUMENTS
+    {get,set,path,append,remove,tag-prefixes}  Action to perform
+    key                                        Config key (dotted path, e.g.,
+                                               serve.host)
+    value                                      Value to use (for 'set', 'append',
+                                               'remove')
+  
+  OPTIONS
+    --json  JSON output (currently used by 'tag-prefixes')
   
   examples:
     siftd config                        # show all config
@@ -152,17 +179,18 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[copy]
   '''
+  siftd > copy
+  Copy built-in resources for customization
+  
   usage: siftd copy [-h] [--all] [--force] {adapter,query,formatter} [name]
   
-  positional arguments:
-    {adapter,query,formatter}
-                          Resource type to copy
-    name                  Resource name
+  ARGUMENTS
+    {adapter,query,formatter}  Resource type to copy
+    name                       Resource name
   
-  options:
-    -h, --help            show this help message and exit
-    --all                 Copy all resources of this type
-    --force               Overwrite existing files
+  OPTIONS
+    --all    Copy all resources of this type
+    --force  Overwrite existing files
   
   examples:
     siftd copy adapter claude_code    # copy adapter to ~/.config/siftd/adapters/
@@ -174,36 +202,32 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[db]
   '''
-  usage: siftd db [-h]
-                  {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
-                  ...
+  siftd > db
+  Database operations (info, schema-version, backup, restore, vacuum, slice,
+  merge, send, receive, remote, push, pull)
   
-  positional arguments:
-    {info,schema-version,stats,workspaces,path,vacuum,backup,restore,slice,merge,receive,process,sync-status,send,remote,push,pull}
-      info                Show database file metadata and schema info
-      schema-version      Show migration triage info: current version, target,
-                          pending migrations
-      stats               Show database statistics
-      workspaces          List workspaces with conversation counts
-      path                Show XDG paths
-      vacuum              Compact database and optimize indexes
-      backup              Create a consistent online backup
-      restore             Restore database from a backup file
-      slice               Export filtered conversations into a standalone
-                          database
-      merge               Merge an external database (slice) into the main
-                          database
-      receive             Receive a database from stdin and create-or-merge into
-                          the local database
-      process             Merge staged inbox payloads into the database
-      sync-status         Report sync capabilities and inbox status (JSON)
-      send                Slice the database and write binary SQLite to stdout
-      remote              Manage sync remotes (add, list, remove)
-      push                Push conversations to a sync remote
-      pull                Pull conversations from a sync remote
+  usage: siftd db [-h] <command> ...
   
-  options:
-    -h, --help            show this help message and exit
+  COMMANDS
+    info            Show database file metadata and schema info
+    schema-version  Show migration triage info: current version, target, pending
+                    migrations
+    stats           Show database statistics
+    workspaces      List workspaces with conversation counts
+    path            Show XDG paths
+    vacuum          Compact database and optimize indexes
+    backup          Create a consistent online backup
+    restore         Restore database from a backup file
+    slice           Export filtered conversations into a standalone database
+    merge           Merge an external database (slice) into the main database
+    receive         Receive a database from stdin and create-or-merge into the
+                    local database
+    process         Merge staged inbox payloads into the database
+    sync-status     Report sync capabilities and inbox status (JSON)
+    send            Slice the database and write binary SQLite to stdout
+    remote          Manage sync remotes (add, list, remove)
+    push            Push conversations to a sync remote
+    pull            Pull conversations from a sync remote
   
   Container-level operations on the siftd database.
   
@@ -232,27 +256,29 @@
     siftd db receive < slice.db            # receive via stdin (SSH pipe)
     siftd db process                       # process staged inbox payloads
   
+  Run 'siftd db <command> --help' for details.
+  
   '''
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[doctor]
   '''
-  usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep]
-                      [--fast] [--blob-refcount] [--triggers] [--no-hints]
-                      [subcommand ...]
+  siftd > doctor
+  Run health checks and maintenance
   
-  positional arguments:
-    subcommand       list | run [checks...] | fix | <check-name>
+  usage: siftd doctor [-h] [--json] [--strict] [--pending-tags] [--deep] [--fast]
+                      [--blob-refcount] [--triggers] [--no-hints] [subcommand ...]
   
-  options:
-    -h, --help       show this help message and exit
+  ARGUMENTS
+    subcommand  list | run [checks...] | fix | <check-name>
+  
+  OPTIONS
     --json           Output as JSON
     --strict         Exit 1 on warnings (not just errors). Useful for CI.
     --pending-tags   Clean up stale sessions and orphaned pending tags (use with
                      'fix')
     --deep           Include deep integrity checks (slower).
     --fast           Run only fast checks (skips slow and deep).
-    --blob-refcount  Re-derive blob ref counts and sweep orphans (use with
-                     'fix').
+    --blob-refcount  Re-derive blob ref counts and sweep orphans (use with 'fix').
     --triggers       Recreate blob ref-count triggers (use with 'fix').
     --no-hints       Suppress hint-severity findings.
   
@@ -280,52 +306,47 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[export]
   '''
+  siftd > export
+  Export conversations as markdown or JSON
+  
   usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
                       [-l NAME] [--no-tag NAME] [--on KIND] [-s QUERY]
                       [--owner USER] [--json] [-F] [-b] [--thinking] [--tools]
-                      [--no-header] [-o FILE]
-                      [conversation_id]
+                      [--no-header] [-o FILE] [conversation_id]
   
-  positional arguments:
-    conversation_id       Conversation ID (prefix match)
+  ARGUMENTS
+    conversation_id  Conversation ID (prefix match)
   
-  options:
-    -h, --help            show this help message and exit
-    -n [N], --last [N], --latest [N]
-                          Export N most recent sessions (default: 1 if no ID
-                          given)
+  OPTIONS
+    -n, --last, --latest [N]  Export N most recent sessions (default: 1 if no ID
+                              given)
   
-  filtering:
-    -w SUBSTR, --workspace SUBSTR
-                          Filter by workspace path substring
-    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                          1w, yesterday, today)
-    --before DATE         Conversations started before this date (YYYY-MM-DD,
-                          7d, 1w, yesterday, today)
-    -s QUERY, --search QUERY
-                          Full-text search filter
-    --owner USER          Filter to conversations owned by this user
+  FILTERS
+    -w, --workspace SUBSTR  Filter by workspace path substring
+    --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    -l, --tag NAME          Filter by tag (repeatable, OR logic)
+    --no-tag NAME           Exclude conversations with this tag (NOT logic)
+    --on KIND               Scope tag filters to a specific target kind
+                            (repeatable). Default: match tags on any kind
+                            (conversation, prompt, response, tool_call, exchange).
+    -s, --search QUERY      Full-text search filter
+    --owner USER            Filter to conversations owned by this user
   
-  tag filtering:
-    -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
-    --on KIND             Scope tag filters to a specific target kind
-                          (repeatable). Default: match tags on any kind
-                          (conversation, prompt, response, tool_call, exchange).
+  OUTPUT
+    --json  Output as JSON
   
-  output:
-    --json                Output as JSON
+  VIEW
+    -F, --full   Full text (no truncation)
+    -b, --brief  Compact view (80 char truncation)
+    --thinking   Show model thinking/reasoning blocks
   
-  fidelity:
-    -F, --full            Full text (no truncation)
-    -b, --brief           Compact view (80 char truncation)
-    --thinking            Show model thinking/reasoning blocks
-  
-  export options:
-    --tools               Expand tool inputs and results (default: summary)
-    --no-header           Omit session metadata header
-    -o FILE, --output FILE
-                          Write to file instead of stdout
+  EXPORT OPTIONS
+    --tools            Expand tool inputs and results (default: summary)
+    --no-header        Omit session metadata header
+    -o, --output FILE  Write to file instead of stdout
   
   examples:
     siftd export --last                   # export most recent session
@@ -342,14 +363,16 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[id]
   '''
+  siftd > id
+  Classify a ULID and show its type and context
+  
   usage: siftd id [-h] [--json] ulid
   
-  positional arguments:
-    ulid        ULID or ULID prefix to classify
+  ARGUMENTS
+    ulid  ULID or ULID prefix to classify
   
-  options:
-    -h, --help  show this help message and exit
-    --json      Output as JSON
+  OPTIONS
+    --json  Output as JSON
   
   examples:
     siftd id 01HX4G7K9                   # identify a conversation or event
@@ -359,17 +382,18 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[ingest]
   '''
+  siftd > ingest
+  Ingest logs from all sources
+  
   usage: siftd ingest [-h] [-q | -v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
   
-  options:
-    -h, --help            show this help message and exit
-    -q, --quiet           Only show totals line
-    -v, --verbose         Show per-adapter skip breakdowns
-    -p DIR, --path DIR    Additional directories to scan (can be repeated)
-    -a NAME, --adapter NAME
-                          Only run specific adapter(s) (can be repeated)
-    --json                Output newline-delimited JSON events
-    --rebuild-fts         Rebuild FTS index from existing data (skips ingestion)
+  OPTIONS
+    -q, --quiet         Only show totals line
+    -v, --verbose       Show per-adapter skip breakdowns
+    -p, --path DIR      Additional directories to scan (can be repeated)
+    -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
+    --json              Output newline-delimited JSON events
+    --rebuild-fts       Rebuild FTS index from existing data (skips ingestion)
   
   examples:
     siftd ingest                      # ingest from all adapters
@@ -383,24 +407,23 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[install]
   '''
-  usage: siftd install [-h] [--dry-run] [--scope {user,project}]
-                       [--harness NAME]
+  siftd > install
+  Install optional dependencies or bundled components
+  
+  usage: siftd install [-h] [--dry-run] [--scope {user,project}] [--harness NAME]
                        [{embed,serve,skill,plugin}]
   
-  positional arguments:
-    {embed,serve,skill,plugin}
-                          Component to install (skill: search workflow, plugin:
-                          skill + hooks + commands, embed: semantic search,
-                          serve: HTTP server)
+  ARGUMENTS
+    {embed,serve,skill,plugin}  Component to install (skill: search workflow,
+                                plugin: skill + hooks + commands, embed: semantic
+                                search, serve: HTTP server)
   
-  options:
-    -h, --help            show this help message and exit
-    --dry-run             Show what would be run without executing
-    --scope {user,project}
-                          Install scope: user (home dir) or project (current
-                          dir)
-    --harness NAME        Target harness for skill install (claude_code,
-                          codex_cli, gemini_cli, pi_agent, copilot_cli, aider)
+  OPTIONS
+    --dry-run               Show what would be run without executing
+    --scope {user,project}  Install scope: user (home dir) or project (current
+                            dir)
+    --harness NAME          Target harness for skill install (claude_code,
+                            codex_cli, gemini_cli, pi_agent, copilot_cli, aider)
   
   examples:
     siftd install skill                         # Claude Code skill (default)
@@ -414,80 +437,54 @@
   
   '''
 # ---
-# name: TestHelpSnapshots.test_subcommand_help[path]
-  ''
-# ---
 # name: TestHelpSnapshots.test_subcommand_help[peek]
   '''
-  usage: siftd peek [-h] [--json] [-n LIMIT] [-F] [-b] [--chars N] [--thinking]
-                    [-w SUBSTR] [--branch SUBSTR] [--all] [--main-only]
-                    [--children ID] [--exchanges N] [--tools] [-f]
+  siftd > peek
+  Inspect live sessions from disk (bypasses SQLite)
+  
+  usage: siftd peek [-h] [-w SUBSTR] [--branch SUBSTR] [--all] [--main-only]
+                    [--children ID] [--json] [-n LIMIT] [-F] [-b] [--chars N]
+                    [--thinking] [--exchanges N] [--tools] [-f]
                     [--timeout SECONDS] [--tail] [--tail-lines N]
-                    [--last-response] [--last-prompt]
-                    [session_id]
+                    [--last-response] [--last-prompt] [session_id]
   
-  positional arguments:
-    session_id            Session ID prefix for detail view
+  ARGUMENTS
+    session_id  Session ID prefix for detail view
   
-  options:
-    -h, --help            show this help message and exit
+  FILTERS
+    -w, --workspace SUBSTR  Filter by workspace name substring
+    --branch SUBSTR         Filter by worktree branch substring
+    --all                   Include inactive sessions (not just last 2 hours)
+    --main-only             Only show main sessions (exclude subagents)
+    --children ID           Show only children of the specified parent session
   
-  output:
-    --json                Output as JSON
-    -n LIMIT, --limit LIMIT
-                          Number of results to show
+  OUTPUT
+    --json             Output as JSON
+    -n, --limit LIMIT  Number of results to show
   
-  fidelity:
-    -F, --full            Full text (no truncation)
-    -b, --brief           Compact view (80 char truncation)
-    --chars N             Truncate text at N characters
-    --thinking            Show model thinking/reasoning blocks
-  
-  session filters:
-    -w SUBSTR, --workspace SUBSTR
-                          Filter by workspace name substring
-    --branch SUBSTR       Filter by worktree branch substring
-    --all                 Include inactive sessions (not just last 2 hours)
-    --main-only           Only show main sessions (exclude subagents)
-    --children ID         Show only children of the specified parent session
-  
-  detail and follow:
-    --exchanges N         Detail mode: number of exchanges to show (default: 5)
-    --tools               Show tool inputs/results inline when available
-    -f, --follow          Follow a live session in real time (like tail -f)
-    --timeout SECONDS     Exit after SECONDS of wall-clock time (for use with
-                          --follow)
-    --tail                Raw JSONL tail (last 20 records)
-    --tail-lines N        Number of records for --tail (default: 20)
-    --last-response       Output only the last assistant response (raw text, no
-                          formatting)
-    --last-prompt         Output only the last user prompt (raw text, no
-                          formatting)
+  VIEW
+    -F, --full         Full text (no truncation)
+    -b, --brief        Compact view (80 char truncation)
+    --chars N          Truncate text at N characters
+    --thinking         Show model thinking/reasoning blocks
+    --exchanges N      Detail mode: number of exchanges to show (default: 5)
+    --tools            Show tool inputs/results inline when available
+    -f, --follow       Follow a live session in real time (like tail -f)
+    --timeout SECONDS  Exit after SECONDS of wall-clock time (for use with
+                       --follow)
+    --tail             Raw JSONL tail (last 20 records)
+    --tail-lines N     Number of records for --tail (default: 20)
+    --last-response    Output only the last assistant response (raw text, no
+                       formatting)
+    --last-prompt      Output only the last user prompt (raw text, no formatting)
   
   examples:
-    siftd peek                    # list latest 10 sessions
-    siftd peek -n 5               # list latest 5 sessions
-    siftd peek --all              # list all sessions (no time limit)
-    siftd peek --all -n 50        # list all, but only first 50
-    siftd peek -w myproject       # filter by workspace name
-    siftd peek c520f862           # detail view for session (last 5 exchanges)
-    siftd peek c520 --exchanges 10  # show last 10 exchanges
-    siftd peek c520 --thinking    # show thinking blocks inline
-    siftd peek c520 --tools       # show tool inputs/results inline when available
-    siftd peek c520 --brief       # compact detail view (80 char truncation)
-    siftd peek c520 -b            # short alias for --brief
-    siftd peek c520 --full        # show full text (no truncation)
-    siftd peek c520 -F            # short alias for --full
-    siftd peek c520 --tail        # raw JSONL tail
-    siftd peek c520 --tail --json # tail as JSON array
-    siftd peek --main-only        # exclude subagent sessions
-    siftd peek --children abc123  # show children of parent session
-    siftd peek --last-response    # output last assistant response (raw text)
-    siftd peek --last-prompt      # output last user prompt (raw text)
-    siftd peek c520 --last-response  # last response from specific session
-    siftd peek c520 --follow      # follow a live session in real time
-    siftd peek --follow            # follow most recent active session
-    siftd peek --follow --json    # follow as NDJSON (one object per line)
+    siftd peek                     # latest sessions (active, last 2h)
+    siftd peek --all -n 50         # all sessions, first 50
+    siftd peek -w myproject        # filter by workspace name
+    siftd peek c520f862            # detail view (last 5 exchanges)
+    siftd peek c520 --follow       # follow a live session in real time
+    siftd peek --last-response     # output the last assistant response (raw)
   
   NOTE: Session content may contain sensitive information (API keys, credentials, etc.).
   
@@ -495,6 +492,9 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[query]
   '''
+  siftd > query
+  List and filter conversations by metadata
+  
   usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                      [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                      [-t NAME] [--tool-tag NAME] [--owner USER] [--json]
@@ -502,112 +502,79 @@
                      [--tools [FILTER]] [--tool-chars N]
                      [--from-start | --from-end | --at-turn N | --around PHRASE]
                      [--exchanges N | --turns A:B] [-v] [--oldest] [--stats]
-                     [--summary] [--neighbors]
-                     [conversation_id]
+                     [--summary] [--neighbors] [conversation_id]
   
-  positional arguments:
-    conversation_id       Conversation ID for detail view
+  ARGUMENTS
+    conversation_id  Conversation ID for detail view
   
-  options:
-    -h, --help            show this help message and exit
+  FILTERS
+    -w, --workspace SUBSTR  Filter by workspace path substring
+    -m, --model NAME        Filter by model name
+    --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    -l, --tag NAME          Filter by tag (repeatable, OR logic)
+    --all-tags NAME         Require all specified tags (AND logic)
+    --no-tag NAME           Exclude conversations with this tag (NOT logic)
+    --on KIND               Scope tag filters to a specific target kind
+                            (repeatable). Default: match tags on any kind
+                            (conversation, prompt, response, tool_call, exchange).
+    -t, --tool NAME         Filter by canonical tool name (e.g. shell.execute)
+    --tool-tag NAME         Filter by tool call tag (e.g. shell:test)
+    --owner USER            Filter to conversations owned by this user
   
-  filtering:
-    -w SUBSTR, --workspace SUBSTR
-                          Filter by workspace path substring
-    -m NAME, --model NAME
-                          Filter by model name
-    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                          1w, yesterday, today)
-    --before DATE         Conversations started before this date (YYYY-MM-DD,
-                          7d, 1w, yesterday, today)
-    -t NAME, --tool NAME  Filter by canonical tool name (e.g. shell.execute)
-    --owner USER          Filter to conversations owned by this user
+  OUTPUT
+    --json             Output as JSON
+    -n, --limit LIMIT  Number of results to show
+    --no-hints         Suppress hint-severity caveat findings.
+    -v, --verbose      Full table with all columns
+    --oldest           Sort by oldest first (default: newest first)
+    --stats            Show summary totals after list
   
-  tag filtering:
-    -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
-    --all-tags NAME       Require all specified tags (AND logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
-    --on KIND             Scope tag filters to a specific target kind
-                          (repeatable). Default: match tags on any kind
-                          (conversation, prompt, response, tool_call, exchange).
-    --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
+  VIEW
+    -F, --full        Full text (no truncation)
+    -b, --brief       Compact view (80 char truncation)
+    --chars N         Truncate text at N characters
+    --thinking        Show model thinking/reasoning blocks
+    --tools [FILTER]  Show tool inputs/results (optional filter: tool name prefix
+                      or 'errors')
+    --tool-chars N    Truncate tool input/result at N characters (default: 120)
+    --from-start      Anchor at the start of the conversation (turn 0)
+    --from-end        Anchor at the end of the conversation (last turn)
+    --at-turn N       Anchor at the N-th turn (0-indexed)
+    --around PHRASE   Anchor at the first FTS5 phrase match in the conversation
+    --exchanges N     Number of turns to show from anchor (requires an anchor
+                      flag)
+    --turns A:B       Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires
+                      an anchor flag)
+    --summary         Summary only (metadata, no turns)
+    --neighbors       Include prev_event_id/next_event_id in event detail output
   
-  output:
-    --json                Output as JSON
-    -n LIMIT, --limit LIMIT
-                          Number of results to show
-    --no-hints            Suppress hint-severity caveat findings.
-  
-  fidelity:
-    -F, --full            Full text (no truncation)
-    -b, --brief           Compact view (80 char truncation)
-    --chars N             Truncate text at N characters
-    --thinking            Show model thinking/reasoning blocks
-    --tools [FILTER]      Show tool inputs/results (optional filter: tool name
-                          prefix or 'errors')
-    --tool-chars N        Truncate tool input/result at N characters (default:
-                          120)
-  
-  navigation:
-    --from-start          Anchor at the start of the conversation (turn 0)
-    --from-end            Anchor at the end of the conversation (last turn)
-    --at-turn N           Anchor at the N-th turn (0-indexed)
-    --around PHRASE       Anchor at the first FTS5 phrase match in the
-                          conversation
-    --exchanges N         Number of turns to show from anchor (requires an
-                          anchor flag)
-    --turns A:B           Turn range relative to anchor, e.g. -2:+2 or 5:10
-                          (requires an anchor flag)
-  
-  list options:
-    -v, --verbose         Full table with all columns
-    --oldest              Sort by oldest first (default: newest first)
-    --stats               Show summary totals after list
-  
-  detail view:
-    --summary             Summary only (metadata, no turns)
-    --neighbors           Include prev_event_id/next_event_id in event detail
-                          output
-  
-  List and filter conversations by metadata (workspace, model, date, tags).
-  To read one conversation: siftd show <id>.  For content search: siftd search <query>.
-  
-  Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
-  prefix works — e.g. 'siftd show 01ABCDEF01AB --summary' resolves without a full 26-character ID.
-  If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
+  IDs shown are 12-char prefixes; any unambiguous prefix works. Pass an
+  ID to read that conversation (alias for 'siftd show <id>'); content search is 'siftd search'.
   
   examples:
-    siftd query                                   # list recent conversations
-    siftd query -n 20                             # list 20 conversations
-    siftd query -w myproject                      # filter by workspace
-    siftd query -l research:auth                  # conversations tagged research:auth
-    siftd query -l research: -l useful:           # OR — any research: or useful: tag
-    siftd query --all-tags important --all-tags reviewed  # AND — must have both
-    siftd query -l research: --no-tag archived    # combine OR + NOT
-    siftd query --tool-tag shell:test             # conversations with test commands
-  
-  read one conversation (canonical verb is 'siftd show'; see 'siftd show --help'):
-    siftd show <id>                               # read a conversation in detail
-    siftd query <id>                              # alias for 'siftd show <id>'
-  
-  named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
-    siftd report                                 # list saved SQL reports
-    siftd report cost                            # run the 'cost' report
-    siftd report cost --var ws=proj              # run with variable substitution
+    siftd query                          # recent conversations
+    siftd query -n 20                    # the last 20
+    siftd query -w myproject             # filter by workspace
+    siftd query --since 7d               # started in the last 7 days
+    siftd query -l research:auth         # tagged research:auth
+    siftd query <id>                     # read one (alias for siftd show)
   
   '''
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[register]
   '''
+  siftd > register
+  Register an active session for live tagging
+  
   usage: siftd register [-h] --session ID --adapter NAME [--workspace PATH]
   
-  options:
-    -h, --help            show this help message and exit
-    --session ID, -s ID   Harness session ID
-    --adapter NAME, -a NAME
-                          Adapter name (e.g., claude_code)
-    --workspace PATH, -w PATH
-                          Workspace path (default: current directory)
+  OPTIONS
+    --session, -s ID      Harness session ID
+    --adapter, -a NAME    Adapter name (e.g., claude_code)
+    --workspace, -w PATH  Workspace path (default: current directory)
   
   examples:
     siftd register --session abc123 --adapter claude_code
@@ -617,13 +584,15 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[report]
   '''
+  siftd > report
+  Run saved SQL reports (parameterized .sql queries)
+  
   usage: siftd report [-h] [--var KEY=VALUE] [name]
   
-  positional arguments:
-    name             Report name (omit to list available reports)
+  ARGUMENTS
+    name  Report name (omit to list available reports)
   
-  options:
-    -h, --help       show this help message and exit
+  OPTIONS
     --var KEY=VALUE  Substitute $KEY with VALUE in the report SQL
   
   Run saved SQL reports. Built-in reports work out of the box;
@@ -643,178 +612,116 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[search]
   '''
+  siftd > search
+  Search conversations (auto-selects FTS5 or semantic based on what's installed)
+  
   usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                       [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                       [-t NAME] [--tool-tag NAME] [--owner USER] [--json]
                       [-n LIMIT] [-F] [-v] [--format NAME] [--around PHRASE]
                       [--turns A:B] [--select SELECTOR] [--sort ORDER]
-                      [--view VIEW] [--refs [FILES]] [--mode ENGINE]
-                      [--recall N] [--threshold SCORE] [--raw-fts]
-                      [--no-diversity] [--lambda FLOAT] [--recency]
-                      [--recency-half-life DAYS] [--recency-max-boost MULT]
-                      [--no-exclude-active] [--include-derivative] [--index]
-                      [--rebuild] [--backend NAME] [--embed-db PATH]
-                      [query ...]
+                      [--view VIEW] [--refs [FILES]] [--mode ENGINE] [--recall N]
+                      [--threshold SCORE] [--raw-fts] [--no-diversity]
+                      [--lambda FLOAT] [--recency] [--recency-half-life DAYS]
+                      [--recency-max-boost MULT] [--no-exclude-active]
+                      [--include-derivative] [--index] [--rebuild]
+                      [--backend NAME] [--embed-db PATH] [query ...]
   
-  positional arguments:
-    query                 Natural language search query
+  ARGUMENTS
+    query  Natural language search query
   
-  options:
-    -h, --help            show this help message and exit
+  FILTERS
+    -w, --workspace SUBSTR  Filter by workspace path substring
+    -m, --model NAME        Filter by model name
+    --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    -l, --tag NAME          Filter by tag (repeatable, OR logic)
+    --all-tags NAME         Require all specified tags (AND logic)
+    --no-tag NAME           Exclude conversations with this tag (NOT logic)
+    --on KIND               Scope tag filters to a specific target kind
+                            (repeatable). Default: match tags on any kind
+                            (conversation, prompt, response, tool_call, exchange).
+    -t, --tool NAME         Filter by canonical tool name (e.g. shell.execute)
+    --tool-tag NAME         Filter by tool call tag (e.g. shell:test)
+    --owner USER            Filter to conversations owned by this user
   
-  filtering:
-    -w SUBSTR, --workspace SUBSTR
-                          Filter by workspace path substring
-    -m NAME, --model NAME
-                          Filter by model name
-    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                          1w, yesterday, today)
-    --before DATE         Conversations started before this date (YYYY-MM-DD,
-                          7d, 1w, yesterday, today)
-    -t NAME, --tool NAME  Filter by canonical tool name (e.g. shell.execute)
-    --owner USER          Filter to conversations owned by this user
+  OUTPUT
+    --json             Output as JSON
+    -n, --limit LIMIT  Number of results to show (default: 10)
+    -v, --verbose      Show full chunk text
+    --format NAME      Use named formatter (built-in or drop-in plugin)
   
-  tag filtering:
-    -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
-    --all-tags NAME       Require all specified tags (AND logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
-    --on KIND             Scope tag filters to a specific target kind
-                          (repeatable). Default: match tags on any kind
-                          (conversation, prompt, response, tool_call, exchange).
-    --tool-tag NAME       Filter by tool call tag (e.g. shell:test)
+  VIEW
+    -F, --full         Full text (no truncation)
+    --around PHRASE    Anchor at the first FTS5 phrase match in the conversation
+    --turns A:B        Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires
+                       an anchor flag)
+    --select SELECTOR  Result selector: all (default) or first (chronologically
+                       earliest match above threshold)
+    --sort ORDER       Sort order: score (default, relevance) or time
+                       (chronological). Incompatible with
+                       --mode=thread/conversations.
+    --view VIEW        Result shape: chunks (default), thread (narrative
+                       drill-down), or conversations (aggregated ranking)
+    --refs [FILES]     Show file references; optionally filter by comma-separated
+                       basenames
   
-  output:
-    --json                Output as JSON
-    -n LIMIT, --limit LIMIT
-                          Number of results to show (default: 10)
+  SEARCH
+    --mode ENGINE      Search engine: auto (default), fts, semantic, or hybrid.
+                       auto picks hybrid when embeddings are installed, else fts.
+    --recall N         FTS5 conversation recall limit (default: 80)
+    --threshold SCORE  Filter results below this score (e.g., 0.7)
+    --raw-fts          Pass query directly to FTS5 without tokenization (advanced:
+                       skips OR fallback)
   
-  fidelity:
-    -F, --full            Full text (no truncation)
+  RANKING
+    --no-diversity            Disable MMR reranking for deterministic pure
+                              relevance order
+    --lambda FLOAT            MMR lambda: 1.0=relevance, 0.0=diversity (default:
+                              0.7)
+    --recency                 Boost recent results (exponential decay, mild 15%
+                              boost)
+    --recency-half-life DAYS  Days until recency boost decays to half (default:
+                              30)
+    --recency-max-boost MULT  Max boost multiplier for today's results (default:
+                              1.15)
+    --no-exclude-active       Include results from active sessions (excluded by
+                              default)
+    --include-derivative      Include derivative conversations (siftd search/query
+                              results)
   
-  search display:
-    -v, --verbose         Show full chunk text
-    --format NAME         Use named formatter (built-in or drop-in plugin)
+  INDEX
+    --index          Build/update embeddings index
+    --rebuild        Rebuild embeddings index from scratch
+    --backend NAME   Embedding backend (ollama, fastembed)
+    --embed-db PATH  Alternate embeddings database path
   
-  navigation:
-    --around PHRASE       Anchor at the first FTS5 phrase match in the
-                          conversation
-    --turns A:B           Turn range relative to anchor, e.g. -2:+2 or 5:10
-                          (requires an anchor flag)
-  
-  result modes:
-    --select SELECTOR     Result selector: all (default) or first
-                          (chronologically earliest match above threshold)
-    --sort ORDER          Sort order: score (default, relevance) or time
-                          (chronological). Incompatible with
-                          --mode=thread/conversations.
-    --view VIEW           Result shape: chunks (default), thread (narrative
-                          drill-down), or conversations (aggregated ranking)
-    --refs [FILES]        Show file references; optionally filter by comma-
-                          separated basenames
-  
-  search engine:
-    --mode ENGINE         Search engine: auto (default), fts, semantic, or
-                          hybrid. auto picks hybrid when embeddings are
-                          installed, else fts.
-  
-  search tuning:
-    --recall N            FTS5 conversation recall limit (default: 80)
-    --threshold SCORE     Filter results below this score (e.g., 0.7)
-    --raw-fts             Pass query directly to FTS5 without tokenization
-                          (advanced: skips OR fallback)
-  
-  diversity:
-    --no-diversity        Disable MMR reranking for deterministic pure relevance
-                          order
-    --lambda FLOAT        MMR lambda: 1.0=relevance, 0.0=diversity (default:
-                          0.7)
-  
-  recency:
-    --recency             Boost recent results (exponential decay, mild 15%
-                          boost)
-    --recency-half-life DAYS
-                          Days until recency boost decays to half (default: 30)
-    --recency-max-boost MULT
-                          Max boost multiplier for today's results (default:
-                          1.15)
-  
-  scope:
-    --no-exclude-active   Include results from active sessions (excluded by
-                          default)
-    --include-derivative  Include derivative conversations (siftd search/query
-                          results)
-  
-  index management:
-    --index               Build/update embeddings index
-    --rebuild             Rebuild embeddings index from scratch
-    --backend NAME        Embedding backend (ollama, fastembed)
-    --embed-db PATH       Alternate embeddings database path
-  
-  Unified search: auto-selects the best available search mechanism.
-  - With embeddings installed: hybrid search (FTS5 recall + semantic reranking)
-  - Without embeddings: FTS5 keyword search (install embeddings: siftd install embed)
+  Auto-selects the engine: hybrid (FTS5 + semantic) when embeddings are
+  installed, else FTS5 keyword search. Install embeddings: siftd install embed
   
   examples:
-    # search (auto-selects best available mode)
-    siftd search "error handling"                        # hybrid or FTS5 (auto)
-    siftd search -w myproject "auth flow"                # filter by workspace
-    siftd search --since 2024-06 "testing"               # filter by date
+    siftd search "error handling"                   # auto (hybrid or FTS5)
+    siftd search -w myproject "auth flow"           # filter by workspace
+    siftd search --since 7d "testing"               # filter by date
+    siftd search "design decision" --view thread    # narrative: top conversations
+    siftd search "why X" --around why --turns -2:+2 # window around a phrase match
+    siftd search -l research: "auth flow"           # search within tagged conversations
   
-    # explicit engine selection
-    siftd search --mode fts "error handling"             # force FTS5 keyword search
-    siftd search --mode semantic "auth flow"             # force semantic search
-  
-    # refine
-    siftd search "design decision" --view=thread         # narrative: top conversations expanded
-    siftd search "why we chose X" --around "why" --turns -2:+2  # ±2 turns around phrase
-    siftd search "event sourcing" --view=conversations   # rank whole conversations, not chunks
-    siftd search "when first discussed Y" --select=first # earliest match above threshold
-    siftd search --threshold 0.7 "architecture"          # only high-relevance results
-  
-    # inspect
-    siftd search -v "chunking"                           # full chunk text
-    siftd search --full "chunking"                       # complete prompt+response exchange
-    siftd search --refs "authelia"                       # file references + content
-    siftd search --refs HANDOFF.md "setup"               # filter refs to specific file
-  
-    # filter by tags
-    siftd search -l research:auth "auth flow"            # search within tagged conversations
-    siftd search -l research: -l useful: "pattern"       # OR — any research: or useful: tag
-    siftd search --all-tags important --all-tags reviewed "design"  # AND — must have both
-    siftd search -l research: --no-tag archived "auth"   # combine OR + NOT
-  
-    # filter by tool use
-    siftd search --tool shell.execute "test failure"     # only conversations that ran a shell
-    siftd search --tool-tag shell:vcs "merge conflict"   # conversations with a git-tagged tool call
-  
-    # save useful results for future retrieval
-    siftd tag 01HX... research:auth                   # bookmark a conversation
-    siftd tag --last research:architecture            # tag most recent conversation
-    siftd query -l research:auth                      # retrieve tagged conversations
-  
-    # tuning
-    siftd search --recall 200 "error"                    # widen FTS5 candidate pool
-    siftd search --sort=time "chunking"                   # sort by time instead of score
-  
-    # diversity vs relevance (MMR reranking)
-    siftd search --no-diversity "chunking"               # pure relevance order (deterministic)
-    siftd search --lambda 0.5 "design"                   # more diverse results (less redundancy)
-    siftd search --json "auth" | jq '.results[0].breakdown'  # score component breakdown
-    siftd search --json "auth" | jq '.results[0].turn_index'  # turn index for drill-in
-  
-  note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N instead.
-    Example: --context 2 → --around "phrase" --turns -2:+2
+  (--context was removed; use --around PHRASE --turns -N:+N)
   
   '''
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[session-id]
   '''
+  siftd > session-id
+  Print the session ID for the current workspace
+  
   usage: siftd session-id [-h] [--workspace PATH]
   
-  options:
-    -h, --help            show this help message and exit
-    --workspace PATH, -w PATH
-                          Workspace path (default: current directory)
+  OPTIONS
+    --workspace, -w PATH  Workspace path (default: current directory)
   
   examples:
     siftd session-id                    # print session ID for current directory
@@ -826,132 +733,111 @@
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[show]
   '''
+  siftd > show
+  Read one conversation (or event) in detail
+  
   usage: siftd show [-h] [--json] [-F] [-b] [--chars N] [--thinking]
                     [--tools [FILTER]] [--tool-chars N]
                     [--from-start | --from-end | --at-turn N | --around PHRASE]
                     [--exchanges N | --turns A:B] [--summary] [--neighbors]
                     conversation_id
   
-  positional arguments:
-    conversation_id   Conversation or event ID (any unambiguous prefix)
+  ARGUMENTS
+    conversation_id  Conversation or event ID (any unambiguous prefix)
   
-  options:
-    -h, --help        show this help message and exit
+  OUTPUT
+    --json  Output as JSON
   
-  output:
-    --json            Output as JSON
-  
-  fidelity:
+  VIEW
     -F, --full        Full text (no truncation)
     -b, --brief       Compact view (80 char truncation)
     --chars N         Truncate text at N characters
     --thinking        Show model thinking/reasoning blocks
-    --tools [FILTER]  Show tool inputs/results (optional filter: tool name
-                      prefix or 'errors')
+    --tools [FILTER]  Show tool inputs/results (optional filter: tool name prefix
+                      or 'errors')
     --tool-chars N    Truncate tool input/result at N characters (default: 120)
-  
-  navigation:
     --from-start      Anchor at the start of the conversation (turn 0)
     --from-end        Anchor at the end of the conversation (last turn)
     --at-turn N       Anchor at the N-th turn (0-indexed)
     --around PHRASE   Anchor at the first FTS5 phrase match in the conversation
     --exchanges N     Number of turns to show from anchor (requires an anchor
                       flag)
-    --turns A:B       Turn range relative to anchor, e.g. -2:+2 or 5:10
-                      (requires an anchor flag)
-  
-  detail view:
+    --turns A:B       Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires
+                      an anchor flag)
     --summary         Summary only (metadata, no turns)
     --neighbors       Include prev_event_id/next_event_id in event detail output
   
-  Read a single conversation (or event) by ID, with navigation.
-  
-  IDs may be any unambiguous prefix — the 12-char display IDs from `siftd query`
-  and `siftd search` resolve directly. Use `siftd query` to browse by metadata or
-  `siftd search <text>` to find conversations by content, then `show` to read one.
-  
-  Navigation: --exchanges and --turns require an anchor flag. No anchor shows the
-  whole conversation.
+  IDs may be any unambiguous prefix. Anchors (--from-start / --from-end /
+  --at-turn / --around) pick a position; --exchanges / --turns set the window around it.
+  No anchor shows the whole conversation.
   
   examples:
-    siftd show 01HX4G7K                              # full conversation
-    siftd show 01HX4G7K --summary                    # metadata only, no turns
-    siftd show 01HX4G7K --from-start --exchanges 3   # first 3 turns
-    siftd show 01HX4G7K --from-end --exchanges 5     # last 5 turns
-    siftd show 01HX4G7K --at-turn 4                  # show only turn 4
-    siftd show 01HX4G7K --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
-    siftd show 01HX4G7K --around "error" --turns=-2:+2   # context around a phrase
-    siftd show 01HX4G7K --brief                      # compact view (80 char truncation)
-    siftd show 01HX4G7K --full                       # full text, no truncation
+    siftd show 01HX4G7K                            # full conversation
+    siftd show 01HX4G7K --summary                  # metadata only, no turns
+    siftd show 01HX4G7K --from-end --exchanges 5   # last 5 turns
+    siftd show 01HX4G7K --at-turn 4 --turns -1:+2  # turns 3-6, around turn 4
+    siftd show 01HX4G7K --around error --turns -2:+2  # window around a phrase
   
   '''
-# ---
-# name: TestHelpSnapshots.test_subcommand_help[status]
-  ''
 # ---
 # name: TestHelpSnapshots.test_subcommand_help[tag]
   '''
-  usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
-                   [--exchange INDEX | --last-prompt | --last-response | --last-exchange | --last-tool-call]
-                   [--prefix PREFIX] [--limit LIMIT] [--force] [--by-workspace]
-                   [--json] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
-                   [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
-                   [--owner USER]
-                   [positional ...]
-  
+  siftd > tag
   Apply, remove, list, rename, or delete tags.
   
-  positional arguments:
-    positional            [entity_type] entity_id tag [tag2 ...] | apply |
-                          remove | list | rename | delete
+  usage: siftd tag [-h] [-n [N]] [-r] [--session ID] [--current]
+                   [--exchange INDEX | --last-prompt | --last-response |
+                   --last-exchange | --last-tool-call] [--prefix PREFIX]
+                   [--limit LIMIT] [--force] [--by-workspace] [--json] [-w SUBSTR]
+                   [-m NAME] [--since DATE] [--before DATE] [-l NAME]
+                   [--all-tags NAME] [--no-tag NAME] [--on KIND] [--owner USER]
+                   [positional ...]
   
-  options:
-    -h, --help            show this help message and exit
-    -n [N], --last [N], --latest [N]
-                          Tag N most recent conversations (default: 1 if flag
-                          used without N)
-    -r, --remove          Remove tag instead of applying
-    --session ID          Queue tag for a live session (applied at ingest)
-    --current             Auto-detect current session (falls back to --last)
-    --exchange INDEX      Tag specific exchange (1-based, requires --session)
-    --last-prompt         Tag the last prompt of the session (requires
-                          --session/--current)
-    --last-response       Tag the last response of the session (requires
-                          --session/--current)
-    --last-exchange       Tag the last exchange of the session (requires
-                          --session/--current)
-    --last-tool-call      Tag the last tool_call of the session (requires
-                          --session/--current)
-    --prefix PREFIX       Filter tag list by prefix (use with 'tag list')
-    --limit LIMIT         Result cap (drill-down: default 10, --by-workspace:
-                          default 20 workspaces)
-    --force               Force delete even if tag has associations (use with
-                          'tag delete')
-    --by-workspace        Group tag counts by workspace (use with 'tag list').
-                          Counts only event-backed tags (tool_call, prompt,
-                          response, exchange); conversation-level tags are
-                          excluded. Composes with --on, --prefix, -w, --owner,
-                          --all-tags, --limit only.
-    --json                Output as JSON (use with 'tag list --by-workspace')
+  ARGUMENTS
+    positional  [entity_type] entity_id tag [tag2 ...] | apply | remove | list |
+                rename | delete
   
-  filtering:
-    -w SUBSTR, --workspace SUBSTR
-                          Filter by workspace path substring
-    -m NAME, --model NAME
-                          Filter by model name
-    --since DATE          Conversations started after this date (YYYY-MM-DD, 7d,
-                          1w, yesterday, today)
-    --before DATE         Conversations started before this date (YYYY-MM-DD,
-                          7d, 1w, yesterday, today)
-    --owner USER          Filter to conversations owned by this user
+  OPTIONS
+    -n, --last, --latest [N]  Tag N most recent conversations (default: 1 if flag
+                              used without N)
+    -r, --remove              Remove tag instead of applying
+    --session ID              Queue tag for a live session (applied at ingest)
+    --current                 Auto-detect current session (falls back to --last)
+    --exchange INDEX          Tag specific exchange (1-based, requires --session)
+    --last-prompt             Tag the last prompt of the session (requires
+                              --session/--current)
+    --last-response           Tag the last response of the session (requires
+                              --session/--current)
+    --last-exchange           Tag the last exchange of the session (requires
+                              --session/--current)
+    --last-tool-call          Tag the last tool_call of the session (requires
+                              --session/--current)
+    --prefix PREFIX           Filter tag list by prefix (use with 'tag list')
+    --limit LIMIT             Result cap (drill-down: default 10, --by-workspace:
+                              default 20 workspaces)
+    --force                   Force delete even if tag has associations (use with
+                              'tag delete')
+    --by-workspace            Group tag counts by workspace (use with 'tag list').
+                              Counts only event-backed tags (tool_call, prompt,
+                              response, exchange); conversation-level tags are
+                              excluded. Composes with --on, --prefix, -w, --owner,
+                              --all-tags, --limit only.
+    --json                    Output as JSON (use with 'tag list --by-workspace')
   
-  tag filtering:
-    -l NAME, --tag NAME   Filter by tag (repeatable, OR logic)
-    --all-tags NAME       Require all specified tags (AND logic)
-    --no-tag NAME         Exclude conversations with this tag (NOT logic)
-    --on KIND             Scope tag filters to a specific target kind
-                          (repeatable). Default: match tags on any kind
-                          (conversation, prompt, response, tool_call, exchange).
+  FILTERS
+    -w, --workspace SUBSTR  Filter by workspace path substring
+    -m, --model NAME        Filter by model name
+    --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
+                            yesterday, today)
+    -l, --tag NAME          Filter by tag (repeatable, OR logic)
+    --all-tags NAME         Require all specified tags (AND logic)
+    --no-tag NAME           Exclude conversations with this tag (NOT logic)
+    --on KIND               Scope tag filters to a specific target kind
+                            (repeatable). Default: match tags on any kind
+                            (conversation, prompt, response, tool_call, exchange).
+    --owner USER            Filter to conversations owned by this user
   
   examples:
     siftd tag 01HX... important              # tag conversation (default)
@@ -983,7 +869,4 @@
     siftd tag --session abc123 --exchange 5 key    # queue tag for exchange 5
   
   '''
-# ---
-# name: TestHelpSnapshots.test_subcommand_help[workspaces]
-  ''
 # ---

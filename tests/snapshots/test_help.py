@@ -56,14 +56,24 @@ def run_siftd(*args: str) -> str:
         timeout=30,
         env=env,
     )
-    return result.stdout
+    # Guard against an argparse error (exit 2, message on stderr, empty stdout)
+    # masquerading as a passing empty snapshot — every --help here must succeed.
+    assert result.returncode == 0, (
+        f"`siftd {' '.join(args)}` exited {result.returncode}: {result.stderr.strip()}"
+    )
+    # The brand masthead bakes the running version into root --help; normalize it
+    # so a version bump doesn't churn the snapshot (this pins help STRUCTURE, not
+    # the version number — the same reason HOME is normalized to ~).
+    from siftd.cli._common import _get_version
+
+    return result.stdout.replace(f"siftd {_get_version()}", "siftd X.Y.Z")
 
 
-# All subcommands to test
+# All top-level subcommands to test. (path/status/workspaces are NOT here — they
+# are db/auth sub-verbs; running them at top level is an argparse error, which the
+# run_siftd returncode guard now rejects. Branch sub-verbs are covered below.)
 SUBCOMMANDS = [
     "ingest",
-    "status",
-    "workspaces",
     "search",
     "install",
     "register",
@@ -74,7 +84,6 @@ SUBCOMMANDS = [
     "show",
     "report",
     "backfill",
-    "path",
     "config",
     "adapters",
     "copy",
@@ -82,6 +91,16 @@ SUBCOMMANDS = [
     "peek",
     "export",
     "db",
+]
+
+# A sampling of branch sub-verbs — exercises the help grammar one level down
+# (breadcrumb path, the leaf's own groups) the way the formerly-dead top-level
+# path/status/workspaces entries never did.
+BRANCH_SUBCOMMANDS = [
+    ("db", "path"),
+    ("db", "stats"),
+    ("db", "workspaces"),
+    ("auth", "status"),
 ]
 
 
@@ -98,6 +117,13 @@ class TestHelpSnapshots:
     def test_subcommand_help(self, subcommand, snapshot):
         """Test each subcommand's --help output."""
         stdout = run_siftd(subcommand, "--help")
+        normalized = stdout.replace(HOME, "~")
+        assert normalized == snapshot
+
+    @pytest.mark.parametrize("parent,sub", BRANCH_SUBCOMMANDS)
+    def test_branch_subcommand_help(self, parent, sub, snapshot):
+        """Branch sub-verb --help renders through the same grammar one level down."""
+        stdout = run_siftd(parent, sub, "--help")
         normalized = stdout.replace(HOME, "~")
         assert normalized == snapshot
 

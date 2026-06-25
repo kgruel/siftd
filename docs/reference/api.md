@@ -161,6 +161,7 @@ Session metadata for list display.
 | `preview_available` | `bool` |  |
 | `adapter_name` | `str \| None` |  |
 | `parent_session_id` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 
 ### Functions
 
@@ -245,6 +246,9 @@ Summary row for conversation listing.
 | `cost` | `float \| None` |  |
 | `tags` | `list[str]` |  |
 | `owner` | `str \| None` |  |
+| `external_id` | `str \| None` |  |
+| `parent_external_id` | `str \| None` |  |
+| `agent_type` | `str \| None` |  |
 
 ### ConversationDetail
 
@@ -260,6 +264,7 @@ Full conversation with timeline.
 | `total_output_tokens` | `int` |  |
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
+| `cost` | `float \| None` |  |
 
 ### Exchange
 
@@ -351,7 +356,7 @@ def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | No
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ...) -> list[ConversationSummary]
+def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ..., workspace: str | None = ..., workspace_id: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ..., group_subagents: bool = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -359,6 +364,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ...
 - `fidelity`: Cross-stage rendering contract carried through to the renderer, which emits the cost column at ``depth >= 3``. Cost itself is no longer recomputed here: the fast path reads the precomputed ``conversation_stats.cost`` (the rollup's single canonical definition), and the no-stats fallback emits NULL cost rather than re-deriving it (see ``_list_conversations_impl``).
 - `db_path`: Path to database. Uses default if not specified.
 - `workspace`: Filter by workspace path substring.
+- `workspace_id`: Filter by exact workspace ULID (workspaces.id); distinct from ``workspace`` path/remote substring.
 - `model`: Filter by model name substring.
 - `since`: Filter conversations started after this date (ISO format).
 - `before`: Filter conversations started before this date.
@@ -371,6 +377,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ...
 - `tool_tag`: Filter by tool call tag (e.g., 'shell:test').
 - `n`: Maximum results to return (0 = unlimited).
 - `oldest`: Sort by oldest first instead of newest.
+- `owner`: Filter to conversations owned by this user_id.
 
 **Returns:** List of ConversationSummary objects.
 
@@ -437,13 +444,13 @@ def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, own
 
 ### list_query_files
 
-List available user-defined SQL query files.
+List available SQL reports — packaged builtins plus user overrides.
 
 ```python
 def list_query_files() -> list[QueryFile]
 ```
 
-**Returns:** List of QueryFile with name, path, and required variables.
+**Returns:** List of QueryFile (sorted by name) with name, path, and required vars. ``path`` is None for a builtin, or the user file's path for an override.
 
 ### run_query_file
 
@@ -470,12 +477,12 @@ def run_query_file(name: str, variables: dict[str, str] | None = ..., *, db_path
 
 ### QueryFile
 
-Metadata about a user-defined SQL query file.
+Metadata about an available SQL report (builtin or user-defined).
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` | Query file stem (without .sql extension). |
-| `path` | `Path` | Full path to the .sql file. |
+| `path` | `pathlib.Path \| None` | Path to the .sql file, or None for a packaged builtin. |
 | `template_vars` | `list[str]` | Variables using $var syntax (text substitution). |
 | `param_vars` | `list[str]` | Variables using :var syntax (parameterized, safe). |
 
@@ -656,6 +663,19 @@ Canonical mutable search chunk result.
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
 
+### SearchView
+
+Post-processed, render-ready search output — the recipe's single product.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `results` | `list[dict[str, Any]]` |  |
+| `view` | `str` |  |
+| `tier1` | `list[dict[str, Any]] \| None` |  |
+| `tier2` | `list[dict[str, Any]] \| None` |  |
+| `n_skipped` | `int` |  |
+| `empty_reason` | `str \| None` |  |
+
 ### ScoreBreakdown
 
 Detailed score components for explainability.
@@ -708,7 +728,23 @@ Conversation-level aggregate derived from chunk results.
 Canonical entry point for retrieving search chunks.
 
 ```python
-def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
+def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
+```
+
+### search_view
+
+The whole search Operation: engine retrieval + the post-processing recipe.
+
+```python
+def search_view(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ..., view: str = ..., sort: str = ..., select: str = ..., threshold: float | None = ..., full: bool = ..., around: str | None = ..., turns: str | None = ...) -> SearchView
+```
+
+### parse_turns_range
+
+Parse a turns-range string like ``-2:+2`` or ``5:10`` into (start, end).
+
+```python
+def parse_turns_range(s: str) -> tuple[int, int]
 ```
 
 ### hybrid_search
@@ -716,7 +752,7 @@ def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ...,
 Unified search pipeline — FTS5, semantic, or hybrid.
 
 ```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
+def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
 ```
 
 **Parameters:**
@@ -736,6 +772,14 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ...,
 - `FileNotFoundError`: If database doesn't exist.
 - `ValueError`: If query is empty or search fails.
 - `RuntimeError`: If embedding backend unavailable.
+
+### process_search_view
+
+Run the shared search post-processing recipe over engine chunks.
+
+```python
+def process_search_view(chunks: list[SearchChunk], conn: Connection, *, view: str = ..., sort: str = ..., select: str = ..., threshold: float | None = ..., limit: int = ..., full: bool = ..., around: str | None = ..., turns_range: tuple[int, int] | None = ..., db_path: pathlib.Path | None = ...) -> SearchView
+```
 
 ### aggregate_by_conversation
 
@@ -769,7 +813,7 @@ def filter_by_threshold(results: list[siftd.domain.search_types.SearchChunk] | l
 
 ### sort_chunks_by_time
 
-Sort chunks by date then chunk_id (legacy CLI behavior).
+Sort chunks newest-first by date then chunk_id.
 
 ```python
 def sort_chunks_by_time(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]]) -> list[SearchChunk]
@@ -805,6 +849,14 @@ Attach +/-N context exchanges around each chunk's source prompts.
 
 ```python
 def enrich_context_window(conn: Connection, results: list[SearchChunk], n: int) -> None
+```
+
+### enrich_around_window
+
+Enrich search chunks with context window anchored on FTS5 phrase match.
+
+```python
+def enrich_around_window(conn: Connection, chunks: list, phrase: str, window_start: int, window_end: int) -> tuple[list, int]
 ```
 
 ### embeddings_available
@@ -897,7 +949,7 @@ Token/cost breakdown for a single group (model or workspace).
 | `conversations` | `int` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
-| `cost` | `float` |  |
+| `cost` | `float \| None` |  |
 
 ### TableCounts
 
@@ -935,6 +987,8 @@ Aggregated token/cost stats.
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
 | `total_cost` | `float` |  |
+| `total_cache_read_tokens` | `int` |  |
+| `total_cache_creation_tokens` | `int` |  |
 
 ### WorkspaceStats
 
@@ -955,6 +1009,44 @@ Tool with usage count.
 | `name` | `str` |  |
 | `usage_count` | `int` |  |
 
+### UsageDistributions
+
+Activity over time: the daily series + hour-of-day and day-of-week rhythms.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `by_day` | `list[Bucket]` |  |
+| `by_hour` | `list[Bucket]` |  |
+| `by_dow` | `list[Bucket]` |  |
+
+### InputEconomy
+
+The input token economy — how the (true-total) input splits into freshly paid (uncached), cheaply re-served (cache reads), and one-time written (cache creation) tokens. ``input_tokens`` is the rollup's TRUE TOTAL, so ``uncached = input - cache_read - cache_creation``. Owner- and model- scopable, so the reckoning can show it for the whole corpus or one brushed model.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `input_tokens` | `int` |  |
+| `cache_read_tokens` | `int` |  |
+| `cache_creation_tokens` | `int` |  |
+
+### WorkspaceDetail
+
+Per-workspace detail, keyed by the workspace ULID.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | `str` |  |
+| `path` | `str` |  |
+| `git_remote` | `str \| None` |  |
+| `sessions` | `int` |  |
+| `input_tokens` | `int` |  |
+| `output_tokens` | `int` |  |
+| `cost` | `float \| None` |  |
+| `model_mix` | `list[GroupUsage]` |  |
+| `recent` | `list` |  |
+| `cadence` | `list[Bucket]` |  |
+| `tags` | `list[tuple[str, int]]` |  |
+
 ### Functions
 
 ### get_cost_coverage
@@ -962,7 +1054,7 @@ Tool with usage count.
 Get cost coverage statistics from conversation_stats.
 
 ```python
-def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> siftd.api.stats.CostCoverage | None
+def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> siftd.storage.conversation_stats.CostCoverage | None
 ```
 
 ### get_stats
@@ -995,6 +1087,22 @@ Get token/cost breakdown grouped by workspace.
 def get_usage_by_workspace(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[GroupUsage]
 ```
 
+### get_usage_distributions
+
+Daily / hourly / weekday token+cost distributions over the rollup.
+
+```python
+def get_usage_distributions(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., workspace_id: str | None = ..., model_name: str | None = ...) -> UsageDistributions
+```
+
+### get_input_economy
+
+Input-token economy over the rollup (the reckoning's cache lever).
+
+```python
+def get_input_economy(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., model_name: str | None = ...) -> InputEconomy
+```
+
 ### get_usage_summary
 
 Get aggregate token/cost totals across all conversations.
@@ -1011,43 +1119,68 @@ Deserialize a JSON dict back to DatabaseStats.
 def dict_to_stats(data: dict) -> DatabaseStats
 ```
 
+### list_models
+
+List canonical model names, optionally scoped to an owner.
+
+```python
+def list_models(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[str]
+```
+
+**Parameters:**
+
+- `conn`: Database connection. Opened from db_path if not provided.
+- `db_path`: Path to database. Ignored if conn provided.
+
+**Returns:** Sorted, deduped canonical model names.
+
 ### list_workspaces
 
 List workspaces with conversation counts.
 
 ```python
-def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[Row]
+def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ..., with_usage: bool = ..., sort: str = ...) -> list[Row]
 ```
 
 **Parameters:**
 
 - `conn`: Database connection. Opened from db_path if not provided.
 - `n`: Maximum workspaces to return.
+- `db_path`: Path to database. Ignored if conn provided.
+- `with_usage`: Also return ``inp``/``out``/``cost`` columns from the rollup (cost ``None`` when the workspace has no priced usage). Off by default so the name-only callers stay on the lean query; the Workspaces view opts in.
 
-**Returns:** Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', and 'last_activity' keys. The ULID 'id' is the workspace's stable identity (workspaces.id) — the read API addresses workspaces by it, not by the slash-containing path.
+**Returns:** Rows with 'id' (workspace ULID), 'path', 'git_remote', 'convs', 'last_activity', and 'pinned' (0/1, owner-scoped) keys (plus 'inp'/'out'/'cost' when ``with_usage``). The ULID 'id' is the workspace's stable identity (workspaces.id) — the read API addresses workspaces by it, not by the slash-containing path.
+
+### workspace_detail
+
+Detail for one workspace, addressed by its stable ULID (workspaces.id).
+
+```python
+def workspace_detail(workspace_id: str, *, fidelity, db_path: pathlib.Path | None = ..., owner: str | None = ..., recent_n: int = ...) -> siftd.api.stats.WorkspaceDetail | None
+```
 
 ### stats_cache_path
 
 Return path to the stats cache file.
 
 ```python
-def stats_cache_path() -> Path
+def stats_cache_path(owner: str | None = ...) -> Path
 ```
 
 ### write_stats_cache
 
-Atomically write stats to the cache file.
+Atomically write stats to the cache file (per-owner when scoped).
 
 ```python
-def write_stats_cache(stats: DatabaseStats) -> None
+def write_stats_cache(stats: DatabaseStats, *, owner: str | None = ..., db_mtime_ns: int | None = ...) -> None
 ```
 
 ### read_stats_cache
 
-Read cached stats if the cache exists and is fresh.
+Read cached stats if the cache exists and matches.
 
 ```python
-def read_stats_cache(*, db_path: pathlib.Path | None = ...) -> siftd.api.stats.DatabaseStats | None
+def read_stats_cache(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., require_fresh: bool = ...) -> siftd.api.stats.DatabaseStats | None
 ```
 
 ## Export
@@ -1118,7 +1251,7 @@ Result metadata for a backfill API run.
 | Field | Type | Description |
 |-------|------|-------------|
 | `db_path` | `Path` |  |
-| `operation` | `Literal[response_attributes, shell_tags, derivative_tags, filter_binary]` |  |
+| `operation` | `Literal[response_attributes, shell_tags, derivative_tags, filter_binary, models, pricing]` |  |
 | `dry_run` | `bool` |  |
 | `inserted_attributes` | `int` |  |
 | `tagged_conversations` | `int` |  |
@@ -1126,6 +1259,8 @@ Result metadata for a backfill API run.
 | `filtered` | `int` |  |
 | `skipped` | `int` |  |
 | `errors` | `int` |  |
+| `updated_models` | `int` |  |
+| `repriced_rows` | `int` |  |
 | `elapsed_ms` | `int` |  |
 
 ### ApplyResult
@@ -1174,6 +1309,8 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+| `pinned` | `bool` |  |
+| `auto` | `bool` |  |
 | `activity` | `list[int] \| None` |  |
 
 ### EventDetail
@@ -1234,6 +1371,7 @@ Result of a push operation.
 | `dry_run` | `bool` |  |
 | `last_push_updated` | `bool` |  |
 | `windows` | `int` |  |
+| `owned` | `int \| None` |  |
 
 ### SyncRemote
 
@@ -1271,6 +1409,10 @@ Raised when requested adapter names match no discovered adapters.
 
 Raised when index metadata is incompatible with current backend configuration.
 
+#### IncrementalCompatError
+
+Raised when incremental indexing would mix incompatible backends.
+
 #### SyncError
 
 Raised when a sync operation fails.
@@ -1284,7 +1426,7 @@ Raised when a sync operation fails.
 Run a backfill operation with API-owned DB lifecycle.
 
 ```python
-def run_backfill(*, db_path: Path, operation: Literal[response_attributes, shell_tags, derivative_tags, filter_binary] = ..., dry_run: bool = ...) -> BackfillRunResult
+def run_backfill(*, db_path: Path, operation: Literal[response_attributes, shell_tags, derivative_tags, filter_binary, models, pricing] = ..., dry_run: bool = ...) -> BackfillRunResult
 ```
 
 ### audit_db_integrity
@@ -1510,6 +1652,14 @@ def get_event(id: str, *, db_path: pathlib.Path | None = ..., conn: sqlite3.Conn
 
 - `FileNotFoundError`: If the database does not exist.
 
+### sanitize_fts5_query
+
+Tokenize and quote a user query for safe FTS5 MATCH use.
+
+```python
+def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, or] = ...) -> SanitizedFts5Query
+```
+
 ### run_ingest
 
 Run ingestion from discovered adapters.
@@ -1540,6 +1690,14 @@ Record a push event in the push_log table.
 
 ```python
 def record_push_log(*, db_path: Path, identity: str, conversations: int, size_bytes: int, source_ip: str | None, push_id: str | None = ...) -> None
+```
+
+### record_audit_event
+
+Record a state-changing operation in the audit_log table.
+
+```python
+def record_audit_event(*, db_path: Path, actor: str, action: str, target_type: str | None = ..., target: str | None = ..., detail: str | None = ..., source_ip: str | None = ...) -> None
 ```
 
 ### merge_database
@@ -1614,16 +1772,13 @@ def slice_database(source_db: Path, target_path: Path, *, workspace: str | None 
 
 Push conversations to a remote database.
 
-```python
-def sync_push(db_path: Path, remote: SyncRemote, *, since: str | None = ..., push_all: bool = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., owner: str | None = ..., dry_run: bool = ...) -> PushResult
-```
-
 **Parameters:**
 
 - `db_path`: Path to the local siftd database.
 - `remote`: The remote to push to.
 - `since`: Only push conversations started after this date.
 - `push_all`: Push all conversations (ignore last_push). workspace..owner: Filter kwargs (override remote config filters).
+- `dry_run`: If True, slice and report but don't transfer.
 
 **Returns:** PushResult with stats.
 

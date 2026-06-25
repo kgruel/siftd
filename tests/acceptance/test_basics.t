@@ -12,6 +12,7 @@ Version exits with code 0:
 
   $ siftd --version
   siftd * (glob)
+  python * (glob)
 
 Stats works with fresh database (use empty path to avoid discovering real files):
 

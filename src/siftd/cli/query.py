@@ -525,31 +525,16 @@ def build_query_parser(subparsers) -> None:
         "query",
         help="List and filter conversations by metadata",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""List and filter conversations by metadata (workspace, model, date, tags).
-To read one conversation: siftd show <id>.  For content search: siftd search <query>.
-
-Conversation IDs in lists are truncated to 12 characters for display; any unambiguous
-prefix works — e.g. 'siftd show 01ABCDEF01AB --summary' resolves without a full 26-character ID.
-If a prefix matches multiple conversations, the command exits with code 2 and lists the matched IDs.
+        epilog="""IDs shown are 12-char prefixes; any unambiguous prefix works. Pass an
+ID to read that conversation (alias for 'siftd show <id>'); content search is 'siftd search'.
 
 examples:
-  siftd query                                   # list recent conversations
-  siftd query -n 20                             # list 20 conversations
-  siftd query -w myproject                      # filter by workspace
-  siftd query -l research:auth                  # conversations tagged research:auth
-  siftd query -l research: -l useful:           # OR — any research: or useful: tag
-  siftd query --all-tags important --all-tags reviewed  # AND — must have both
-  siftd query -l research: --no-tag archived    # combine OR + NOT
-  siftd query --tool-tag shell:test             # conversations with test commands
-
-read one conversation (canonical verb is 'siftd show'; see 'siftd show --help'):
-  siftd show <id>                               # read a conversation in detail
-  siftd query <id>                              # alias for 'siftd show <id>'
-
-named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
-  siftd report                                 # list saved SQL reports
-  siftd report cost                            # run the 'cost' report
-  siftd report cost --var ws=proj              # run with variable substitution""",
+  siftd query                          # recent conversations
+  siftd query -n 20                    # the last 20
+  siftd query -w myproject             # filter by workspace
+  siftd query --since 7d               # started in the last 7 days
+  siftd query -l research:auth         # tagged research:auth
+  siftd query <id>                     # read one (alias for siftd show)""",
     )
 
     # Positional arguments
@@ -568,14 +553,14 @@ named SQL reports moved to 'siftd report' ('query sql' still works, deprecated):
     # Anchor + window flags for detail view (Slice 1: query <id>; Slice 2: search)
     add_anchor_window_args(p_query)
 
-    # List options
-    list_group = p_query.add_argument_group("list options")
+    # List options — join the shared "output" section (renderer merges by title).
+    list_group = p_query.add_argument_group("output")
     list_group.add_argument("-v", "--verbose", action="store_true", help="Full table with all columns")
     list_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     list_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
 
-    # Detail view options (when conversation_id is provided)
-    detail_group = p_query.add_argument_group("detail view")
+    # Detail-view options (when conversation_id is given) — join the "view" section.
+    detail_group = p_query.add_argument_group("view")
     detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
     detail_group.add_argument("--neighbors", action="store_true",
         help="Include prev_event_id/next_event_id in event detail output")

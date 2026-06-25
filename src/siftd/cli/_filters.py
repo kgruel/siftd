@@ -56,7 +56,10 @@ def add_filter_args(
         except ValueError as e:
             raise _ap.ArgumentTypeError(str(e)) from e
 
-    filter_group = parser.add_argument_group("filtering")
+    # One "filters" group: which conversations to match — workspace/model/date/
+    # tool/owner and the tag predicates together. (Tag filters used to be a
+    # separate "tag filtering" group; merged so the help reads as one purpose.)
+    filter_group = parser.add_argument_group("filters")
     filter_group.add_argument(
         "-w", "--workspace", metavar="SUBSTR",
         help="Filter by workspace path substring",
@@ -68,14 +71,14 @@ def add_filter_args(
         )
     filter_group.add_argument(
         "--since", metavar="DATE", type=_date_arg,
-        help="Conversations started after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        help="Conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
     )
     filter_group.add_argument(
         "--before", metavar="DATE", type=_date_arg,
-        help="Conversations started before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        help="Conversations before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
     )
 
-    tag_group = parser.add_argument_group("tag filtering")
+    tag_group = filter_group  # tag predicates live in the same "filters" group
     tag_group.add_argument(
         "-l", "--tag", action="append", metavar="NAME",
         help="Filter by tag (repeatable, OR logic)",

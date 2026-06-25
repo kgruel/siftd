@@ -35,31 +35,22 @@ def build_show_parser(subparsers) -> None:
         "show",
         help="Read one conversation (or event) in detail",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Read a single conversation (or event) by ID, with navigation.
-
-IDs may be any unambiguous prefix — the 12-char display IDs from `siftd query`
-and `siftd search` resolve directly. Use `siftd query` to browse by metadata or
-`siftd search <text>` to find conversations by content, then `show` to read one.
-
-Navigation: --exchanges and --turns require an anchor flag. No anchor shows the
-whole conversation.
+        epilog="""IDs may be any unambiguous prefix. Anchors (--from-start / --from-end /
+--at-turn / --around) pick a position; --exchanges / --turns set the window around it.
+No anchor shows the whole conversation.
 
 examples:
-  siftd show 01HX4G7K                              # full conversation
-  siftd show 01HX4G7K --summary                    # metadata only, no turns
-  siftd show 01HX4G7K --from-start --exchanges 3   # first 3 turns
-  siftd show 01HX4G7K --from-end --exchanges 5     # last 5 turns
-  siftd show 01HX4G7K --at-turn 4                  # show only turn 4
-  siftd show 01HX4G7K --at-turn 4 --turns=-1:+2    # turns 3-6 (relative to turn 4)
-  siftd show 01HX4G7K --around "error" --turns=-2:+2   # context around a phrase
-  siftd show 01HX4G7K --brief                      # compact view (80 char truncation)
-  siftd show 01HX4G7K --full                       # full text, no truncation""",
+  siftd show 01HX4G7K                            # full conversation
+  siftd show 01HX4G7K --summary                  # metadata only, no turns
+  siftd show 01HX4G7K --from-end --exchanges 5   # last 5 turns
+  siftd show 01HX4G7K --at-turn 4 --turns -1:+2  # turns 3-6, around turn 4
+  siftd show 01HX4G7K --around error --turns -2:+2  # window around a phrase""",
     )
     p.add_argument("conversation_id", help="Conversation or event ID (any unambiguous prefix)")
     add_output_args(p, json=True)
     add_fidelity_args(p, full=True, brief=True, chars=True, thinking=True, tools=True, tool_chars=True)
     add_anchor_window_args(p)
-    detail_group = p.add_argument_group("detail view")
+    detail_group = p.add_argument_group("view")  # merges with fidelity/navigation
     detail_group.add_argument(
         "--summary", action="store_true", help="Summary only (metadata, no turns)"
     )

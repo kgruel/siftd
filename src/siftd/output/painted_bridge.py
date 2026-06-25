@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -1061,50 +1060,14 @@ def _role_prefix(role: str, ds: DomainStyles, *, abbrev: bool) -> list[tuple[str
 def _wrap_spans(spans: list, width: int) -> list:
     """Word-wrap styled spans into Lines of <= width display columns.
 
-    Preserves each span's style across wrap boundaries; a single token wider than
-    width (e.g. an unbroken JSON blob) is hard-split. Lets the top-tier snippet
-    show in full — untruncated and without overflowing the terminal.
+    Thin delegator to the leaf ``output.row.wrap_spans`` (the one home for the
+    wcwidth-correct styled word-wrap, shared with the markdown body and help
+    renderers). Kept as a module-local name so this module's call sites read
+    unchanged.
     """
-    _, Line, Span, _, _, _, _ = _painted()
-    from painted.core._text_width import display_width
+    from siftd.output.row import wrap_spans
 
-    out_lines: list = []
-    cur: list = []
-    cur_w = 0
-    for sp in spans:
-        for tok in re.findall(r"\S+|\s+", sp.text):
-            tw = display_width(tok)
-            if tok.isspace():
-                if cur_w + tw <= width:
-                    cur.append(Span(tok, sp.style))
-                    cur_w += tw
-                else:
-                    out_lines.append(cur)
-                    cur, cur_w = [], 0
-                continue
-            if cur and cur_w + tw > width:
-                out_lines.append(cur)
-                cur, cur_w = [], 0
-            if tw > width:  # token longer than a whole line — hard-split it
-                buf, bw = "", 0
-                for ch in tok:
-                    cw = display_width(ch)
-                    if buf and bw + cw > width:
-                        cur.append(Span(buf, sp.style))
-                        out_lines.append(cur)
-                        cur, cur_w = [], 0
-                        buf, bw = "", 0
-                    buf += ch
-                    bw += cw
-                if buf:
-                    cur.append(Span(buf, sp.style))
-                    cur_w += bw
-            else:
-                cur.append(Span(tok, sp.style))
-                cur_w += tw
-    if cur:
-        out_lines.append(cur)
-    return [Line(spans=tuple(line)) for line in out_lines] or [Line(spans=())]
+    return wrap_spans(spans, width)
 
 
 def _snippet_block(

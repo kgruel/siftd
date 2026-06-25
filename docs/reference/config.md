@@ -20,6 +20,12 @@ All keys can be managed via `siftd config set <key> <value>`.
 | `chars` | int | `200` | Max characters per turn in list view |
 | `tool_chars` | int | `120` | Max characters for tool content in detail view |
 
+## [ui]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `theme` | string | `siftd` | Terminal colour theme (values: siftd, nord); terminal only — does not affect the web UI |
+
 ## [ingestion]
 
 | Key | Type | Default | Description |
