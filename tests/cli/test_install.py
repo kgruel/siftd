@@ -405,6 +405,45 @@ class TestInstallHelpers:
         assert rc == 1
         assert "not found" in capsys.readouterr().err
 
+    def test_install_preserves_other_extra(self, monkeypatch):
+        """Force-reinstall flows must keep already-installed extras in the spec.
+
+        Installing serve while embed is already present should produce a combined
+        'siftd[embed,serve]' spec, not drop embed (regression: uv tool/pipx
+        rebuild the env from scratch).
+        """
+        args = SimpleNamespace(dry_run=False)
+
+        monkeypatch.setattr("siftd.cli.install.detect_install_method", lambda: "uv_tool")
+        monkeypatch.setattr("siftd.cli.install._editable_source_url", lambda: "")
+        # embed already installed, serve is the one being added
+        monkeypatch.setattr("siftd.cli.install.embed_installed", lambda: True)
+        monkeypatch.setattr("siftd.cli.install._serve_installed", lambda: False)
+
+        captured: dict = {}
+
+        def _fake_commands(extra, source_path=None):
+            captured["extra"] = extra
+            return {"uv_tool": ["uv", "tool", "install", f"siftd[{extra}]", "--force"]}
+
+        monkeypatch.setattr("siftd.cli.install._install_commands", _fake_commands)
+        monkeypatch.setattr("siftd.cli.install.install_hint", lambda extra: f"uv tool install 'siftd[{extra}]' --force")
+
+        class _Res:
+            returncode = 0
+
+        monkeypatch.setattr("siftd.cli.install.subprocess.run", lambda *a, **k: _Res())
+
+        rc = _run_extra_install(
+            args,
+            "serve",
+            is_installed=lambda: False,
+            already_msg="already",
+            success_msg="ok",
+        )
+        assert rc == 0
+        assert captured["extra"] == "embed,serve"
+
     def test_cmd_install_help_and_unknown(self, capsys):
         rc = cmd_install(SimpleNamespace(extra=None))
         assert rc == 0
