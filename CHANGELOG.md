@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-06-26
+
+### Fixed
+
+- **`siftd install embed`/`serve` no longer drops the other extra** — on
+  force-reinstall install methods (`uv tool`, `pipx`), `--force` rebuilds the
+  environment from scratch, so installing one extra while the other was already
+  present silently removed it. The reinstall command now preserves every
+  already-installed extra (e.g. installing `serve` when `embed` is present runs
+  `siftd[embed,serve] --force`).
+
 ## [0.10.1] - 2026-06-25
 
 ### Fixed
