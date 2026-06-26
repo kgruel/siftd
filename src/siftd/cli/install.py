@@ -155,7 +155,12 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
     source_url = _editable_source_url() or ""
     source_path = source_url[7:] if source_url.startswith("file://") else None
 
-    cmds = _install_commands(extra, source_path=source_path)
+    # Preserve already-installed extras: force-reinstall methods (uv tool, pipx)
+    # rebuild the environment from scratch, so the package spec must name every
+    # extra we want to keep, not just the new one.
+    extra_spec = ",".join(sorted(_installed_extras() | {extra}))
+
+    cmds = _install_commands(extra_spec, source_path=source_path)
     cmd = cmds[method]
 
     # For plain editable installs, we need to be in the project directory
@@ -169,7 +174,7 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
             print(f"  pip install -e '.[{extra}]'")
             return 1
 
-    cmd_str = install_hint(extra)
+    cmd_str = install_hint(extra_spec)
 
     from siftd.output.listing import print_definitions, print_heading
 
@@ -215,6 +220,21 @@ def _run_extra_install(args, extra: str, *, is_installed, already_msg: str, succ
         )
 
     return 0
+
+
+def _installed_extras() -> set[str]:
+    """Return the set of optional extras currently installed.
+
+    Used to preserve extras across force-reinstall flows (uv tool, pipx), which
+    recreate the environment from scratch with only the named extras — installing
+    one would otherwise silently drop the other.
+    """
+    extras: set[str] = set()
+    if embed_installed():
+        extras.add("embed")
+    if _serve_installed():
+        extras.add("serve")
+    return extras
 
 
 def _install_embed(args) -> int:
