@@ -16,6 +16,10 @@ These docs explain how siftd works under the hood. Understanding these concepts 
 
 6. **[Sync](sync.md)** — Moving conversations between machines. Remotes, push/pull, delta tracking, SSH transport, and the send/receive pipe primitives.
 
+7. **[Serve](serve.md)** — Sharing a corpus over HTTP: bearer-token auth, push attribution, and remote search/query so clients don't pull the whole database.
+
+8. **[Web UI](web-ui.md)** — The local browser front-end: reading conversations as prose, tracing tool activity, token and cost dashboards, and URL-addressable views.
+
 ## The flow
 
 ```

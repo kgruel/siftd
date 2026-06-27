@@ -32,10 +32,10 @@ siftd serve — listening on 0.0.0.0:8484
   auth: disabled (--no-auth)
 ```
 
-Override via CLI flags or config:
+Override via CLI flags or config (`--db` is a global flag, so it goes *before* the subcommand):
 
 ```bash
-siftd serve --db /data/team.db --port 9000 --no-auth
+siftd --db /data/team.db serve --port 9000 --no-auth
 ```
 
 ```toml
