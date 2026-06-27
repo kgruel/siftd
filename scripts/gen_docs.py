@@ -647,12 +647,24 @@ def run_help(args: list[str]) -> str:
     return stdout.getvalue() or stderr.getvalue()
 
 
-def extract_subcommands(help_text: str) -> list[str]:
-    """Extract subcommand names from main help output."""
-    # Look for the {cmd1,cmd2,...} pattern in usage line
-    match = re.search(r"\{([^}]+)\}", help_text)
-    if match:
-        return [cmd.strip() for cmd in match.group(1).split(",")]
+def extract_subcommands() -> list[str]:
+    """Enumerate top-level subcommand names from the argparse tree.
+
+    The root ``--help`` no longer carries a ``{cmd1,cmd2,...}`` usage block — the
+    CLI brand redesign replaced it with a ``lanes:`` legend — so scraping help
+    text returns nothing. Read the subparser ``choices`` directly instead, which
+    is independent of how help is formatted. Hidden plumbing commands are
+    de-listed from ``--help`` but remain registered (and runnable), so they are
+    enumerated here and documented in the reference.
+    """
+    import argparse
+
+    from siftd.cli import _build_parser
+
+    parser = _build_parser()
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return list(action.choices.keys())
     return []
 
 
@@ -667,7 +679,7 @@ def generate_cli_docs() -> str:
 
     # Get main help
     main_help = run_help(["--help"])
-    subcommands = extract_subcommands(main_help)
+    subcommands = extract_subcommands()
 
     lines.append("## siftd")
     lines.append("")
