@@ -57,15 +57,15 @@ Tool call results can be large — a file read might return thousands of lines. 
 siftd stores large content in a content-addressable blob store:
 
 ```
-tool_calls table                    content_blobs table
+event_tool_call table               content_blobs table
 ┌─────────────────────┐            ┌─────────────────────┐
-│ id: 01JGK3...       │            │ hash: a1b2c3...     │
+│ event_id: 01JGK3... │            │ hash: a1b2c3...     │
 │ result_hash: ───────┼────────────│ content: "..."      │
 │ ...                 │      ┌─────│ ref_count: 3        │
 └─────────────────────┘      │     └─────────────────────┘
                              │
 ┌─────────────────────┐      │
-│ id: 01JGK4...       │      │
+│ event_id: 01JGK4... │      │
 │ result_hash: ───────┼──────┘
 └─────────────────────┘
 ```
@@ -133,7 +133,7 @@ GROUP BY w.id ORDER BY count DESC;
 
 -- Tool usage breakdown
 SELECT t.name, COUNT(*) as count
-FROM tool_calls tc
+FROM event_tool_call tc
 JOIN tools t ON t.id = tc.tool_id
 GROUP BY t.id ORDER BY count DESC;
 ```
@@ -207,12 +207,7 @@ If space is a concern:
 
 siftd handles schema migrations automatically on database open. Migrations are idempotent — running the same migration twice has no effect.
 
-Current migrations:
-- Labels → tags rename
-- Add error column to ingested_files
-- Add cascade deletes to foreign keys
-- Add content_blobs table for deduplication
-- Add tool_call_tags table
+siftd uses a versioned migration registry (current schema version 11). Migrations run automatically and idempotently on database open — highlights: v2 cascade-delete enforcement, v3 content_blobs ref-count integrity, v4 the polymorphic events/tag_assignments schema (which replaced the old workspace_tags/conversation_tags/tool_call_tags/prompt_tags tables), v5 FTS5 simplification, v6 dropping legacy tables, v9 usage rollup, v10 cache tokens, v11 pricing reference. Run `siftd db schema-version` for the authoritative current/target version.
 
 When you upgrade siftd, migrations run automatically on first use. No manual intervention needed.
 

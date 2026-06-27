@@ -41,20 +41,22 @@ by the CSP it ships.** With `'unsafe-eval'` absent, that bans `hx-on`,
 `hx-vals="js:…"`, and `hx-trigger` event-filter brackets (`[expr]`) — all of
 which htmx evaluates via `new Function`.
 
-### ⚠ connect-src collision with browser SSO (when this branch merges)
+### ⚠ connect-src collision with browser SSO
 
-The browser login flow (`static/auth.js`, `feat/serve-browser-pkce-login`) does
-two cross-origin requests to the IdP: discovery (`GET issuer/.well-known/...`)
-and the PKCE token exchange (`POST token_endpoint`). Today's policy is
-`script-src`-only with **no `default-src`**, so `connect-src` is unrestricted and
-those fetches are allowed. **If a future hardening adds `default-src 'self'` (or
-an explicit `connect-src`), it MUST also add the configured `serve.auth.issuer`
-origin to `connect-src`** — otherwise SSO login breaks with a CSP error and the
-"Sign in with SSO" button dead-ends (now surfaced via `loginError()`, not silent).
-The token POST also requires CORS from the IdP regardless of CSP (granted by
-registering the serve origin as a Redirect URI). The sessionStorage token store
-`auth.js` uses leans on `script-src` keeping XSS out — so the CSP and the login
-flow are coupled: don't tighten one without checking the other.
+The browser login flow (`static/auth.js`) does two cross-origin requests to the
+IdP: discovery (`GET issuer/.well-known/...`) and the PKCE token exchange
+(`POST token_endpoint`). The shipped policy (`_build_csp` in `serve/app.py`) is
+`default-src 'self'` with an explicit `connect-src` that is `'self'` by default,
+so those off-origin fetches are **only** permitted because `connect-src` is
+widened to the configured `serve.auth.issuer` origin when an OIDC issuer is set.
+**Tightening `connect-src` (or removing the issuer widening) breaks SSO login**
+with a CSP error, and the "Sign in with SSO" button dead-ends — surfaced via
+`loginError()`, not silent. `tests/test_serve.py` pins both the default-and-self
+`connect-src` and the issuer-widened form, so the coupling is asserted, not just
+documented. The token POST also requires CORS from the IdP regardless of CSP
+(granted by registering the serve origin as a Redirect URI). The sessionStorage
+token store `auth.js` uses leans on `script-src` keeping XSS out — so the CSP and
+the login flow are coupled: don't tighten one without checking the other.
 
 ## How to run a trustworthy browser CSP smoke
 
@@ -104,7 +106,8 @@ From cheapest/narrowest to most thorough:
   contains no eval-requiring htmx construct (`hx-on`, `hx-vals="js:"`,
   `hx-trigger` event-filter brackets) while the CSP lacks `'unsafe-eval'`; pin the
   CSP header value so policy changes are deliberate. Mirrors the existing
-  `tests/architecture/test_mock_ratchet.py` ratchet pattern. Runs in the base CI
+  `test_known_violations_ratchet` ratchet pattern in
+  `tests/architecture/test_imports.py`. Runs in the base CI
   lane, near-zero cost, and would have caught the motivating bug. **Recommended
   first; small enough to ride alongside the fix it guards.**
 - **T2 — HTML↔CSP cross-check (no browser).** Parse the served HTML and validate
@@ -117,7 +120,7 @@ From cheapest/narrowest to most thorough:
   `hx-on`, so T1 suffices, but a future vendored plugin that internally evals
   would only surface in a browser. Cost: a browser dependency in CI and
   async/timing flakiness. Closes audit gaps G2 (serve-acceptance) and R5
-  (browser-under-CSP untested); see `docs/dev/test-refactor-plan.md` Phase 2.
+  (browser-under-CSP untested).
 
 The authored-construct class (T1/T2) covers the common case and the known bug;
 T3 is for library-internal risk and is a deliberate cost/benefit call given the

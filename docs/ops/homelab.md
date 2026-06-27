@@ -335,7 +335,7 @@ sqlite3 /var/lib/siftd/siftd.db \
 
 The `push_log` table preserves per-machine attribution (`source_ip` + a stable `push_id` per call) even though all rows in `conversation_owners` are owned by the same `sub`.
 
-## Coverage limits (current)
+## Coverage limits
 
 The wire-form dissolution closed the previously-deferred delegation gaps; the current picture is:
 

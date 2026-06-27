@@ -119,10 +119,12 @@ The `--all` flag ignores the timestamp entirely — useful for a full resync.
 
 ### SSH
 
-For remote hosts, siftd uses a single SSH connection. Push pipes a slice database over stdin to `siftd db receive` on the remote. Pull runs `siftd db send` on the remote and streams the result back.
+For remote hosts, an SSH push runs three steps over SSH: it first checks remote capabilities (`siftd db sync-status`) and requires the remote to support staged receive, then streams the slice over stdin to `siftd db receive --stage` (a fast ACK into the remote's staging inbox), then triggers `siftd db process` to merge the staged payload. Pull is a single connection: it runs `siftd db send` on the remote and streams the result back.
 
 ```
-Push:  local slice.db ─── stdin ───▶ ssh host "siftd db receive"
+Push:  ssh host "siftd db sync-status"           (preflight: requires staged support)
+       local slice.db ─── stdin ───▶ ssh host "siftd db receive --stage"   (fast ACK)
+       ssh host "siftd db process"               (merge staged payload)
 Pull:  ssh host "siftd db send" ───▶ local temp.db ─── merge
 ```
 
@@ -142,7 +144,7 @@ Global SSH options apply to all remotes:
 ```toml
 # ~/.config/siftd/config.toml
 [sync.ssh]
-options = ["-o", "StrictHostKeyChecking=no"]
+known_hosts = "none"  # disable host-key checking
 connect_timeout_s = 30
 ```
 
@@ -150,7 +152,8 @@ Per-remote options override the global ones:
 
 ```toml
 [sync.remotes.alcove.ssh]
-options = ["-i", "~/.ssh/alcove_key"]
+identity_file = "~/.ssh/alcove_key"  # selects the client key
+# also supported: username, port, known_hosts
 ```
 
 ## The pipe primitives
@@ -174,7 +177,7 @@ ssh server "siftd db receive < /tmp/slice.db"
 siftd --db source.db db send | siftd --db target.db db receive
 ```
 
-Both commands use the same pattern: binary data on stdout/stdin, JSON metadata on stderr. This lets the caller parse transfer stats without interfering with the data stream.
+Each command keeps its metadata off the binary stream: `db send` writes the SQLite stream to stdout and its stats JSON to stderr; `db receive` reads the stream from stdin and writes its result JSON to stdout (errors and diagnostics go to stderr). This lets the caller parse transfer stats without interfering with the data stream.
 
 ## Merge behavior
 

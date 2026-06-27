@@ -159,7 +159,7 @@ See the surrounding context:
 
 ```bash
 siftd search --around "token refresh" --turns -2:+2  # window around the match
-siftd search --mode thread "architecture"            # expand top hits into full threads
+siftd search --view thread "architecture"            # expand top hits into full threads
 ```
 
 ## This is useful — you'll need it again
@@ -224,7 +224,7 @@ Look at the last few exchanges in a session:
 
 ```bash
 siftd peek c520           # last 5 exchanges
-siftd peek c520 -n 10     # last 10 exchanges
+siftd peek c520 --exchanges 10   # last 10 exchanges
 siftd peek c520 --full    # no truncation
 ```
 
@@ -271,7 +271,7 @@ siftd export -w myproject --since 7d      # recent work in a project
 
 ## You use a tool siftd doesn't support
 
-siftd ships adapters for Claude Code, Aider, Gemini CLI, and Codex. If you use something else, write an adapter.
+siftd ships adapters for Claude Code, Aider, Gemini CLI, Codex, Copilot CLI, OpenCode, Pi Agent, and VSCode Chat. If you use something else, write an adapter.
 
 Start from the template or copy an existing adapter to modify:
 
@@ -304,12 +304,12 @@ See [Writing Adapters](docs/guides/writing-adapters.md) for the full guide.
 |---------|---------|
 | `ingest` | Import conversation logs from all adapters |
 | `query` | List conversations, filter by workspace/date/tag, view details |
-| `search` | Semantic search (requires `[embed]` extra) |
+| `search` | Hybrid search; FTS5 keyword by default, semantic with `[embed]` extra |
 | `tag` | Apply tags to conversations; `tag list` to browse |
 | `export` | Export conversations for PR review or context |
 | `peek` | View live sessions without waiting for ingest |
 | `db` | Database operations — `stats`, `info`, `backup`, `restore`, `vacuum`, `slice`, `path` |
-| `tools` | Shell command category summary and tool usage patterns |
+| `report` | Run saved SQL reports (`cost`, `tool-usage`, `model-usage`, ...) |
 | `doctor` | Health checks and maintenance |
 | `adapters` | List discovered adapters |
 | `config` | View and modify configuration |

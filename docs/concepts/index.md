@@ -45,4 +45,5 @@ For complete specifications, see:
 - [CLI Reference](../reference/cli.md) — all commands and flags
 - [API Reference](../reference/api.md) — library usage
 - [Schema Reference](../reference/schema.md) — database tables and columns
+- [Configuration Reference](../reference/config.md) — config.toml keys, types, and defaults
 - [Writing Adapters](../guides/writing-adapters.md) — full adapter implementation guide

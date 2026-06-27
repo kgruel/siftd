@@ -27,9 +27,10 @@ siftd serve
 ```
 
 ```
-siftd serve — listening on 0.0.0.0:8484
+siftd serve — listening on 127.0.0.1:8484
+  url: http://127.0.0.1:8484/
   db: /home/deploy/.local/share/siftd/siftd.db
-  auth: disabled (--no-auth)
+  auth: disabled (no [serve.auth] config)
 ```
 
 Override via CLI flags or config (`--db` is a global flag, so it goes *before* the subcommand):
@@ -49,7 +50,19 @@ fts_rebuild = "on_push"    # "on_push" | "scheduled" | "off"
 
 ## Authentication
 
-Two modes, both provider-agnostic. The server validates tokens — it doesn't issue them.
+Three modes, all provider-agnostic. The server validates tokens — it doesn't issue them.
+
+### Shared secret (static token)
+
+A single bearer the server compares in constant time against a configured value — the simplest option for single-user/homelab setups:
+
+```toml
+[serve.auth]
+static_token = "env:SIFTD_SERVE_TOKEN"
+identity = "local"            # owner stamped on writes
+```
+
+The client sends the matching value via `[sync.remotes.<name>.auth].token` (or `[auth].token`).
 
 ### OIDC (JWT validation)
 
@@ -105,8 +118,8 @@ token = "file:~/.config/siftd/team.token"  # file path
 Same commands as SSH sync. HTTP transport is auto-detected from the URL:
 
 ```bash
-siftd db push team       # POST slice to /v1/push
-siftd db pull team       # GET slice from /v1/pull
+siftd db push team       # POST slice to /api/v1/push
+siftd db pull team       # GET slice from /api/v1/pull
 ```
 
 All the same filters work:
@@ -125,7 +138,7 @@ siftd db pull team --all --dry-run
 | `/api/v1/pull` | GET | Export a filtered slice |
 | `/api/v1/conversations` | GET | List conversations |
 | `/api/v1/conversations/{id}` | GET | Conversation detail |
-| `/api/v1/search` | GET | Semantic + FTS search (requires `siftd[embed]` on server) |
+| `/api/v1/search` | GET | Semantic + FTS search (semantic/hybrid modes require `siftd[embed]` on the server; keyword/FTS works without it) |
 | `/api/v1/stats` | GET | Aggregate statistics |
 | `/api/v1/workspaces` | GET | List workspaces |
 | `/api/v1/tags` | GET | List tags |
@@ -151,8 +164,10 @@ sqlite3 /data/team.db "SELECT user_identity, pushed_at, conversations FROM push_
 FROM python:3.12-slim
 RUN pip install siftd[serve]
 EXPOSE 8484
-CMD ["siftd", "serve"]
+CMD ["siftd", "serve", "--host", "0.0.0.0"]
 ```
+
+A non-loopback bind also requires `[serve.auth]` configured — a public bind without auth is refused with exit 2 (or pass `--unsafe-public-no-auth` on a trusted network).
 
 ### systemd
 
@@ -181,7 +196,7 @@ Both transports coexist. Use whichever fits:
 |---|---|---|
 | Use case | Personal homelab sync | Team shared DB |
 | Auth | SSH keys | Bearer tokens (OIDC/introspection) |
-| Remote query | No (pull the DB first) | Yes (`/v1/query`, `/v1/search`) |
+| Remote query | No (pull the DB first) | Yes (`/api/v1/conversations`, `/api/v1/search`) |
 | Attribution | None | Push log + identity |
 | Setup | `siftd` on both machines | `siftd[serve]` on server only |
 

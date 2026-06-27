@@ -17,7 +17,7 @@ An adapter does three things:
 3. **Parse** — read the file and produce `Conversation` objects
 
 ```
-~/.claude/projects/*/sessions/*.jsonl
+~/.claude/projects/*/*.jsonl
          │
          ▼
     ┌─────────────┐
@@ -68,8 +68,12 @@ siftd ships with adapters for:
 |---------|------|--------------|--------|
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
-| `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
+| `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSON |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
+| `copilot_cli` | Copilot CLI | `~/.local/state/.copilot/session-state` | JSONL |
+| `opencode` | OpenCode | `~/.local/share/opencode` (reads `opencode.db`) | SQLite |
+| `pi_agent` | Pi Coding Agent | `~/.pi/agent/sessions` | JSONL |
+| `vscode` | VSCode | VSCode/Cursor/Windsurf `workspaceStorage` + `globalStorage` | JSON |
 
 Each adapter knows where its tool writes logs by default. When you run `siftd ingest`, all adapters scan their default locations.
 
@@ -82,6 +86,10 @@ claude_code  builtin  ~/.claude/projects, ~/.config/claude/projects
 aider        builtin  ~/.aider
 gemini_cli   builtin  ~/.gemini/tmp
 codex_cli    builtin  ~/.codex/sessions
+copilot_cli  builtin  ~/.local/state/.copilot/session-state
+opencode     builtin  ~/.local/share/opencode
+pi_agent     builtin  ~/.pi/agent/sessions
+vscode       builtin  ~/.config/Code/User/workspaceStorage, ...
 ```
 
 ## Custom adapters

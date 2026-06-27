@@ -76,10 +76,10 @@ siftd supports multiple embedding backends:
 
 | Backend | Model | Notes |
 |---------|-------|-------|
-| `fastembed` | bge-small-en-v1.5 | Default, runs on CPU, ~130MB |
-| `ollama` | nomic-embed-text | Requires Ollama running locally |
+| `fastembed` | bge-small-en-v1.5 | Fallback (zero-config), runs on CPU, ~130MB |
+| `ollama` | nomic-embed-text | Preferred when available; requires Ollama running locally |
 
-The backend is selected automatically (fastembed by default). You can override:
+The backend is selected automatically: siftd uses Ollama if it's running locally with an embedding model, otherwise it falls back to fastembed (the zero-config default that ships with the `[embed]` extra). You can force one:
 
 ```bash
 siftd search --backend ollama "query"

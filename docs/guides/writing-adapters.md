@@ -205,24 +205,46 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
 
 ```python
 from siftd.adapters.sdk import (
+    NormalizedRecord,       # Common record form for peek helpers
+    make_peek_hooks,        # Derive peek_scan/exchanges/tail from a normalizer
     seek_last_lines,        # Efficient tail read
-    peek_jsonl_scan,        # Generic JSONL scanner
-    peek_jsonl_exchanges,   # Generic JSONL exchange extractor
     peek_jsonl_tail,        # Generic JSONL tail
     canonicalize_tool_name, # Apply TOOL_ALIASES
     extract_text_with_placeholders,  # Text + [image]/[tool] markers
 )
 
 # Example: Claude Code-compatible JSONL
-def peek_scan(path: Path) -> PeekScanResult | None:
-    return peek_jsonl_scan(
-        path,
-        user_type="user",
-        assistant_type="assistant",
-        cwd_key="cwd",
-        session_id_key="sessionId",
-        is_tool_result=lambda r: _has_tool_result(r),
+def normalize_record(raw: dict) -> NormalizedRecord | None:
+    """Map a native record to NormalizedRecord (or None to skip)."""
+    record_type = raw.get("type")
+    if record_type not in ("user", "assistant"):
+        return None
+    msg = raw.get("message") or {}
+    content = msg.get("content")
+    content_blocks = content if isinstance(content, list) else []
+    if record_type == "user":
+        return NormalizedRecord(
+            kind="user",
+            timestamp=raw.get("timestamp"),
+            content_blocks=content_blocks,
+            session_id=raw.get("sessionId"),
+            workspace_path=raw.get("cwd"),
+        )
+    usage = msg.get("usage") or {}
+    return NormalizedRecord(
+        kind="assistant",
+        timestamp=raw.get("timestamp"),
+        content_blocks=content_blocks,
+        model=msg.get("model"),
+        input_tokens=usage.get("input_tokens", 0) or 0,
+        output_tokens=usage.get("output_tokens", 0) or 0,
     )
+
+# Derive the three peek hooks from the normalizer
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    normalize_record,
+    tool_aliases=TOOL_ALIASES,
+)
 ```
 
 ### Graceful Degradation
@@ -318,5 +340,5 @@ siftd ingest --path ~/.my_harness/logs -v
 Check adapter discovery:
 
 ```bash
-siftd adapters list
+siftd adapters        # List discovered adapters (add --json for machine-readable output)
 ```

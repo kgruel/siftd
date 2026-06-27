@@ -50,7 +50,11 @@ Use `--dry-run` to see source and target paths without writing.
 ### Method 2: Marketplace
 
 ```bash
-claude plugin install siftd
+# Add the siftd marketplace
+claude plugin marketplace add kgruel/siftd
+
+# Install the plugin
+claude plugin install siftd@siftd
 ```
 
 ### Method 3: Dev mode

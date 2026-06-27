@@ -91,7 +91,7 @@ siftd normalizes raw names into canonical forms using vocabulary tables:
 **Providers** — who serves the model and bills you
 - anthropic, openai, google, openrouter, local
 
-This normalization lets you query across tools. "Show me all shell commands" works whether the session was Claude Code (Bash tool), Aider (run command), or Gemini CLI (execute_shell).
+This normalization lets you query across tools. "Show me all shell commands" works whether the session was Claude Code (Bash tool), Codex CLI (shell_command), or Gemini CLI (run_shell_command).
 
 ## Workspaces
 

@@ -177,7 +177,7 @@ siftd tag list --on tool_call --prefix shell: --by-workspace     # see patterns 
 
 ### Derivative conversations
 
-Conversations that run `siftd search`, `siftd query`, or `siftd ask` — or invoke the siftd CLI skill — get tagged `siftd:derivative`. These are excluded from search by default — otherwise your searches would find previous search results.
+Conversations that run `siftd search` or `siftd query` — or invoke the siftd CLI skill — get tagged `siftd:derivative`. These are excluded from search by default — otherwise your searches would find previous search results.
 
 ```bash
 siftd search "topic"                        # excludes derivative
@@ -216,6 +216,6 @@ siftd tag workspace 01HY... project:core      # tag a workspace
 siftd tag tool_call 01HZ... slow              # tag a specific tool call
 ```
 
-Workspace tags apply to the directory. All conversations in that workspace inherit the tag for filtering purposes.
+Workspace tags label the directory itself (visible via `siftd tag list`), but they do not propagate to conversations. `siftd query -l <tag>` (and `search -l`, `--all-tags`, `--no-tag`) only match tags applied at the conversation, prompt, response, tool_call, or exchange level — never workspace tags. Filtering by a workspace-only tag returns no conversations.
 
 Tool call tags are mainly used by auto-tagging (shell categories), but you can add your own to mark specific actions.
