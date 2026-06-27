@@ -634,13 +634,6 @@ def update_last_sent(
     _update_last_sent(name, timestamp, filter_signature=filter_signature)
 
 
-def get_ssh_options(remote_name: str | None = None) -> list[str]:
-    """Backward-compatible sync accessor re-export."""
-    from siftd.config_sync import get_ssh_options as _get_ssh_options
-
-    return _get_ssh_options(remote_name)
-
-
 def get_ssh_connect_kwargs(remote_name: str | None = None) -> dict:
     """Backward-compatible sync accessor re-export."""
     from siftd.config_sync import get_ssh_connect_kwargs as _get_ssh_connect_kwargs

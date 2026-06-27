@@ -26,7 +26,6 @@ from siftd.config import (
     get_config,
     get_ingestion_filter_binary,
     get_query_defaults,
-    get_ssh_options,
     get_sync_remote,
     get_sync_remotes,
     get_sync_timeouts,
@@ -387,25 +386,6 @@ class TestSyncRemotes:
         cfg.set_sync_remote("known", "h", "/p")
         getattr(cfg, fn_name)("unknown", "ts")
         assert cfg.get_sync_remote("unknown") is None
-
-
-class TestSSHOptions:
-    def test_global_and_timeout(self, config_dir):
-        _w(config_dir, '[sync.ssh]\noptions = ["-v"]\nconnect_timeout_s = 10\n')
-        assert get_ssh_options() == ["-v", "-o", "ConnectTimeout=10"]
-
-    def test_per_remote_overrides(self, config_dir):
-        _w(config_dir, '[sync.ssh]\noptions = ["-v"]\n\n[sync.remotes.box.ssh]\noptions = ["-q"]\n')
-        assert get_ssh_options("box") == ["-q"]
-
-    @pytest.mark.parametrize("setup", [
-        None, "[sync]\n", '[sync.ssh]\nconnect_timeout_s = "bad"\n',
-        'sync = "x"\n', '[sync]\nssh = "x"\n',
-    ])
-    def test_error_paths(self, config_dir, setup):
-        if setup is not None:
-            _w(config_dir, setup)
-        assert get_ssh_options() == []
 
 
 class TestSyncTimeouts:
