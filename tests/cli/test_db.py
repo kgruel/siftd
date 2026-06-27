@@ -231,6 +231,16 @@ class TestDbRemoteSubcommands:
         assert rc == 0
         assert called == [("nas", None, "/mnt/team.db")]
 
+    def test_remote_add_http_url(self, monkeypatch, capsys):
+        # A URL must register as an HTTP remote (host=None, path=<url>), not be
+        # split on the scheme colon into host="https", path="//...".
+        called = []
+        monkeypatch.setattr("siftd.config_sync.set_sync_remote", lambda n, h, p: called.append((n, h, p)))
+        rc = main(["db", "remote", "add", "team", "https://siftd.example.com"])
+        assert rc == 0
+        assert called == [("team", None, "https://siftd.example.com")]
+        assert "(HTTP)" in capsys.readouterr().out
+
     def test_remote_list_empty(self, monkeypatch, capsys):
         monkeypatch.setattr("siftd.config_sync.get_sync_remotes", lambda: [])
         rc = main(["db", "remote", "list"])
@@ -252,6 +262,23 @@ class TestDbRemoteSubcommands:
         assert rc == 0
         out = capsys.readouterr().out
         assert "team" in out and "last push" in out and "last pull" in out
+
+    def test_remote_list_http(self, monkeypatch, capsys):
+        # HTTP remotes (host=None, URL path) render as (HTTP), not (local).
+        monkeypatch.setattr(
+            "siftd.config_sync.get_sync_remotes",
+            lambda: [{
+                "name": "team",
+                "host": None,
+                "path": "https://siftd.example.com",
+                "last_push": None,
+                "last_pull": None,
+            }],
+        )
+        rc = main(["db", "remote", "list"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert "https://siftd.example.com" in out and "(HTTP)" in out and "(local)" not in out
 
     def test_remote_remove(self, monkeypatch, capsys):
         monkeypatch.setattr("siftd.config_sync.remove_sync_remote", lambda n: True)

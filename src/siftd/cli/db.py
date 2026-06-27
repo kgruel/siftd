@@ -790,18 +790,21 @@ def cmd_db_pull(args) -> int:
 
 def cmd_db_remote_add(args) -> int:
     """Register a sync remote."""
+    from siftd.api.sync import is_http_url
     from siftd.config_sync import set_sync_remote
 
     name = args.name
     target = args.target
 
-    # Parse host:path vs local path
-    # Heuristic: if it contains ':' and the part before ':' doesn't look like
-    # a drive letter (Windows) or start with '/', treat as host:path.
-    if ":" in target and not target.startswith("/"):
-        parts = target.split(":", 1)
-        host = parts[0]
-        path = parts[1]
+    # Resolve the target into one of three transports (host distinguishes them):
+    #   HTTP(S) URL  -> host=None, path=<url>   (the colon in "https:" is not a host sep)
+    #   host:path    -> SSH                      (part before ':' isn't a drive/abs path)
+    #   /local/path  -> host=None, path=<path>
+    if is_http_url(target):
+        host = None
+        path = target
+    elif ":" in target and not target.startswith("/"):
+        host, path = target.split(":", 1)
     else:
         host = None
         path = target
@@ -810,6 +813,8 @@ def cmd_db_remote_add(args) -> int:
 
     if host:
         status.confirm(f"Added remote '{name}': {host}:{path}")
+    elif is_http_url(path):
+        status.confirm(f"Added remote '{name}': {path} (HTTP)")
     else:
         status.confirm(f"Added remote '{name}': {path} (local)")
     return 0
@@ -817,6 +822,7 @@ def cmd_db_remote_add(args) -> int:
 
 def cmd_db_remote_list(args) -> int:
     """List sync remotes."""
+    from siftd.api.sync import is_http_url
     from siftd.config_sync import get_sync_remotes
 
     remotes = get_sync_remotes()
@@ -832,7 +838,12 @@ def cmd_db_remote_list(args) -> int:
     # sub-rows under each remote.
     pairs: list[tuple[str, str]] = []
     for r in remotes:
-        location = f"{r['host']}:{r['path']}" if r["host"] else f"{r['path']} (local)"
+        if r["host"]:
+            location = f"{r['host']}:{r['path']}"
+        elif is_http_url(r["path"]):
+            location = f"{r['path']} (HTTP)"
+        else:
+            location = f"{r['path']} (local)"
         pairs.append((r["name"], location))
         if r["last_push"]:
             pairs.append(("", f"last push: {r['last_push']}"))
@@ -1158,6 +1169,7 @@ examples:
         epilog="""examples:
   siftd db remote add alcove alcove:/data/team.db   # SSH remote
   siftd db remote add nas /mnt/nas/siftd/team.db    # local path
+  siftd db remote add team https://siftd.example.com # HTTP server
   siftd db remote list                               # show all remotes
   siftd db remote remove alcove                      # unregister""",
     )
@@ -1165,7 +1177,7 @@ examples:
 
     p_remote_add = remote_sub.add_parser("add", help="Register a sync remote")
     p_remote_add.add_argument("name", help="Remote name")
-    p_remote_add.add_argument("target", help="host:path (SSH) or /local/path")
+    p_remote_add.add_argument("target", help="host:path (SSH), /local/path, or https://server")
     p_remote_add.set_defaults(func=cmd_db_remote_add)
 
     p_remote_list = remote_sub.add_parser("list", help="List sync remotes")

@@ -31,6 +31,15 @@ def parse_sync_header(data: bytes) -> int | None:
     return struct.unpack(">H", data[6:8])[0]
 
 
+def is_http_url(target: str) -> bool:
+    """Whether a remote target string addresses an HTTP(S) server.
+
+    The single source of truth for distinguishing the three remote transports:
+    an HTTP URL here, an ``ssh`` ``host:path`` (non-None host), or a local path.
+    """
+    return target.startswith(("http://", "https://"))
+
+
 @dataclass
 class SyncFilters:
     """Per-remote default filters for push/pull slicing."""

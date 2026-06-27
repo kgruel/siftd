@@ -35,6 +35,7 @@ from siftd.domain.sync import (
     PushResult,
     SyncRemote,
     SyncStatus,
+    is_http_url,
     parse_sync_header,
 )
 from siftd.safecall import parse_json
@@ -119,7 +120,7 @@ class _PushProgress:
 
 def _is_http_remote(remote: SyncRemote) -> bool:
     """Check if remote uses HTTP transport (URL-based detection)."""
-    return remote.path.startswith(("http://", "https://"))
+    return is_http_url(remote.path)
 
 
 def _receive_or_sync_error(
