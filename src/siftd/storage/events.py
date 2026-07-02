@@ -82,6 +82,14 @@ def ensure_polymorphic_cleanup_triggers(conn: sqlite3.Connection) -> None:
             DELETE FROM attributes WHERE target_id = OLD.id AND target_kind = 'conversation';
         END
     """)
+    conn.execute("""
+        CREATE TRIGGER IF NOT EXISTS tr_polymorphic_event_content_cleanup
+        AFTER DELETE ON event_content
+        BEGIN
+            DELETE FROM tag_assignments WHERE target_id = OLD.id AND target_kind = 'block';
+            DELETE FROM attributes WHERE target_id = OLD.id AND target_kind = 'block';
+        END
+    """)
 
 
 # ---------------------------------------------------------------------------

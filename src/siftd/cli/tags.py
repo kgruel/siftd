@@ -73,7 +73,7 @@ def _parse_tag_args(positional: list[str]) -> tuple[str, str, list[str]] | None:
     """
     if len(positional) >= 2:
         # Check if first arg is an entity type
-        if positional[0] in ("conversation", "workspace", "tool_call", "prompt", "response", "exchange"):
+        if positional[0] in ("conversation", "workspace", "tool_call", "prompt", "response", "exchange", "block"):
             if len(positional) < 3:
                 return None
             return (positional[0], positional[1], positional[2:])
@@ -294,6 +294,7 @@ def _cmd_tag_list(args, db: Path) -> int:
         tags = [t for t in tags if (
             t.conversation_count or t.workspace_count or t.tool_call_count
             or t.exchange_count or t.prompt_count or t.response_count
+            or t.block_count
         )]
         if not tags:
             status.info("No tags found in the specified time range.")
@@ -333,6 +334,8 @@ def _cmd_tag_list(args, db: Path) -> int:
             counts.append(f"{fmt_count(tag.prompt_count)} prompts")
         if tag.response_count:
             counts.append(f"{fmt_count(tag.response_count)} responses")
+        if tag.block_count:
+            counts.append(f"{fmt_count(tag.block_count)} blocks")
         count_str = f" ({', '.join(counts)})" if counts else ""
         desc = f" - {tag.description}" if tag.description else ""
         line = row_line(
@@ -541,6 +544,7 @@ def _cmd_tag_delete(args, db: Path) -> int:
         + tag_info.exchange_count
         + tag_info.prompt_count
         + tag_info.response_count
+        + tag_info.block_count
     )
 
     force = getattr(args, "force", False)
@@ -558,6 +562,8 @@ def _cmd_tag_delete(args, db: Path) -> int:
             parts.append(f"{fmt_count(tag_info.prompt_count)} prompts")
         if tag_info.response_count:
             parts.append(f"{fmt_count(tag_info.response_count)} responses")
+        if tag_info.block_count:
+            parts.append(f"{fmt_count(tag_info.block_count)} blocks")
         status.error(
             f"Tag '{tag_name}' is applied to {', '.join(parts)}.",
             hint="Use --force to delete.",
@@ -871,7 +877,7 @@ def cmd_tag(args) -> int:
         print("       siftd tag rename <old> <new>")
         print("       siftd tag delete <name> [--force]")
         print("\nTip: Use --session to queue tags for live sessions before ingest.", file=sys.stderr)
-        print("\nEntity types: conversation (default), workspace, tool_call, prompt, response, exchange")
+        print("\nEntity types: conversation (default), workspace, tool_call, prompt, response, exchange, block")
         return 1
 
     entity_type, entity_id, tag_names = parsed

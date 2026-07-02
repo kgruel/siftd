@@ -18,6 +18,11 @@ def test_breakdown_lists_element_kinds():
     assert _tag_kind_breakdown(t) == "3 responses, 1 conversation"
 
 
+def test_breakdown_lists_block_kind():
+    t = _tag("docs:thing", block_count=2, conversation_count=1)
+    assert _tag_kind_breakdown(t) == "2 blocks, 1 conversation"
+
+
 def test_breakdown_singular():
     t = _tag("docs:thing", response_count=1)
     assert _tag_kind_breakdown(t) == "1 response"

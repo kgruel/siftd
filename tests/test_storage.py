@@ -386,6 +386,48 @@ class TestConversationOps:
             "SELECT COUNT(*) FROM attributes WHERE target_id=?", (event_id,)
         ).fetchone()[0] == 0, "attributes orphan should be removed by trigger"
 
+    def test_cascade_trigger_cleans_block_tags_on_event_content_delete(self, populated_db):
+        """tr_polymorphic_event_content_cleanup fires on DELETE FROM event_content (WS8)."""
+        conn, cid = populated_db
+        block_id = conn.execute("SELECT id FROM event_content LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "block-orphan-tag")
+        tags.apply_tag(conn, "block", block_id, tag_id)
+        conn.execute(
+            "INSERT INTO attributes (id, target_kind, target_id, key, value) VALUES (?,?,?,?,?)",
+            ("battr", "block", block_id, "k", "v"),
+        )
+        conn.commit()
+
+        # Direct delete of the content block — the block trigger should fire.
+        conn.execute("DELETE FROM event_content WHERE id=?", (block_id,))
+        conn.commit()
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?", (block_id,)
+        ).fetchone()[0] == 0, "block tag_assignments orphan should be removed by trigger"
+        assert conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_id=?", (block_id,)
+        ).fetchone()[0] == 0, "block attributes orphan should be removed by trigger"
+
+    def test_event_delete_cascades_to_block_tags(self, populated_db):
+        """Deleting an event cascades to its content blocks (FK), whose block tags
+        are then cleaned by the event_content trigger (WS8)."""
+        conn, cid = populated_db
+        row = conn.execute(
+            "SELECT id, event_id FROM event_content LIMIT 1"
+        ).fetchone()
+        block_id, event_id = row["id"], row["event_id"]
+        tag_id = tags.get_or_create_tag(conn, "block-cascade-tag")
+        tags.apply_tag(conn, "block", block_id, tag_id)
+        conn.commit()
+
+        conn.execute("DELETE FROM events WHERE id=?", (event_id,))
+        conn.commit()
+
+        assert conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?", (block_id,)
+        ).fetchone()[0] == 0, "block tag should be gone after the owning event is deleted"
+
 
 # === File dedup ===
 
@@ -506,8 +548,8 @@ class TestWhereBuilder:
         assert "LEFT JOIN events" in sql
         assert "CASE ta.target_kind" in sql
         assert "e.conversation_id" in sql
-        # Five kind placeholders + one tag value
-        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "bug"]
+        # Six kind placeholders + one tag value
+        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "block", "bug"]
 
     def test_tags_scoped_to_conversation(self):
         """kinds=['conversation'] preserves legacy behavior."""
@@ -535,9 +577,9 @@ class TestWhereBuilder:
     def test_tags_all_polymorphic_params(self):
         wb = WhereBuilder()
         wb.tags_all(["a", "b"])
-        # Two subqueries: each emits 5 kinds + 1 tag value
-        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "a",
-                             "conversation", "prompt", "response", "tool_call", "exchange", "b"]
+        # Two subqueries: each emits 6 kinds + 1 tag value
+        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "block", "a",
+                             "conversation", "prompt", "response", "tool_call", "exchange", "block", "b"]
 
     def test_tags_none_polymorphic_uses_not_in(self):
         wb = WhereBuilder()

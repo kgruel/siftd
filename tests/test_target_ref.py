@@ -180,3 +180,111 @@ def test_alias_roundtrips_resolve(tmp_path, colon):
 def test_alias_conversation(tmp_path):
     _, conn, conv_id = _make_db(tmp_path)
     assert alias(conn, "conversation", conv_id) == conv_id[:12]
+
+
+# --- WS8: block-level tagging -----------------------------------------------
+
+def _add_blocks(conn, event_id: str, texts: list[str]) -> list[str]:
+    """Insert content blocks (block_index 0-based) under an event; return their ids."""
+    ids = []
+    for i, text in enumerate(texts):
+        bid = (event_id[:20] + f"BLK{i:03d}")[:26]
+        conn.execute(
+            "INSERT INTO event_content (id, event_id, block_index, block_type, content) "
+            "VALUES (?, ?, ?, 'text', ?)",
+            (bid, event_id, i, f'{{"text": "{text}"}}'),
+        )
+        ids.append(bid)
+    conn.commit()
+    return ids
+
+
+def test_from_colon_path_four_segment():
+    ref = TargetRef.from_colon_path("01CONV:response:2:3")
+    assert ref == TargetRef(conv_ref="01CONV", kind="response", position=2, block_position=3)
+
+
+@pytest.mark.parametrize("bad", ["01CONV:response:1:0", "01CONV:response:1:x", "a:b:c:d"])
+def test_from_colon_path_four_segment_rejects(bad):
+    assert TargetRef.from_colon_path(bad) is None
+
+
+def test_resolve_colon_block(tmp_path):
+    _, conn, conv_id = _make_db(tmp_path)
+    # Two blocks on the first prompt event.
+    bids = _add_blocks(conn, "01EVTPROMPT0000000000000001", ["first", "second"])
+    got = resolve(conn, TargetRef.from_colon_path(f"{conv_id}:prompt:1:2"))
+    assert got == ResolvedTarget("block", bids[1])
+
+
+def test_resolve_colon_block_out_of_range(tmp_path):
+    _, conn, conv_id = _make_db(tmp_path)
+    _add_blocks(conn, "01EVTPROMPT0000000000000001", ["only"])
+    with pytest.raises(IndexError):
+        resolve(conn, TargetRef.from_colon_path(f"{conv_id}:prompt:1:5"))
+
+
+def test_resolve_bare_block_full_ulid(tmp_path):
+    _, conn, _ = _make_db(tmp_path)
+    bids = _add_blocks(conn, "01EVTRESP000000000000000002", ["hi"])
+    got = resolve(conn, TargetRef(raw_id=bids[0]))
+    assert got == ResolvedTarget("block", bids[0])
+
+
+def test_resolve_kind_narrowed_block(tmp_path):
+    _, conn, _ = _make_db(tmp_path)
+    bids = _add_blocks(conn, "01EVTRESP000000000000000002", ["hi"])
+    got = resolve(conn, TargetRef(raw_id=bids[0][:10], kind="block"))
+    assert got == ResolvedTarget("block", bids[0])
+
+
+def test_alias_block_roundtrips_resolve(tmp_path):
+    _, conn, conv_id = _make_db(tmp_path)
+    _add_blocks(conn, "01EVTPROMPT0000000000000001", ["a", "b"])
+    resolved = resolve(conn, TargetRef.from_colon_path(f"{conv_id}:prompt:1:2"))
+    assert alias(conn, resolved.target_kind, resolved.target_id) == f"{conv_id[:12]}:prompt:1:2"
+
+
+def test_resolve_cross_kind_ambiguous_includes_block(tmp_path):
+    """A prefix shared by a conversation, an event, and a block spans all three."""
+    db_path = tmp_path / "collide2.db"
+    conn = create_database(db_path)
+    harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+    shared = "01SHARE2"
+    conv_id = shared + "CONV0000000000000A"
+    evt_id = shared + "EVT00000000000000B"
+    blk_id = shared + "BLK00000000000000C"
+    conn.execute(
+        "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at) "
+        "VALUES (?, ?, ?, NULL, NULL, ?, NULL)",
+        (conv_id, "ext", harness_id, "2024-01-01T00:00:00Z"),
+    )
+    conn.execute(
+        "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, 'prompt', ?, ?)",
+        (evt_id, conv_id, "2024-01-01T00:00:01Z"),
+    )
+    conn.execute(
+        "INSERT INTO event_content (id, event_id, block_index, block_type, content) "
+        "VALUES (?, ?, 0, 'text', '{\"text\": \"x\"}')",
+        (blk_id, evt_id),
+    )
+    conn.commit()
+    with pytest.raises(AmbiguousPrefix) as exc:
+        resolve(conn, TargetRef(raw_id=shared))
+    assert set(exc.value.candidate_kinds) == {"conversation", "prompt", "block"}
+
+
+def test_resolve_cross_kind_owner_scopes_blocks(tmp_path):
+    """An owner-scoped caller cannot resolve another tenant's block by ULID."""
+    _, conn, _ = _make_db(tmp_path)
+    bids = _add_blocks(conn, "01EVTRESP000000000000000002", ["hi"])
+    conn.execute(
+        "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at) "
+        "VALUES (?, 'alice', NULL, '2024-01-01T00:00:00Z')",
+        ("01CONVAAAAAAAAAAAAAAAAAAAA",),
+    )
+    conn.commit()
+
+    assert resolve(conn, TargetRef(raw_id=bids[0]), owner="alice") == ResolvedTarget("block", bids[0])
+    with pytest.raises(LookupError):
+        resolve(conn, TargetRef(raw_id=bids[0]), owner="bob")

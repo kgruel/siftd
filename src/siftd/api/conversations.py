@@ -1393,7 +1393,7 @@ def resolve_entity_id(
     Args:
         conn: Database connection.
         entity_type: One of 'conversation', 'workspace', 'tool_call', 'prompt',
-            'response', or 'exchange'.
+            'response', 'exchange', or 'block'.
         entity_id: Full or prefix ID to look up.
 
     Returns:
@@ -1464,6 +1464,32 @@ def resolve_entity_id(
         count_row = conn.execute(
             f"SELECT COUNT(*) AS n FROM events e WHERE {where_sql}",
             evt_params,
+        ).fetchone()
+        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
+    elif entity_type == "block":
+        # Content-block ids (event_content.id), owner-scoped through the owning
+        # event's conversation — mirrors the events branch (WS8).
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["(ec.id = ? OR ec.id LIKE ?)"]
+        blk_params: list[object] = [entity_id, f"{entity_id}%"]
+        join = ""
+        if owner:
+            join = " JOIN events e ON e.id = ec.event_id"
+            where.append(owner_predicate("e.conversation_id"))
+            blk_params.append(owner)
+        where_sql = " AND ".join(where)
+        rows = conn.execute(
+            f"SELECT ec.id FROM event_content ec{join} WHERE {where_sql} ORDER BY ec.id LIMIT 6",
+            blk_params,
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+        count_row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM event_content ec{join} WHERE {where_sql}",
+            blk_params,
         ).fetchone()
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     else:

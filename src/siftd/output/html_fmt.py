@@ -1740,6 +1740,7 @@ _TAG_COUNT_KINDS: tuple[tuple[str, str], ...] = (
     ("prompt_count", "prompts"),
     ("response_count", "resp"),
     ("exchange_count", "exch"),
+    ("block_count", "blocks"),
     ("workspace_count", "ws"),
 )
 
@@ -1781,6 +1782,7 @@ _TAG_ELEMENT_KINDS: tuple[tuple[str, str, str], ...] = (
     ("prompt_count", "prompt", "prompts"),
     ("tool_call_count", "tool call", "tool calls"),
     ("exchange_count", "exchange", "exchanges"),
+    ("block_count", "block", "blocks"),
     ("conversation_count", "conversation", "conversations"),
 )
 

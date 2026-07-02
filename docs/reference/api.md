@@ -265,7 +265,7 @@ Full conversation with timeline.
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
 | `cost` | `float \| None` |  |
-| `event_tags` | `dict[str, list[str]]` |  |
+| `event_tags` | `dict[str, list[tuple[str, str]]]` |  |
 
 ### Exchange
 
@@ -435,7 +435,7 @@ def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, own
 **Parameters:**
 
 - `conn`: Database connection.
-- `entity_type`: One of 'conversation', 'workspace', 'tool_call', 'prompt', 'response', or 'exchange'.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call', 'prompt', 'response', 'exchange', or 'block'.
 
 **Returns:** Resolved full ID, or None if not found.
 
@@ -1312,6 +1312,7 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+| `block_count` | `int` |  |
 | `pinned` | `bool` |  |
 | `auto` | `bool` |  |
 | `activity` | `list[int] \| None` |  |

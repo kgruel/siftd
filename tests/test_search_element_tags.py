@@ -73,6 +73,25 @@ def test_facet_only_conversations_view_aggregates(test_db):
     assert sv.results[0]["conversation_id"] == conv
 
 
+def test_facet_only_returns_block_hits(test_db):
+    conv, pid, rid = _ids(test_db)
+    conn = open_database(test_db, read_only=True)
+    try:
+        bid = conn.execute(
+            "SELECT id FROM event_content WHERE event_id=? ORDER BY block_index LIMIT 1", (rid,)
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+    apply_tags(db_path=test_db, tags=["docs:block"], entity_type="block", entity_id=bid)
+
+    sv = search_view("", db_path=test_db, tag=["docs:block"], tag_kind=["block"])
+    assert len(sv.results) == 1
+    hit = sv.results[0]
+    assert hit["chunk_type"] == "text"  # the block's block_type
+    assert hit["event_id"] == rid  # owning event, for the folio jump
+    assert hit["text"] == "I am doing well, thank you!"
+
+
 def test_all_tags_and_semantics(test_db):
     conv, pid, rid = _ids(test_db)
     apply_tags(db_path=test_db, tags=["a", "b"], entity_type="response", entity_id=rid)

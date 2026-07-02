@@ -1368,6 +1368,7 @@ def enumerate_tagged(
         k for k in (tag_kind or _ENUM_ELEMENT_KINDS) if k in _ENUM_ELEMENT_KINDS
     )
     want_conversation = tag_kind is None or "conversation" in tag_kind
+    want_block = tag_kind is None or "block" in tag_kind
 
     conn = open_database(db_path, read_only=True)
     try:
@@ -1422,6 +1423,55 @@ def enumerate_tagged(
                         event_id=row["target_id"],
                     )
                 )
+
+        # --- block-kind matches → content-block chunks ---
+        # target_id is an event_content.id, so the join descends
+        # event_content → events → conversations (distinct from the event arm).
+        if want_block:
+            frags, params = _enum_tag_facet_where(tag, all_tags)
+            where = ["ta.target_kind = 'block'", *frags]
+            bparams: list[object] = [*params]
+            if workspace:
+                where.append("w.path LIKE ?")
+                bparams.append(f"%{workspace}%")
+            if since:
+                where.append("e.timestamp >= ?")
+                bparams.append(since)
+            if before:
+                where.append("e.timestamp < ?")
+                bparams.append(before)
+            if owner:
+                where.append(owner_predicate("c.id"))
+                bparams.append(owner)
+            rows = conn.execute(
+                "SELECT DISTINCT ta.target_id AS block_id, ec.block_type, "
+                "ec.event_id, e.conversation_id, e.timestamp AS ev_ts, "
+                "c.started_at, w.path AS workspace, "
+                "json_extract(ec.content, '$.text') AS text "
+                "FROM tag_assignments ta "
+                "JOIN event_content ec ON ec.id = ta.target_id "
+                "JOIN events e ON e.id = ec.event_id "
+                "JOIN conversations c ON c.id = e.conversation_id "
+                "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY e.timestamp DESC, ec.id DESC LIMIT ?",
+                (*bparams, n),
+            ).fetchall()
+            for row in rows:
+                started = row["started_at"]
+                chunks.append(
+                    SearchChunk(
+                        conversation_id=row["conversation_id"],
+                        score=0.0,
+                        text=(row["text"] or ""),
+                        chunk_type=row["block_type"],
+                        workspace_path=_workspace_label(row["workspace"]),
+                        started_at=(started or "")[:10] if started else None,
+                        event_id=row["event_id"],
+                    )
+                )
+
+        if chunks:
             enrich_tags(conn, chunks)
             _annotate_turn_positions(conn, chunks)
 

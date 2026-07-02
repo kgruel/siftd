@@ -19,7 +19,10 @@ from dataclasses import dataclass
 from siftd.api.conversations import AmbiguousPrefix, resolve_entity_id
 
 GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
-_ADDRESSABLE_KINDS = frozenset({"conversation", "workspace"}) | GRANULAR_KINDS
+# 'block' addresses an event_content row (a single content block). It is not a
+# colon-path *anchor* kind (that segment is always an event kind); it enters as a
+# bare/kind-narrowed id or as the optional 4th colon segment.
+_ADDRESSABLE_KINDS = frozenset({"conversation", "workspace", "block"}) | GRANULAR_KINDS
 LAST_MARKERS = frozenset({"last_prompt", "last_response", "last_exchange", "last_tool_call"})
 
 # Maps a granular target kind to the events.kind value used to query. 'exchange'
@@ -46,7 +49,8 @@ class TargetRef:
 
     Exactly one addressing mode is populated:
       - ``raw_id`` (+ optional ``kind``): bare ULID or prefix.
-      - ``conv_ref`` + ``kind`` + ``position``: colon-path.
+      - ``conv_ref`` + ``kind`` + ``position`` (+ optional ``block_position``):
+        colon-path. The optional 4th segment descends into a content block.
       - ``last_marker`` or ``exchange_index``: session-relative markers (deferred).
     """
 
@@ -54,6 +58,7 @@ class TargetRef:
     kind: str | None = None
     conv_ref: str | None = None
     position: int | None = None
+    block_position: int | None = None
     last_marker: str | None = None
     exchange_index: int | None = None
 
@@ -61,16 +66,18 @@ class TargetRef:
 
     @classmethod
     def from_colon_path(cls, raw: str) -> TargetRef | None:
-        """Parse ``<conv_ref>:<kind>:<n>`` into a colon-path TargetRef.
+        """Parse ``<conv_ref>:<kind>:<n>[:<b>]`` into a colon-path TargetRef.
 
-        Returns None if the string does not match the colon-path pattern
-        (exactly two colons, last segment a positive integer). Kind is not
-        validated here — ``resolve`` raises on an unknown kind.
+        The optional 4th segment ``b`` (1-based) descends into content block ``b``
+        of the addressed event — the block grammar (WS8). Returns None if the
+        string does not match the colon-path pattern (two or three colons, the
+        positional segments positive integers). Kind is not validated here —
+        ``resolve`` raises on an unknown kind.
         """
         parts = raw.split(":")
-        if len(parts) != 3:
+        if len(parts) not in (3, 4):
             return None
-        conv_ref, kind, n_str = parts
+        conv_ref, kind, n_str = parts[0], parts[1], parts[2]
         if not conv_ref or not kind:
             return None
         try:
@@ -79,7 +86,15 @@ class TargetRef:
             return None
         if n < 1:
             return None
-        return cls(conv_ref=conv_ref, kind=kind, position=n)
+        block_pos: int | None = None
+        if len(parts) == 4:
+            try:
+                block_pos = int(parts[3])
+            except ValueError:
+                return None
+            if block_pos < 1:
+                return None
+        return cls(conv_ref=conv_ref, kind=kind, position=n, block_position=block_pos)
 
     @classmethod
     def from_positional(cls, positional: list[str]) -> tuple[TargetRef, list[str]] | None:
@@ -155,7 +170,7 @@ def resolve(
         if conv_id is None:
             raise LookupError(f"conversation not found: {ref.conv_ref}")
         assert ref.kind is not None and ref.position is not None
-        return _resolve_colon(conn, conv_id, ref.kind, ref.position)
+        return _resolve_colon(conn, conv_id, ref.kind, ref.position, ref.block_position)
 
     if ref.raw_id is None:
         raise ValueError("empty target ref")
@@ -179,8 +194,13 @@ def _resolve_colon(
     conversation_id: str,
     kind: str,
     n: int,
+    block_position: int | None = None,
 ) -> ResolvedTarget:
-    """Resolve a colon-path ``<conv>:<kind>:<n>`` to (target_kind, target_id)."""
+    """Resolve a colon-path ``<conv>:<kind>:<n>[:<b>]`` to (target_kind, target_id).
+
+    With ``block_position`` set, descends into content block ``b`` (1-based by
+    ``block_index``) of the addressed event, returning a ``block`` target.
+    """
     if kind not in GRANULAR_KINDS:
         valid = ", ".join(sorted(GRANULAR_KINDS))
         raise ValueError(f"Invalid target kind {kind!r}. Valid: {valid}")
@@ -197,6 +217,20 @@ def _resolve_colon(
     ).fetchone()
     if row is None:
         raise IndexError(f"No {kind} at index {n} in conversation {conversation_id[:12]}")
+
+    if block_position is not None:
+        # block_index is 0-based and adapter-derived/contiguous — direct lookup,
+        # no OFFSET ordering tricks. b (1-based) → block_index = b - 1.
+        brow = conn.execute(
+            "SELECT id FROM event_content WHERE event_id = ? AND block_index = ?",
+            (row["id"], block_position - 1),
+        ).fetchone()
+        if brow is None:
+            raise IndexError(
+                f"No block at index {block_position} in {kind} {n} "
+                f"of conversation {conversation_id[:12]}"
+            )
+        return ResolvedTarget("block", brow["id"])
 
     target_kind = "exchange" if kind == "exchange" else kind
     return ResolvedTarget(target_kind, row["id"])
@@ -251,6 +285,24 @@ def _resolve_cross_kind(
         ):
             candidates.append((row["kind"], row["id"]))
 
+    # Blocks arm (event_content) — scoped through the owning event's conversation
+    # with the SAME owner predicate, mirroring the events arm's stance.
+    include_blocks = not (owner and not has_conversation_owners_table(conn))
+    if include_blocks:
+        blk_where = ["(ec.id = ? OR ec.id LIKE ?)"]
+        blk_params: list[object] = [raw, f"{raw}%"]
+        blk_join = ""
+        if owner:
+            blk_join = " JOIN events e2 ON e2.id = ec.event_id"
+            blk_where.append(owner_predicate("e2.conversation_id"))
+            blk_params.append(owner)
+        for row in conn.execute(
+            f"SELECT ec.id FROM event_content ec{blk_join} "
+            f"WHERE {' AND '.join(blk_where)} ORDER BY ec.id LIMIT 6",
+            blk_params,
+        ):
+            candidates.append(("block", row["id"]))
+
     if not candidates:
         raise LookupError(f"not found: {raw}")
     if len(candidates) == 1:
@@ -272,11 +324,19 @@ def _resolve_cross_kind(
             f"SELECT COUNT(*) AS n FROM events e WHERE {' AND '.join(evt_where)}",
             evt_params,
         ).fetchone()["n"]
+    blk_count = 0
+    if include_blocks:
+        blk_join_c = " JOIN events e2 ON e2.id = ec.event_id" if owner else ""
+        blk_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM event_content ec{blk_join_c} "
+            f"WHERE {' AND '.join(blk_where)}",
+            blk_params,
+        ).fetchone()["n"]
     shown = candidates[:5]
     raise AmbiguousPrefix(
         raw,
         [i for _, i in shown],
-        conv_count + evt_count,
+        conv_count + evt_count + blk_count,
         candidate_kinds=[k for k, _ in shown],
         noun="targets",
     )
@@ -291,6 +351,9 @@ def alias(conn: sqlite3.Connection, target_kind: str, target_id: str) -> str:
     """
     if target_kind in ("conversation", "workspace"):
         return target_id[:12]
+
+    if target_kind == "block":
+        return _alias_block(conn, target_id)
 
     event_kind = _KIND_TO_EVENT_KIND.get(target_kind, target_kind)
     row = conn.execute(
@@ -307,3 +370,32 @@ def alias(conn: sqlite3.Connection, target_kind: str, target_id: str) -> str:
         (conv, event_kind, row["timestamp"], row["timestamp"], target_id),
     ).fetchone()["n"]
     return f"{conv[:12]}:{target_kind}:{n}"
+
+
+def _alias_block(conn: sqlite3.Connection, block_id: str) -> str:
+    """Reverse map a content-block id to its ``<conv>:<kind>:<n>:<b>`` colon-path.
+
+    The 2nd segment is the owning event's real kind; ``b`` is 1-based
+    (``block_index + 1``). Falls back to the short id if the block or its event
+    is missing.
+    """
+    brow = conn.execute(
+        "SELECT event_id, block_index FROM event_content WHERE id = ?",
+        (block_id,),
+    ).fetchone()
+    if brow is None:
+        return block_id[:12]
+    erow = conn.execute(
+        "SELECT conversation_id, kind, timestamp FROM events WHERE id = ?",
+        (brow["event_id"],),
+    ).fetchone()
+    if erow is None:
+        return block_id[:12]
+    conv = erow["conversation_id"]
+    n = conn.execute(
+        "SELECT COUNT(*) AS n FROM events "
+        "WHERE conversation_id = ? AND kind = ? "
+        "AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
+        (conv, erow["kind"], erow["timestamp"], erow["timestamp"], brow["event_id"]),
+    ).fetchone()["n"]
+    return f"{conv[:12]}:{erow['kind']}:{n}:{brow['block_index'] + 1}"

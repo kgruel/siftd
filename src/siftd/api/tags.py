@@ -70,7 +70,7 @@ __all__ = [
     "tag_info_list_from_dict",
 ]
 
-_GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
+_GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange", "block"})
 _ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
 
 # Auto-applied tag names: the closed shell:* category vocabulary (written
@@ -104,6 +104,7 @@ class TagInfo:
     exchange_count: int
     prompt_count: int
     response_count: int
+    block_count: int = 0
     pinned: bool = False
     auto: bool = False
     activity: list[int] | None = None
@@ -202,6 +203,7 @@ def list_tags(
                 exchange_count=r["exchange_count"],
                 prompt_count=r["prompt_count"],
                 response_count=r["response_count"],
+                block_count=r.get("block_count", 0),
                 pinned=r.get("pinned", False),
                 auto=r["name"] in _AUTO_TAG_VOCABULARY,
             )

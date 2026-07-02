@@ -7,7 +7,7 @@ from siftd.ids import ulid as _ulid
 from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
 
 _VALID_TARGET_KINDS: frozenset[str] = frozenset(
-    {"conversation", "workspace", "prompt", "response", "tool_call", "exchange"}
+    {"conversation", "workspace", "prompt", "response", "tool_call", "exchange", "block"}
 )
 
 # In-process cache for tag name -> id lookups.
@@ -488,6 +488,30 @@ def list_tags(
         f"WHERE {' AND '.join(response_where)}"
     )
 
+    # block count — target_id is an event_content.id, so time/owner joins descend
+    # event_content → events → conversations (distinct from the event arms).
+    block_where = ["ta.tag_id = t.id", "ta.target_kind = 'block'"]
+    block_params: list[object] = []
+    block_joins: list[str] = []
+    if has_time_filter or owner:
+        block_joins.append("JOIN event_content ec ON ec.id = ta.target_id")
+        block_joins.append("JOIN events e ON e.id = ec.event_id")
+        block_joins.append("JOIN conversations c ON c.id = e.conversation_id")
+    if owner:
+        block_where.append(owner_predicate("e.conversation_id"))
+        block_params.append(owner)
+    if since:
+        block_where.append("c.started_at >= ?")
+        block_params.append(since)
+    if before:
+        block_where.append("c.started_at < ?")
+        block_params.append(before)
+    block_count_sql = (
+        "SELECT COUNT(*) FROM tag_assignments ta "
+        f"{' '.join(block_joins)} "
+        f"WHERE {' AND '.join(block_where)}"
+    )
+
     # pinned flag (owner-scoped). tag_pins is created lazily on a write-open and
     # may be absent on a read-only open of a DB unwritten since this shipped —
     # guard the join so the read degrades to "nothing pinned" rather than raising.
@@ -511,6 +535,7 @@ def list_tags(
             ({exchange_count_sql}) as exchange_count,
             ({prompt_count_sql}) as prompt_count,
             ({response_count_sql}) as response_count,
+            ({block_count_sql}) as block_count,
             {pin_select} as pinned
         FROM tags t
         {pin_join}
@@ -518,7 +543,7 @@ def list_tags(
     """
     all_params = [
         *conv_params, *ws_params, *tc_params, *exchange_params,
-        *prompt_params, *response_params, *pin_params,
+        *prompt_params, *response_params, *block_params, *pin_params,
     ]
 
     cur = conn.execute(sql, all_params)
@@ -533,6 +558,7 @@ def list_tags(
             "exchange_count": row["exchange_count"],
             "prompt_count": row["prompt_count"],
             "response_count": row["response_count"],
+            "block_count": row["block_count"],
             "pinned": bool(row["pinned"]),
         }
         for row in cur.fetchall()
@@ -546,6 +572,7 @@ def list_tags(
             r["pinned"]
             or r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
             or r["exchange_count"] or r["prompt_count"] or r["response_count"]
+            or r["block_count"]
         )]
     return rows
 

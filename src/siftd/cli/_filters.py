@@ -94,7 +94,7 @@ def add_filter_args(
     )
     tag_group.add_argument(
         "--on", action="append", metavar="KIND",
-        choices=["conversation", "prompt", "response", "tool_call", "exchange"],
+        choices=["conversation", "prompt", "response", "tool_call", "exchange", "block"],
         dest="tag_kind",
         help=(
             "Scope tag filters to a specific target kind (repeatable). "

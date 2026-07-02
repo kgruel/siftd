@@ -152,7 +152,8 @@ def test_v11_migration_reprices_stale_row(tmp_path):
 
     conn = open_database(db)  # triggers v10 → v11 migration
     try:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 11
+        # v10 → current: the v11 repricing migration runs en route to SCHEMA_VERSION.
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == sq.SCHEMA_VERSION
         row = _price_of(conn, "m1")
         assert (row["input_per_mtok"], row["output_per_mtok"]) == (5.0, 25.0)
         assert row["source"]  # provenance attached by the reprojection
