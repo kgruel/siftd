@@ -1151,18 +1151,22 @@ def _render_turn_blocks(
                 if trace else _FolioEmitter()
             )
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
-            # The assistant turn tags on its primary response event (reading mode
-            # has no per-run event id in the body, so the turn is the tagging
-            # unit here — tool-call/secondary-response tags stay reachable via
-            # trace/CLI/colon-path). Chips reflect that one event so remove
-            # targets it exactly.
-            resp_ids = getattr(turn, "response_ids", None) or []
-            primary_response = resp_ids[0] if resp_ids else None
-            assistant_tags = _render_element_tags(
-                primary_response, "response", event_tags,
-                interactive=interactive_tags,
-                tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
-            )
+            # Reading mode tags the assistant turn on its primary response event
+            # (the body has no per-run event id there, so the turn is the tagging
+            # unit — tool-call/secondary-response tags stay reachable via
+            # trace/CLI/colon-path). Chips reflect that one event so remove targets
+            # it exactly. Trace mode supersedes this with per-run + per-tool corner
+            # affordances inside the emitter output, so the bottom form is dropped.
+            if trace:
+                assistant_tags = ""
+            else:
+                resp_ids = getattr(turn, "response_ids", None) or []
+                primary_response = resp_ids[0] if resp_ids else None
+                assistant_tags = _render_element_tags(
+                    primary_response, "response", event_tags,
+                    interactive=interactive_tags,
+                    tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+                )
             body.append(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
                 f'<header class="turn__head"><span class="turn__role">Assistant</span>'

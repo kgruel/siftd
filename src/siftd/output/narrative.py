@@ -115,6 +115,9 @@ class HtmlEmitter:
         self.parts: list[str] = []
         self._target = target_event_id
         self._last_event_id: str | None = None
+        # Whether a per-run wrapper div is currently open (closed on the next run
+        # transition or at to_html finalize). Only used on the interactive path.
+        self._run_open = False
         # Trace-mode element tagging (WS4b): the batch (name, kind)-pair map, plus
         # the interactivity + route context, let each tool-call block carry a
         # top-right hover-reveal tag affordance. Off by default — the CLI html
@@ -156,10 +159,26 @@ class HtmlEmitter:
         Uniqueness relies on an upstream invariant: ``_build_narrative`` emits all
         blocks of one response contiguously under that response's id, and each
         assistant turn gets a fresh emitter — so an id never recurs after another
-        intervenes, and a single ``_last_event_id`` suffices to dedupe a run."""
+        intervenes, and a single ``_last_event_id`` suffices to dedupe a run.
+
+        A run transition is also where the per-run response tag affordance is
+        emitted (WS4b slice 2): the whole run is wrapped in a ``.trace-block--run``
+        container carrying a top-right menu that tags the response event, so trace
+        mode tags every block from its own corner — the run for prose/thinking, an
+        inner ``.trace-block--tool`` for each tool call. Thinking has no separate
+        affordance: it tags its owning response, which the run menu already is."""
         if not event_id or event_id == self._last_event_id:
             return "", ""
         self._last_event_id = event_id
+        # Open a positioned wrapper per response run so the run-level menu can pin
+        # to its corner. Only when tagging is interactive — otherwise the output
+        # (CLI html export, search slice) stays byte-for-byte as before.
+        if self._interactive_tags:
+            if self._run_open:
+                self.parts.append("</div>")
+            affordance = self._tag_affordance("response", event_id)
+            self.parts.append(f'<div class="trace-block trace-block--run">{affordance}')
+            self._run_open = True
         attrs = f' data-event-id="{self._escape(event_id)}"'
         cls = " is-target" if event_id == self._target else ""
         return attrs, cls
@@ -386,5 +405,10 @@ class HtmlEmitter:
         )
 
     def to_html(self) -> str:
+        # Close the final run wrapper if one is still open (idempotent — a second
+        # call finds no open run).
+        if self._run_open:
+            self.parts.append("</div>")
+            self._run_open = False
         return "\n".join(self.parts)
 

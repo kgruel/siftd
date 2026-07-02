@@ -280,6 +280,24 @@ def test_trace_tool_call_offers_corner_tag_affordance(ctx):
     assert 'name="entity_type" value="tool_call"' in body  # tags the tool call
 
 
+def test_trace_response_run_offers_corner_affordance_not_bottom_form(ctx):
+    """WS4b slice 2: trace mode wraps each response run in a positioned container
+    with its own top-right response menu, so prose/thinking tag from the corner
+    like tool calls do. The reading-mode bottom whole-turn form is dropped in
+    trace (the per-run corner menu supersedes it)."""
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    reading = client.get("/folio", params={"id": cid, "mode": "reading"}).text
+
+    # Trace: per-run wrapper + a response-kind corner menu.
+    assert "trace-block--run" in trace
+    assert 'name="entity_type" value="response"' in trace
+    # Reading: the bottom whole-turn form still carries the response affordance,
+    # but WITHOUT the trace per-run wrapper.
+    assert 'name="entity_type" value="response"' in reading
+    assert "trace-block--run" not in reading
+
+
 def test_trace_tool_call_tag_roundtrip_via_post_tag(tmp_path):
     """The corner affordance's form round-trips through POST /tag: the tool call
     resolves owner-safely, tags apply/remove, and the audit records target_type
