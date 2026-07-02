@@ -1231,7 +1231,7 @@ def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last
 Export conversations as a complete document.
 
 ```python
-def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
+def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., view: str = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
 ```
 
 **Parameters:**

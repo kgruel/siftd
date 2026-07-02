@@ -312,7 +312,8 @@
   usage: siftd export [-h] [-n [N]] [-w SUBSTR] [--since DATE] [--before DATE]
                       [-l NAME] [--no-tag NAME] [--on KIND] [-s QUERY]
                       [--owner USER] [--json] [-F] [-b] [--thinking] [--tools]
-                      [--no-header] [-o FILE] [conversation_id]
+                      [--no-header] [--view {conversations,elements}] [-o FILE]
+                      [conversation_id]
   
   ARGUMENTS
     conversation_id  Conversation ID (prefix match)
@@ -344,9 +345,12 @@
     --thinking   Show model thinking/reasoning blocks
   
   EXPORT OPTIONS
-    --tools            Expand tool inputs and results (default: summary)
-    --no-header        Omit session metadata header
-    -o, --output FILE  Write to file instead of stdout
+    --tools                          Expand tool inputs and results (default:
+                                     summary)
+    --no-header                      Omit session metadata header
+    --view {conversations,elements}  What to export: whole conversations (default)
+                                     or the tagged elements (requires --tag)
+    -o, --output FILE                Write to file instead of stdout
   
   examples:
     siftd export --last                   # export most recent session

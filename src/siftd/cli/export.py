@@ -22,9 +22,15 @@ def cmd_export(args) -> int:
 
     conversation_ids = [args.conversation_id] if args.conversation_id else None
     last = args.last
+    view = getattr(args, "view", "conversations")
 
-    # Default: if no ID and no --last specified, export last 1
-    if not conversation_ids and last is None:
+    if view == "elements" and not getattr(args, "tag", None):
+        status.error("elements view requires --tag", hint="e.g. siftd export --view elements --tag docs:thing")
+        return 1
+
+    # Default: if no ID and no --last specified, export last 1 (conversations
+    # view only — elements view selects by tag, not recency count).
+    if view != "elements" and not conversation_ids and last is None:
         last = 1
 
     fidelity = fidelity_from_args(args)
@@ -47,6 +53,7 @@ def cmd_export(args) -> int:
             "since": args.since,
             "before": args.before,
             "search": args.search,
+            "view": view,
             "db_path": db,
         },
         # "export-artifact" picks the ExportArtifact deserializer in from_wire.
@@ -141,5 +148,10 @@ def build_export_parser(subparsers) -> None:
         help="Expand tool inputs and results (default: summary)",
     )
     export_opts.add_argument("--no-header", action="store_true", help="Omit session metadata header")
+    export_opts.add_argument(
+        "--view", choices=["conversations", "elements"], default="conversations",
+        help="What to export: whole conversations (default) or the tagged elements "
+             "(requires --tag)",
+    )
     export_opts.add_argument("-o", "--output", metavar="FILE", help="Write to file instead of stdout")
     p.set_defaults(func=cmd_export)
