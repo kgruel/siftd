@@ -1143,6 +1143,10 @@ def _render_turn_blocks(
                     target_event_id,
                     tool_seq=tool_seq if collect else None,
                     turn_no=n,
+                    event_tags=event_tags,
+                    interactive_tags=interactive_tags,
+                    tag_action_url=tag_action_url,
+                    tag_suggest_url=tag_suggest_url,
                 )
                 if trace else _FolioEmitter()
             )

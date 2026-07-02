@@ -267,6 +267,64 @@ def test_folio_body_offers_element_tag_affordance(ctx):
     assert 'name="entity_type" value="response"' in body  # assistant block on response
 
 
+def test_trace_tool_call_offers_corner_tag_affordance(ctx):
+    """WS4b: in trace mode each tool-call block carries a top-right dropdown tag
+    affordance (a native <details> menu, so it opens with no JS — CSP-safe). It
+    is a SIBLING wrapper (.trace-block) so a collapsed block still shows it, and
+    it tags the tool call itself (entity_type=tool_call), not the response."""
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    assert 'data-mode="trace"' in body
+    assert "trace-block--tool" in body               # positioned wrapper
+    assert 'class="tag-menu"' in body                # native-details dropdown
+    assert 'name="entity_type" value="tool_call"' in body  # tags the tool call
+
+
+def test_trace_tool_call_tag_roundtrip_via_post_tag(tmp_path):
+    """The corner affordance's form round-trips through POST /tag: the tool call
+    resolves owner-safely, tags apply/remove, and the audit records target_type
+    'tool_call' keyed on the tool call's own event ULID."""
+    import re
+
+    from siftd.storage.sqlite import open_database
+
+    db, cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db)
+    try:
+        tool_id = conn.execute("SELECT id FROM events WHERE kind='tool_call' LIMIT 1").fetchone()["id"]
+    finally:
+        conn.close()
+
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+        # The tool_call's own id rides its affordance form (not the response id).
+        assert re.search(rf'name="id" value="{re.escape(tool_id)}"', body)
+
+        r = client.post("/tag", data={
+            "action": "apply", "id": tool_id, "entity_type": "tool_call", "tag": "iface",
+        })
+        assert r.status_code == 201
+        assert "iface" in r.text
+        assert 'name="entity_type" value="tool_call"' in r.text
+
+        r2 = client.post("/tag", data={
+            "action": "remove", "id": tool_id, "entity_type": "tool_call", "tag": "iface",
+        })
+        assert r2.status_code == 201
+        assert "iface<" not in r2.text
+
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT target_type, target FROM audit_log WHERE action = 'tag.apply'"
+            " ORDER BY occurred_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["target_type"] == "tool_call"
+    assert row["target"] == tool_id
+
+
 def test_element_tag_apply_remove_roundtrip_via_post_tag(tmp_path):
     """The generalized POST /tag applies + removes an element-kind tag, returns the
     element fragment, and audits with the resolved kind (not the wire hint)."""
