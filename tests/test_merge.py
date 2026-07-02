@@ -504,6 +504,54 @@ def test_tool_call_tag_remapping(tmp_path):
     assert violations == []
 
 
+def test_block_tag_merge(tmp_path):
+    """Block tags (target_kind='block', target_id=event_content.id) survive merge.
+
+    Regression: the tag_assignments copy enumerated only conversation/workspace/
+    event kinds, so block tags were silently dropped — and a block-only tag
+    vanished entirely from the target.
+    """
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-A"}],
+    )
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-B"}],
+    )
+
+    from siftd.storage.sqlite import open_database as _open
+
+    src_conn = _open(source)
+    block_id = src_conn.execute(
+        "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id "
+        "WHERE e.kind = 'response' LIMIT 1"
+    ).fetchone()["id"]
+    tag_id = get_or_create_tag(src_conn, "docs:block-only")
+    apply_tag(src_conn, "block", block_id, tag_id)
+    src_conn.commit()
+    src_conn.close()
+
+    result = merge_database(target, source)
+    assert result["conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    n = conn.execute(
+        "SELECT COUNT(*) FROM tag_assignments WHERE target_kind = 'block' AND target_id = ?",
+        (block_id,),
+    ).fetchone()[0]
+    tag_present = conn.execute(
+        "SELECT COUNT(*) FROM tags WHERE name = 'docs:block-only'"
+    ).fetchone()[0]
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+
+    assert n == 1
+    assert tag_present == 1
+    assert violations == []
+
+
 def test_replace_stale_conversation(tmp_path):
     """Source with newer ULID for same (harness, external_id) replaces target's version."""
     import time

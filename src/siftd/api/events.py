@@ -232,16 +232,28 @@ def _fetch_event_tags(conn: sqlite3.Connection, event_id: str, kind: str) -> lis
     Prompts also surface 'exchange'-kind tags (same target_id, different kind);
     fetched in a single query covering both target_kinds.
     """
+    return [name for name, _ in _fetch_event_tag_pairs(conn, event_id, kind)]
+
+
+def _fetch_event_tag_pairs(
+    conn: sqlite3.Connection, event_id: str, kind: str
+) -> list[tuple[str, str]]:
+    """(tag name, target_kind) pairs for this event.
+
+    Prompts surface 'exchange'-kind tags too; the pair carries each tag's ACTUAL
+    kind so a remove posts the kind the user clicked (an exchange chip on a prompt
+    section removes the exchange assignment, not a nonexistent prompt one).
+    """
     if kind == "prompt":
         rows = conn.execute(
-            "SELECT DISTINCT t.name FROM tag_assignments ta"
+            "SELECT DISTINCT t.name, ta.target_kind FROM tag_assignments ta"
             " JOIN tags t ON t.id = ta.tag_id"
             " WHERE ta.target_id = ? AND ta.target_kind IN ('prompt', 'exchange')"
             " ORDER BY t.name",
             (event_id,),
         ).fetchall()
-        return [row["name"] for row in rows]
-    return [row["name"] for row in get_tags_for(conn, kind, event_id)]
+        return [(row["name"], row["target_kind"]) for row in rows]
+    return [(row["name"], kind) for row in get_tags_for(conn, kind, event_id)]
 
 
 def _fetch_neighbors(

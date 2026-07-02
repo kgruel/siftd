@@ -566,6 +566,7 @@ def export_route(
     # the rendered ExportArtifact. When absent, retain legacy behavior
     # (return conversation list — backward compat for any external clients).
     format: str | None = Parameter(query="format", default=None),
+    view: str = Parameter(query="view", default="conversations"),
     no_header: bool = Parameter(query="no_header", default=False),
     include_thinking: bool = Parameter(query="include_thinking", default=False),
     include_tool_content: bool = Parameter(query="include_tool_content", default=False),
@@ -605,7 +606,7 @@ def export_route(
              "id": id, "last": last, "n": n,
              "workspace": workspace, "tag": tag, "no_tag": no_tag,
              "tag_kind": tag_kind, "since": since, "before": before,
-             "search": search, "db_path": db_path, "owner": owner},
+             "search": search, "view": view, "db_path": db_path, "owner": owner},
             "export-artifact", db_path,
             fidelity=fidelity,
         )
@@ -972,7 +973,7 @@ def conversation_list(
 def search_route(
     request: Request,
     db_path: Path,
-    q: str = Parameter(query="q"),
+    q: str = Parameter(query="q", default=""),
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),

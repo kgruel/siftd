@@ -12,6 +12,7 @@ from painted import Fidelity
 
 from siftd.domain.shell_categories import shell_tag_names
 from siftd.paths import db_path as _db_path
+from siftd.storage.filters import ALL_TAG_KINDS, ELEMENT_TAG_KINDS
 from siftd.storage.sqlite import open_database as _open_database
 from siftd.storage.tags import DERIVATIVE_TAG
 from siftd.storage.tags import (
@@ -46,6 +47,7 @@ from siftd.storage.tags import (
 )
 
 __all__ = [
+    "ALL_ENTITY_TYPES",
     "DERIVATIVE_TAG",
     "ApplyTagOutcome",
     "ApplyResult",
@@ -61,6 +63,7 @@ __all__ = [
     "get_or_create_tag",
     "get_tags_for",
     "list_tags",
+    "modify_target_tag",
     "rename_tag_safe",
     "remove_tag",
     "rename_tag",
@@ -69,8 +72,11 @@ __all__ = [
     "tag_info_list_from_dict",
 ]
 
-_GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
-_ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
+_GRANULAR_KINDS = ELEMENT_TAG_KINDS  # sub-conversation kinds (incl. 'block')
+# Public: the full entity_type vocabulary, for serve-layer wire validation (the
+# architecture boundary forbids serve importing storage.filters directly).
+ALL_ENTITY_TYPES = ALL_TAG_KINDS
+_ALL_ENTITY_TYPES = ALL_ENTITY_TYPES
 
 # Auto-applied tag names: the closed shell:* category vocabulary (written
 # automatically at ingest/backfill) plus the derivative marker. Membership is a pure
@@ -103,6 +109,7 @@ class TagInfo:
     exchange_count: int
     prompt_count: int
     response_count: int
+    block_count: int = 0
     pinned: bool = False
     auto: bool = False
     activity: list[int] | None = None
@@ -201,6 +208,7 @@ def list_tags(
                 exchange_count=r["exchange_count"],
                 prompt_count=r["prompt_count"],
                 response_count=r["response_count"],
+                block_count=r.get("block_count", 0),
                 pinned=r.get("pinned", False),
                 auto=r["name"] in _AUTO_TAG_VOCABULARY,
             )
@@ -480,6 +488,97 @@ def modify_conversation_tag(
 
         conn.commit()
         return fetch_conversation_tags(conn, resolved)
+    finally:
+        conn.close()
+
+
+def _fetch_target_tags(
+    conn: sqlite3.Connection, kind: str, target_id: str
+) -> list[tuple[str, str]]:
+    """(tag name, target_kind) pairs on a resolved target, dispatched by kind.
+
+    Prompts surface their 'exchange' tags too (``_fetch_event_tag_pairs`` owns
+    that union, carrying each tag's real kind); conversations/workspaces read
+    their own kind, so their pairs all carry ``kind``. The kind rides each chip
+    so the re-rendered fragment's remove buttons post the assignment the user
+    clicked.
+    """
+    from siftd.storage.queries import fetch_conversation_tags
+
+    if kind == "conversation":
+        return [(name, "conversation") for name in fetch_conversation_tags(conn, target_id)]
+    if kind == "workspace":
+        names = sorted({row["name"] for row in _get_tags_for(conn, "workspace", target_id)})
+        return [(name, "workspace") for name in names]
+
+    from siftd.api.events import _fetch_event_tag_pairs
+
+    return _fetch_event_tag_pairs(conn, target_id, kind)
+
+
+def modify_target_tag(
+    entity_type: str,
+    entity_id: str,
+    tag_name: str,
+    *,
+    action: str = "apply",
+    db_path: Path | None = None,
+    owner: str | None = None,
+    view_kind: str | None = None,
+) -> tuple[str, str, list[tuple[str, str]]]:
+    """Apply or remove a tag on any taggable target (conversation or element).
+
+    The single owner-safe write path behind the serve ``POST /tag`` route. The
+    wire ``entity_type``/``entity_id`` fold into a :class:`TargetRef`, which
+    ``resolve`` maps to a canonical (kind, ULID) *scoped by owner on every
+    grammar* — so a tenant can neither read nor tag another tenant's element.
+    The resolved kind is authoritative (the wire type is only a hint); it drives
+    the caller's audit ``target_type``.
+
+    ``view_kind`` names the kind whose tag VIEW the returned pairs reflect,
+    defaulting to the resolved kind. The mutation kind and the view kind differ
+    when a chip's kind differs from its host section (an exchange chip on a
+    prompt section): the mutation must target the exchange assignment, but the
+    fragment must re-render as the prompt view (prompt + exchange union) or the
+    section's other chips vanish. Both kinds address the same event ULID, so the
+    read-back stays owner-safe — the target already resolved under ``owner``.
+
+    Returns ``(resolved_kind, resolved_id, updated_tag_names)``.
+
+    Raises:
+        LookupError: the target does not resolve (incl. owner-scope miss — the
+            route maps this to 404, not 403).
+        AmbiguousPrefix: a prefix collides across candidates.
+    """
+    from siftd.api.target_ref import TargetRef, resolve
+
+    path = db_path or _db_path()
+    conn = _open_database(path)
+    try:
+        ref = TargetRef.from_wire({"entity_type": entity_type, "entity_id": entity_id})
+        resolved = resolve(conn, ref, owner=owner)
+
+        # Workspace tags are shared-dimension state — every tenant in the
+        # workspace sees them — so owner-scoped callers may not mutate them
+        # (mirrors apply_tags' stance). 404-shaped like every other owner miss.
+        if owner and resolved.target_kind == "workspace":
+            raise LookupError(f"workspace not taggable under owner scope: {entity_id}")
+
+        if action == "remove":
+            tid = _get_tag_id(conn, tag_name)
+            if tid:
+                _remove_tag(conn, resolved.target_kind, resolved.target_id, tid)
+        else:
+            tid = _get_or_create_tag(conn, tag_name)
+            _apply_tag(conn, resolved.target_kind, resolved.target_id, tid)
+
+        conn.commit()
+        fetch_kind = view_kind if view_kind in _ALL_ENTITY_TYPES else resolved.target_kind
+        tags = _fetch_target_tags(conn, fetch_kind, resolved.target_id)
+        return resolved.target_kind, resolved.target_id, tags
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

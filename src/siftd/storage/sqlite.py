@@ -38,7 +38,7 @@ from siftd.storage.tags import (
 )
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 11
+SCHEMA_VERSION = 12
 
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
@@ -2131,6 +2131,25 @@ def _migrate_v11_pricing_reference(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[11] = _migrate_v11_pricing_reference
+
+
+def _migrate_v12_block_cleanup_trigger(conn: sqlite3.Connection) -> None:
+    """v12: Add the event_content cascade-cleanup trigger for block tags (WS8).
+
+    Block-level tagging introduces target_kind = 'block' referencing
+    event_content.id. event_content rows cascade-delete via their events FK, but
+    that FK fires no trigger touching tag_assignments/attributes — so a block tag
+    would orphan. This trigger mirrors the other polymorphic cleanup triggers.
+    Idempotent: ensure_polymorphic_cleanup_triggers also creates it on every write
+    open, so this migration only stamps the version and guarantees old in-place
+    DBs pick it up.
+    """
+    from siftd.storage.events import ensure_polymorphic_cleanup_triggers
+
+    ensure_polymorphic_cleanup_triggers(conn)
+
+
+MIGRATIONS[12] = _migrate_v12_block_cleanup_trigger
 
 
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:

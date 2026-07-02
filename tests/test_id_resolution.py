@@ -186,6 +186,47 @@ class TestResolveEntityId:
         conn.close()
         assert result is None
 
+    def test_workspace_owner_scope_is_participation(self, tmp_path):
+        """Under owner scope a workspace resolves only for a participant.
+
+        Regression: the workspace arm had no owner predicate and no
+        owners-table fallback guard, so any owner-scoped caller resolved any
+        workspace id (an existence oracle via ``POST /tag``).
+        """
+        db_path = tmp_path / "ws-owner.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        conn.execute(
+            "INSERT INTO workspaces (id, path, discovered_at) VALUES (?, ?, ?)",
+            ("ws1", "/proj", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)"
+            " VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+            ("conv1", "ext-1", harness_id, "ws1", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS conversation_owners ("
+            "conversation_id TEXT PRIMARY KEY, user_id TEXT, push_id TEXT, assigned_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+            " VALUES (?, ?, NULL, ?)",
+            ("conv1", "bob", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Unscoped and participant callers resolve; a non-participant gets
+            # None (404-shaped), not an error.
+            assert resolve_entity_id(conn, "workspace", "ws1") == "ws1"
+            assert resolve_entity_id(conn, "workspace", "ws1", owner="bob") == "ws1"
+            assert resolve_entity_id(conn, "workspace", "ws1", owner="alice") is None
+        finally:
+            conn.close()
+
     def _make_event_collision_db(self, tmp_path, kind, ids):
         """Create a DB with one conversation and events of `kind` having `ids`."""
         db_path = tmp_path / "events.db"
@@ -379,3 +420,49 @@ class TestExportAmbiguousPrefix:
         db_path, id_a, id_b = _make_unique_db(tmp_path)
         code = _invoke(["--db", str(db_path), "export", id_a])
         assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# Owner-scoped event resolution (WS4 owner-safety of the kind-narrowed path)
+# ---------------------------------------------------------------------------
+
+def test_resolve_event_is_owner_scoped(tmp_path):
+    """resolve_entity_id for an event kind scopes through the owning conversation:
+    an owner who does not own the event's conversation resolves nothing, so the
+    serve /tag route can trust resolve() on the kind-narrowed path (not just the
+    bare-id cross-kind one)."""
+    from siftd.storage.sqlite import (
+        get_or_create_workspace,
+        insert_conversation,
+        insert_prompt,
+        open_database,
+    )
+
+    db_path = tmp_path / "owned.db"
+    conn = create_database(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/bob", "2024-01-01T00:00:00Z")
+    cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2024-01-01T00:00:00Z",
+    )
+    pid = insert_prompt(conn, cid, "p0", "2024-01-01T00:00:00Z")
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (cid, "bob", None, "2024-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_database(db_path)
+    try:
+        # Unscoped and the true owner resolve; a foreign owner does not.
+        assert resolve_entity_id(conn, "prompt", pid, owner=None) == pid
+        assert resolve_entity_id(conn, "prompt", pid, owner="bob") == pid
+        assert resolve_entity_id(conn, "prompt", pid, owner="alice") is None
+    finally:
+        conn.close()

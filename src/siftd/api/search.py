@@ -19,6 +19,7 @@ from siftd.domain.search_types import (
     SearchChunk,
     SearchView,
 )
+from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
@@ -442,6 +443,59 @@ def enrich_search_metadata(conn: sqlite3.Connection, results: list[SearchChunk])
         r.started_at = (started or "")[:10] if started else None
 
 
+def enrich_tags(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
+    """Attach element-level tags to each chunk in-place, batched (no N+1).
+
+    A hit's ``event_id`` is the element address; any ``tag_assignments`` row whose
+    ``target_id`` equals it (prompt/response/tool_call, or an ``exchange`` anchored
+    on that prompt) contributes a tag chip.
+    """
+    event_ids = list({r.event_id for r in results if r.event_id})
+    if not event_ids:
+        return
+    placeholders = ",".join("?" * len(event_ids))
+    rows = conn.execute(
+        f"SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        f"JOIN tags tg ON tg.id = ta.tag_id "
+        f"WHERE ta.target_id IN ({placeholders}) ORDER BY tg.name",
+        event_ids,
+    ).fetchall()
+    by_id: dict[str, list[str]] = {}
+    for row in rows:
+        by_id.setdefault(row["target_id"], []).append(row["name"])
+    for r in results:
+        if r.event_id and r.event_id in by_id:
+            r.tags = by_id[r.event_id]
+
+
+def _enrich_block_tags(
+    conn: sqlite3.Connection, block_chunk_ids: list[tuple[SearchChunk, str]]
+) -> None:
+    """Set block chunks' chips from the BLOCK's own tags (target_id = block id).
+
+    Block chunks carry ``event_id`` = the owning event (the folio-jump address),
+    so :func:`enrich_tags`' event-keyed pass can't reach a block's tags — and
+    would otherwise leak the owning event's unrelated tags onto the hit. This
+    overrides that pass, keyed by block id, batched (rows already capped at ``n``).
+    """
+    if not block_chunk_ids:
+        return
+    block_ids = list({bid for _, bid in block_chunk_ids})
+    placeholders = ",".join("?" * len(block_ids))
+    rows = conn.execute(
+        f"SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        f"JOIN tags tg ON tg.id = ta.tag_id "
+        f"WHERE ta.target_id IN ({placeholders}) AND ta.target_kind = 'block' "
+        f"ORDER BY tg.name",
+        block_ids,
+    ).fetchall()
+    by_id: dict[str, list[str]] = {}
+    for row in rows:
+        by_id.setdefault(row["target_id"], []).append(row["name"])
+    for chunk, block_id in block_chunk_ids:
+        chunk.tags = by_id.get(block_id, [])
+
+
 def enrich_file_refs(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
     """Attach file references to each chunk in-place."""
     from siftd.api import fetch_file_refs
@@ -769,6 +823,7 @@ def process_search_view(
     enrich_search_metadata(conn, chunks)
     if view != "conversations":
         enrich_file_refs(conn, chunks)
+        enrich_tags(conn, chunks)
 
     # 5. --sort time (chunks view only; the other views impose their own order
     #    and reject --sort=time at axis validation).
@@ -1270,6 +1325,264 @@ def _engine_limit(n: int, *, view: str, select: str) -> int:
     return n
 
 
+# Event-anchored kinds enumerated by the element arm; 'block' rides its own arm
+# (its target is an event_content.id, not an events.id).
+_ENUM_ELEMENT_KINDS = tuple(sorted(EVENT_TAG_KINDS))
+
+
+def _enum_tag_facet_where(
+    tag: list[str] | None, all_tags: list[str] | None
+) -> tuple[list[str], list[object]]:
+    """WHERE fragments matching the outer ``ta.target_id`` against the tag facet.
+
+    ``tag`` is OR, ``all_tags`` is AND. Each fragment is a self-contained
+    ``ta.target_id IN (subquery)`` so it composes with any outer target-kind
+    filter (element rows or conversation rows) without an outer tags join.
+    """
+    from siftd.storage.filters import tag_condition
+
+    frags: list[str] = []
+    params: list[object] = []
+    if tag:
+        ors: list[str] = []
+        for t in tag:
+            clause, val = tag_condition(t)
+            ors.append(f"({clause})")
+            params.append(val)
+        frags.append(
+            "ta.target_id IN (SELECT s.target_id FROM tag_assignments s "
+            "JOIN tags tg ON tg.id = s.tag_id "
+            f"WHERE {' OR '.join(ors)})"
+        )
+    if all_tags:
+        for t in all_tags:
+            clause, val = tag_condition(t)
+            frags.append(
+                "ta.target_id IN (SELECT s.target_id FROM tag_assignments s "
+                f"JOIN tags tg ON tg.id = s.tag_id WHERE {clause})"
+            )
+            params.append(val)
+    return frags, params
+
+
+def enumerate_tagged(
+    *,
+    db_path: Path,
+    tag: list[str] | None = None,
+    all_tags: list[str] | None = None,
+    tag_kind: list[str] | None = None,
+    workspace: str | None = None,
+    since: str | None = None,
+    before: str | None = None,
+    owner: str | None = None,
+    n: int = 10,
+    view: str = "chunks",
+) -> SearchView:
+    """Enumerate tagged targets without ranking — the filter-only search path.
+
+    Selects ``tag_assignments`` matching the tag facet (``tag`` = OR, ``all_tags``
+    = AND), honoring the other facets (workspace, date range, owner),
+    recency-ordered. Per decision 1: element-kind matches surface as element
+    hits, conversation-kind matches surface as conversation-scoped hits. A tag
+    that matches both (or ``view="conversations"``) resolves to the conversations
+    shape — the element-owning conversations unioned with the directly-tagged
+    ones — so a conversation-level tag (the common case for a pre-existing
+    corpus) never returns silently empty.
+    """
+    from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
+    from siftd.storage.sqlite import open_database
+
+    if not (tag or all_tags):
+        return SearchView(results=[], view=view)
+
+    element_kinds = tuple(
+        k for k in (tag_kind or _ENUM_ELEMENT_KINDS) if k in _ENUM_ELEMENT_KINDS
+    )
+    want_conversation = tag_kind is None or "conversation" in tag_kind
+    want_block = tag_kind is None or "block" in tag_kind
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        if owner and not has_conversation_owners_table(conn):
+            return SearchView(results=[], view=view)
+
+        # --- element-kind matches → element chunks ---
+        chunks: list[SearchChunk] = []
+        block_chunk_ids: list[tuple[SearchChunk, str]] = []
+        if element_kinds:
+            frags, params = _enum_tag_facet_where(tag, all_tags)
+            where = [f"ta.target_kind IN ({','.join('?' * len(element_kinds))})", *frags]
+            eparams: list[object] = [*element_kinds, *params]
+            if workspace:
+                where.append("w.path LIKE ?")
+                eparams.append(f"%{workspace}%")
+            if since:
+                where.append("e.timestamp >= ?")
+                eparams.append(since)
+            if before:
+                where.append("e.timestamp < ?")
+                eparams.append(before)
+            if owner:
+                where.append(owner_predicate("c.id"))
+                eparams.append(owner)
+            rows = conn.execute(
+                "SELECT DISTINCT ta.target_kind, ta.target_id, e.conversation_id, "
+                "e.timestamp AS ev_ts, c.started_at, w.path AS workspace "
+                "FROM tag_assignments ta "
+                "JOIN events e ON e.id = ta.target_id "
+                "JOIN conversations c ON c.id = e.conversation_id "
+                "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY e.timestamp DESC, e.id DESC LIMIT ?",
+                (*eparams, n),
+            ).fetchall()
+            for row in rows:
+                excerpt_row = conn.execute(
+                    "SELECT json_extract(content, '$.text') AS text FROM event_content "
+                    "WHERE event_id = ? AND json_extract(content, '$.text') IS NOT NULL "
+                    "ORDER BY block_index LIMIT 1",
+                    (row["target_id"],),
+                ).fetchone()
+                started = row["started_at"]
+                chunks.append(
+                    SearchChunk(
+                        conversation_id=row["conversation_id"],
+                        score=0.0,
+                        text=(excerpt_row["text"] if excerpt_row else "") or "",
+                        chunk_type=row["target_kind"],
+                        workspace_path=_workspace_label(row["workspace"]),
+                        started_at=(started or "")[:10] if started else None,
+                        event_id=row["target_id"],
+                    )
+                )
+
+        # --- block-kind matches → content-block chunks ---
+        # target_id is an event_content.id, so the join descends
+        # event_content → events → conversations (distinct from the event arm).
+        if want_block:
+            frags, params = _enum_tag_facet_where(tag, all_tags)
+            where = ["ta.target_kind = 'block'", *frags]
+            bparams: list[object] = [*params]
+            if workspace:
+                where.append("w.path LIKE ?")
+                bparams.append(f"%{workspace}%")
+            if since:
+                where.append("e.timestamp >= ?")
+                bparams.append(since)
+            if before:
+                where.append("e.timestamp < ?")
+                bparams.append(before)
+            if owner:
+                where.append(owner_predicate("c.id"))
+                bparams.append(owner)
+            rows = conn.execute(
+                "SELECT DISTINCT ta.target_id AS block_id, ec.block_type, "
+                "ec.event_id, e.conversation_id, e.timestamp AS ev_ts, "
+                "c.started_at, w.path AS workspace, "
+                "json_extract(ec.content, '$.text') AS text "
+                "FROM tag_assignments ta "
+                "JOIN event_content ec ON ec.id = ta.target_id "
+                "JOIN events e ON e.id = ec.event_id "
+                "JOIN conversations c ON c.id = e.conversation_id "
+                "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY e.timestamp DESC, ec.id DESC LIMIT ?",
+                (*bparams, n),
+            ).fetchall()
+            for row in rows:
+                started = row["started_at"]
+                chunk = SearchChunk(
+                    conversation_id=row["conversation_id"],
+                    score=0.0,
+                    text=(row["text"] or ""),
+                    chunk_type=row["block_type"],
+                    workspace_path=_workspace_label(row["workspace"]),
+                    started_at=(started or "")[:10] if started else None,
+                    event_id=row["event_id"],
+                )
+                chunks.append(chunk)
+                # A block chunk's event_id is the OWNING event (the folio-jump
+                # address), but its tags live on the block id — so enrich_tags'
+                # event-keyed pass can't reach them (and could leak the owning
+                # event's own tags). Remember (chunk, block_id) to set chips
+                # directly below, overriding that pass.
+                block_chunk_ids.append((chunk, row["block_id"]))
+
+        if chunks:
+            enrich_tags(conn, chunks)
+            _annotate_turn_positions(conn, chunks)
+            _enrich_block_tags(conn, block_chunk_ids)
+
+        # --- conversation-kind matches → directly-tagged conversation rows ---
+        conv_rows: list = []
+        if want_conversation:
+            frags, params = _enum_tag_facet_where(tag, all_tags)
+            where = ["ta.target_kind = 'conversation'", *frags]
+            cparams: list[object] = [*params]
+            if workspace:
+                where.append("w.path LIKE ?")
+                cparams.append(f"%{workspace}%")
+            if since:
+                where.append("c.started_at >= ?")
+                cparams.append(since)
+            if before:
+                where.append("c.started_at < ?")
+                cparams.append(before)
+            if owner:
+                where.append(owner_predicate("c.id"))
+                cparams.append(owner)
+            conv_rows = conn.execute(
+                "SELECT DISTINCT ta.target_id AS conv_id, c.started_at, w.path AS workspace "
+                "FROM tag_assignments ta "
+                "JOIN conversations c ON c.id = ta.target_id "
+                "LEFT JOIN workspaces w ON w.id = c.workspace_id "
+                f"WHERE {' AND '.join(where)} "
+                "ORDER BY c.started_at DESC LIMIT ?",
+                (*cparams, n),
+            ).fetchall()
+
+        # No conversation-kind matches and not explicitly asked for the
+        # conversations shape → element hits.
+        if view != "conversations" and not conv_rows:
+            return SearchView(results=[c.to_render_dict() for c in chunks[:n]], view="chunks")
+
+        # Conversations shape: element-owning conversations (aggregated) unioned
+        # with the directly-tagged ones, deduped, recency-ordered.
+        conv_hits: dict[str, dict] = {}
+        for summ in aggregate_by_conversation(chunks, limit=n):
+            d = summ.to_render_dict()
+            conv_hits[d["conversation_id"]] = d
+        for row in conv_rows:
+            cid = row["conv_id"]
+            if cid in conv_hits:
+                continue
+            excerpt = conn.execute(
+                "SELECT json_extract(ec.content, '$.text') AS text FROM event_content ec "
+                "JOIN events e ON e.id = ec.event_id "
+                "WHERE e.conversation_id = ? AND e.kind = 'prompt' "
+                "AND json_extract(ec.content, '$.text') IS NOT NULL "
+                "ORDER BY e.timestamp LIMIT 1",
+                (cid,),
+            ).fetchone()
+            started = row["started_at"]
+            conv_hits[cid] = {
+                "conversation_id": cid,
+                "max_score": 0.0,
+                "mean_score": 0.0,
+                "chunk_count": 0,
+                "best_excerpt": (excerpt["text"] if excerpt else "") or "",
+                "_workspace": _workspace_label(row["workspace"]) or "",
+                "_started_at": (started or "")[:10] if started else "",
+                "file_refs": [],
+            }
+        merged = sorted(
+            conv_hits.values(), key=lambda d: d.get("_started_at", ""), reverse=True
+        )[:n]
+        return SearchView(results=merged, view="conversations")
+    finally:
+        conn.close()
+
+
 def search_view(
     q: str,
     *,
@@ -1329,6 +1642,23 @@ def search_view(
     emptied one.
     """
     _validate_view_axes(view, sort, select, around, turns)
+
+    # Filter-only search: no query, but a tag facet → enumerate tagged elements
+    # (recency-ordered), skipping the FTS/vector engines entirely (decision 1).
+    if not q.strip() and (tag or all_tags):
+        return enumerate_tagged(
+            db_path=db_path,
+            tag=tag,
+            all_tags=all_tags,
+            tag_kind=tag_kind,
+            workspace=workspace,
+            since=since,
+            before=before,
+            owner=owner,
+            n=n,
+            view=view if view in ("chunks", "conversations") else "chunks",
+        )
+
     turns_range = (
         parse_turns_range(turns) if (around is not None and turns is not None) else None
     )

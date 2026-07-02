@@ -1654,40 +1654,87 @@ def ui_follow(
 
 @post("/tag")
 async def ui_tag(request: Request, db_path: Path) -> Response:
-    """Apply or remove a tag, return updated tag section fragment."""
+    """Apply or remove a tag on a conversation OR a folio element.
+
+    Generalized from the conversation-only form: the request carries
+    ``entity_type`` (default ``conversation`` for back-compat) alongside ``id``,
+    which fold into a :class:`TargetRef` and resolve — owner-scoped on every
+    grammar — inside ``modify_target_tag``. An element block posts its kind
+    (``prompt``/``response``/…) + event ULID; the resolved kind (authoritative,
+    not the wire hint) drives both the audit ``target_type`` and the returned
+    fragment's re-post identity. A miss under owner scope is a 404 (the target
+    is simply not visible), never a 403.
+    """
     from siftd.serve.auth import require_write
 
     require_write(request)
 
     from siftd.api import record_audit_event
-    from siftd.api.tags import modify_conversation_tag
+    from siftd.api.conversations import AmbiguousPrefix
+    from siftd.api.tags import modify_target_tag
     from siftd.output.html_fmt import render_tag_section
     from siftd.serve.routes import _actor_identity, _client_ip
 
     owner = _effective_owner(request, None)
     form = await request.form()
     action = str(form.get("action", "apply"))
-    conv_id = str(form.get("id", ""))
+    target_id = str(form.get("id", ""))
+    entity_type = str(form.get("entity_type", "conversation"))
+    # The section hosting the control — chip removes post it because a chip's
+    # kind can differ from its section (an exchange chip on a prompt section):
+    # the mutation targets the chip's kind, the fragment re-renders the SECTION's
+    # view or its other chips vanish and its add-form flips kind. Adds (and old
+    # fragments) omit it; the mutation kind then IS the section kind. Clamped to
+    # the known vocabulary — a spoofed value must not ride into the fragment.
+    from siftd.api.tags import ALL_ENTITY_TYPES
+
+    section_type = str(form.get("section_type", "")) or entity_type
+    if section_type not in ALL_ENTITY_TYPES:
+        section_type = entity_type
     tag_name = str(form.get("tag", "")).strip()
 
-    if not conv_id or not tag_name:
+    if not target_id or not tag_name:
         return _html_response('<div class="tag-section">error: missing id or tag</div>')
 
-    tags = modify_conversation_tag(
-        conv_id, tag_name, action=action, db_path=db_path, owner=owner,
-    )
+    try:
+        resolved_kind, resolved_id, tags = modify_target_tag(
+            entity_type, target_id, tag_name,
+            action=action, db_path=db_path, owner=owner,
+            view_kind=section_type,
+        )
+    except LookupError:
+        return Response(
+            content='<div class="tag-section">error: target not found</div>',
+            media_type="text/html",
+            status_code=404,
+        )
+    except AmbiguousPrefix as exc:
+        return Response(
+            content=f'<div class="tag-section">error: ambiguous id — {exc.total} matches</div>',
+            media_type="text/html",
+            status_code=400,
+        )
+
     record_audit_event(
         db_path=db_path,
         actor=_actor_identity(request),
         action=f"tag.{action}",
-        target_type="conversation",
-        target=conv_id,
+        target_type=resolved_kind,
+        target=resolved_id,
         detail=tag_name,
         source_ip=_client_ip(request),
     )
+    # A conversation section keeps the plain class; an element section keeps its
+    # hover-reveal identity so the swapped-in fragment re-posts against the same
+    # element and stays visually subordinate. The fragment renders as the SECTION
+    # (chips + add-form kind), not the mutation kind — see section_type above.
+    section_class = (
+        "tag-section" if section_type == "conversation" else "tag-section tag-section--elem"
+    )
     return _html_response(render_tag_section(
-        conv_id, tags,
+        resolved_id, tags,
         tag_action_url="/tag", tag_suggest_url="/tags/suggest",
+        entity_type=section_type, section_class=section_class,
     ))
 
 

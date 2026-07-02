@@ -4,11 +4,10 @@ import sqlite3
 from datetime import UTC, datetime
 
 from siftd.ids import ulid as _ulid
+from siftd.storage.filters import ALL_TAG_KINDS, EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
 
-_VALID_TARGET_KINDS: frozenset[str] = frozenset(
-    {"conversation", "workspace", "prompt", "response", "tool_call", "exchange"}
-)
+_VALID_TARGET_KINDS = ALL_TAG_KINDS
 
 # In-process cache for tag name -> id lookups.
 # Only valid within a single connection lifetime. Cleared on module reload.
@@ -168,51 +167,60 @@ def delete_tag(conn: sqlite3.Connection, name: str, *, commit: bool = False) -> 
     return removed
 
 
+def _tag_owner_participation(
+    conn: sqlite3.Connection,
+    tag_id: str,
+    owner: str | None,
+    *,
+    others: bool,
+) -> bool:
+    """True when the tag has an assignment on an entity owned by ``owner``
+    (``others=False``) or by anyone else (``others=True``).
+
+    One arm per ownership join topology: conversation (direct), event kinds
+    (events → conversation), block (event_content → events → conversation),
+    workspace (participation — any conversation in the workspace).
+    """
+    if not owner:
+        return False
+    if not has_conversation_owners_table(conn):
+        return False
+
+    op = "!=" if others else "="
+    event_kinds = ",".join(f"'{k}'" for k in sorted(EVENT_TAG_KINDS))
+    arms = (
+        # conversation-kind: direct ownership join
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversation_owners co ON co.conversation_id = ta.target_id "
+        f"WHERE ta.tag_id = ? AND ta.target_kind = 'conversation' AND co.user_id {op} ? LIMIT 1",
+        # event-kind: ownership via event → conversation
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN events e ON e.id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
+        f"WHERE ta.tag_id = ? AND ta.target_kind IN ({event_kinds}) "
+        f"AND co.user_id {op} ? LIMIT 1",
+        # block-kind: ownership via event_content → event → conversation
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN event_content ec ON ec.id = ta.target_id "
+        "JOIN events e ON e.id = ec.event_id "
+        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
+        f"WHERE ta.tag_id = ? AND ta.target_kind = 'block' AND co.user_id {op} ? LIMIT 1",
+        # workspace-kind: participation — any conversation in the workspace
+        "SELECT 1 FROM tag_assignments ta "
+        "JOIN conversations c ON c.workspace_id = ta.target_id "
+        "JOIN conversation_owners co ON co.conversation_id = c.id "
+        f"WHERE ta.tag_id = ? AND ta.target_kind = 'workspace' AND co.user_id {op} ? LIMIT 1",
+    )
+    return any(conn.execute(sql, (tag_id, owner)).fetchone() for sql in arms)
+
+
 def tag_used_by_other_owners(
     conn: sqlite3.Connection,
     tag_id: str,
     owner: str | None,
 ) -> bool:
     """Return True when a tag is associated with entities owned by other users."""
-    if not owner:
-        return False
-    if not has_conversation_owners_table(conn):
-        return False
-
-    # conversation-kind: direct ownership join
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN conversation_owners co ON co.conversation_id = ta.target_id "
-        "WHERE ta.tag_id = ? AND ta.target_kind = 'conversation' AND co.user_id != ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    # tool_call/prompt/response/exchange-kind: ownership via event → conversation
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN events e ON e.id = ta.target_id "
-        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
-        "WHERE ta.tag_id = ? AND ta.target_kind IN ('tool_call','prompt','response','exchange') "
-        "AND co.user_id != ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    # workspace-kind: conservative — if any conversation in the workspace belongs to another user
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN conversations c ON c.workspace_id = ta.target_id "
-        "JOIN conversation_owners co ON co.conversation_id = c.id "
-        "WHERE ta.tag_id = ? AND ta.target_kind = 'workspace' AND co.user_id != ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    return False
+    return _tag_owner_participation(conn, tag_id, owner, others=True)
 
 
 def owner_uses_tag(
@@ -229,45 +237,7 @@ def owner_uses_tag(
     foreign tenant's tag and surface its name (a cross-tenant existence oracle),
     exactly as the workspace-pin participation guard prevents for workspaces.
     """
-    if not owner:
-        return False
-    if not has_conversation_owners_table(conn):
-        return False
-
-    # conversation-kind: direct ownership join
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN conversation_owners co ON co.conversation_id = ta.target_id "
-        "WHERE ta.tag_id = ? AND ta.target_kind = 'conversation' AND co.user_id = ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    # tool_call/prompt/response/exchange-kind: ownership via event → conversation
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN events e ON e.id = ta.target_id "
-        "JOIN conversation_owners co ON co.conversation_id = e.conversation_id "
-        "WHERE ta.tag_id = ? AND ta.target_kind IN ('tool_call','prompt','response','exchange') "
-        "AND co.user_id = ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    # workspace-kind: the owner participates if any conversation in the workspace is theirs
-    row = conn.execute(
-        "SELECT 1 FROM tag_assignments ta "
-        "JOIN conversations c ON c.workspace_id = ta.target_id "
-        "JOIN conversation_owners co ON co.conversation_id = c.id "
-        "WHERE ta.tag_id = ? AND ta.target_kind = 'workspace' AND co.user_id = ? LIMIT 1",
-        (tag_id, owner),
-    ).fetchone()
-    if row:
-        return True
-
-    return False
+    return _tag_owner_participation(conn, tag_id, owner, others=False)
 
 
 def ensure_tag_pins_table(conn: sqlite3.Connection) -> None:
@@ -488,6 +458,30 @@ def list_tags(
         f"WHERE {' AND '.join(response_where)}"
     )
 
+    # block count — target_id is an event_content.id, so time/owner joins descend
+    # event_content → events → conversations (distinct from the event arms).
+    block_where = ["ta.tag_id = t.id", "ta.target_kind = 'block'"]
+    block_params: list[object] = []
+    block_joins: list[str] = []
+    if has_time_filter or owner:
+        block_joins.append("JOIN event_content ec ON ec.id = ta.target_id")
+        block_joins.append("JOIN events e ON e.id = ec.event_id")
+        block_joins.append("JOIN conversations c ON c.id = e.conversation_id")
+    if owner:
+        block_where.append(owner_predicate("e.conversation_id"))
+        block_params.append(owner)
+    if since:
+        block_where.append("c.started_at >= ?")
+        block_params.append(since)
+    if before:
+        block_where.append("c.started_at < ?")
+        block_params.append(before)
+    block_count_sql = (
+        "SELECT COUNT(*) FROM tag_assignments ta "
+        f"{' '.join(block_joins)} "
+        f"WHERE {' AND '.join(block_where)}"
+    )
+
     # pinned flag (owner-scoped). tag_pins is created lazily on a write-open and
     # may be absent on a read-only open of a DB unwritten since this shipped —
     # guard the join so the read degrades to "nothing pinned" rather than raising.
@@ -511,6 +505,7 @@ def list_tags(
             ({exchange_count_sql}) as exchange_count,
             ({prompt_count_sql}) as prompt_count,
             ({response_count_sql}) as response_count,
+            ({block_count_sql}) as block_count,
             {pin_select} as pinned
         FROM tags t
         {pin_join}
@@ -518,7 +513,7 @@ def list_tags(
     """
     all_params = [
         *conv_params, *ws_params, *tc_params, *exchange_params,
-        *prompt_params, *response_params, *pin_params,
+        *prompt_params, *response_params, *block_params, *pin_params,
     ]
 
     cur = conn.execute(sql, all_params)
@@ -533,6 +528,7 @@ def list_tags(
             "exchange_count": row["exchange_count"],
             "prompt_count": row["prompt_count"],
             "response_count": row["response_count"],
+            "block_count": row["block_count"],
             "pinned": bool(row["pinned"]),
         }
         for row in cur.fetchall()
@@ -546,6 +542,7 @@ def list_tags(
             r["pinned"]
             or r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
             or r["exchange_count"] or r["prompt_count"] or r["response_count"]
+            or r["block_count"]
         )]
     return rows
 
@@ -565,9 +562,10 @@ def tag_activity_series(
     activity in the window are omitted. Owner-scoped when ``owner`` is set.
 
     A conversation "bears" a tag when the tag is applied to the conversation
-    directly (``target_kind='conversation'``) or to any of its events
-    (tool_call/prompt/response/exchange) — the union of the two association
-    paths the flat counts in :func:`list_tags` keep separate.
+    directly (``target_kind='conversation'``), to any of its events
+    (tool_call/prompt/response/exchange), or to a content block of one — the
+    union of the association paths the flat counts in :func:`list_tags` keep
+    separate.
     """
     if owner and not has_conversation_owners_table(conn):
         return {}
@@ -596,6 +594,12 @@ def tag_activity_series(
             FROM tag_assignments ta
             JOIN events e ON e.id = ta.target_id
             WHERE ta.target_kind IN ('tool_call', 'prompt', 'response', 'exchange')
+            UNION
+            SELECT ta.tag_id AS tag_id, e.conversation_id AS conversation_id
+            FROM tag_assignments ta
+            JOIN event_content ec ON ec.id = ta.target_id
+            JOIN events e ON e.id = ec.event_id
+            WHERE ta.target_kind = 'block'
         ) tc
         JOIN tags t ON t.id = tc.tag_id
         JOIN conversations c ON c.id = tc.conversation_id

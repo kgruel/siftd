@@ -337,6 +337,62 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .tag-input:focus { outline:none; border-bottom-color:var(--accent); }
 .tag-input::placeholder { color:var(--faint); }
 .tag-input::-webkit-calendar-picker-indicator { display:none !important; }
+
+/* Per-element (per-turn) tag section in the folio body — subordinate to the
+   conversation tag section, with a hover/focus-revealed add affordance. The
+   reveal is pure CSS (no htmx event filters → no new Function → CSP-safe under
+   the missing 'unsafe-eval'). Existing chips stay visible; only the add form is
+   ghosted until the turn is hovered or focused. `:focus-within` (not just
+   `:hover`) keeps it reachable by keyboard tab; touch pointers have no hover, so
+   a hover-less environment gets the affordance always-on. */
+.tag-section--elem { margin-top:10px; gap:5px; }
+.tag-section--elem .tag { font-size:11px; color:var(--faint); }
+.tag-section--elem .tag-add { opacity:0; pointer-events:none; transition:opacity .12s ease; }
+.turn:hover .tag-section--elem .tag-add,
+.turn:focus-within .tag-section--elem .tag-add { opacity:1; pointer-events:auto; }
+@media (hover: none) { .tag-section--elem .tag-add { opacity:1; pointer-events:auto; } }
+
+/* Trace-mode per-block tagging (WS4b): a long tool read shouldn't force a scroll
+   to a bottom-anchored form, so the affordance rides the block's top-right corner
+   as a dropdown you open from the always-visible header. The menu is a native
+   <details> — the `+` is its summary — so it opens and stays open on click with
+   no JS (CSP-safe under the missing 'unsafe-eval'). It is a SIBLING of the tool
+   block, absolutely positioned over the corner, so a collapsed block still shows
+   it and its clicks never toggle the block. The panel reuses .tag-section--elem;
+   scoping the panel's look here (not via a modifier class) survives the htmx
+   fragment swap, which returns a plain .tag-section--elem. */
+.trace-block { position:relative; }
+.tag-menu { position:absolute; top:6px; right:6px; z-index:3; }
+.tag-menu > summary { list-style:none; cursor:pointer; opacity:0; transition:opacity .12s ease;
+  width:18px; height:18px; line-height:16px; text-align:center; border-radius:3px;
+  border:1px solid var(--hair); background:var(--paper); color:var(--faint);
+  font-family:var(--font-mono); font-size:13px; }
+.tag-menu > summary::-webkit-details-marker { display:none; }
+/* `> .tag-menu` (direct child only): a run wrapper contains tool wrappers, so a
+   descendant selector would light every tool's `+` the moment you hover anywhere
+   in the run. Direct-child scoping keeps each reveal to its own block — hovering
+   the run shows only the run menu; hovering one tool shows only that tool's. */
+.trace-block:hover > .tag-menu > summary,
+.tag-menu[open] > summary { opacity:1; }
+.tag-menu[open] > summary { color:var(--ink); border-color:var(--hair-strong); }
+/* Presence indicator: a block that HAS tags keeps its `+` lit instead of ghost,
+   with a panel-toned fill so "tagged" reads distinctly from "hovering". Derived
+   via :has() from the chips already inside the panel, so it stays correct
+   through htmx swaps for free (mutations replace only the inner tag-section —
+   a server-rendered badge on the summary would go stale). Presence-only, no
+   count: CSS can't count children into text, and swapping the whole <details>
+   to refresh a badge would snap an open dropdown shut mid-interaction. */
+.tag-menu:has(.tag) > summary {
+  opacity:1; color:var(--ink); border-color:var(--hair-strong);
+  background:var(--panel); }
+@media (hover: none) { .tag-menu > summary { opacity:1; } }
+.tag-menu__panel { position:absolute; top:calc(100% + 4px); right:0; min-width:180px;
+  padding:8px 10px; background:var(--panel); border:1px solid var(--hair);
+  border-radius:var(--radius); box-shadow:0 4px 14px rgba(0,0,0,.14); }
+.tag-menu__panel .tag-section--elem { margin-top:0; }
+/* Inside the always-open panel the add form is not ghosted — the menu itself is
+   the reveal, so nested hover-gating would need a second interaction. */
+.tag-menu__panel .tag-section--elem .tag-add { opacity:1; pointer-events:auto; }
 .export-actions { display:flex; gap:8px; }
 .export-link { font-family:var(--font-mono); font-size:var(--fs-micro);
   letter-spacing:.1em; text-transform:uppercase; text-decoration:none;
@@ -1032,6 +1088,9 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .hit-src { display:flex; flex-wrap:wrap; gap:8px; color:var(--faint); }
 .hit-src .adapter { letter-spacing:.06em; text-transform:uppercase; }
 .hit-src .temporal { color:var(--mid); }
+.hit-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:2px; }
+.hit-tags .tag { font-size:11px; color:var(--faint); border:1px solid var(--hair);
+    border-radius:3px; padding:0 5px; letter-spacing:.02em; }
 
 /* the body — full-width for scanning, with typeset hierarchy per shape. The
    excerpt nav (.search-hit__main, the folio jump) + the unfold are stacked
@@ -1556,6 +1615,8 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .idx-name { color:var(--ink); white-space:nowrap; text-decoration:none;
   cursor:pointer; }
 .idx-name:hover { color:var(--accent); }
+.idx-kinds { flex:none; margin-left:8px; font-size:11px; color:var(--faint);
+  white-space:nowrap; }
 .idx-entry.is-pinned .idx-name { color:var(--accent); }
 .index__machine .idx-name { color:var(--mid); }
 .index__machine .idx-name:hover { color:var(--accent); }

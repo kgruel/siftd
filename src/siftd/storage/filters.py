@@ -1,12 +1,22 @@
 """Dynamic WHERE clause builder for conversation filters."""
 
 
+# Canonical tag target-kind vocabulary. Every site that enumerates kinds (per-kind
+# query arms, validation gates, merge/slice copies) derives from these sets instead
+# of restating them — adding a kind means editing here and following the type errors.
+#
+# EVENT_TAG_KINDS: kinds whose target_id is an events.id (ownership/conversation
+# joins go through events). 'exchange' anchors on its prompt event.
+EVENT_TAG_KINDS: frozenset[str] = frozenset({"prompt", "response", "tool_call", "exchange"})
+# ELEMENT_TAG_KINDS: all sub-conversation kinds. 'block' targets an event_content.id,
+# so its joins descend event_content → events (one hop more than EVENT_TAG_KINDS).
+ELEMENT_TAG_KINDS: frozenset[str] = EVENT_TAG_KINDS | {"block"}
+# ALL_TAG_KINDS: every valid tag_assignments.target_kind.
+ALL_TAG_KINDS: frozenset[str] = ELEMENT_TAG_KINDS | {"conversation", "workspace"}
+
 # Tag target_kinds whose target_id resolves to a conversation (directly or via events).
 # 'workspace' is excluded — workspace tags don't map to a single conversation.
-ALL_CONVERSATION_TAG_KINDS: tuple[str, ...] = (
-    "conversation", "prompt", "response", "tool_call", "exchange",
-)
-_EVENT_TAG_KINDS: frozenset[str] = frozenset({"prompt", "response", "tool_call", "exchange"})
+ALL_CONVERSATION_TAG_KINDS: tuple[str, ...] = ("conversation", *sorted(ELEMENT_TAG_KINDS))
 
 
 def tag_condition(tag_value: str) -> tuple[str, str]:
@@ -41,12 +51,15 @@ def _tag_target_subquery(allowed_kinds: tuple[str, ...], tag_clause: str) -> str
     return (
         "SELECT CASE ta.target_kind"
         " WHEN 'conversation' THEN ta.target_id"
+        " WHEN 'block' THEN eb.conversation_id"
         " ELSE e.conversation_id"
         " END AS conv_id"
         " FROM tag_assignments ta"
         " JOIN tags tg ON tg.id = ta.tag_id"
         " LEFT JOIN events e ON e.id = ta.target_id"
         " AND ta.target_kind IN ('prompt','response','tool_call','exchange')"
+        " LEFT JOIN event_content ec ON ec.id = ta.target_id AND ta.target_kind = 'block'"
+        " LEFT JOIN events eb ON eb.id = ec.event_id"
         f" WHERE ta.target_kind IN ({placeholders})"
         f" AND ({tag_clause})"
     )

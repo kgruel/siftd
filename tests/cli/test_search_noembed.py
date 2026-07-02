@@ -69,7 +69,7 @@ def test_search_missing_db(tmp_path, capsys):
 def test_search_empty_query_shows_usage(test_db, capsys):
     args = make_args(query=[], db=str(test_db))
     assert cmd_search(args) == 1
-    assert "A search query is required" in capsys.readouterr().err
+    assert "A search query or tag filter is required" in capsys.readouterr().err
 
 
 def test_search_json_refs_rejected(test_db, capsys):

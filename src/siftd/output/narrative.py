@@ -104,6 +104,10 @@ class HtmlEmitter:
         *,
         tool_seq: list[dict] | None = None,
         turn_no: int | None = None,
+        event_tags: dict[str, list[tuple[str, str]]] | None = None,
+        interactive_tags: bool = False,
+        tag_action_url: str = "",
+        tag_suggest_url: str = "",
     ) -> None:
         from html import escape
 
@@ -111,6 +115,17 @@ class HtmlEmitter:
         self.parts: list[str] = []
         self._target = target_event_id
         self._last_event_id: str | None = None
+        # Whether a per-run wrapper div is currently open (closed on the next run
+        # transition or at to_html finalize). Only used on the interactive path.
+        self._run_open = False
+        # Trace-mode element tagging (WS4b): the batch (name, kind)-pair map, plus
+        # the interactivity + route context, let each tool-call block carry a
+        # top-right hover-reveal tag affordance. Off by default — the CLI html
+        # export and the search-context slice pass nothing and stay chip-free.
+        self._event_tags = event_tags
+        self._interactive_tags = interactive_tags
+        self._tag_action_url = tag_action_url
+        self._tag_suggest_url = tag_suggest_url
         # Optional Activity registry (the folio's chronological tool ledger).
         # When passed, each tool-call gets a folio-unique ``id="evt-N"`` anchor
         # and one record {id, name, target, status, turn} is appended — the
@@ -144,13 +159,62 @@ class HtmlEmitter:
         Uniqueness relies on an upstream invariant: ``_build_narrative`` emits all
         blocks of one response contiguously under that response's id, and each
         assistant turn gets a fresh emitter — so an id never recurs after another
-        intervenes, and a single ``_last_event_id`` suffices to dedupe a run."""
+        intervenes, and a single ``_last_event_id`` suffices to dedupe a run.
+
+        A run transition is also where the per-run response tag affordance is
+        emitted (WS4b slice 2): the whole run is wrapped in a ``.trace-block--run``
+        container carrying a top-right menu that tags the response event, so trace
+        mode tags every block from its own corner — the run for prose/thinking, an
+        inner ``.trace-block--tool`` for each tool call. Thinking has no separate
+        affordance: it tags its owning response, which the run menu already is."""
         if not event_id or event_id == self._last_event_id:
             return "", ""
         self._last_event_id = event_id
+        # Open a positioned wrapper per response run so the run-level menu can pin
+        # to its corner. Only when tagging is interactive — otherwise the output
+        # (CLI html export, search slice) stays byte-for-byte as before.
+        if self._interactive_tags:
+            if self._run_open:
+                self.parts.append("</div>")
+            affordance = self._tag_affordance("response", event_id)
+            self.parts.append(f'<div class="trace-block trace-block--run">{affordance}')
+            self._run_open = True
         attrs = f' data-event-id="{self._escape(event_id)}"'
         cls = " is-target" if event_id == self._target else ""
         return attrs, cls
+
+    def _tag_affordance(self, entity_type: str, target_id: str | None) -> str:
+        """Top-right hover-reveal tag menu for one taggable trace block, or "".
+
+        Rendered only when interactive tagging is on and the block has a real
+        target id. The menu is a native ``<details>`` (the ``+`` is its summary)
+        so the dropdown opens and stays open on click with no JS — the CSP's
+        missing ``unsafe-eval`` never comes up. Its panel body is the same tag
+        section reading mode uses (chips with × + add-input), so a mutation swaps
+        just the inner section and the open dropdown persists. The affordance is a
+        SIBLING of the block's ``<details>`` (never a child): a collapsed block
+        hides its non-summary children, so a child affordance would vanish when
+        the tool call is folded — and a sibling's clicks never toggle the block.
+        """
+        if not self._interactive_tags or not target_id:
+            return ""
+        from siftd.output.html_fmt import _render_tag_section
+
+        pairs = (self._event_tags or {}).get(target_id, [])
+        section = _render_tag_section(
+            target_id, pairs, True,
+            tag_action_url=self._tag_action_url,
+            tag_suggest_url=self._tag_suggest_url,
+            entity_type=entity_type,
+            section_class="tag-section tag-section--elem",
+        )
+        return (
+            '<details class="tag-menu">'
+            f'<summary class="tag-menu__toggle" title="Tag this {self._escape(entity_type)}"'
+            ' aria-label="Tag">+</summary>'
+            f'<div class="tag-menu__panel">{section}</div>'
+            "</details>"
+        )
 
     def text(self, content: str, *, event_id: str | None = None) -> None:
         attrs, cls = self._anchor(event_id)
@@ -242,7 +306,6 @@ class HtmlEmitter:
         event_id: str | None = None,
         tool_call_id: str | None = None,
     ) -> None:
-        del tool_call_id
         anchor_attrs, anchor_cls = self._anchor(event_id)
         from siftd.output.tool_presenters import extract_tool_presentation
 
@@ -321,7 +384,18 @@ class HtmlEmitter:
             parts.append(f'<pre class="tool-error">{e(pres.error)}</pre>')
 
         parts.append("</details>" if has_content else "</div>")
-        self.parts.append("\n".join(parts))
+
+        # A tagged run of identical tools collapses to one row with no single id
+        # (tool_call_id is None then) — no affordance on an aggregate. Otherwise
+        # wrap the block in a positioned container carrying the top-right tag menu.
+        affordance = self._tag_affordance("tool_call", tool_call_id)
+        if affordance:
+            block = "\n".join(parts)
+            self.parts.append(
+                f'<div class="trace-block trace-block--tool">{affordance}\n{block}</div>'
+            )
+        else:
+            self.parts.append("\n".join(parts))
 
     def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
         del block_type
@@ -331,5 +405,10 @@ class HtmlEmitter:
         )
 
     def to_html(self) -> str:
+        # Close the final run wrapper if one is still open (idempotent — a second
+        # call finds no open run).
+        if self._run_open:
+            self.parts.append("</div>")
+            self._run_open = False
         return "\n".join(self.parts)
 

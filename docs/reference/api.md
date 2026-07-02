@@ -265,6 +265,7 @@ Full conversation with timeline.
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
 | `cost` | `float \| None` |  |
+| `event_tags` | `dict[str, list[tuple[str, str]]]` |  |
 
 ### Exchange
 
@@ -333,7 +334,7 @@ A prompt and its full response narrative.
 
 #### AmbiguousPrefix
 
-Prefix matches multiple conversations — caller must use a longer prefix or full ID.
+Prefix matches multiple targets — caller must use a longer prefix or full ID.
 
 ### Functions
 
@@ -434,7 +435,7 @@ def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, own
 **Parameters:**
 
 - `conn`: Database connection.
-- `entity_type`: One of 'conversation', 'workspace', 'tool_call', 'prompt', 'response', or 'exchange'.
+- `entity_type`: One of 'conversation', 'workspace', 'tool_call', 'prompt', 'response', 'exchange', or 'block'.
 
 **Returns:** Resolved full ID, or None if not found.
 
@@ -641,6 +642,7 @@ Canonical mutable search chunk result.
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
+| `tags` | `list[str]` |  |
 
 ### SearchResult
 
@@ -662,6 +664,7 @@ Canonical mutable search chunk result.
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
+| `tags` | `list[str]` |  |
 
 ### SearchView
 
@@ -1228,7 +1231,7 @@ def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last
 Export conversations as a complete document.
 
 ```python
-def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
+def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., view: str = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
 ```
 
 **Parameters:**
@@ -1309,6 +1312,7 @@ Tag with usage counts.
 | `exchange_count` | `int` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
+| `block_count` | `int` |  |
 | `pinned` | `bool` |  |
 | `auto` | `bool` |  |
 | `activity` | `list[int] \| None` |  |

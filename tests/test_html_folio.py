@@ -227,6 +227,90 @@ def test_folio_curation_bar_hosts_tags_and_export():
     assert "format=md" in html and "format=json" in html  # export links
 
 
+def test_folio_body_renders_element_tag_chips_and_affordance():
+    """WS4: each turn carries its own element-tag section inside the body — chips
+    for existing tags + a hover-revealed add form scoped to that element. The
+    prompt block tags on its prompt event; the assistant block on its primary
+    response event. Data rides ConversationDetail.event_tags (the WS3 batch
+    fetch), threaded through render_folio."""
+    detail = _detail()
+    detail.turns[0].prompt_id = "01PROMPT0000000000"
+    detail.turns[0].response_ids = ["01RESP000000000000"]
+    detail.event_tags = {
+        "01PROMPT0000000000": [("needs-followup", "prompt")],
+        "01RESP000000000000": [("good-answer", "response")],
+    }
+    html = render_folio(
+        detail,
+        _FID,
+        interactive_tags=True,
+        tag_action_url="/tag",
+        tag_suggest_url="/tags/suggest",
+    )
+    # Chips render for both the prompt and the response events.
+    assert 'class="tag">needs-followup' in html or "needs-followup" in html
+    assert "good-answer" in html
+    # Element sections carry the hover-reveal class + the resolved entity_type so
+    # the form re-posts against the right target kind.
+    assert "tag-section--elem" in html
+    assert 'name="entity_type" value="prompt"' in html
+    assert 'name="entity_type" value="response"' in html
+    # The add form posts to /tag with a per-element stable swap id.
+    assert 'hx-post="/tag"' in html
+
+
+def test_folio_prompt_exchange_chip_removes_as_exchange_not_prompt():
+    """A prompt section unions its 'exchange'-kind tags into its chips. The remove
+    button must post the chip's OWN kind — an exchange chip removes the exchange
+    assignment, not a nonexistent prompt one. The (name, kind) pair on each chip
+    is what makes the remove target the assignment the user actually clicked."""
+    import json
+    from html import escape
+
+    detail = _detail()
+    detail.turns[0].prompt_id = "01PROMPT0000000000"
+    detail.event_tags = {
+        "01PROMPT0000000000": [("prompt-tag", "prompt"), ("exch-tag", "exchange")],
+    }
+    html = render_folio(
+        detail, _FID, interactive_tags=True,
+        tag_action_url="/tag", tag_suggest_url="/tags/suggest",
+    )
+    # Both chips' remove hx-vals appear (HTML-escaped), each carrying its own kind
+    # plus the hosting section's kind (so the fragment re-renders as the section).
+    assert escape(json.dumps(
+        {"action": "remove", "id": "01PROMPT0000000000", "tag": "exch-tag",
+         "entity_type": "exchange", "section_type": "prompt"}
+    )) in html
+    assert escape(json.dumps(
+        {"action": "remove", "id": "01PROMPT0000000000", "tag": "prompt-tag",
+         "entity_type": "prompt", "section_type": "prompt"}
+    )) in html
+
+
+def test_folio_interactive_offers_affordance_even_when_untagged():
+    """The hover-reveal add form is offered on every element with an id, tagged or
+    not (that IS the write affordance) — an untagged element still gets its
+    section, just with no chips."""
+    detail = _detail()
+    detail.turns[0].prompt_id = "01PROMPT0000000000"
+    html = render_folio(
+        detail, _FID, interactive_tags=True,
+        tag_action_url="/tag", tag_suggest_url="/tags/suggest",
+    )
+    assert "tag-section--elem" in html
+    assert 'name="entity_type" value="prompt"' in html
+
+
+def test_folio_non_interactive_untagged_element_stays_chip_free():
+    """No routes + no tags → element sections are suppressed entirely (the CLI
+    html export path stays clean; nothing to reveal, nothing to show)."""
+    detail = _detail()
+    detail.turns[0].prompt_id = "01PROMPT0000000000"
+    html = render_folio(detail, _FID)  # non-interactive, no event_tags
+    assert "tag-section--elem" not in html
+
+
 def test_folio_without_context_renders_passive_tags_only():
     # CLI html export path: no routes to offer — tags render as plain pills,
     # no forms, no export links.

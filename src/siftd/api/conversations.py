@@ -70,13 +70,29 @@ class AnchorPhraseInvalid(AnchorError):
 
 
 class AmbiguousPrefix(Exception):
-    """Prefix matches multiple conversations — caller must use a longer prefix or full ID."""
+    """Prefix matches multiple targets — caller must use a longer prefix or full ID.
 
-    def __init__(self, prefix: str, matched_ids: list[str], total: int) -> None:
+    ``candidate_kinds`` (when supplied) is parallel to ``matched_ids`` and labels
+    each candidate by target kind, used when a bare-ULID prefix collides across
+    conversations and events (e.g. ``01HX… (response)`` vs ``01HX… (conversation)``).
+    ``noun`` names the collided population for the summary line.
+    """
+
+    def __init__(
+        self,
+        prefix: str,
+        matched_ids: list[str],
+        total: int,
+        *,
+        candidate_kinds: list[str] | None = None,
+        noun: str = "conversations",
+    ) -> None:
         self.prefix = prefix
         self.matched_ids = matched_ids  # up to 5
         self.total = total
-        super().__init__(f"prefix {prefix!r} matches {total} conversations")
+        self.candidate_kinds = candidate_kinds  # parallel to matched_ids, or None
+        self.noun = noun
+        super().__init__(f"prefix {prefix!r} matches {total} {noun}")
 
 
 @dataclass
@@ -193,6 +209,11 @@ class ConversationDetail:
     turns: list[Turn]
     tags: list[str] = field(default_factory=list)
     cost: float | None = None
+    # Element-level tags keyed by event id (prompt/response/tool_call/exchange
+    # targets; exchange tags land on their anchor prompt's id). Batch-fetched.
+    # Each value is a list of (tag name, target_kind) pairs — the kind rides the
+    # chip so a remove posts against the assignment the user actually clicked.
+    event_tags: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -777,6 +798,9 @@ def get_conversation(
         # Tags + cost render in list/detail at depth >= 3. Cost is the rollup's
         # canonical precomputed value (None when no priced usage), never faked.
         tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
+        # Element tags always fetched (one batched query, no N+1) so transcript
+        # chips appear at any depth.
+        event_tags = _fetch_conversation_event_tags(conn, conv_id)
         cost = (
             get_conversation_cost(conn, conv_id)
             if fidelity.depth >= 3 and has_conversation_stats_table(conn)
@@ -803,9 +827,38 @@ def get_conversation(
             turns=turns,
             tags=tags,
             cost=cost,
+            event_tags=event_tags,
         )
     finally:
         conn.close()
+
+
+def _fetch_conversation_event_tags(
+    conn: sqlite3.Connection, conversation_id: str
+) -> dict[str, list[tuple[str, str]]]:
+    """Batch-fetch element tags for a conversation, keyed by event id.
+
+    One query for all element (prompt/response/tool_call/exchange) tag
+    assignments whose target is an event of this conversation — no N+1. Exchange
+    tags anchor on the prompt event, so they key on that prompt's id.
+
+    Each value is a list of ``(tag name, target_kind)`` pairs: the kind travels
+    with the chip so a remove posts the kind the user clicked (an exchange chip
+    sharing a prompt's id removes the exchange assignment, not the prompt one).
+    """
+    rows = conn.execute(
+        "SELECT ta.target_id, ta.target_kind, tg.name FROM tag_assignments ta "
+        "JOIN tags tg ON tg.id = ta.tag_id "
+        "JOIN events e ON e.id = ta.target_id "
+        "WHERE e.conversation_id = ? "
+        "AND ta.target_kind IN ('prompt','response','tool_call','exchange') "
+        "ORDER BY tg.name",
+        (conversation_id,),
+    ).fetchall()
+    out: dict[str, list[tuple[str, str]]] = {}
+    for row in rows:
+        out.setdefault(row["target_id"], []).append((row["name"], row["target_kind"]))
+    return out
 
 
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
@@ -1340,7 +1393,7 @@ def resolve_entity_id(
     Args:
         conn: Database connection.
         entity_type: One of 'conversation', 'workspace', 'tool_call', 'prompt',
-            'response', or 'exchange'.
+            'response', 'exchange', or 'block'.
         entity_id: Full or prefix ID to look up.
 
     Returns:
@@ -1377,7 +1430,22 @@ def resolve_entity_id(
         ).fetchone()
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     elif entity_type == "workspace":
-        row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
+        # Owner scope is participation (any owned conversation in the workspace),
+        # matching the workspace-pin guard's semantics. A non-participant gets
+        # None (404-shaped), not an error — existence isn't leaked.
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["w.id = ?"]
+        ws_params: list[object] = [entity_id]
+        join = ""
+        if owner:
+            join = " JOIN conversations c ON c.workspace_id = w.id"
+            where.append(owner_predicate("c.id"))
+            ws_params.append(owner)
+        row = conn.execute(
+            f"SELECT DISTINCT w.id FROM workspaces w{join} WHERE {' AND '.join(where)}",
+            ws_params,
+        ).fetchone()
         return row["id"] if row else None
     elif entity_type in ("tool_call", "prompt", "response", "exchange"):
         # Prefix-match across event kinds so `siftd query <event_prefix>` /
@@ -1385,20 +1453,58 @@ def resolve_entity_id(
         # conversation branch: a colliding prefix must raise AmbiguousPrefix,
         # not silently resolve to an arbitrary match. ('exchange' anchors on a
         # prompt event.)
+        #
+        # Owner-scoped through the owning conversation (mirrors the conversation
+        # branch and TargetRef._resolve_cross_kind): an owner-scoped caller must
+        # not resolve — and then tag — another tenant's event by ULID/prefix.
+        # This completes the resolver's owner safety so the serve /tag route can
+        # trust resolve() on the kind-narrowed path, not just the bare-id one.
         kind = "prompt" if entity_type == "exchange" else entity_type
-        params = (entity_id, f"{entity_id}%", kind)
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["(e.id = ? OR e.id LIKE ?)", "e.kind = ?"]
+        evt_params: list[object] = [entity_id, f"{entity_id}%", kind]
+        if owner:
+            where.append(owner_predicate("e.conversation_id"))
+            evt_params.append(owner)
+        where_sql = " AND ".join(where)
         rows = conn.execute(
-            "SELECT id FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?"
-            " ORDER BY id LIMIT 6",
-            params,
+            f"SELECT e.id FROM events e WHERE {where_sql} ORDER BY e.id LIMIT 6",
+            evt_params,
         ).fetchall()
         if not rows:
             return None
         if len(rows) == 1:
             return rows[0]["id"]
         count_row = conn.execute(
-            "SELECT COUNT(*) AS n FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?",
-            params,
+            f"SELECT COUNT(*) AS n FROM events e WHERE {where_sql}",
+            evt_params,
+        ).fetchone()
+        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
+    elif entity_type == "block":
+        # Content-block ids (event_content.id), owner-scoped through the owning
+        # event's conversation — mirrors the events branch (WS8).
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["(ec.id = ? OR ec.id LIKE ?)"]
+        blk_params: list[object] = [entity_id, f"{entity_id}%"]
+        join = ""
+        if owner:
+            join = " JOIN events e ON e.id = ec.event_id"
+            where.append(owner_predicate("e.conversation_id"))
+            blk_params.append(owner)
+        where_sql = " AND ".join(where)
+        rows = conn.execute(
+            f"SELECT ec.id FROM event_content ec{join} WHERE {where_sql} ORDER BY ec.id LIMIT 6",
+            blk_params,
+        ).fetchall()
+        if not rows:
+            return None
+        if len(rows) == 1:
+            return rows[0]["id"]
+        count_row = conn.execute(
+            f"SELECT COUNT(*) AS n FROM event_content ec{join} WHERE {where_sql}",
+            blk_params,
         ).fetchone()
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     else:

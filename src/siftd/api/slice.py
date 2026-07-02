@@ -287,6 +287,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
         INSERT OR IGNORE INTO slice.attributes
         SELECT a.* FROM attributes a
         WHERE a.target_id IN (SELECT id FROM slice.events)
+           OR a.target_id IN (SELECT id FROM slice.event_content)
            OR a.target_id IN (SELECT id FROM _slice_conv_ids)
     """)
 
@@ -304,6 +305,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                    AND ta.target_id IN (
                        SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
                    ))
+               OR (ta.target_kind = 'block' AND ta.target_id IN (SELECT id FROM slice.event_content))
         )
     """)
 
@@ -318,6 +320,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                AND ta.target_id IN (
                    SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
                ))
+           OR (ta.target_kind = 'block' AND ta.target_id IN (SELECT id FROM slice.event_content))
     """)
 
     # Skip ephemeral: ingested_files, active_sessions, pending_tags

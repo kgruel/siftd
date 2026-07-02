@@ -84,6 +84,7 @@ class SearchChunk:
     context_window: list[tuple[str, str, str, bool]] | None = None
     turn_index: int | None = None
     event_id: str | None = None
+    tags: list[str] = field(default_factory=list)
 
     _DISPLAY_LABELS: ClassVar[dict[str, str]] = {
         "prompt": "USER",
@@ -154,6 +155,7 @@ class SearchChunk:
             context_window=data.get("context_window") or data.get("_context"),
             turn_index=turn_index,
             event_id=data.get("event_id"),
+            tags=list(data.get("tags") or []),
         )
 
     def to_render_dict(self, debug_ids: bool = True) -> dict[str, Any]:
@@ -177,6 +179,8 @@ class SearchChunk:
         out["turn_index"] = self.turn_index
         if self.event_id is not None:
             out["event_id"] = self.event_id
+        if self.tags:
+            out["tags"] = list(self.tags)
         if self.breakdown is not None:
             out["breakdown"] = self.breakdown
         if self.file_refs is not None:
