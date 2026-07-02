@@ -467,6 +467,34 @@ def enrich_tags(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
             r.tags = by_id[r.event_id]
 
 
+def _enrich_block_tags(
+    conn: sqlite3.Connection, block_chunk_ids: list[tuple[SearchChunk, str]]
+) -> None:
+    """Set block chunks' chips from the BLOCK's own tags (target_id = block id).
+
+    Block chunks carry ``event_id`` = the owning event (the folio-jump address),
+    so :func:`enrich_tags`' event-keyed pass can't reach a block's tags — and
+    would otherwise leak the owning event's unrelated tags onto the hit. This
+    overrides that pass, keyed by block id, batched (rows already capped at ``n``).
+    """
+    if not block_chunk_ids:
+        return
+    block_ids = list({bid for _, bid in block_chunk_ids})
+    placeholders = ",".join("?" * len(block_ids))
+    rows = conn.execute(
+        f"SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        f"JOIN tags tg ON tg.id = ta.tag_id "
+        f"WHERE ta.target_id IN ({placeholders}) AND ta.target_kind = 'block' "
+        f"ORDER BY tg.name",
+        block_ids,
+    ).fetchall()
+    by_id: dict[str, list[str]] = {}
+    for row in rows:
+        by_id.setdefault(row["target_id"], []).append(row["name"])
+    for chunk, block_id in block_chunk_ids:
+        chunk.tags = by_id.get(block_id, [])
+
+
 def enrich_file_refs(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
     """Attach file references to each chunk in-place."""
     from siftd.api import fetch_file_refs
@@ -1377,6 +1405,7 @@ def enumerate_tagged(
 
         # --- element-kind matches → element chunks ---
         chunks: list[SearchChunk] = []
+        block_chunk_ids: list[tuple[SearchChunk, str]] = []
         if element_kinds:
             frags, params = _enum_tag_facet_where(tag, all_tags)
             where = [f"ta.target_kind IN ({','.join('?' * len(element_kinds))})", *frags]
@@ -1459,21 +1488,27 @@ def enumerate_tagged(
             ).fetchall()
             for row in rows:
                 started = row["started_at"]
-                chunks.append(
-                    SearchChunk(
-                        conversation_id=row["conversation_id"],
-                        score=0.0,
-                        text=(row["text"] or ""),
-                        chunk_type=row["block_type"],
-                        workspace_path=_workspace_label(row["workspace"]),
-                        started_at=(started or "")[:10] if started else None,
-                        event_id=row["event_id"],
-                    )
+                chunk = SearchChunk(
+                    conversation_id=row["conversation_id"],
+                    score=0.0,
+                    text=(row["text"] or ""),
+                    chunk_type=row["block_type"],
+                    workspace_path=_workspace_label(row["workspace"]),
+                    started_at=(started or "")[:10] if started else None,
+                    event_id=row["event_id"],
                 )
+                chunks.append(chunk)
+                # A block chunk's event_id is the OWNING event (the folio-jump
+                # address), but its tags live on the block id — so enrich_tags'
+                # event-keyed pass can't reach them (and could leak the owning
+                # event's own tags). Remember (chunk, block_id) to set chips
+                # directly below, overriding that pass.
+                block_chunk_ids.append((chunk, row["block_id"]))
 
         if chunks:
             enrich_tags(conn, chunks)
             _annotate_turn_positions(conn, chunks)
+            _enrich_block_tags(conn, block_chunk_ids)
 
         # --- conversation-kind matches → directly-tagged conversation rows ---
         conv_rows: list = []

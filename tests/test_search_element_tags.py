@@ -84,12 +84,18 @@ def test_facet_only_returns_block_hits(test_db):
         conn.close()
     apply_tags(db_path=test_db, tags=["docs:block"], entity_type="block", entity_id=bid)
 
+    # The owning response event carries its OWN unrelated tag — the block hit
+    # must NOT inherit it (chips come from the block id, not the event id).
+    apply_tags(db_path=test_db, tags=["owner:evt"], entity_type="response", entity_id=rid)
+
     sv = search_view("", db_path=test_db, tag=["docs:block"], tag_kind=["block"])
     assert len(sv.results) == 1
     hit = sv.results[0]
     assert hit["chunk_type"] == "text"  # the block's block_type
     assert hit["event_id"] == rid  # owning event, for the folio jump
     assert hit["text"] == "I am doing well, thank you!"
+    # Chips are the block's own tags — not the owning event's "owner:evt".
+    assert hit["tags"] == ["docs:block"]
 
 
 def test_all_tags_and_semantics(test_db):
