@@ -826,6 +826,25 @@ class TestSearchModeWireContract:
         assert results[0]["event_id"] == rid
         assert results[0]["tags"] == ["docs:thing"]
 
+    def test_event_detail_route_surfaces_element_tags(self, tmp_path):
+        """GET /api/v1/events/{id} carries the element's tags (WS7 read-back)."""
+        from siftd.api.tags import apply_tags
+        from siftd.storage.sqlite import open_database
+
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        conn = open_database(db, read_only=True)
+        try:
+            rid = conn.execute("SELECT id FROM events WHERE kind='response' LIMIT 1").fetchone()["id"]
+        finally:
+            conn.close()
+        apply_tags(db_path=db, tags=["docs:thing"], entity_type="response", entity_id=rid)
+
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(f"/api/v1/events/{rid}")
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["tags"] == ["docs:thing"]
+
     def test_search_bad_mode_returns_400(self, tmp_path):
         """An unrecognised mode value must return HTTP 400, not silently fall through."""
         db, _ = _make_multi_turn_db(tmp_path / "team.db")
