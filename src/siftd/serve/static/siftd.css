@@ -1559,6 +1559,8 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .idx-name { color:var(--ink); white-space:nowrap; text-decoration:none;
   cursor:pointer; }
 .idx-name:hover { color:var(--accent); }
+.idx-kinds { flex:none; margin-left:8px; font-size:11px; color:var(--faint);
+  white-space:nowrap; }
 .idx-entry.is-pinned .idx-name { color:var(--accent); }
 .index__machine .idx-name { color:var(--mid); }
 .index__machine .idx-name:hover { color:var(--accent); }

@@ -1679,6 +1679,35 @@ def _tag_weight(t: Any) -> tuple[int, str]:
     return best_n, best_u
 
 
+_TAG_ELEMENT_KINDS: tuple[tuple[str, str, str], ...] = (
+    ("response_count", "response", "responses"),
+    ("prompt_count", "prompt", "prompts"),
+    ("tool_call_count", "tool call", "tool calls"),
+    ("exchange_count", "exchange", "exchanges"),
+    ("conversation_count", "conversation", "conversations"),
+)
+
+
+def _tag_kind_breakdown(t: Any) -> str:
+    """A tag's element-grain breakdown, e.g. ``3 responses, 1 conversation``.
+
+    Returns "" for a purely conversation-kind tag (the common case stays quiet) —
+    the breakdown only earns its space once the tag lives on elements.
+    """
+    parts: list[str] = []
+    element_total = 0
+    for attr, singular, plural in _TAG_ELEMENT_KINDS:
+        n = getattr(t, attr, 0) or 0
+        if n <= 0:
+            continue
+        if attr != "conversation_count":
+            element_total += n
+        parts.append(f"{n} {singular if n == 1 else plural}")
+    if element_total == 0:
+        return ""  # only conversation-kind (or nothing) → stay quiet
+    return ", ".join(parts)
+
+
 def _idx_pin_button(name: str, pinned: bool, pin_action_url: str) -> str:
     """The pin/unpin toggle shared by index entries (the star before the name)."""
     if not pin_action_url:
@@ -1712,9 +1741,12 @@ def _idx_entry(
     weight, unit = _tag_weight(t)
     drill = _hx_detail(list_base, name, shell_base, key="tag")
     li_cls = "idx-entry is-pinned" if pinned else "idx-entry"
+    breakdown = _tag_kind_breakdown(t)
+    breakdown_html = f'<span class="idx-kinds">{escape(breakdown)}</span>' if breakdown else ""
     return (
         f'<li class="{li_cls}">{_idx_pin_button(name, pinned, pin_action_url)}'
         f'<a class="idx-name"{drill}>{escape(display)}</a>'
+        f'{breakdown_html}'
         f'<span class="idx-dots" aria-hidden="true"></span>'
         f'<span class="idx-loc"><b class="idx-loc__n">{weight:,}</b>'
         f'<i>{escape(unit)}</i></span></li>'
