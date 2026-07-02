@@ -379,3 +379,49 @@ class TestExportAmbiguousPrefix:
         db_path, id_a, id_b = _make_unique_db(tmp_path)
         code = _invoke(["--db", str(db_path), "export", id_a])
         assert code == 0
+
+
+# ---------------------------------------------------------------------------
+# Owner-scoped event resolution (WS4 owner-safety of the kind-narrowed path)
+# ---------------------------------------------------------------------------
+
+def test_resolve_event_is_owner_scoped(tmp_path):
+    """resolve_entity_id for an event kind scopes through the owning conversation:
+    an owner who does not own the event's conversation resolves nothing, so the
+    serve /tag route can trust resolve() on the kind-narrowed path (not just the
+    bare-id cross-kind one)."""
+    from siftd.storage.sqlite import (
+        get_or_create_workspace,
+        insert_conversation,
+        insert_prompt,
+        open_database,
+    )
+
+    db_path = tmp_path / "owned.db"
+    conn = create_database(db_path)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/bob", "2024-01-01T00:00:00Z")
+    cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2024-01-01T00:00:00Z",
+    )
+    pid = insert_prompt(conn, cid, "p0", "2024-01-01T00:00:00Z")
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (cid, "bob", None, "2024-01-01T00:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    conn = open_database(db_path)
+    try:
+        # Unscoped and the true owner resolve; a foreign owner does not.
+        assert resolve_entity_id(conn, "prompt", pid, owner=None) == pid
+        assert resolve_entity_id(conn, "prompt", pid, owner="bob") == pid
+        assert resolve_entity_id(conn, "prompt", pid, owner="alice") is None
+    finally:
+        conn.close()

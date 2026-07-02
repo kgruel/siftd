@@ -90,27 +90,44 @@ def _render_export_links(export_base: str, conv_id: str) -> str:
 
 def _render_tag_section(
     conv_id: str,
-    tags: list[str],
+    tags: list[str] | list[tuple[str, str]],
     interactive: bool = False,
     *,
     tag_action_url: str = "",
     tag_suggest_url: str = "",
+    entity_type: str = "conversation",
+    section_class: str = "tag-section",
 ) -> str:
-    """Render the tag section for a conversation detail header.
+    """Render the tag section for a conversation header or a folio element.
 
     When interactive=True, tags get × remove buttons and a + add input.
     The section has a stable ID for htmx fragment swaps.
     Route URLs are passed via parameters — formatters must not hardcode routes.
+
+    ``entity_type`` rides the form so one ``POST /tag`` route serves both the
+    conversation section and per-element sections (``prompt``/``response``/…);
+    it defaults to ``conversation`` so existing callers are unchanged.
+    ``section_class`` lets element sections opt into the hover-reveal treatment
+    (``tag-section tag-section--elem``) without a second renderer.
+
+    ``tags`` may be bare names (kind = the section ``entity_type``) or
+    ``(name, kind)`` pairs. A prompt section unions its ``exchange`` tags, so a
+    chip's kind can differ from the section default; each chip's remove posts its
+    OWN kind — the wire says what the user clicked — while the add form always
+    creates tags at the section's ``entity_type``.
     """
     section_id = f"tags-{short_id(conv_id)}"
-    parts = [f'<div class="tag-section" id="{escape(section_id)}">']
+    parts = [f'<div class="{escape(section_class)}" id="{escape(section_id)}">']
 
     for tag in tags:
+        name, kind = tag if isinstance(tag, tuple) else (tag, entity_type)
         if interactive and tag_action_url:
             import json as _json
-            vals = _json.dumps({"action": "remove", "id": conv_id, "tag": tag})
+            vals = _json.dumps(
+                {"action": "remove", "id": conv_id, "tag": name, "entity_type": kind}
+            )
             parts.append(
-                f'<span class="tag interactive">{escape(tag)}'
+                f'<span class="tag interactive">{escape(name)}'
                 f'<button class="tag-remove"'
                 f' hx-post="{escape(tag_action_url)}"'
                 f' hx-vals="{escape(vals)}"'
@@ -119,7 +136,7 @@ def _render_tag_section(
                 f'</span>'
             )
         else:
-            parts.append(f'<span class="tag">{escape(tag)}</span>')
+            parts.append(f'<span class="tag">{escape(name)}</span>')
 
     if interactive and tag_action_url:
         input_id = f"tag-input-{short_id(conv_id)}"
@@ -130,6 +147,7 @@ def _render_tag_section(
             f' hx-swap="outerHTML">'
             f'<input type="hidden" name="action" value="apply">'
             f'<input type="hidden" name="id" value="{escape(conv_id)}">'
+            f'<input type="hidden" name="entity_type" value="{escape(entity_type)}">'
             f'<input type="text" name="tag" id="{escape(input_id)}"'
             f' list="{escape(list_id)}" class="tag-input"'
             f' placeholder="add tag\u2026"'
@@ -152,18 +170,24 @@ def _render_tag_section(
 
 def render_tag_section(
     conv_id: str,
-    tags: list[str],
+    tags: list[str] | list[tuple[str, str]],
     *,
     tag_action_url: str = "",
     tag_suggest_url: str = "",
+    entity_type: str = "conversation",
+    section_class: str = "tag-section",
 ) -> str:
     """Public entry point for rendering an interactive tag section fragment.
 
-    Used by the tag mutation route to return the updated tag section.
+    Used by the tag mutation route to return the updated tag section. For an
+    element target the route passes the resolved ``entity_type`` and the
+    ``tag-section--elem`` class so the swapped-in fragment keeps its hover-reveal
+    identity and re-posts against the same target.
     """
     return _render_tag_section(
         conv_id, tags, interactive=True,
         tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+        entity_type=entity_type, section_class=section_class,
     )
 
 
@@ -974,6 +998,35 @@ def _folio_mode_toggle(conv_id: str, mode: str) -> str:
     )
 
 
+def _render_element_tags(
+    event_id: str | None,
+    entity_type: str,
+    event_tags: dict[str, list[tuple[str, str]]] | None,
+    *,
+    interactive: bool,
+    tag_action_url: str,
+    tag_suggest_url: str,
+) -> str:
+    """Per-element tag section for a folio body block (chips + hover-reveal add).
+
+    Rendered only when a batch ``event_tags`` map is supplied (the folio) — the
+    search-context slice passes ``None`` and stays chip-free. The existing tags
+    render as visible chips; the add form is the ghost affordance the folio CSS
+    reveals on ``.turn:hover``/``:focus-within`` (no JS, CSP-safe). Suppressed
+    entirely for an untagged element when not interactive (nothing to show).
+    """
+    if event_tags is None or not event_id:
+        return ""
+    tags = event_tags.get(event_id, [])
+    if not interactive and not tags:
+        return ""
+    return _render_tag_section(
+        event_id, tags, interactive,
+        tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+        entity_type=entity_type, section_class="tag-section tag-section--elem",
+    )
+
+
 def _render_turn_blocks(
     turns: list[Any],
     fidelity: Fidelity,
@@ -982,6 +1035,10 @@ def _render_turn_blocks(
     anchor_pos: int | None = None,
     mode: str = "reading",
     target_event_id: str | None = None,
+    event_tags: dict[str, list[tuple[str, str]]] | None = None,
+    interactive_tags: bool = False,
+    tag_action_url: str = "",
+    tag_suggest_url: str = "",
 ) -> tuple[list[str], list[str], int, Counter[str], list[dict]]:
     """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
     body and the search context slice (the unfold view).
@@ -1045,11 +1102,17 @@ def _render_turn_blocks(
             pid = getattr(turn, "prompt_id", None)
             evt_attrs = f' data-event-id="{escape(pid)}"' if pid else ""
             evt_cls = " is-target" if pid and pid == target_event_id else ""
+            prompt_tags = _render_element_tags(
+                pid, "prompt", event_tags,
+                interactive=interactive_tags,
+                tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+            )
             body.append(
                 f'<div class="turn{amark}{evt_cls}" data-role="user"{idattr}{evt_attrs}>'
                 f'<header class="turn__head"><span class="turn__role">User</span>'
                 f'<span class="turn__time">{escape(t_time)}</span></header>'
                 f'<div class="turn__text">{_md_to_html(prompt_text)}</div>'
+                f'{prompt_tags}'
                 f"</div>"
             )
 
@@ -1084,11 +1147,24 @@ def _render_turn_blocks(
                 if trace else _FolioEmitter()
             )
             walk_narrative(narrative, emitter, fidelity=fidelity, tool_chars=0)
+            # The assistant turn tags on its primary response event (reading mode
+            # has no per-run event id in the body, so the turn is the tagging
+            # unit here — tool-call/secondary-response tags stay reachable via
+            # trace/CLI/colon-path). Chips reflect that one event so remove
+            # targets it exactly.
+            resp_ids = getattr(turn, "response_ids", None) or []
+            primary_response = resp_ids[0] if resp_ids else None
+            assistant_tags = _render_element_tags(
+                primary_response, "response", event_tags,
+                interactive=interactive_tags,
+                tag_action_url=tag_action_url, tag_suggest_url=tag_suggest_url,
+            )
             body.append(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
                 f'<header class="turn__head"><span class="turn__role">Assistant</span>'
                 f'<span class="turn__time">{escape(t_time)}</span>{tools_html}</header>'
                 f'<div class="turn__text">{emitter.to_html()}</div>'
+                f'{assistant_tags}'
                 f"</div>"
             )
 
@@ -1191,8 +1267,22 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
 
     # Turn blocks (body + rail) are shared with the search context slice; the
     # folio passes id_prefix="t" for its :target anchors + scroll-spy rail.
+    # It also threads the batch element-tag map (get_conversation populates
+    # ConversationDetail.event_tags at depth>=2) so each turn renders its own
+    # tag chips + hover-reveal add affordance — suppressed on a live folio,
+    # which has no ingested events to tag (same gate as the conversation
+    # curation below).
+    live_poll_url = context.get("live_poll_url", "")
+    body_event_tags: dict[str, list[tuple[str, str]]] | None = (
+        (getattr(detail, "event_tags", None) or {}) if not live_poll_url else None
+    )
+    body_interactive = context.get("interactive_tags", False) and not live_poll_url
     body, rail, n, tool_counter, tool_seq = _render_turn_blocks(
-        turns, fidelity, id_prefix="t", mode=mode, target_event_id=target_event_id
+        turns, fidelity, id_prefix="t", mode=mode, target_event_id=target_event_id,
+        event_tags=body_event_tags,
+        interactive_tags=body_interactive,
+        tag_action_url=context.get("tag_action_url", ""),
+        tag_suggest_url=context.get("tag_suggest_url", ""),
     )
 
     total_tokens = (
@@ -1248,7 +1338,6 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     kick = context.get("kick") or (f"{escape(short)} · folio" if short else "folio")
     view = context.get("view", "transcript")
     title = context.get("title", "Transcript")
-    live_poll_url = context.get("live_poll_url", "")
 
     # Curation: tags + export, hosted in the command bar's actions group. The
     # /tag route swaps the same stable #tags-<id> section render_tag_section

@@ -61,6 +61,7 @@ __all__ = [
     "get_or_create_tag",
     "get_tags_for",
     "list_tags",
+    "modify_target_tag",
     "rename_tag_safe",
     "remove_tag",
     "rename_tag",
@@ -480,6 +481,81 @@ def modify_conversation_tag(
 
         conn.commit()
         return fetch_conversation_tags(conn, resolved)
+    finally:
+        conn.close()
+
+
+def _fetch_target_tags(
+    conn: sqlite3.Connection, kind: str, target_id: str
+) -> list[tuple[str, str]]:
+    """(tag name, target_kind) pairs on a resolved target, dispatched by kind.
+
+    Prompts surface their 'exchange' tags too (``_fetch_event_tag_pairs`` owns
+    that union, carrying each tag's real kind); conversations/workspaces read
+    their own kind, so their pairs all carry ``kind``. The kind rides each chip
+    so the re-rendered fragment's remove buttons post the assignment the user
+    clicked.
+    """
+    from siftd.storage.queries import fetch_conversation_tags
+
+    if kind == "conversation":
+        return [(name, "conversation") for name in fetch_conversation_tags(conn, target_id)]
+    if kind == "workspace":
+        names = sorted({row["name"] for row in _get_tags_for(conn, "workspace", target_id)})
+        return [(name, "workspace") for name in names]
+
+    from siftd.api.events import _fetch_event_tag_pairs
+
+    return _fetch_event_tag_pairs(conn, target_id, kind)
+
+
+def modify_target_tag(
+    entity_type: str,
+    entity_id: str,
+    tag_name: str,
+    *,
+    action: str = "apply",
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> tuple[str, str, list[tuple[str, str]]]:
+    """Apply or remove a tag on any taggable target (conversation or element).
+
+    The single owner-safe write path behind the serve ``POST /tag`` route. The
+    wire ``entity_type``/``entity_id`` fold into a :class:`TargetRef`, which
+    ``resolve`` maps to a canonical (kind, ULID) *scoped by owner on every
+    grammar* — so a tenant can neither read nor tag another tenant's element.
+    The resolved kind is authoritative (the wire type is only a hint); it drives
+    the tag fetch and the caller's audit ``target_type``.
+
+    Returns ``(resolved_kind, resolved_id, updated_tag_names)``.
+
+    Raises:
+        LookupError: the target does not resolve (incl. owner-scope miss — the
+            route maps this to 404, not 403).
+        AmbiguousPrefix: a prefix collides across candidates.
+    """
+    from siftd.api.target_ref import TargetRef, resolve
+
+    path = db_path or _db_path()
+    conn = _open_database(path)
+    try:
+        ref = TargetRef.from_wire({"entity_type": entity_type, "entity_id": entity_id})
+        resolved = resolve(conn, ref, owner=owner)
+
+        if action == "remove":
+            tid = _get_tag_id(conn, tag_name)
+            if tid:
+                _remove_tag(conn, resolved.target_kind, resolved.target_id, tid)
+        else:
+            tid = _get_or_create_tag(conn, tag_name)
+            _apply_tag(conn, resolved.target_kind, resolved.target_id, tid)
+
+        conn.commit()
+        tags = _fetch_target_tags(conn, resolved.target_kind, resolved.target_id)
+        return resolved.target_kind, resolved.target_id, tags
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

@@ -35,15 +35,16 @@ def test_fetch_conversation_event_tags_batches(test_db):
         tags = _fetch_conversation_event_tags(conn, conv)
     finally:
         conn.close()
-    assert tags[rid] == ["docs:x"]
-    assert tags[pid] == ["q:review"]  # exchange tag anchors on the prompt id
+    # values are (name, kind) pairs — the kind rides each chip
+    assert tags[rid] == [("docs:x", "response")]
+    assert tags[pid] == [("q:review", "exchange")]  # exchange tag anchors on the prompt id
 
 
 def test_detail_carries_event_tags(test_db):
     conv, pid, rid = _ids(test_db)
     apply_tags(db_path=test_db, tags=["docs:x"], entity_type="response", entity_id=rid)
     detail = get_conversation(conv, fidelity=Fidelity(), db_path=test_db)
-    assert detail.event_tags.get(rid) == ["docs:x"]
+    assert detail.event_tags.get(rid) == [("docs:x", "response")]
 
 
 def test_transcript_renders_element_chips(test_db):

@@ -211,7 +211,9 @@ class ConversationDetail:
     cost: float | None = None
     # Element-level tags keyed by event id (prompt/response/tool_call/exchange
     # targets; exchange tags land on their anchor prompt's id). Batch-fetched.
-    event_tags: dict[str, list[str]] = field(default_factory=dict)
+    # Each value is a list of (tag name, target_kind) pairs — the kind rides the
+    # chip so a remove posts against the assignment the user actually clicked.
+    event_tags: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -833,15 +835,19 @@ def get_conversation(
 
 def _fetch_conversation_event_tags(
     conn: sqlite3.Connection, conversation_id: str
-) -> dict[str, list[str]]:
+) -> dict[str, list[tuple[str, str]]]:
     """Batch-fetch element tags for a conversation, keyed by event id.
 
     One query for all element (prompt/response/tool_call/exchange) tag
     assignments whose target is an event of this conversation — no N+1. Exchange
     tags anchor on the prompt event, so they key on that prompt's id.
+
+    Each value is a list of ``(tag name, target_kind)`` pairs: the kind travels
+    with the chip so a remove posts the kind the user clicked (an exchange chip
+    sharing a prompt's id removes the exchange assignment, not the prompt one).
     """
     rows = conn.execute(
-        "SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        "SELECT ta.target_id, ta.target_kind, tg.name FROM tag_assignments ta "
         "JOIN tags tg ON tg.id = ta.tag_id "
         "JOIN events e ON e.id = ta.target_id "
         "WHERE e.conversation_id = ? "
@@ -849,9 +855,9 @@ def _fetch_conversation_event_tags(
         "ORDER BY tg.name",
         (conversation_id,),
     ).fetchall()
-    out: dict[str, list[str]] = {}
+    out: dict[str, list[tuple[str, str]]] = {}
     for row in rows:
-        out.setdefault(row["target_id"], []).append(row["name"])
+        out.setdefault(row["target_id"], []).append((row["name"], row["target_kind"]))
     return out
 
 
@@ -1432,20 +1438,32 @@ def resolve_entity_id(
         # conversation branch: a colliding prefix must raise AmbiguousPrefix,
         # not silently resolve to an arbitrary match. ('exchange' anchors on a
         # prompt event.)
+        #
+        # Owner-scoped through the owning conversation (mirrors the conversation
+        # branch and TargetRef._resolve_cross_kind): an owner-scoped caller must
+        # not resolve — and then tag — another tenant's event by ULID/prefix.
+        # This completes the resolver's owner safety so the serve /tag route can
+        # trust resolve() on the kind-narrowed path, not just the bare-id one.
         kind = "prompt" if entity_type == "exchange" else entity_type
-        params = (entity_id, f"{entity_id}%", kind)
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["(e.id = ? OR e.id LIKE ?)", "e.kind = ?"]
+        evt_params: list[object] = [entity_id, f"{entity_id}%", kind]
+        if owner:
+            where.append(owner_predicate("e.conversation_id"))
+            evt_params.append(owner)
+        where_sql = " AND ".join(where)
         rows = conn.execute(
-            "SELECT id FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?"
-            " ORDER BY id LIMIT 6",
-            params,
+            f"SELECT e.id FROM events e WHERE {where_sql} ORDER BY e.id LIMIT 6",
+            evt_params,
         ).fetchall()
         if not rows:
             return None
         if len(rows) == 1:
             return rows[0]["id"]
         count_row = conn.execute(
-            "SELECT COUNT(*) AS n FROM events WHERE (id = ? OR id LIKE ?) AND kind = ?",
-            params,
+            f"SELECT COUNT(*) AS n FROM events e WHERE {where_sql}",
+            evt_params,
         ).fetchone()
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     else:

@@ -337,6 +337,20 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
 .tag-input:focus { outline:none; border-bottom-color:var(--accent); }
 .tag-input::placeholder { color:var(--faint); }
 .tag-input::-webkit-calendar-picker-indicator { display:none !important; }
+
+/* Per-element (per-turn) tag section in the folio body — subordinate to the
+   conversation tag section, with a hover/focus-revealed add affordance. The
+   reveal is pure CSS (no htmx event filters → no new Function → CSP-safe under
+   the missing 'unsafe-eval'). Existing chips stay visible; only the add form is
+   ghosted until the turn is hovered or focused. `:focus-within` (not just
+   `:hover`) keeps it reachable by keyboard tab; touch pointers have no hover, so
+   a hover-less environment gets the affordance always-on. */
+.tag-section--elem { margin-top:10px; gap:5px; }
+.tag-section--elem .tag { font-size:11px; color:var(--faint); }
+.tag-section--elem .tag-add { opacity:0; pointer-events:none; transition:opacity .12s ease; }
+.turn:hover .tag-section--elem .tag-add,
+.turn:focus-within .tag-section--elem .tag-add { opacity:1; pointer-events:auto; }
+@media (hover: none) { .tag-section--elem .tag-add { opacity:1; pointer-events:auto; } }
 .export-actions { display:flex; gap:8px; }
 .export-link { font-family:var(--font-mono); font-size:var(--fs-micro);
   letter-spacing:.1em; text-transform:uppercase; text-decoration:none;

@@ -186,7 +186,10 @@ def test_ui_tag_success(monkeypatch, tmp_path):
         async def form(self):
             return {"action": "apply", "id": "cid", "tag": "tag1"}
 
-    monkeypatch.setattr("siftd.api.tags.modify_conversation_tag", lambda *a, **k: ["tag1"])
+    monkeypatch.setattr(
+        "siftd.api.tags.modify_target_tag",
+        lambda *a, **k: ("conversation", "cid", [("tag1", "conversation")]),
+    )
     monkeypatch.setattr("siftd.output.html_fmt.render_tag_section", lambda *a, **k: "<tags/>")
     tag_out = _run(hr.ui_tag.fn(_Req(), db))
     assert "<tags/>" in tag_out.content

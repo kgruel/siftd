@@ -8,6 +8,7 @@ from siftd.api.tags import (
     apply_tags,
     delete_tag_safe,
     get_or_create_tag,
+    modify_target_tag,
     rename_tag_safe,
 )
 
@@ -42,6 +43,33 @@ def test_apply_tags_apply_already_and_remove_statuses(test_db):
     missing = apply_tags(db_path=test_db, tags=["topic:missing"], entity_id=conv1, remove=True)
     assert missing.results[0].status == "not_found"
     assert missing.results[0].count == 0
+
+
+def test_modify_target_tag_element_roundtrip_and_resolved_kind(test_db):
+    """modify_target_tag resolves a wire (entity_type, entity_id) to a canonical
+    (kind, ULID), mutates, and returns the target's updated tags. The resolved
+    kind is authoritative — used for the audit + fragment."""
+    conn = open_database(test_db)
+    try:
+        pid = conn.execute("SELECT id FROM events WHERE kind = 'prompt' LIMIT 1").fetchone()["id"]
+    finally:
+        conn.close()
+
+    kind, target_id, tags = modify_target_tag("prompt", pid, "flagged", action="apply", db_path=test_db)
+    assert kind == "prompt"
+    assert target_id == pid
+    # tags are (name, kind) pairs so each chip re-posts against its own kind
+    assert ("flagged", "prompt") in tags
+
+    kind2, _, tags2 = modify_target_tag("prompt", pid, "flagged", action="remove", db_path=test_db)
+    assert kind2 == "prompt"
+    assert "flagged" not in [name for name, _ in tags2]
+
+
+def test_modify_target_tag_missing_target_raises_lookup(test_db):
+    """A nonexistent target raises LookupError (the serve route maps it to 404)."""
+    with pytest.raises(LookupError):
+        modify_target_tag("response", "01DOESNOTEXIST0000", "x", action="apply", db_path=test_db)
 
 
 def test_apply_tags_last_missing_entities(tmp_path):

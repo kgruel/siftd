@@ -599,14 +599,14 @@ def render_query_detail_block(
     ds = domain_styles(fidelity)
     parts: list[Block] = []
 
-    event_tags: dict[str, list[str]] = getattr(detail, "event_tags", None) or {}
+    event_tags: dict[str, list[tuple[str, str]]] = getattr(detail, "event_tags", None) or {}
 
     def _tag_span(*event_ids: str | None):
         """The tag-chip trailer for an event's meta line, or None if untagged."""
         names: list[str] = []
         for eid in event_ids:
             if eid:
-                names.extend(event_tags.get(eid, []))
+                names.extend(name for name, _kind in event_tags.get(eid, []))
         if not names:
             return None
         # Dedup preserving order (a prompt carries its own + exchange tags).

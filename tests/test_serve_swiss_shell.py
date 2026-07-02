@@ -256,6 +256,127 @@ def test_folio_hosts_tag_and_export_curation(ctx):
     assert "format=md" in body and "format=json" in body  # export links
 
 
+def test_folio_body_offers_element_tag_affordance(ctx):
+    """WS4: each turn in the folio body carries its own hover-reveal element-tag
+    section (chips + add form), distinct from the conversation section in the
+    command bar."""
+    client, cid = ctx
+    body = client.get("/folio", params={"id": cid}).text
+    assert "tag-section--elem" in body                    # per-element sections
+    assert 'name="entity_type" value="prompt"' in body   # prompt block tags on prompt
+    assert 'name="entity_type" value="response"' in body  # assistant block on response
+
+
+def test_element_tag_apply_remove_roundtrip_via_post_tag(tmp_path):
+    """The generalized POST /tag applies + removes an element-kind tag, returns the
+    element fragment, and audits with the resolved kind (not the wire hint)."""
+    import re
+
+    from siftd.storage.sqlite import open_database
+
+    db, cid = _make_db(tmp_path / "team.db")
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid}).text
+        # Reading-mode body anchors only the prompt with data-event-id.
+        m = re.search(r'data-event-id="([^"]+)"', body)
+        assert m, "folio body should carry a prompt data-event-id to tag"
+        event_id = m.group(1)
+
+        r = client.post("/tag", data={
+            "action": "apply", "id": event_id, "entity_type": "prompt", "tag": "flagme",
+        })
+        assert r.status_code == 201
+        assert "flagme" in r.text
+        assert "tag-section--elem" in r.text
+        assert 'name="entity_type" value="prompt"' in r.text
+
+        # Chip is visible in a fresh folio render.
+        assert "flagme" in client.get("/folio", params={"id": cid}).text
+
+        r2 = client.post("/tag", data={
+            "action": "remove", "id": event_id, "entity_type": "prompt", "tag": "flagme",
+        })
+        assert r2.status_code == 201
+        assert "flagme" not in r2.text
+
+    # Audited under the resolved kind (prompt), keyed on the resolved ULID.
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT target_type, target FROM audit_log WHERE action = 'tag.apply'"
+            " ORDER BY occurred_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row["target_type"] == "prompt"
+    assert row["target"] == event_id
+
+
+def test_exchange_chip_on_prompt_section_removes_as_exchange(tmp_path):
+    """Regression: a prompt section unions its 'exchange'-kind tags into its chips.
+    The rendered remove button must carry entity_type=exchange so the round-trip
+    actually deletes the exchange assignment — before the (name, kind) chips, the
+    remove posted entity_type=prompt and the exchange tag silently survived."""
+    import re
+
+    db, cid = _make_db(tmp_path / "team.db")
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid}).text
+        event_id = re.search(r'data-event-id="([^"]+)"', body).group(1)
+
+        # Tag the exchange (anchors on the prompt event id).
+        r = client.post("/tag", data={
+            "action": "apply", "id": event_id, "entity_type": "exchange", "tag": "exch",
+        })
+        assert r.status_code == 201
+        assert "exch" in r.text
+        # The chip's remove wire carries the EXCHANGE kind, not the prompt hint
+        # (hx-vals JSON is HTML-escaped in the rendered fragment).
+        assert "entity_type&quot;: &quot;exchange" in r.text
+
+        # Remove as exchange — the fragment now reflects an empty chip set.
+        r2 = client.post("/tag", data={
+            "action": "remove", "id": event_id, "entity_type": "exchange", "tag": "exch",
+        })
+        assert r2.status_code == 201
+        assert "exch<" not in r2.text  # no lingering chip
+        assert "exch" not in client.get("/folio", params={"id": cid}).text
+
+
+def test_element_tag_post_is_owner_scoped_404_not_403(tmp_path):
+    """An owner-scoped caller tagging another tenant's element resolves to nothing
+    (the resolver scopes events through the owning conversation) → 404, never a
+    403 that would confirm the target exists."""
+    conn = create_database(tmp_path / "owned.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/bob-proj", "2026-01-01T00:00:00Z")
+    bob_cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    bob_pid = insert_prompt(conn, bob_cid, "cBp", "2026-01-15T10:00:00Z")
+    insert_prompt_content(conn, bob_pid, 0, "text", '{"text": "bobs prompt"}')
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (bob_cid, "bob", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with _hx_client(create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
+        r = client.post(
+            "/tag",
+            data={"action": "apply", "id": bob_pid, "entity_type": "prompt", "tag": "x"},
+            headers={"Authorization": "Bearer s3cret"},
+        )
+    assert r.status_code == 404
+
+
 def test_stub_view_carries_head_metadata(ctx):
     # Every nav view is live now; the /view/{name} stub still answers unknown
     # names (defensive) and must carry the head metadata enhance.js needs.
