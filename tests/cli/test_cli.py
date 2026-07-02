@@ -168,7 +168,7 @@ def test_tag_colon_path_invalid_kind(test_db, capsys):
     rc = main(["--db", str(test_db), "tag", f"{conv_id}:badkind:1", "some-tag"])
     assert rc == 1
     captured = capsys.readouterr()
-    assert "Unknown target kind" in captured.out or "Unknown target kind" in captured.err
+    assert "Invalid target kind" in captured.out or "Invalid target kind" in captured.err
 
 
 def test_tag_colon_path_out_of_range(test_db, capsys):

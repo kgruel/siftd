@@ -657,34 +657,29 @@ def cmd_tag(args) -> int:
 
     # Colon-path syntax: <conv>:<kind>:<n> <tag> [tag2...]
     if positional and args.last is None:
-        from siftd.api.granular_targets import GRANULAR_KINDS, parse_colon_path, resolve_colon_target
+        from siftd.api.target_ref import TargetRef
+        from siftd.api.target_ref import resolve as resolve_target
 
-        _cp = parse_colon_path(positional[0])
-        if _cp is not None:
-            _conv_ref, _kind, _n = _cp
+        _ref = TargetRef.from_colon_path(positional[0])
+        if _ref is not None:
             _tag_names = positional[1:]
             if not _tag_names:
                 print("Usage: siftd tag <conv>:<kind>:<n> <tag> [tag2 ...]")
                 return 1
-            if _kind not in GRANULAR_KINDS:
-                status.error(f"Unknown target kind {_kind!r}. Valid: {', '.join(sorted(GRANULAR_KINDS))}")
-                return 1
             _conn = open_database(db)
             try:
-                from siftd.api.conversations import resolve_entity_id
                 try:
-                    _conv_id = resolve_entity_id(_conn, "conversation", _conv_ref)
+                    _resolved = resolve_target(_conn, _ref)
                 except AmbiguousPrefix as _exc:
                     print_ambiguous_error(_exc)
                     return 2
-                if _conv_id is None:
-                    status.error(f"conversation not found: {_conv_ref}")
+                except LookupError as e:
+                    status.error(str(e))
                     return 1
-                try:
-                    _target_kind, _target_id = resolve_colon_target(_conn, _conv_id, _kind, _n)
                 except (ValueError, IndexError) as e:
                     status.error(str(e))
                     return 1
+                _target_kind, _target_id = _resolved.target_kind, _resolved.target_id
             finally:
                 _conn.close()
             try:
@@ -738,11 +733,32 @@ def cmd_tag(args) -> int:
         body["last"] = n
         body["tags"] = [str(t) for t in positional]
     elif positional:
-        parsed = _parse_tag_args(positional)
+        from siftd.api.target_ref import TargetRef
+        from siftd.api.target_ref import resolve as resolve_target
+
+        parsed = TargetRef.from_positional(positional)
         if parsed:
-            entity_type, entity_id, tag_names_parsed = parsed
-            body["entity_type"] = entity_type
-            body["entity_id"] = entity_id
+            _ref, tag_names_parsed = parsed
+            # Bare id, kind unknown → resolve across conversations AND events so
+            # `siftd tag <ulid> <tag>` finds an element without a kind word
+            # (decision 2). An explicit kind word narrows and skips this.
+            if _ref.kind is None:
+                _conn = open_database(db)
+                try:
+                    _resolved = resolve_target(_conn, _ref)
+                except AmbiguousPrefix as _exc:
+                    print_ambiguous_error(_exc)
+                    return 2
+                except LookupError as e:
+                    status.error(str(e))
+                    return 1
+                finally:
+                    _conn.close()
+                body["entity_type"] = _resolved.target_kind
+                body["entity_id"] = _resolved.target_id
+            else:
+                body["entity_type"] = _ref.kind
+                body["entity_id"] = _ref.raw_id
             body["tags"] = tag_names_parsed
 
     if "tags" in body:
@@ -761,6 +777,7 @@ def cmd_tag(args) -> int:
             print_serve_4xx(e)
             return 1
         if result is not None and isinstance(result, dict) and "error" not in result:
+            _noun = body.get("entity_type", "conversation")
             for r in result.get("results", []):
                 tag = r["tag"]
                 row_status = r["status"]
@@ -768,9 +785,9 @@ def cmd_tag(args) -> int:
                 if row_status == "not_found":
                     status.error(f"Tag '{tag}' not found")
                 elif row_status == "applied":
-                    status.confirm(f"Applied tag '{tag}' to {count} conversation(s)")
+                    status.confirm(f"Applied tag '{tag}' to {count} {_noun}(s)")
                 elif row_status == "removed":
-                    status.confirm(f"Removed tag '{tag}' from {count} conversation(s)")
+                    status.confirm(f"Removed tag '{tag}' from {count} {_noun}(s)")
             return 0
 
     # Handle --last mode
@@ -834,8 +851,13 @@ def cmd_tag(args) -> int:
 
         return 1 if errors == len(tag_names) else 0
 
-    # Parse positional args
-    parsed = _parse_tag_args(positional)
+    # Local path (no running server). Reuse the target resolved for the
+    # delegation body — including cross-kind bare-ULID resolution — rather than
+    # re-parsing, so element targets apply locally too.
+    if "entity_type" in body and "entity_id" in body:
+        parsed = (str(body["entity_type"]), str(body["entity_id"]), list(body["tags"]))
+    else:
+        parsed = _parse_tag_args(positional)
     if not parsed:
         print("Usage: siftd tag <id> <tag> [tag2 ...]")
         print("       siftd tag apply <id> <tag> [tag2 ...]")

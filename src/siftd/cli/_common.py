@@ -21,11 +21,18 @@ def print_ambiguous_error(exc) -> None:
     from siftd.output.common import should_use_ansi
     from siftd.output.listing import lines
 
+    noun = getattr(exc, "noun", "conversations")
     status.error(
-        f"Prefix {exc.prefix!r} matches {exc.total} conversations:",
+        f"Prefix {exc.prefix!r} matches {exc.total} {noun}:",
         hint="Disambiguate with a longer prefix or full ID.",
     )
-    body: list[str] = list(exc.matched_ids)
+    # When candidates span kinds (bare-ULID collision across conversations and
+    # events), label each with its kind so the user can pick the right one.
+    kinds = getattr(exc, "candidate_kinds", None)
+    if kinds:
+        body: list[str] = [f"{i} ({k})" for i, k in zip(exc.matched_ids, kinds, strict=False)]
+    else:
+        body = list(exc.matched_ids)
     if exc.total > len(exc.matched_ids):
         body.append(f"... and {exc.total - len(exc.matched_ids)} more")
     print_block(lines(body), sys.stderr, use_ansi=should_use_ansi(sys.stderr))

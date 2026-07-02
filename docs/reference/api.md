@@ -333,7 +333,7 @@ A prompt and its full response narrative.
 
 #### AmbiguousPrefix
 
-Prefix matches multiple conversations — caller must use a longer prefix or full ID.
+Prefix matches multiple targets — caller must use a longer prefix or full ID.
 
 ### Functions
 

@@ -70,13 +70,29 @@ class AnchorPhraseInvalid(AnchorError):
 
 
 class AmbiguousPrefix(Exception):
-    """Prefix matches multiple conversations — caller must use a longer prefix or full ID."""
+    """Prefix matches multiple targets — caller must use a longer prefix or full ID.
 
-    def __init__(self, prefix: str, matched_ids: list[str], total: int) -> None:
+    ``candidate_kinds`` (when supplied) is parallel to ``matched_ids`` and labels
+    each candidate by target kind, used when a bare-ULID prefix collides across
+    conversations and events (e.g. ``01HX… (response)`` vs ``01HX… (conversation)``).
+    ``noun`` names the collided population for the summary line.
+    """
+
+    def __init__(
+        self,
+        prefix: str,
+        matched_ids: list[str],
+        total: int,
+        *,
+        candidate_kinds: list[str] | None = None,
+        noun: str = "conversations",
+    ) -> None:
         self.prefix = prefix
         self.matched_ids = matched_ids  # up to 5
         self.total = total
-        super().__init__(f"prefix {prefix!r} matches {total} conversations")
+        self.candidate_kinds = candidate_kinds  # parallel to matched_ids, or None
+        self.noun = noun
+        super().__init__(f"prefix {prefix!r} matches {total} {noun}")
 
 
 @dataclass
