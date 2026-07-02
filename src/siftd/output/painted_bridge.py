@@ -1313,6 +1313,9 @@ def render_search_block(
                 (f"{r.get('_started_at', '')}  ", ds.temporal),
                 (r.get("_workspace", ""), ds.workspace),
             ]
+            _tags = r.get("tags")
+            if _tags:
+                left.append((f"  {' '.join('#' + t for t in _tags)}", ds.tag))
             rows = [_meta_header(left, r.get("score"), inner)]
 
             if exchanges:

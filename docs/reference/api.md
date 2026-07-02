@@ -641,6 +641,7 @@ Canonical mutable search chunk result.
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
+| `tags` | `list[str]` |  |
 
 ### SearchResult
 
@@ -662,6 +663,7 @@ Canonical mutable search chunk result.
 | `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
+| `tags` | `list[str]` |  |
 
 ### SearchView
 

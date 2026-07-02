@@ -1032,6 +1032,9 @@ details.hit-context[open] > summary::before { content:'\25BE'; color:var(--accen
 .hit-src { display:flex; flex-wrap:wrap; gap:8px; color:var(--faint); }
 .hit-src .adapter { letter-spacing:.06em; text-transform:uppercase; }
 .hit-src .temporal { color:var(--mid); }
+.hit-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:2px; }
+.hit-tags .tag { font-size:11px; color:var(--faint); border:1px solid var(--hair);
+    border-radius:3px; padding:0 5px; letter-spacing:.02em; }
 
 /* the body — full-width for scanning, with typeset hierarchy per shape. The
    excerpt nav (.search-hit__main, the folio jump) + the unfold are stacked

@@ -397,15 +397,21 @@ def _hit_data(r: Any) -> str:
 
 
 def _hit_meta(
-    *, score: float, conv_id: str, ws: str, label: str, started: str, meter: bool = True
+    *, score: float, conv_id: str, ws: str, label: str, started: str,
+    meter: bool = True, tags: list[str] | None = None,
 ) -> str:
     """The hanging meta gutter of a search hit — a folio number (CSS counter)
     stacked over the match's identity: score + a meter bar, the short id, the
     workspace, and the source (adapter · date). Shared by Excerpts + Thread
     tier-1. The meter's ``data-n`` is score×1000; enhance.js ``drawHitMeters``
     scales it (n/10 %). ``started`` is the already-display-formatted timestamp the
-    SearchView carries (``_started_at``)."""
+    SearchView carries (``_started_at``). ``tags`` are the element's tag chips."""
     bar = f'<span class="hit-meter" data-n="{round(score * 1000)}"></span>' if meter else ""
+    chips = ""
+    if tags:
+        chips = '<span class="hit-tags">' + "".join(
+            f'<span class="tag">{escape(t)}</span>' for t in tags
+        ) + "</span>"
     return (
         '<aside class="hit-meta">'
         '<span class="hit-num"></span>'
@@ -414,6 +420,7 @@ def _hit_meta(
         f'<span class="workspace">{escape(ws)}</span>'
         f'<span class="hit-src"><span class="adapter">{escape(label)}</span>'
         f'<span class="temporal">{escape(started)}</span></span>'
+        f'{chips}'
         '</aside>'
     )
 
@@ -569,7 +576,10 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             # anchored at the matched event (lands on the match, not the top).
             parts.append(f'<article class="search-hit"{_hit_data(r)}>')
             parts.append(
-                _hit_meta(score=score, conv_id=conv_id, ws=ws, label=display_label, started=started)
+                _hit_meta(
+                    score=score, conv_id=conv_id, ws=ws, label=display_label,
+                    started=started, tags=r.get("tags"),
+                )
             )
             parts.append('<div class="hit-body">')
             parts.append(

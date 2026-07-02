@@ -803,6 +803,29 @@ class TestSearchModeWireContract:
         # The multi-turn fixture includes "turn-0-unique-marker-alpha" in turn 0.
         assert len(results) > 0, f"Expected FTS results for 'alpha'; got empty: {body}"
 
+    def test_search_facet_only_enumerates_tagged_elements(self, tmp_path):
+        """No query + a tag facet → element hits, no 400 for the missing q."""
+        from siftd.api.tags import apply_tags
+        from siftd.storage.sqlite import open_database
+
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        conn = open_database(db, read_only=True)
+        try:
+            rid = conn.execute("SELECT id FROM events WHERE kind='response' LIMIT 1").fetchone()["id"]
+        finally:
+            conn.close()
+        apply_tags(db_path=db, tags=["docs:thing"], entity_type="response", entity_id=rid)
+
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get("/api/v1/search", params={"tag": "docs:thing"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        results = body.get("results", body) if isinstance(body, dict) else body
+        assert len(results) == 1
+        assert results[0]["event_id"] == rid
+        assert results[0]["tags"] == ["docs:thing"]
+
     def test_search_bad_mode_returns_400(self, tmp_path):
         """An unrecognised mode value must return HTTP 400, not silently fall through."""
         db, _ = _make_multi_turn_db(tmp_path / "team.db")

@@ -129,6 +129,8 @@ def _wire_chunk(r: dict) -> dict:
     }
     if r.get("event_id") is not None:
         chunk["event_id"] = r.get("event_id")
+    if r.get("tags"):
+        chunk["tags"] = r.get("tags")
 
     breakdown = r.get("breakdown")
     if isinstance(breakdown, ScoreBreakdown):

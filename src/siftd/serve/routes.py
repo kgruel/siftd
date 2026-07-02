@@ -972,7 +972,7 @@ def conversation_list(
 def search_route(
     request: Request,
     db_path: Path,
-    q: str = Parameter(query="q"),
+    q: str = Parameter(query="q", default=""),
     workspace: str | None = Parameter(query="workspace", default=None),
     since: str | None = Parameter(query="since", default=None),
     before: str | None = Parameter(query="before", default=None),

@@ -81,9 +81,11 @@ def cmd_search(args) -> int:
             return 1
         return _search_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
-    # Search mode — need a query
+    # Search mode — need a query OR a tag facet. A query ranks content; a bare
+    # tag facet enumerates tagged elements (filter-only search, decision 1).
     query = " ".join(args.query) if args.query else ""
-    if not query:
+    facet_only = not query and bool(getattr(args, "tag", None) or getattr(args, "all_tags", None))
+    if not query and not facet_only:
         # A usage triplet can't ride a callout hint (it flattens newlines), so the
         # examples travel on a lines() body — print_ambiguous_error's idiom — all
         # to stderr so a piped stdout stays clean.
@@ -92,10 +94,11 @@ def cmd_search(args) -> int:
         from siftd.output.common import should_use_ansi
         from siftd.output.listing import lines
 
-        status.error("A search query is required.")
+        status.error("A search query or tag filter is required.")
         print_block(
             lines([
                 "siftd search <query>",
+                "siftd search --tag NAME  (enumerate tagged elements)",
                 "siftd search --index     (build/update index)",
                 "siftd search --rebuild   (rebuild index from scratch)",
             ]),
@@ -138,7 +141,7 @@ def cmd_search(args) -> int:
     # Explicit semantic/hybrid without embeddings: surface the precise reason
     # (extra missing vs index missing). Keep stdout clean so `--json | jq` stays
     # valid — human text to stderr, structured error envelope on stdout.
-    if requested_mode in ("semantic", "hybrid") and not has_embeddings:
+    if requested_mode in ("semantic", "hybrid") and not has_embeddings and not facet_only:
         import json
         if not embeddings_available():
             if args.json:
@@ -172,7 +175,7 @@ def cmd_search(args) -> int:
     # about embeddings-only flags). auto-resolved fts (no embeddings installed)
     # stays on the main path below, keeping full view/flag support — it just
     # ranks by FTS5 instead of semantic.
-    if requested_mode == "fts":
+    if requested_mode == "fts" and not facet_only:
         return _search_fts_only(args, db, query, filters)
 
     from siftd.api.dispatch import (
