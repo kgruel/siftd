@@ -46,12 +46,23 @@ def test_facet_only_tag_kind_scopes(test_db):
     assert [h["chunk_type"] for h in only.results] == ["response"]
 
 
-def test_facet_only_conversation_kind_yields_no_element_hits(test_db):
+def test_facet_only_conversation_kind_yields_conversation_hits(test_db):
     conv, _, _ = _ids(test_db)
     apply_tags(db_path=test_db, tags=["proj:x"], entity_type="conversation", entity_id=conv)
-    # tag lives only on the conversation → no element hits enumerated
+    # tag lives only on the conversation → conversation-scoped hits (decision 1),
+    # not a silent empty result.
     sv = search_view("", db_path=test_db, tag=["proj:x"])
-    assert sv.results == []
+    assert sv.view == "conversations"
+    assert [h["conversation_id"] for h in sv.results] == [conv]
+
+
+def test_facet_only_mixed_kinds_fold_to_conversations(test_db):
+    conv, pid, rid = _ids(test_db)
+    apply_tags(db_path=test_db, tags=["mix"], entity_type="response", entity_id=rid)
+    apply_tags(db_path=test_db, tags=["mix"], entity_type="conversation", entity_id=conv)
+    sv = search_view("", db_path=test_db, tag=["mix"])
+    assert sv.view == "conversations"
+    assert conv in {h["conversation_id"] for h in sv.results}
 
 
 def test_facet_only_conversations_view_aggregates(test_db):

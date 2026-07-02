@@ -64,7 +64,9 @@ def test_from_positional_too_short():
 
 def test_from_wire_and_markers():
     assert TargetRef.from_wire({"entity_type": "prompt", "entity_id": "01X"}) == TargetRef(raw_id="01X", kind="prompt")
-    assert TargetRef.from_wire({"last": 3}).exchange_index == 3
+    # wire `last` means "N recent conversations" — a selection count, not a
+    # target address — so from_wire ignores it (no exchange_index pun).
+    assert TargetRef.from_wire({"last": 3}) == TargetRef(raw_id=None, kind=None)
     assert TargetRef.from_markers(last_marker="last_response").last_marker == "last_response"
     with pytest.raises(ValueError, match="Invalid last marker"):
         TargetRef.from_markers(last_marker="last_bogus")
@@ -136,6 +138,26 @@ def test_resolve_cross_kind_ambiguous(tmp_path):
         resolve(conn, TargetRef(raw_id=shared))
     assert exc.value.candidate_kinds is not None
     assert set(exc.value.candidate_kinds) == {"conversation", "prompt"}
+
+
+def test_resolve_cross_kind_owner_scopes_events(tmp_path):
+    """An owner-scoped caller cannot resolve another tenant's event by ULID."""
+    db_path, conn, _ = _make_db(tmp_path)
+    # Assign the conversation (and thus its events) to user 'alice'.
+    conn.execute(
+        "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at) "
+        "VALUES (?, 'alice', NULL, '2024-01-01T00:00:00Z')",
+        ("01CONVAAAAAAAAAAAAAAAAAAAA",),
+    )
+    conn.commit()
+
+    # Alice resolves her own event by full ULID.
+    got = resolve(conn, TargetRef(raw_id="01EVTRESP000000000000000002"), owner="alice")
+    assert got == ResolvedTarget("response", "01EVTRESP000000000000000002")
+
+    # Bob (no ownership) cannot — the event is invisible, so it's not found.
+    with pytest.raises(LookupError):
+        resolve(conn, TargetRef(raw_id="01EVTRESP000000000000000002"), owner="bob")
 
 
 def test_resolve_deferred_marker_raises(tmp_path):

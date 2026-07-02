@@ -102,19 +102,16 @@ class TargetRef:
 
     @classmethod
     def from_wire(cls, body: dict) -> TargetRef:
-        """Parse a serve JSON tag body into a TargetRef.
+        """Parse a serve JSON tag body's target into a TargetRef.
 
-        Recognizes ``entity_type``/``entity_id`` and the ``last`` marker.
-        ``last`` (an int) is carried as ``exchange_index`` for deferral; the
-        caller decides whether ``last`` means recent-conversations (handled by
-        ``apply_tags(last=...)``) or a session marker.
+        Recognizes ``entity_type``/``entity_id`` (the addressable target). The
+        wire ``last`` key means "N most recent conversations" — a *selection*
+        count, not a target address — so it is intentionally NOT handled here;
+        that path is served by ``apply_tags(last=...)``, and session markers use
+        ``from_markers``. Folding ``last`` into ``exchange_index`` would be a
+        semantic pun (wire-last ≠ session-exchange), so it is omitted.
         """
-        entity_type = body.get("entity_type")
-        entity_id = body.get("entity_id")
-        last = body.get("last")
-        if last is not None:
-            return cls(exchange_index=int(last))
-        return cls(raw_id=entity_id, kind=entity_type)
+        return cls(raw_id=body.get("entity_id"), kind=body.get("entity_type"))
 
     @classmethod
     def from_markers(
@@ -236,11 +233,23 @@ def _resolve_cross_kind(
         ):
             candidates.append(("conversation", row["id"]))
 
-    for row in conn.execute(
-        "SELECT id, kind FROM events WHERE (id = ? OR id LIKE ?) ORDER BY id LIMIT 6",
-        (raw, f"{raw}%"),
-    ):
-        candidates.append((row["kind"], row["id"]))
+    # Events arm — scoped through the owning conversation with the SAME owner
+    # predicate, so an owner-scoped caller can't resolve (and then tag) another
+    # tenant's event by ULID prefix. Skipped entirely when the owners table is
+    # absent but an owner is demanded (same stance as the conversations arm).
+    include_events = not (owner and not has_conversation_owners_table(conn))
+    if include_events:
+        evt_where = ["(e.id = ? OR e.id LIKE ?)"]
+        evt_params: list[object] = [raw, f"{raw}%"]
+        if owner:
+            evt_where.append(owner_predicate("e.conversation_id"))
+            evt_params.append(owner)
+        for row in conn.execute(
+            "SELECT e.id, e.kind FROM events e "
+            f"WHERE {' AND '.join(evt_where)} ORDER BY e.id LIMIT 6",
+            evt_params,
+        ):
+            candidates.append((row["kind"], row["id"]))
 
     if not candidates:
         raise LookupError(f"not found: {raw}")
@@ -248,11 +257,26 @@ def _resolve_cross_kind(
         kind, target_id = candidates[0]
         return ResolvedTarget(kind, target_id)
 
+    # Exact total across both tables (each arm above is capped at 6, so
+    # len(candidates) would undercount "and N more"). Owner scoping mirrors the
+    # candidate queries.
+    conv_count = 0
+    if include_conversations:
+        conv_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM conversations c WHERE {' AND '.join(conv_where)}",
+            conv_params,
+        ).fetchone()["n"]
+    evt_count = 0
+    if include_events:
+        evt_count = conn.execute(
+            f"SELECT COUNT(*) AS n FROM events e WHERE {' AND '.join(evt_where)}",
+            evt_params,
+        ).fetchone()["n"]
     shown = candidates[:5]
     raise AmbiguousPrefix(
         raw,
         [i for _, i in shown],
-        len(candidates),
+        conv_count + evt_count,
         candidate_kinds=[k for k, _ in shown],
         noun="targets",
     )
