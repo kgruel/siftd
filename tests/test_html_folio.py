@@ -276,12 +276,15 @@ def test_folio_prompt_exchange_chip_removes_as_exchange_not_prompt():
         detail, _FID, interactive_tags=True,
         tag_action_url="/tag", tag_suggest_url="/tags/suggest",
     )
-    # Both chips' remove hx-vals appear (HTML-escaped), each carrying its own kind.
+    # Both chips' remove hx-vals appear (HTML-escaped), each carrying its own kind
+    # plus the hosting section's kind (so the fragment re-renders as the section).
     assert escape(json.dumps(
-        {"action": "remove", "id": "01PROMPT0000000000", "tag": "exch-tag", "entity_type": "exchange"}
+        {"action": "remove", "id": "01PROMPT0000000000", "tag": "exch-tag",
+         "entity_type": "exchange", "section_type": "prompt"}
     )) in html
     assert escape(json.dumps(
-        {"action": "remove", "id": "01PROMPT0000000000", "tag": "prompt-tag", "entity_type": "prompt"}
+        {"action": "remove", "id": "01PROMPT0000000000", "tag": "prompt-tag",
+         "entity_type": "prompt", "section_type": "prompt"}
     )) in html
 
 

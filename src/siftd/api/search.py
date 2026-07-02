@@ -19,6 +19,7 @@ from siftd.domain.search_types import (
     SearchChunk,
     SearchView,
 )
+from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
@@ -1324,7 +1325,9 @@ def _engine_limit(n: int, *, view: str, select: str) -> int:
     return n
 
 
-_ENUM_ELEMENT_KINDS = ("prompt", "response", "tool_call", "exchange")
+# Event-anchored kinds enumerated by the element arm; 'block' rides its own arm
+# (its target is an event_content.id, not an events.id).
+_ENUM_ELEMENT_KINDS = tuple(sorted(EVENT_TAG_KINDS))
 
 
 def _enum_tag_facet_where(

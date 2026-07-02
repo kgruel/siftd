@@ -17,12 +17,13 @@ import sqlite3
 from dataclasses import dataclass
 
 from siftd.api.conversations import AmbiguousPrefix, resolve_entity_id
+from siftd.storage.filters import ALL_TAG_KINDS, EVENT_TAG_KINDS
 
-GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange"})
-# 'block' addresses an event_content row (a single content block). It is not a
-# colon-path *anchor* kind (that segment is always an event kind); it enters as a
-# bare/kind-narrowed id or as the optional 4th colon segment.
-_ADDRESSABLE_KINDS = frozenset({"conversation", "workspace", "block"}) | GRANULAR_KINDS
+# Colon-path *anchor* kinds — the 2nd segment always names an event kind.
+# 'block' is addressable (bare/kind-narrowed id, or the optional 4th colon
+# segment descending into the anchored event) but never an anchor itself.
+GRANULAR_KINDS = EVENT_TAG_KINDS
+_ADDRESSABLE_KINDS = ALL_TAG_KINDS
 LAST_MARKERS = frozenset({"last_prompt", "last_response", "last_exchange", "last_tool_call"})
 
 # Maps a granular target kind to the events.kind value used to query. 'exchange'

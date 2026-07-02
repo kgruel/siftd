@@ -20,6 +20,7 @@ from siftd.api.conversations import (
     list_conversations,
 )
 from siftd.output._id_format import short_id
+from siftd.storage.filters import EVENT_TAG_KINDS
 
 
 @dataclass
@@ -143,7 +144,9 @@ class ExportedElement:
     block_type: str | None = None  # only for block: the content-block flavor
 
 
-_EXPORT_ELEMENT_KINDS = ("prompt", "response", "tool_call", "exchange")
+# Event-anchored kinds exported by the event arm; 'block' rides its own arm
+# (its target is an event_content.id, not an events.id).
+_EXPORT_ELEMENT_KINDS = tuple(sorted(EVENT_TAG_KINDS))
 
 
 def _element_text(conn, event_id: str) -> str:

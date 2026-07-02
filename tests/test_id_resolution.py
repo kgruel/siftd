@@ -186,6 +186,47 @@ class TestResolveEntityId:
         conn.close()
         assert result is None
 
+    def test_workspace_owner_scope_is_participation(self, tmp_path):
+        """Under owner scope a workspace resolves only for a participant.
+
+        Regression: the workspace arm had no owner predicate and no
+        owners-table fallback guard, so any owner-scoped caller resolved any
+        workspace id (an existence oracle via ``POST /tag``).
+        """
+        db_path = tmp_path / "ws-owner.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        conn.execute(
+            "INSERT INTO workspaces (id, path, discovered_at) VALUES (?, ?, ?)",
+            ("ws1", "/proj", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, workspace_id, branch, started_at, ended_at)"
+            " VALUES (?, ?, ?, ?, NULL, ?, NULL)",
+            ("conv1", "ext-1", harness_id, "ws1", "2024-01-01T00:00:00Z"),
+        )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS conversation_owners ("
+            "conversation_id TEXT PRIMARY KEY, user_id TEXT, push_id TEXT, assigned_at TEXT)"
+        )
+        conn.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+            " VALUES (?, ?, NULL, ?)",
+            ("conv1", "bob", "2024-01-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+        conn = sqlite3.connect(str(db_path))
+        conn.row_factory = sqlite3.Row
+        try:
+            # Unscoped and participant callers resolve; a non-participant gets
+            # None (404-shaped), not an error.
+            assert resolve_entity_id(conn, "workspace", "ws1") == "ws1"
+            assert resolve_entity_id(conn, "workspace", "ws1", owner="bob") == "ws1"
+            assert resolve_entity_id(conn, "workspace", "ws1", owner="alice") is None
+        finally:
+            conn.close()
+
     def _make_event_collision_db(self, tmp_path, kind, ids):
         """Create a DB with one conversation and events of `kind` having `ids`."""
         db_path = tmp_path / "events.db"

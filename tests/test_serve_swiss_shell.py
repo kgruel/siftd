@@ -419,6 +419,49 @@ def test_exchange_chip_on_prompt_section_removes_as_exchange(tmp_path):
         assert "exch" not in client.get("/folio", params={"id": cid}).text
 
 
+def test_mixed_kind_section_rerenders_as_its_section(tmp_path):
+    """Regression: an exchange-chip mutation on a prompt section must re-render
+    the PROMPT view. Without section_type the fragment reflected only the
+    mutation kind — the still-present prompt chip vanished from the UI, and the
+    add-form flipped to entity_type=exchange so the next add silently created an
+    exchange-kind assignment."""
+    import re
+
+    db, cid = _make_db(tmp_path / "team.db")
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid}).text
+        event_id = re.search(r'data-event-id="([^"]+)"', body).group(1)
+
+        # The prompt event carries both a prompt-kind and an exchange-kind tag.
+        client.post("/tag", data={
+            "action": "apply", "id": event_id, "entity_type": "prompt", "tag": "p1",
+        })
+        client.post("/tag", data={
+            "action": "apply", "id": event_id, "entity_type": "exchange", "tag": "e1",
+        })
+
+        # Remove the exchange chip AS the prompt section's chip (what the
+        # rendered hx-vals post): mutation kind = exchange, section = prompt.
+        r = client.post("/tag", data={
+            "action": "remove", "id": event_id, "entity_type": "exchange",
+            "section_type": "prompt", "tag": "e1",
+        })
+        assert r.status_code == 201
+        # The prompt chip survives in the fragment...
+        assert ">p1<" in r.text
+        # ...and the add-form still creates prompt-kind tags.
+        assert 'name="entity_type" value="prompt"' in r.text
+        assert ">e1<" not in r.text
+
+        # Back-compat: a post WITHOUT section_type behaves as before (fragment
+        # keyed to the mutation kind).
+        r2 = client.post("/tag", data={
+            "action": "apply", "id": event_id, "entity_type": "exchange", "tag": "e2",
+        })
+        assert r2.status_code == 201
+        assert 'name="entity_type" value="exchange"' in r2.text
+
+
 def test_element_tag_post_is_owner_scoped_404_not_403(tmp_path):
     """An owner-scoped caller tagging another tenant's element resolves to nothing
     (the resolver scopes events through the owning conversation) → 404, never a

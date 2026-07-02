@@ -114,7 +114,11 @@ def _render_tag_section(
     ``(name, kind)`` pairs. A prompt section unions its ``exchange`` tags, so a
     chip's kind can differ from the section default; each chip's remove posts its
     OWN kind — the wire says what the user clicked — while the add form always
-    creates tags at the section's ``entity_type``.
+    creates tags at the section's ``entity_type``. Removes ALSO post
+    ``section_type`` (the section's kind) so the route re-renders the fragment as
+    THIS section: without it, removing an exchange chip from a prompt section
+    would return an exchange-only fragment — dropping the still-present prompt
+    chips and flipping the add form to create exchange tags.
     """
     section_id = f"tags-{short_id(conv_id)}"
     parts = [f'<div class="{escape(section_class)}" id="{escape(section_id)}">']
@@ -124,7 +128,8 @@ def _render_tag_section(
         if interactive and tag_action_url:
             import json as _json
             vals = _json.dumps(
-                {"action": "remove", "id": conv_id, "tag": name, "entity_type": kind}
+                {"action": "remove", "id": conv_id, "tag": name,
+                 "entity_type": kind, "section_type": entity_type}
             )
             parts.append(
                 f'<span class="tag interactive">{escape(name)}'

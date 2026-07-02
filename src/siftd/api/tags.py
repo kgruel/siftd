@@ -12,6 +12,7 @@ from painted import Fidelity
 
 from siftd.domain.shell_categories import shell_tag_names
 from siftd.paths import db_path as _db_path
+from siftd.storage.filters import ALL_TAG_KINDS, ELEMENT_TAG_KINDS
 from siftd.storage.sqlite import open_database as _open_database
 from siftd.storage.tags import DERIVATIVE_TAG
 from siftd.storage.tags import (
@@ -46,6 +47,7 @@ from siftd.storage.tags import (
 )
 
 __all__ = [
+    "ALL_ENTITY_TYPES",
     "DERIVATIVE_TAG",
     "ApplyTagOutcome",
     "ApplyResult",
@@ -70,8 +72,11 @@ __all__ = [
     "tag_info_list_from_dict",
 ]
 
-_GRANULAR_KINDS = frozenset({"prompt", "response", "tool_call", "exchange", "block"})
-_ALL_ENTITY_TYPES = frozenset({"conversation", "workspace"}) | _GRANULAR_KINDS
+_GRANULAR_KINDS = ELEMENT_TAG_KINDS  # sub-conversation kinds (incl. 'block')
+# Public: the full entity_type vocabulary, for serve-layer wire validation (the
+# architecture boundary forbids serve importing storage.filters directly).
+ALL_ENTITY_TYPES = ALL_TAG_KINDS
+_ALL_ENTITY_TYPES = ALL_ENTITY_TYPES
 
 # Auto-applied tag names: the closed shell:* category vocabulary (written
 # automatically at ingest/backfill) plus the derivative marker. Membership is a pure
@@ -519,6 +524,7 @@ def modify_target_tag(
     action: str = "apply",
     db_path: Path | None = None,
     owner: str | None = None,
+    view_kind: str | None = None,
 ) -> tuple[str, str, list[tuple[str, str]]]:
     """Apply or remove a tag on any taggable target (conversation or element).
 
@@ -527,7 +533,15 @@ def modify_target_tag(
     ``resolve`` maps to a canonical (kind, ULID) *scoped by owner on every
     grammar* — so a tenant can neither read nor tag another tenant's element.
     The resolved kind is authoritative (the wire type is only a hint); it drives
-    the tag fetch and the caller's audit ``target_type``.
+    the caller's audit ``target_type``.
+
+    ``view_kind`` names the kind whose tag VIEW the returned pairs reflect,
+    defaulting to the resolved kind. The mutation kind and the view kind differ
+    when a chip's kind differs from its host section (an exchange chip on a
+    prompt section): the mutation must target the exchange assignment, but the
+    fragment must re-render as the prompt view (prompt + exchange union) or the
+    section's other chips vanish. Both kinds address the same event ULID, so the
+    read-back stays owner-safe — the target already resolved under ``owner``.
 
     Returns ``(resolved_kind, resolved_id, updated_tag_names)``.
 
@@ -544,6 +558,12 @@ def modify_target_tag(
         ref = TargetRef.from_wire({"entity_type": entity_type, "entity_id": entity_id})
         resolved = resolve(conn, ref, owner=owner)
 
+        # Workspace tags are shared-dimension state — every tenant in the
+        # workspace sees them — so owner-scoped callers may not mutate them
+        # (mirrors apply_tags' stance). 404-shaped like every other owner miss.
+        if owner and resolved.target_kind == "workspace":
+            raise LookupError(f"workspace not taggable under owner scope: {entity_id}")
+
         if action == "remove":
             tid = _get_tag_id(conn, tag_name)
             if tid:
@@ -553,7 +573,8 @@ def modify_target_tag(
             _apply_tag(conn, resolved.target_kind, resolved.target_id, tid)
 
         conn.commit()
-        tags = _fetch_target_tags(conn, resolved.target_kind, resolved.target_id)
+        fetch_kind = view_kind if view_kind in _ALL_ENTITY_TYPES else resolved.target_kind
+        tags = _fetch_target_tags(conn, fetch_kind, resolved.target_id)
         return resolved.target_kind, resolved.target_id, tags
     except Exception:
         conn.rollback()

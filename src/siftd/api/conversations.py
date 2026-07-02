@@ -1430,7 +1430,22 @@ def resolve_entity_id(
         ).fetchone()
         raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
     elif entity_type == "workspace":
-        row = conn.execute("SELECT id FROM workspaces WHERE id = ?", (entity_id,)).fetchone()
+        # Owner scope is participation (any owned conversation in the workspace),
+        # matching the workspace-pin guard's semantics. A non-participant gets
+        # None (404-shaped), not an error — existence isn't leaked.
+        if owner and not has_conversation_owners_table(conn):
+            return None
+        where = ["w.id = ?"]
+        ws_params: list[object] = [entity_id]
+        join = ""
+        if owner:
+            join = " JOIN conversations c ON c.workspace_id = w.id"
+            where.append(owner_predicate("c.id"))
+            ws_params.append(owner)
+        row = conn.execute(
+            f"SELECT DISTINCT w.id FROM workspaces w{join} WHERE {' AND '.join(where)}",
+            ws_params,
+        ).fetchone()
         return row["id"] if row else None
     elif entity_type in ("tool_call", "prompt", "response", "exchange"):
         # Prefix-match across event kinds so `siftd query <event_prefix>` /

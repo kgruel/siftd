@@ -255,3 +255,73 @@ def test_rename_delete_owner_protection(test_db):
 
     with pytest.raises(PermissionError, match="another owner"):
         delete_tag_safe(db_path=test_db, tag_name="protected:tag", owner="alice")
+
+
+def test_modify_target_tag_workspace_blocked_under_owner_scope(test_db):
+    """Workspace tags are shared-dimension state: owner-scoped callers may not
+    mutate them through modify_target_tag (LookupError → the route's 404, so
+    existence isn't leaked). Unscoped callers are unaffected.
+
+    Regression: the workspace resolution arm ignored owner entirely, so any
+    authed tenant could read/write any workspace's tags via ``POST /tag``.
+    """
+    conn = open_database(test_db)
+    try:
+        ws_id = conn.execute("SELECT id FROM workspaces LIMIT 1").fetchone()["id"]
+    finally:
+        conn.close()
+
+    # Unscoped (single-user) works.
+    kind, target_id, tags = modify_target_tag(
+        "workspace", ws_id, "infra", action="apply", db_path=test_db
+    )
+    assert kind == "workspace" and target_id == ws_id
+    assert ("infra", "workspace") in tags
+
+    # Owner-scoped is refused 404-shaped — even for a participant.
+    with pytest.raises(LookupError):
+        modify_target_tag(
+            "workspace", ws_id, "sneaky", action="apply", db_path=test_db, owner="alice"
+        )
+
+
+def test_owner_participation_covers_block_tags(test_db):
+    """Both polarities of the participation guard see block-kind assignments.
+
+    Regression: the event arm enumerated only the four event kinds, so a tag
+    whose only usage was a block was (a) deletable/renamable across tenants —
+    tag_used_by_other_owners returned False — and (b) unpinnable by its own
+    owner — owner_uses_tag returned False.
+    """
+    from siftd.storage.tags import owner_uses_tag, tag_used_by_other_owners
+
+    conv1 = _conversation_ids(test_db)[0]
+    conn = open_database(test_db)
+    try:
+        block_id = conn.execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id "
+            "WHERE e.conversation_id = ? LIMIT 1",
+            (conv1,),
+        ).fetchone()["id"]
+        tag_id = get_or_create_tag(conn, "block:only")
+        apply_tag(conn, "block", block_id, tag_id, commit=False)
+        conn.execute(
+            "INSERT OR REPLACE INTO conversation_owners (conversation_id, user_id, push_id, assigned_at) "
+            "VALUES (?, ?, ?, ?)",
+            (conv1, "bob", None, "2026-03-28T00:00:00Z"),
+        )
+        conn.commit()
+
+        # bob owns the conversation holding the tagged block: he uses the tag,
+        # and to alice it is another owner's.
+        assert owner_uses_tag(conn, tag_id, "bob") is True
+        assert tag_used_by_other_owners(conn, tag_id, "alice") is True
+        # Inverses hold too.
+        assert owner_uses_tag(conn, tag_id, "alice") is False
+        assert tag_used_by_other_owners(conn, tag_id, "bob") is False
+    finally:
+        conn.close()
+
+    # The guard actually blocks the cross-tenant delete/rename.
+    with pytest.raises(PermissionError, match="another owner"):
+        delete_tag_safe(db_path=test_db, tag_name="block:only", owner="alice")

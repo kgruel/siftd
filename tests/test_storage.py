@@ -428,6 +428,23 @@ class TestConversationOps:
             "SELECT COUNT(*) FROM tag_assignments WHERE target_id=?", (block_id,)
         ).fetchone()[0] == 0, "block tag should be gone after the owning event is deleted"
 
+    def test_tag_activity_series_counts_block_tags(self, populated_db):
+        """A block-only tag contributes to the weekly activity series.
+
+        Regression: the series' tag→conversation union had only conversation
+        and event arms, so a tag applied exclusively to blocks showed no
+        activity even in the week it was applied.
+        """
+        conn, cid = populated_db
+        block_id = conn.execute("SELECT id FROM event_content LIMIT 1").fetchone()["id"]
+        tag_id = tags.get_or_create_tag(conn, "block-activity-tag")
+        tags.apply_tag(conn, "block", block_id, tag_id)
+        conn.commit()
+
+        series = tags.tag_activity_series(conn)
+        assert "block-activity-tag" in series
+        assert sum(series["block-activity-tag"]) >= 1
+
 
 # === File dedup ===
 
@@ -548,8 +565,10 @@ class TestWhereBuilder:
         assert "LEFT JOIN events" in sql
         assert "CASE ta.target_kind" in sql
         assert "e.conversation_id" in sql
-        # Six kind placeholders + one tag value
-        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "block", "bug"]
+        # Six kind placeholders + one tag value (order = the canonical constant)
+        from siftd.storage.filters import ALL_CONVERSATION_TAG_KINDS
+
+        assert wb.params == [*ALL_CONVERSATION_TAG_KINDS, "bug"]
 
     def test_tags_scoped_to_conversation(self):
         """kinds=['conversation'] preserves legacy behavior."""
@@ -578,8 +597,9 @@ class TestWhereBuilder:
         wb = WhereBuilder()
         wb.tags_all(["a", "b"])
         # Two subqueries: each emits 6 kinds + 1 tag value
-        assert wb.params == ["conversation", "prompt", "response", "tool_call", "exchange", "block", "a",
-                             "conversation", "prompt", "response", "tool_call", "exchange", "block", "b"]
+        from siftd.storage.filters import ALL_CONVERSATION_TAG_KINDS
+
+        assert wb.params == [*ALL_CONVERSATION_TAG_KINDS, "a", *ALL_CONVERSATION_TAG_KINDS, "b"]
 
     def test_tags_none_polymorphic_uses_not_in(self):
         wb = WhereBuilder()

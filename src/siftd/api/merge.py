@@ -402,6 +402,13 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
                      SELECT id FROM main.events
                      WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
                  ))
+                OR
+                (sta.target_kind = 'block'
+                 AND sta.target_id IN (
+                     SELECT ec.id FROM main.event_content ec
+                     JOIN main.events e ON e.id = ec.event_id
+                     WHERE e.conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+                 ))
         """)
 
     # --- Step 5: content_blobs ref_count ---
@@ -547,13 +554,21 @@ def _replace_stale_conversations(
         WHERE target_id IN (SELECT id FROM _stale_convs)
            OR target_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
     """)
-    # tag_assignments: must delete event-kind rows before events are deleted (no FK cascade)
+    # tag_assignments: must delete event-kind rows before events are deleted (no FK
+    # cascade). Block rows too — the v12 event_content trigger would catch them on
+    # cascade, but only on a v12+ DB with recursive triggers; explicit is uniform.
     conn.execute("""
         DELETE FROM tag_assignments
         WHERE (target_kind = 'conversation' AND target_id IN (SELECT id FROM _stale_convs))
            OR (target_kind IN ('prompt','response','tool_call','exchange')
                AND target_id IN (
                    SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)
+               ))
+           OR (target_kind = 'block'
+               AND target_id IN (
+                   SELECT ec.id FROM event_content ec
+                   JOIN events e ON e.id = ec.event_id
+                   WHERE e.conversation_id IN (SELECT id FROM _stale_convs)
                ))
     """)
     conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")

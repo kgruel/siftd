@@ -1680,6 +1680,17 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     action = str(form.get("action", "apply"))
     target_id = str(form.get("id", ""))
     entity_type = str(form.get("entity_type", "conversation"))
+    # The section hosting the control — chip removes post it because a chip's
+    # kind can differ from its section (an exchange chip on a prompt section):
+    # the mutation targets the chip's kind, the fragment re-renders the SECTION's
+    # view or its other chips vanish and its add-form flips kind. Adds (and old
+    # fragments) omit it; the mutation kind then IS the section kind. Clamped to
+    # the known vocabulary — a spoofed value must not ride into the fragment.
+    from siftd.api.tags import ALL_ENTITY_TYPES
+
+    section_type = str(form.get("section_type", "")) or entity_type
+    if section_type not in ALL_ENTITY_TYPES:
+        section_type = entity_type
     tag_name = str(form.get("tag", "")).strip()
 
     if not target_id or not tag_name:
@@ -1689,6 +1700,7 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
         resolved_kind, resolved_id, tags = modify_target_tag(
             entity_type, target_id, tag_name,
             action=action, db_path=db_path, owner=owner,
+            view_kind=section_type,
         )
     except LookupError:
         return Response(
@@ -1714,14 +1726,15 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
     )
     # A conversation section keeps the plain class; an element section keeps its
     # hover-reveal identity so the swapped-in fragment re-posts against the same
-    # element and stays visually subordinate.
+    # element and stays visually subordinate. The fragment renders as the SECTION
+    # (chips + add-form kind), not the mutation kind — see section_type above.
     section_class = (
-        "tag-section" if resolved_kind == "conversation" else "tag-section tag-section--elem"
+        "tag-section" if section_type == "conversation" else "tag-section tag-section--elem"
     )
     return _html_response(render_tag_section(
         resolved_id, tags,
         tag_action_url="/tag", tag_suggest_url="/tags/suggest",
-        entity_type=resolved_kind, section_class=section_class,
+        entity_type=section_type, section_class=section_class,
     ))
 
 

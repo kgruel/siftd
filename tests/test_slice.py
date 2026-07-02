@@ -435,6 +435,45 @@ def test_slice_by_tags(test_db, tmp_path):
     assert result["conversations"] == 1
 
 
+def test_slice_carries_block_tags(test_db, tmp_path):
+    """Block tags on a sliced conversation land in the slice.
+
+    Regression: the tag copy queries enumerated only conversation/workspace/
+    event kinds, so a block tag's assignment (and a block-only tag row) were
+    silently dropped — invisible to foreign_key_check because tag_assignments
+    has no FK on target_id.
+    """
+    from siftd.storage.sqlite import open_database
+    from siftd.storage.tags import apply_tag, get_or_create_tag
+
+    conn = open_database(test_db)
+    block_id = conn.execute(
+        "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id LIMIT 1"
+    ).fetchone()["id"]
+    tag_id = get_or_create_tag(conn, "block-only-tag")
+    apply_tag(conn, "block", block_id, tag_id)
+    conn.commit()
+    conn.close()
+
+    target = tmp_path / "sliced.db"
+    result = slice_database(test_db, target)
+    assert result["conversations"] >= 1
+
+    sconn = sqlite3.connect(str(target))
+    sconn.row_factory = sqlite3.Row
+    n = sconn.execute(
+        "SELECT COUNT(*) FROM tag_assignments WHERE target_kind = 'block' AND target_id = ?",
+        (block_id,),
+    ).fetchone()[0]
+    tag_present = sconn.execute(
+        "SELECT COUNT(*) FROM tags WHERE name = 'block-only-tag'"
+    ).fetchone()[0]
+    sconn.close()
+
+    assert n == 1
+    assert tag_present == 1
+
+
 def test_slice_refuses_old_schema_version(tmp_path):
     """slice_database raises RuntimeError when source schema version < SCHEMA_VERSION."""
     source = tmp_path / "old.db"
