@@ -435,6 +435,7 @@ class TestGetConversationConnectionSafety:
         monkeypatch.setattr("siftd.api.conversations.fetch_response_content_blocks", lambda *a, **k: {})
         monkeypatch.setattr("siftd.api.conversations.fetch_tool_calls_for_conversation", lambda *a, **k: [])
         monkeypatch.setattr("siftd.api.conversations.fetch_conversation_tags", lambda *a, **k: [])
+        monkeypatch.setattr("siftd.api.conversations._fetch_conversation_event_tags", lambda *a, **k: {})
         monkeypatch.setattr(
             "siftd.api.conversations._resolve_anchor",
             lambda *a, **k: (_ for _ in ()).throw(AnchorNotFound("missing phrase")),

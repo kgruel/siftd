@@ -209,6 +209,9 @@ class ConversationDetail:
     turns: list[Turn]
     tags: list[str] = field(default_factory=list)
     cost: float | None = None
+    # Element-level tags keyed by event id (prompt/response/tool_call/exchange
+    # targets; exchange tags land on their anchor prompt's id). Batch-fetched.
+    event_tags: dict[str, list[str]] = field(default_factory=dict)
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -793,6 +796,9 @@ def get_conversation(
         # Tags + cost render in list/detail at depth >= 3. Cost is the rollup's
         # canonical precomputed value (None when no priced usage), never faked.
         tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
+        # Element tags always fetched (one batched query, no N+1) so transcript
+        # chips appear at any depth.
+        event_tags = _fetch_conversation_event_tags(conn, conv_id)
         cost = (
             get_conversation_cost(conn, conv_id)
             if fidelity.depth >= 3 and has_conversation_stats_table(conn)
@@ -819,9 +825,34 @@ def get_conversation(
             turns=turns,
             tags=tags,
             cost=cost,
+            event_tags=event_tags,
         )
     finally:
         conn.close()
+
+
+def _fetch_conversation_event_tags(
+    conn: sqlite3.Connection, conversation_id: str
+) -> dict[str, list[str]]:
+    """Batch-fetch element tags for a conversation, keyed by event id.
+
+    One query for all element (prompt/response/tool_call/exchange) tag
+    assignments whose target is an event of this conversation — no N+1. Exchange
+    tags anchor on the prompt event, so they key on that prompt's id.
+    """
+    rows = conn.execute(
+        "SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        "JOIN tags tg ON tg.id = ta.tag_id "
+        "JOIN events e ON e.id = ta.target_id "
+        "WHERE e.conversation_id = ? "
+        "AND ta.target_kind IN ('prompt','response','tool_call','exchange') "
+        "ORDER BY tg.name",
+        (conversation_id,),
+    ).fetchall()
+    out: dict[str, list[str]] = {}
+    for row in rows:
+        out.setdefault(row["target_id"], []).append(row["name"])
+    return out
 
 
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:

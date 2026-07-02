@@ -265,6 +265,7 @@ Full conversation with timeline.
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
 | `cost` | `float \| None` |  |
+| `event_tags` | `dict[str, list[str]]` |  |
 
 ### Exchange
 

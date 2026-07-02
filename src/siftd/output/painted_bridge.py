@@ -599,6 +599,22 @@ def render_query_detail_block(
     ds = domain_styles(fidelity)
     parts: list[Block] = []
 
+    event_tags: dict[str, list[str]] = getattr(detail, "event_tags", None) or {}
+
+    def _tag_span(*event_ids: str | None):
+        """The tag-chip trailer for an event's meta line, or None if untagged."""
+        names: list[str] = []
+        for eid in event_ids:
+            if eid:
+                names.extend(event_tags.get(eid, []))
+        if not names:
+            return None
+        # Dedup preserving order (a prompt carries its own + exchange tags).
+        seen: dict[str, None] = {}
+        for n in names:
+            seen.setdefault(n, None)
+        return (f"  {' '.join('#' + n for n in seen)}", ds.tag)
+
     header_pairs = conversation_header_pairs(detail, ds)
     parts.append(definitions(header_pairs, indent=0))
     parts.append(_blank_block())
@@ -611,7 +627,11 @@ def render_query_detail_block(
         response_role_label = getattr(turn, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
         if turn.prompt_text:
-            parts.append(gut(_line_block(_line(*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal))), "user"))
+            _prompt_meta = [*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal)]
+            _pt = _tag_span(getattr(turn, "prompt_id", None))
+            if _pt:
+                _prompt_meta.append(_pt)
+            parts.append(gut(_line_block(_line(*_prompt_meta)), "user"))
             parts.extend(gut(p, "user") for p in _body_parts(turn.prompt_text, ds, width=body_width, ascii_mode=ascii_mode, limit=fidelity.chars))
             parts.append(_blank_block())
 
@@ -621,15 +641,17 @@ def render_query_detail_block(
             continue
 
         tok = turn.total_input_tokens + turn.total_output_tokens
+        _resp_meta = [
+            *_role_prefix(response_role_label, ds, abbrev=False),
+            (ts, ds.temporal),
+            (f" ({fmt_tokens(tok)} tok)", ds.metric),
+        ]
+        _rt = _tag_span(*getattr(turn, "response_ids", []), *getattr(turn, "tool_call_ids", []))
+        if _rt:
+            _resp_meta.append(_rt)
         parts.append(
             gut(
-                _line_block(
-                    _line(
-                        *_role_prefix(response_role_label, ds, abbrev=False),
-                        (ts, ds.temporal),
-                        (f" ({fmt_tokens(tok)} tok)", ds.metric),
-                    )
-                ),
+                _line_block(_line(*_resp_meta)),
                 "assistant",
             )
         )
