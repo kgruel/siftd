@@ -1,9 +1,9 @@
 """CLI handler for 'siftd search' — unified search over conversations.
 
-Supports three modes:
-- Hybrid (default with embeddings): FTS5 recall + semantic reranking
-- FTS5-only (--fts or fallback): keyword search without embeddings
-- Semantic-only (--semantic): pure embeddings without FTS5 recall
+Supports three engines, selected via --mode:
+- hybrid (default with embeddings): FTS5 recall + semantic reranking
+- fts (fallback without embeddings): keyword search without embeddings
+- semantic: pure embeddings without FTS5 recall
 """
 
 import argparse
@@ -511,10 +511,11 @@ def build_search_parser(subparsers) -> None:
     """Add the 'search' subparser to the CLI."""
     p_search = subparsers.add_parser(
         "search",
-        help="Search conversations (auto-selects FTS5 or semantic based on what's installed)",
+        help="Search conversations (auto-selects FTS5 or semantic based on embed.backend)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Auto-selects the engine: hybrid (FTS5 + semantic) when embeddings are
-installed, else FTS5 keyword search. Install embeddings: siftd install embed
+        epilog="""Auto-selects the engine: hybrid (FTS5 + semantic) when an embedding
+backend is configured, else FTS5 keyword search. Set embed.backend for a remote
+provider, or run 'siftd install embed' for the local backend.
 
 examples:
   siftd search "error handling"                   # auto (hybrid or FTS5)

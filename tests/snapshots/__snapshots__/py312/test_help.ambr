@@ -642,7 +642,7 @@
 # name: TestHelpSnapshots.test_subcommand_help[search]
   '''
   siftd > search
-  Search conversations (auto-selects FTS5 or semantic based on what's installed)
+  Search conversations (auto-selects FTS5 or semantic based on embed.backend)
   
   usage: siftd search [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
                       [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
@@ -720,8 +720,9 @@
     --include-derivative      Include derivative conversations (siftd search/query
                               results)
   
-  Auto-selects the engine: hybrid (FTS5 + semantic) when embeddings are
-  installed, else FTS5 keyword search. Install embeddings: siftd install embed
+  Auto-selects the engine: hybrid (FTS5 + semantic) when an embedding
+  backend is configured, else FTS5 keyword search. Set embed.backend for a remote
+  provider, or run 'siftd install embed' for the local backend.
   
   examples:
     siftd search "error handling"                   # auto (hybrid or FTS5)

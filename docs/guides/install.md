@@ -21,13 +21,27 @@ brew install siftd
 
 ### Optional: embeddings
 
-Semantic search requires extra dependencies (fastembed, numpy, onnxruntime):
+Semantic search needs an embedding backend, and there are two ways to get one — pick based on whether you want data to stay on your machine:
+
+**Remote (no extra install)** — set a provider and API key in config, then build the index:
+
+```bash
+siftd config set embed.backend voyage
+siftd config set embed.api_key env:VOYAGE_API_KEY
+siftd embed
+```
+
+This sends conversation content to the configured provider (Voyage, OpenAI, Gemini, Jina, Mistral, or a custom OpenAI-compatible endpoint) at index and query time — see [Search](../concepts/search.md#privacy-when-does-data-leave-your-machine) for exactly when.
+
+**Local (extra dependencies, no data leaves the machine)** — fastembed, numpy, onnxruntime:
 
 ```bash
 siftd install embed
 ```
 
 This detects how siftd was installed and runs the right command. Use `--dry-run` to preview.
+
+A local Ollama server is a third option that needs no extra: set `embed.backend = ollama` and `embed.model` to a pulled embedding model (e.g. `nomic-embed-text`) — it's a remote-style client talking to `localhost`, so it uses the same no-extra base install as the hosted providers, but nothing leaves the machine.
 
 ## Installing the Claude Code plugin
 
@@ -70,8 +84,8 @@ After installing:
 ```bash
 siftd ingest                    # import conversation logs
 siftd query                     # list recent conversations
-siftd install embed             # add semantic search
-siftd search --index            # build embeddings index
+siftd install embed             # add local semantic search (or configure a remote backend instead)
+siftd embed                     # build the embeddings index
 siftd search "your query"       # search
 ```
 

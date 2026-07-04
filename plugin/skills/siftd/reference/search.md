@@ -133,8 +133,9 @@ siftd search -n 20 "error handling"
 Select which retrieval engine runs. (Before 0.10.0 this flag chose the result
 shape — that moved to `--view`.)
 
-**`--mode=auto`** (default) — hybrid (FTS5 + embeddings rerank) when embeddings are
-installed, else FTS5:
+**`--mode=auto`** (default) — hybrid (FTS5 + embeddings rerank) when an embedding
+backend is configured and usable (local `[embed]` extra or a remote provider),
+else FTS5:
 ```bash
 siftd search "chunking strategy"
 ```
@@ -143,8 +144,9 @@ siftd search "chunking strategy"
 ```bash
 siftd search --mode=semantic "chunking strategy"
 ```
-Use when FTS5 keyword terms don't match your semantic intent. Requires the `[embed]`
-extra. (Replaces the removed `--embeddings-only` flag.)
+Use when FTS5 keyword terms don't match your semantic intent. Requires a configured,
+usable embedding backend (local `[embed]` extra or a remote provider). (Replaces the
+removed `--embeddings-only` flag.)
 
 **`--mode=fts`** — keyword-only FTS5 search, no embeddings:
 ```bash

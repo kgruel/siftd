@@ -178,7 +178,7 @@ def test_status_and_workspaces_remaining_branches(monkeypatch, tmp_path, capsys)
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
     assert cmd_status(_args(json=False, db=str(tmp_path / "db.sqlite"))) == 0
     out = capsys.readouterr().out
-    assert "(unknown)" in out and "Embeddings  installed" in out
+    assert "(unknown)" in out and "Embeddings  configured" in out
 
     # latest-only activity window branch (L176-177)
     stats.activity_window = (None, "2024-01-02")

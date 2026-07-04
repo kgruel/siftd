@@ -125,7 +125,7 @@ siftd db pull team --all --dry-run
 | `/api/v1/pull` | GET | Export a filtered slice |
 | `/api/v1/conversations` | GET | List conversations |
 | `/api/v1/conversations/{id}` | GET | Conversation detail |
-| `/api/v1/search` | GET | Semantic + FTS search (requires `siftd[embed]` on server) |
+| `/api/v1/search` | GET | Semantic + FTS search |
 | `/api/v1/stats` | GET | Aggregate statistics |
 | `/api/v1/workspaces` | GET | List workspaces |
 | `/api/v1/tags` | GET | List tags |
@@ -133,6 +133,8 @@ siftd db pull team --all --dry-run
 | `/api/v1/export` | GET | Export conversations |
 
 Pull, conversations, and search accept filter params: `workspace`, `since`, `before`, `model`, `tag`, `n`.
+
+Delegation is server-authoritative for embeddings: a client delegating `siftd search` to a served instance gets semantic/hybrid results only if *the server* has a usable `[embed]` backend configured (local extra or remote preset) — the client's own config and API key are never sent. If the server has no backend, or its remote backend is unreachable, the search degrades to FTS5 and the response's `mode` field reports what actually ran, the same truthful-degrade contract as local search (see [Search](search.md#when-embeddings-arent-reachable)).
 
 ## Attribution
 
