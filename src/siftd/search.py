@@ -377,7 +377,7 @@ def hybrid_search(
         all_tags: AND filter — conversations with all of these tags.
         no_tag: NOT filter — exclude conversations with any of these tags.
         include_derivative: Include derivative conversations (default False).
-        backend: Preferred embedding backend name (ollama, fastembed).
+        backend: Preferred embedding backend name (transitional --backend override).
         exclude_active: Auto-exclude conversations from active sessions (default True).
         rerank: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
         lambda_: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
@@ -558,15 +558,15 @@ def hybrid_search(
     use_mmr = rerank == "mmr"
     embed_backend = get_backend(preferred=backend, verbose=False)
     try:
-        query_embedding = embed_backend.embed_one(q)
+        query_embedding = embed_backend.embed_query(q)
     except (RuntimeError, ConnectionError, OSError):
-        # Cached backend may have become unavailable (e.g., ollama stopped).
-        # Invalidate and retry with fallback chain.
+        # Cached backend may have become unavailable (e.g., a remote endpoint went down).
+        # Invalidate and re-resolve, then retry once.
         from siftd.embeddings.base import invalidate_backend_cache
 
         invalidate_backend_cache()
         embed_backend = get_backend(preferred=backend, verbose=False)
-        query_embedding = embed_backend.embed_one(q)
+        query_embedding = embed_backend.embed_query(q)
 
     # Fetch wider candidate set for MMR to select from
     search_limit = n * 3 if use_mmr else n

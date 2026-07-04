@@ -129,6 +129,27 @@ class TestSchema:
         assert _match_schema("serve.host").default == "127.0.0.1"
         assert _match_schema("auth.token").expected == "string"
 
+    @pytest.mark.parametrize(
+        "key,typ",
+        [
+            ("embed.backend", "string"),
+            ("embed.api_key", "string"),
+            ("embed.model", "string"),
+            ("embed.dimensions", "int"),
+            ("embed.base_url", "string"),
+            ("embed.auto_index", "bool"),
+            ("embed.db_path", "string"),
+            ("embed.query_prefix", "string"),
+            ("embed.document_prefix", "string"),
+        ],
+    )
+    def test_embed_schema_keys(self, key, typ):
+        entry = _match_schema(key)
+        assert entry is not None and entry.expected == typ
+
+    def test_embed_auto_index_default(self):
+        assert _match_schema("embed.auto_index").default == "true"
+
     def test_no_match(self):
         assert _match_schema("totally.unknown.deep.key") is None
 
@@ -324,6 +345,16 @@ class TestDefaultsAndLookups:
         assert str(db_path()) == "/tmp/custom.db"
         _w(config_dir, '[db]\npath = "~/my/siftd.db"\n')
         assert str(db_path()).endswith("my/siftd.db") and "~" not in str(db_path())
+
+    def test_embeddings_db_path_override(self, config_dir, tmp_path, monkeypatch):
+        from siftd.paths import embeddings_db_path
+
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+        assert embeddings_db_path().name == "embeddings.db"
+        _w(config_dir, '[embed]\ndb_path = "/tmp/custom-embed.db"\n')
+        assert str(embeddings_db_path()) == "/tmp/custom-embed.db"
+        _w(config_dir, '[embed]\ndb_path = "~/my/embed.db"\n')
+        assert str(embeddings_db_path()).endswith("my/embed.db") and "~" not in str(embeddings_db_path())
 
 
 class TestSyncRemotes:

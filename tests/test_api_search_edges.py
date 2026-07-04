@@ -78,7 +78,7 @@ def test_hybrid_mode_candidate_empty_and_no_results(monkeypatch, tmp_path):
     monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
     monkeypatch.setattr(api_search, "search_similar", lambda *a, **k: [])
 
-    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_query=lambda q: [0.1])
     assert api_search.hybrid_search("q", db_path=tmp_path / "db", mode="hybrid", embed_backend=backend, embed_db=tmp_path / "e.db") == []
 
     fake_search.resolve_candidates = lambda *a, **k: {"x"}
@@ -107,7 +107,7 @@ def test_hybrid_mode_forwards_tag_kind_to_resolve_candidates(monkeypatch, tmp_pa
     monkeypatch.setattr(api_search, "validate_index_compat", lambda *a, **k: None)
     monkeypatch.setattr(api_search, "search_similar", lambda *a, **k: [])
 
-    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_query=lambda q: [0.1])
     api_search.hybrid_search(
         "q", db_path=tmp_path / "db", mode="hybrid", embed_backend=backend,
         embed_db=tmp_path / "e.db", tag=["t"], tag_kind=["decision"],
@@ -133,7 +133,7 @@ def test_hybrid_mode_recency_and_mmr(monkeypatch, tmp_path):
     monkeypatch.setattr(api_search, "fetch_conversation_timestamps", lambda conn, ids: {"c1": "2024-01-01"})
     monkeypatch.setattr(api_search, "search_similar", lambda *a, **k: [{"conversation_id": "c1", "score": 0.9, "source_ids": [], "chunk_id": "x"}])
 
-    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_query=lambda q: [0.1])
     out = api_search.hybrid_search("q", db_path=tmp_path / "db", mode="hybrid", recency=True, rerank="mmr", embed_backend=backend, embed_db=tmp_path / "e.db")
     assert out and calls.get("annotate") and calls.get("recency") and calls.get("mmr")
 
@@ -146,7 +146,7 @@ def test_hybrid_uses_default_backend_and_fts_ids_when_candidates_none(monkeypatc
         mmr_rerank=lambda results, *_a, **_k: results,
         apply_temporal_weight=lambda results, *_a, **_k: results,
     )
-    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_one=lambda q: [0.1])
+    backend = SimpleNamespace(name="b", model="m", dimension=1, embed_query=lambda q: [0.1])
 
     monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
     monkeypatch.setitem(sys.modules, "siftd.embeddings.base", SimpleNamespace(get_backend=lambda preferred=None, verbose=False: calls.setdefault("backend", backend)))

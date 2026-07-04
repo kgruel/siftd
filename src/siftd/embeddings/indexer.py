@@ -148,7 +148,7 @@ def build_embeddings_index(
         all_embeddings = []
         for i in range(0, len(texts), batch_size):
             batch = texts[i : i + batch_size]
-            all_embeddings.extend(backend.embed(batch))
+            all_embeddings.extend(backend.embed_documents(batch))
             if verbose and len(texts) > batch_size:
                 done = min(i + batch_size, len(texts))
                 print(f"  {done}/{len(texts)}")

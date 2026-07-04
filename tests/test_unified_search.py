@@ -116,7 +116,7 @@ class TestNoEmbeddingsInstalled:
         from siftd.cli.search import cmd_search
 
         # Mock embeddings as unavailable
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -136,7 +136,7 @@ class TestNoEmbeddingsInstalled:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -158,7 +158,7 @@ class TestNoEmbeddingsInstalled:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -184,7 +184,7 @@ class TestFtsOnlyMode:
         from siftd.cli.search import cmd_search
 
         # Mock embeddings unavailable to ensure we're testing FTS path
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -205,7 +205,7 @@ class TestFtsOnlyMode:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -228,7 +228,7 @@ class TestFtsOnlyMode:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["xyzzynonexistent"],
@@ -247,7 +247,7 @@ class TestFtsOnlyMode:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         # Create DB with two workspaces
         db_path = tmp_path / "main.db"
@@ -463,7 +463,7 @@ class TestAutoSelectionHints:
         from siftd.cli.search import cmd_search
 
         # Mock: embeddings available but index doesn't exist
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
         # embed_db_path doesn't exist (fts_db fixture doesn't create it)
 
         args = make_search_args(
@@ -488,7 +488,7 @@ class TestAutoSelectionHints:
         from siftd.cli.search import cmd_search
 
         # Mock: embeddings not available
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -512,7 +512,7 @@ class TestFtsOnlyModeWarnings:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -535,7 +535,7 @@ class TestFtsOnlyModeWarnings:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         args = make_search_args(
             query=["error"],
@@ -560,7 +560,7 @@ class TestFtsMissingTableError:
         import siftd.embeddings.availability as avail
         from siftd.cli.search import cmd_search
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         # Create a DB without FTS table
         db_path = tmp_path / "no_fts.db"

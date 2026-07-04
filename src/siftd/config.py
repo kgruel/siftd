@@ -120,6 +120,27 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # UI
     _SchemaEntry("ui.theme", "string", _is_str,
                  "Terminal colour theme (values: siftd, nord); terminal only — does not affect the web UI", "siftd"),
+    # Embeddings — semantic search backend selection. Configuring a remote backend is the
+    # data-egress opt-in; unset falls back to the local fastembed backend if installed.
+    _SchemaEntry("embed.backend", "string", _is_str,
+                 "Embedding backend: voyage|openai|gemini|jina|mistral|ollama|fastembed|custom|off", ""),
+    _SchemaEntry("embed.api_key", "string", _is_str,
+                 "Remote-backend API key (supports env:/file:/literal via the credentials grammar)", ""),
+    _SchemaEntry("embed.model", "string", _is_str,
+                 "Embedding model name (overrides the preset default)", ""),
+    _SchemaEntry("embed.dimensions", "int", _is_int_like,
+                 "Output dimensions (provider matryoshka truncation; overrides preset default)", ""),
+    _SchemaEntry("embed.base_url", "string", _is_str,
+                 "OpenAI-compatible embeddings base URL (custom/self-hosted override)", ""),
+    _SchemaEntry("embed.auto_index", "bool", _is_bool_like,
+                 "Incrementally embed new conversations at the end of ingest (steady-state only) "
+                 "(not yet active — lands with ingest integration)", "true"),
+    _SchemaEntry("embed.db_path", "string", _is_str,
+                 "Override the embeddings database path (mirrors db.path)", ""),
+    _SchemaEntry("embed.query_prefix", "string", _is_str,
+                 "Prefix prepended to queries for prefix-style models (ollama/custom)", ""),
+    _SchemaEntry("embed.document_prefix", "string", _is_str,
+                 "Prefix prepended to documents for prefix-style models (ollama/custom)", ""),
     # Ingestion
     _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like,
                  "Skip binary content blobs during ingest", "true"),

@@ -82,7 +82,7 @@ def test_build_embeddings_index_rebuild_verbose_and_batch_progress(monkeypatch, 
     db.write_text("x")
     embed_conn = _EmbedConn()
     backend = SimpleNamespace(name="fastembed", model="m", dimension=2)
-    backend.embed = lambda batch: [[1.0, 2.0] for _ in batch]
+    backend.embed_documents = lambda batch: [[1.0, 2.0] for _ in batch]
 
     monkeypatch.setattr(indexer, "get_backend", lambda **_k: backend)
     monkeypatch.setattr(indexer, "open_embeddings_db", lambda _p: embed_conn)

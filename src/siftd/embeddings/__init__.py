@@ -1,38 +1,36 @@
 """Embedding backends for semantic search.
 
-Fallback chain:
-1. Ollama (if running locally)
-2. fastembed (local ONNX, no network)
-3. API (configurable, requires key)
+Resolution is config-driven (``[embed].backend``): a remote OpenAI-compatible provider
+(base install, just an API key) or the local ``fastembed`` ONNX backend (the [embed]
+extra). See ``base.py`` for the deterministic resolver and ``availability.py`` for
+``embedding_status()``.
 
 Usage:
-    from siftd.embeddings import embeddings_available, get_backend
+    from siftd.embeddings import embedding_status
+    from siftd.embeddings.base import get_backend
 
-    if embeddings_available():
+    if embedding_status().usable:
         backend = get_backend()
-        vectors = backend.embed(["hello", "world"])
+        vectors = backend.embed_documents(["hello", "world"])
 
-Note: Embedding functionality requires the [embed] extra.
-Install via ``siftd install embed`` or directly with the appropriate
-package manager command.
+Only the availability/status layer is re-exported here — it is light and always
+importable. Backend and index symbols are imported from their concrete submodules
+(``siftd.embeddings.base``, ``siftd.embeddings.indexer``) so the heavier vector-math
+imports stay off the light CLI paths (see tests/architecture/test_hard_rules.py).
 """
 
 from .availability import (
     EmbeddingsNotAvailable,
+    EmbedStatus,
+    embedding_status,
     embeddings_available,
     require_embeddings,
 )
 
-# Always export availability functions
 __all__ = [
+    "EmbedStatus",
+    "EmbeddingsNotAvailable",
+    "embedding_status",
     "embeddings_available",
     "require_embeddings",
-    "EmbeddingsNotAvailable",
 ]
-
-# Conditionally export embedding functionality when deps are available
-if embeddings_available():
-    from .base import EmbeddingBackend, get_backend, invalidate_backend_cache
-    from .indexer import SCHEMA_VERSION, IndexStats, build_embeddings_index
-
-    __all__ += ["EmbeddingBackend", "get_backend", "invalidate_backend_cache", "IndexStats", "build_embeddings_index", "SCHEMA_VERSION"]

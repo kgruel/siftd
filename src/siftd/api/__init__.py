@@ -154,7 +154,8 @@ from siftd.api.tags import (
     rename_tag_safe,
 )
 
-# Search symbols are lazy-imported to avoid pulling numpy into non-search commands.
+# Search symbols are lazy-imported so non-search commands (`siftd query`, `siftd tag`)
+# don't pay numpy's import latency (tens of ms) on paths that never touch vector search.
 # Access via siftd.api.SearchResult etc. triggers __getattr__ below.
 _LAZY_SEARCH_NAMES = {
     "ConversationScore",

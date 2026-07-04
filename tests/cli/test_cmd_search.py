@@ -340,12 +340,12 @@ class TestSearchServeDelegation:
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda *a, **k: fake_body)
 
         # If local semantic path is used, this would be called.
-        import siftd.embeddings as embeddings
+        import siftd.embeddings.base as embeddings_base
 
         def _should_not_be_called(*_a, **_k):
             raise AssertionError("expected serve delegation (no local embedding backend init)")
 
-        monkeypatch.setattr(embeddings, "get_backend", _should_not_be_called)
+        monkeypatch.setattr(embeddings_base, "get_backend", _should_not_be_called)
 
         result = cmd_search(args)
         captured = capsys.readouterr()

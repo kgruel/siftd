@@ -342,7 +342,7 @@ class TestAPIHybridSearchBranches:
             model = "m"
             dimension = 2
 
-            def embed_one(self, _q):
+            def embed_query(self, _q):
                 calls["n"] += 1
                 if calls["n"] == 1:
                     raise RuntimeError("down")
@@ -382,8 +382,54 @@ class TestAPIHybridSearchBranches:
         assert calls["invalidate"] == 1
         assert calls["n"] == 2
 
+    @pytest.mark.embeddings
+    def test_transient_error_retries_once_then_propagates(self, monkeypatch, tmp_path):
+        # Interim behavior (pre slice-4 degrade): a persistent transient remote failure
+        # retries once then propagates as EmbeddingTransientError — which, being a
+        # RuntimeError, the CLI boundary guard turns into status.error(), not a traceback.
+        from siftd.embeddings.base import EmbeddingTransientError
+
+        calls = {"n": 0, "invalidate": 0}
+
+        class _Backend:
+            name = "remote:voyage"
+            model = "m"
+            dimension = 2
+
+            def embed_query(self, _q):
+                calls["n"] += 1
+                raise EmbeddingTransientError("voyage 429")
+
+        import siftd.embeddings.base as emb_base
+        import siftd.embeddings.indexer as emb_indexer
+
+        monkeypatch.setattr(emb_indexer, "SCHEMA_VERSION", 1, raising=False)
+        monkeypatch.setattr(emb_base, "get_backend", lambda **_k: _Backend(), raising=False)
+        monkeypatch.setattr(
+            emb_base,
+            "invalidate_backend_cache",
+            lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1),
+            raising=False,
+        )
+
+        class _Conn:
+            def close(self):
+                return None
+
+        monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
+        monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
+        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
+        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
+
+        with pytest.raises(EmbeddingTransientError):
+            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db")
+
+        assert calls["invalidate"] == 1
+        assert calls["n"] == 2
+
     def test_recency_relevance_resorts_after_weighting(self, monkeypatch, tmp_path):
-        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_one=lambda _q: [1.0, 0.0])
+        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_query=lambda _q: [1.0, 0.0])
 
         class _Conn:
             def close(self):
@@ -442,7 +488,7 @@ class TestAPIHybridSearchBranches:
         assert [r["conversation_id"] for r in out[:2]] == ["c_new", "c_old"]
 
     def test_mmr_candidate_cap_threshold_and_score_reporting(self, monkeypatch, tmp_path):
-        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_one=lambda _q: [1.0, 0.0])
+        backend = SimpleNamespace(name="b", model="m", dimension=2, embed_query=lambda _q: [1.0, 0.0])
 
         class _Conn:
             def close(self):

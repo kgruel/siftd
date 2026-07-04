@@ -1,6 +1,8 @@
 """FastEmbed backend — local ONNX embeddings, no network required.
 
-Requires the [embed] extra: ``siftd install embed``
+Requires the [embed] extra: ``siftd install embed``. Keeps ``bge-small-en-v1.5``, which is
+prefix-free/symmetric by design (the safest local default): query and document embeddings
+are identical, so intent needs no per-call handling.
 """
 
 from __future__ import annotations
@@ -23,19 +25,18 @@ class FastEmbedBackend:
 
         self.model = model
         self._embedder = TextEmbedding(model_name=model)
-        self.dimension = self._probe_dimension()
+        self.dimension = self._resolve_dimension()
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts."""
-        # fastembed returns a generator of numpy arrays
-        embeddings = list(self._embedder.embed(texts))
-        return [e.tolist() for e in embeddings]
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        """Embed a batch of documents. fastembed returns a generator of numpy arrays."""
+        return [e.tolist() for e in self._embedder.embed(texts)]
 
-    def embed_one(self, text: str) -> list[float]:
-        """Embed a single text."""
-        return self.embed([text])[0]
+    def embed_query(self, text: str) -> list[float]:
+        """Embed a single query. bge is symmetric, so this matches document embedding."""
+        return self.embed_documents([text])[0]
 
-    def _probe_dimension(self) -> int:
-        """Determine embedding dimension from model."""
-        vec = self.embed_one("test")
-        return len(vec)
+    def _resolve_dimension(self) -> int:
+        """Determine the dimension by a one-off local probe — in-process ONNX inference,
+        no network. (Cross-version fastembed model-description introspection is too
+        fragile to rely on; the local probe is cheap enough per the design.)"""
+        return len(self.embed_documents(["dimension probe"])[0])

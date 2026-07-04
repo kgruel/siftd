@@ -158,7 +158,25 @@ def db_path() -> Path:
 
 
 def embeddings_db_path() -> Path:
-    """Return the embeddings database path (derived data, separate from main DB)."""
+    """Return the embeddings database path (derived data, separate from main DB).
+
+    Reads ``[embed].db_path`` directly from config.toml using stdlib ``tomllib`` (mirrors
+    ``db_path()``) so this module stays independent from ``siftd.config``.
+    """
+    cfg = config_file()
+    if cfg.exists():
+        try:
+            doc = tomllib.loads(cfg.read_text())
+        except (OSError, tomllib.TOMLDecodeError):
+            doc = None
+        if isinstance(doc, dict):
+            embed = doc.get("embed")
+            if isinstance(embed, dict) and "db_path" in embed:
+                value = embed.get("db_path")
+                if value is not None and not isinstance(value, (dict, list)):
+                    override = str(value)
+                    if override:
+                        return Path(override).expanduser()
     return data_dir() / "embeddings.db"
 
 

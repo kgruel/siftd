@@ -4,7 +4,7 @@
 Covers:
 - chunker: extract_exchange_window_chunks()
 - indexer: build_embeddings_index()
-- backend: get_backend() and embed() contract
+- backend: get_backend() and embed_documents()/embed_query() contract
 """
 
 import sqlite3
@@ -185,7 +185,7 @@ class TestBuildEmbeddingsIndex:
         assert isinstance(stats, IndexStats)
         assert stats.chunks_added > 0
         assert stats.total_chunks == stats.chunks_added
-        assert stats.backend_name in ("fastembed", "ollama")
+        assert stats.backend_name == "fastembed"
         assert stats.dimension > 0
 
         # Verify database has chunks
@@ -261,7 +261,7 @@ class TestBuildEmbeddingsIndex:
 
         # Search for Python content
         backend = get_backend()
-        query_embedding = backend.embed_one("Python programming language")
+        query_embedding = backend.embed_query("Python programming language")
 
         conn = open_embeddings_db(embed_db_path, read_only=True)
         results = search_similar(conn, query_embedding, limit=5)
@@ -304,36 +304,36 @@ class TestEmbeddingBackend:
 
         assert hasattr(backend, "name")
         assert hasattr(backend, "dimension")
-        assert hasattr(backend, "embed")
-        assert hasattr(backend, "embed_one")
+        assert hasattr(backend, "embed_documents")
+        assert hasattr(backend, "embed_query")
         assert backend.dimension > 0
 
-    def test_embed_batch(self):
-        """embed() handles batches of texts."""
+    def test_embed_documents_batch(self):
+        """embed_documents() handles batches of texts."""
         backend = get_backend()
 
         texts = ["Hello world", "Python programming", "Machine learning"]
-        embeddings = backend.embed(texts)
+        embeddings = backend.embed_documents(texts)
 
         assert len(embeddings) == len(texts)
         for emb in embeddings:
             assert len(emb) == backend.dimension
             assert all(isinstance(v, float) for v in emb)
 
-    def test_embed_one(self):
-        """embed_one() returns a single embedding."""
+    def test_embed_query(self):
+        """embed_query() returns a single embedding."""
         backend = get_backend()
 
-        embedding = backend.embed_one("Test sentence")
+        embedding = backend.embed_query("Test sentence")
 
         assert len(embedding) == backend.dimension
         assert all(isinstance(v, float) for v in embedding)
 
-    def test_embed_empty_batch(self):
-        """embed() handles empty batch."""
+    def test_embed_documents_empty_batch(self):
+        """embed_documents() handles empty batch."""
         backend = get_backend()
 
-        embeddings = backend.embed([])
+        embeddings = backend.embed_documents([])
 
         assert embeddings == []
 
@@ -344,8 +344,10 @@ class TestEmbeddingBackend:
         assert backend.name == "fastembed"
 
     def test_unknown_backend_raises(self):
-        """Requesting unknown backend raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown backend"):
+        """Requesting an unknown backend raises a config error."""
+        from siftd.embeddings.base import EmbeddingConfigError
+
+        with pytest.raises(EmbeddingConfigError, match="not a known backend"):
             get_backend(preferred="nonexistent_backend")
 
 

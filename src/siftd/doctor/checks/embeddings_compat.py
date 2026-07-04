@@ -47,9 +47,11 @@ class EmbeddingsCompatCheck:
                 )
             )
 
+        from siftd.embeddings.base import EmbeddingError
+
         try:
             backend = get_backend(verbose=False)
-        except RuntimeError:
+        except (RuntimeError, EmbeddingError):
             return findings
 
         stored_backend = get_meta(embed_conn, "backend")

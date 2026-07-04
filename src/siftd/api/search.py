@@ -2,8 +2,9 @@
 
 Re-exports core search functionality and adds post-processing functions.
 
-Heavy dependencies (numpy via siftd.search, siftd.storage.embeddings) are
-lazy-imported so that non-search CLI commands don't pull in numpy.
+Heavy dependencies (numpy via siftd.search, siftd.storage.embeddings) are lazy-imported so
+that non-search CLI commands (`siftd query`, `siftd tag`) don't pay numpy's import latency
+(tens of ms) on paths that never touch vector search.
 """
 
 from __future__ import annotations
@@ -11,7 +12,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from statistics import mean as _mean
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from siftd.domain.search_types import (
     ConversationSearchSummary,
@@ -28,21 +29,13 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
+    from siftd.embeddings.base import EmbeddingBackend
     from siftd.embeddings.indexer import IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
-
-class EmbeddingBackend(Protocol):
-    """Minimal protocol for embedding backends (real or fake)."""
-
-    name: str
-    model: str
-    dimension: int
-
-    def embed_one(self, text: str) -> list[float]: ...
-
-# Lazy re-exports — resolved on first access to avoid eager numpy import.
+# Lazy re-exports — resolved on first access to keep numpy's import latency off hot
+# non-search paths.
 _LAZY_IMPORTS = {
     "SearchResult": "siftd.search",
     "apply_temporal_weight": "siftd.search",
@@ -1054,9 +1047,9 @@ def hybrid_search(
         n: Desired result count after all processing.
         mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
         rerank: "mmr" for diversity reranking, "relevance" for pure score order.
-        backend: Preferred embedding backend name (ollama, fastembed).
+        backend: Preferred embedding backend name (transitional --backend override).
         embed_backend: Injected embedding backend instance. If provided, skips
-            get_backend() discovery. Must implement embed_one(text) -> list[float],
+            get_backend() discovery. Must implement embed_query(text) -> list[float],
             and have .name, .model, .dimension attributes.
 
     Returns:
@@ -1175,15 +1168,15 @@ def hybrid_search(
     # Embed query and search
     use_mmr = rerank == "mmr"
     try:
-        query_embedding = _backend.embed_one(q)
+        query_embedding = _backend.embed_query(q)
     except (RuntimeError, ConnectionError, OSError):
-        # Cached backend may have become unavailable (e.g., ollama stopped).
-        # Invalidate and retry with fallback chain (production path only).
+        # Cached backend may have become unavailable (e.g., a remote endpoint went down).
+        # Invalidate and re-resolve, then retry once (production path only).
         if embed_backend is not None:
             raise
         invalidate_backend_cache()
         _backend = _resolve_backend()
-        query_embedding = _backend.embed_one(q)
+        query_embedding = _backend.embed_query(q)
     embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
 
     try:

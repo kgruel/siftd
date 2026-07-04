@@ -730,17 +730,9 @@ Conversation-level aggregate derived from chunk results.
 
 Canonical entry point for retrieving search chunks.
 
-```python
-def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
-```
-
 ### search_view
 
 The whole search Operation: engine retrieval + the post-processing recipe.
-
-```python
-def search_view(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ..., view: str = ..., sort: str = ..., select: str = ..., threshold: float | None = ..., full: bool = ..., around: str | None = ..., turns: str | None = ...) -> SearchView
-```
 
 ### parse_turns_range
 
@@ -754,10 +746,6 @@ def parse_turns_range(s: str) -> tuple[int, int]
 
 Unified search pipeline — FTS5, semantic, or hybrid.
 
-```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
-```
-
 **Parameters:**
 
 - `q`: Search query string.
@@ -766,7 +754,7 @@ def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ...,
 - `n`: Desired result count after all processing.
 - `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
 - `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
-- `backend`: Preferred embedding backend name (ollama, fastembed).
+- `backend`: Preferred embedding backend name (transitional --backend override).
 
 **Returns:** List of SearchChunk results.
 
