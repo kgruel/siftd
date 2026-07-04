@@ -133,8 +133,8 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("embed.base_url", "string", _is_str,
                  "OpenAI-compatible embeddings base URL (custom/self-hosted override)", ""),
     _SchemaEntry("embed.auto_index", "bool", _is_bool_like,
-                 "Incrementally embed new conversations at the end of ingest (steady-state only) "
-                 "(not yet active — lands with ingest integration)", "true"),
+                 "Incrementally embed new conversations at the end of ingest (steady-state only; "
+                 "the first-run backlog goes through an explicit 'siftd embed')", "true"),
     _SchemaEntry("embed.db_path", "string", _is_str,
                  "Override the embeddings database path (mirrors db.path)", ""),
     _SchemaEntry("embed.query_prefix", "string", _is_str,
@@ -692,4 +692,22 @@ def get_ingestion_filter_binary() -> bool:
             if isinstance(value, str):
                 return value.lower() not in ("false", "0", "no")
     # Default: filtering is enabled
+    return True
+
+
+def get_embed_auto_index() -> bool:
+    """Whether ingest embeds new conversations at the end of a run. Defaults to True.
+
+    Steady-state only: the first-run backlog and any unbuilt index still go through an
+    explicit ``siftd embed`` (see the ingest auto-index hook). Reads [embed] auto_index.
+    """
+    doc = load_config()
+    embed_config = doc.get("embed", {})
+    if isinstance(embed_config, dict):
+        value = embed_config.get("auto_index")
+        if value is not None:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() not in ("false", "0", "no")
     return True

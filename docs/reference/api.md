@@ -1330,6 +1330,20 @@ A single event with content, tags, and kind-specific data.
 | `conversation` | `dict[str, Any] \| None` |  |
 | `neighbors` | `dict[str, str \| None] \| None` |  |
 
+### AutoIndexReport
+
+Outcome of the post-ingest auto-index hook, surfaced by the ingest renderer.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ran` | `bool` |  |
+| `chunks_added` | `int` |  |
+| `conversations_indexed` | `int` |  |
+| `awaiting` | `int` |  |
+| `skipped_reason` | `str \| None` |  |
+| `notice` | `str \| None` |  |
+| `error` | `str \| None` |  |
+
 ### IngestRunResult
 
 Result metadata for an ingest API run.
@@ -1344,6 +1358,7 @@ Result metadata for an ingest API run.
 | `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
 | `elapsed_ms` | `int` |  |
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
+| `auto_index` | `siftd.api.ingest.AutoIndexReport \| None` |  |
 
 ### EmbedIndexStatus
 
@@ -1690,7 +1705,7 @@ def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, o
 Run ingestion from discovered adapters.
 
 ```python
-def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ...) -> IngestRunResult
+def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ..., on_notice: collections.abc.Callable[[str], None] | None = ...) -> IngestRunResult
 ```
 
 ### run_rebuild_fts

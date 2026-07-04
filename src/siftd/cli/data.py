@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.api import open_database
-from siftd.cli._common import resolve_db
+from siftd.cli._common import embedding_awaiting_message, resolve_db
 from siftd.output import fmt_count, fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
@@ -429,6 +429,15 @@ def cmd_ingest(args) -> int:
     consumer = ProgressConsumer(shape="bars", live=LiveRegion(enabled=not quiet and not json_mode))
     if not json_mode:
         renderer.attach_consumer(consumer)  # type: ignore[union-attr]
+
+    def _on_egress_notice(text: str) -> None:
+        # The remote first-egress disclosure surfaces the moment auto-index decides to send,
+        # BEFORE the content leaves — never gated by --quiet (it's a privacy notice).
+        if json_mode:
+            renderer._emit({"type": "auto_index_notice", "message": text})
+        else:
+            status.info(text)
+
     try:
         with consumer:
             result = run_ingest(
@@ -436,6 +445,7 @@ def cmd_ingest(args) -> int:
                 adapter_names=args.adapter,
                 scan_paths=args.path,
                 on_event=renderer.handle_event,
+                on_notice=_on_egress_notice,
             )
     except AdapterSelectionError as exc:
         message = str(exc)
@@ -477,7 +487,47 @@ def cmd_ingest(args) -> int:
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
+    _render_auto_index(result.auto_index, json_mode=json_mode, quiet=quiet, renderer=renderer)
     return 0
+
+
+def _render_auto_index(report, *, json_mode: bool, quiet: bool, renderer) -> None:
+    """Surface the post-ingest auto-index OUTCOME (embedded / awaiting / warning).
+
+    The first-egress notice is NOT rendered here — it is surfaced live, pre-embed, through
+    run_ingest's on_notice callback (see cmd_ingest). This runs after run_ingest returns.
+    """
+    if report is None:
+        return
+    if json_mode:
+        renderer._emit({
+            "type": "auto_index",
+            "ran": report.ran,
+            "chunks_added": report.chunks_added,
+            "conversations_indexed": report.conversations_indexed,
+            "awaiting": report.awaiting,
+            "skipped_reason": report.skipped_reason,
+            "notice": report.notice,
+            "error": report.error,
+        })
+        return
+    if quiet:
+        return
+    if report.error:
+        status.warning(
+            f"Auto-index skipped: {report.error}",
+            hint="Run 'siftd embed' to catch up.",
+        )
+    elif report.skipped_reason:
+        subject, hint = embedding_awaiting_message(report.awaiting)
+        status.info(subject, hint=hint)
+    elif report.ran:
+        # Honest at 0 chunks (a stale conversation whose new content all filtered away still
+        # counts as embedded — its old chunks were legitimately swept).
+        status.info(
+            f"Embedded {fmt_count(report.conversations_indexed)} new conversation(s) "
+            f"({fmt_count(report.chunks_added)} chunks)."
+        )
 
 
 def cmd_backfill(args) -> int:

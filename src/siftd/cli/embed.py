@@ -8,7 +8,7 @@ unlike search's shared-data query surface. Imports flow only through ``siftd.api
 import argparse
 from pathlib import Path
 
-from siftd.cli._common import resolve_db
+from siftd.cli._common import embedding_awaiting_message, resolve_db
 from siftd.output import fmt_count, status
 from siftd.paths import embeddings_db_path
 
@@ -168,10 +168,8 @@ def _embed_status(args, db: Path, embed_db: Path) -> int:
     print_definitions(rows)
 
     if report.conversations_stale and not report.needs_rebuild:
-        status.info(
-            f"{fmt_count(report.conversations_stale)} conversation(s) awaiting embedding.",
-            hint="Run 'siftd embed' to update.",
-        )
+        subject, hint = embedding_awaiting_message(report.conversations_stale)
+        status.info(subject, hint=hint)
     return 0
 
 

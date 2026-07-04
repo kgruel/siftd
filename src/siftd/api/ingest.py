@@ -26,6 +26,32 @@ class AdapterSelectionError(ValueError):
         super().__init__(f"No adapters matched: {', '.join(requested)}")
 
 
+# Cap on the stale+new set the post-ingest hook will embed inline. A larger backlog (or a
+# never-built index) is deferred to an explicit `siftd embed` — the first-run backlog can be
+# tens of thousands of chunks, and a 3-RPM remote free tier would otherwise hang ingest.
+_AUTO_INDEX_BACKLOG_LIMIT = 200
+# index_meta key recording that the remote first-egress notice has been shown once.
+_EGRESS_NOTICE_META_KEY = "auto_index_egress_notified"
+
+
+@dataclass
+class AutoIndexReport:
+    """Outcome of the post-ingest auto-index hook, surfaced by the ingest renderer.
+
+    ``ran`` = the incremental indexer executed; ``awaiting``/``skipped_reason`` = inline work
+    was deferred to ``siftd embed``; ``notice`` = one-time remote first-egress notice; ``error``
+    = an embedding failure that was isolated (never aborts ingest).
+    """
+
+    ran: bool = False
+    chunks_added: int = 0
+    conversations_indexed: int = 0
+    awaiting: int = 0
+    skipped_reason: str | None = None  # "unbuilt" | "backlog"
+    notice: str | None = None
+    error: str | None = None
+
+
 @dataclass
 class IngestRunResult:
     """Result metadata for an ingest API run."""
@@ -38,10 +64,12 @@ class IngestRunResult:
     stats: IngestStats | None
     elapsed_ms: int
     dropin_failures: list[tuple[Path, str]] = field(default_factory=list)
+    auto_index: AutoIndexReport | None = None
 
 
 __all__ = [
     "AdapterSelectionError",
+    "AutoIndexReport",
     "IngestRunResult",
     "run_ingest",
     "run_rebuild_fts",
@@ -78,10 +106,13 @@ def run_ingest(
     scan_paths: list[str] | None = None,
     filter_binary: bool | None = None,
     on_event: Callable[[IngestEvent], None] | None = None,
+    on_notice: Callable[[str], None] | None = None,
 ) -> IngestRunResult:
     """Run ingestion from discovered adapters.
 
-    API owns DB lifecycle for this write operation.
+    API owns DB lifecycle for this write operation. ``on_notice`` is invoked (once, before
+    any embedding egress) with the remote first-egress disclosure so the caller can surface
+    it live; without it the disclosure rides ``result.auto_index.notice`` unpersisted.
     """
     path = Path(db_path)
     db_created = not path.exists()
@@ -113,6 +144,14 @@ def run_ingest(
     except Exception:
         pass
 
+    # Steady-state auto-index. Belt-and-suspenders: the hook already isolates embedding
+    # failures onto the report, but a completed ingest must never be undone by a bug in the
+    # gating logic itself either.
+    try:
+        auto_index = _maybe_auto_index(path, on_notice=on_notice)
+    except Exception:
+        auto_index = None
+
     elapsed_ms = int((perf_counter() - started) * 1000)
     return IngestRunResult(
         db_path=path,
@@ -123,7 +162,118 @@ def run_ingest(
         stats=stats,
         elapsed_ms=elapsed_ms,
         dropin_failures=dropin_failures,
+        auto_index=auto_index,
     )
+
+
+def _maybe_auto_index(
+    db_path: Path, embed_db_path: Path | None = None, *, on_notice: Callable[[str], None] | None = None
+) -> AutoIndexReport | None:
+    """Embed new/stale conversations at the end of ingest (steady-state only).
+
+    Returns None when there is nothing to say — auto_index disabled, no usable backend, or
+    no stale conversations. Skips inline work (surfacing an "awaiting" report) when the index
+    is unbuilt or the backlog is large, so the first-run backlog never hangs ingest. Any
+    embedding failure is isolated onto ``report.error`` and never propagates. ``on_notice`` is
+    invoked with the remote first-egress disclosure BEFORE the embedding call (so it precedes
+    the egress); the shown-once flag is persisted only after that emission.
+    """
+    from siftd.config import get_embed_auto_index
+
+    if not get_embed_auto_index():
+        return None
+
+    from siftd.embeddings.availability import embedding_status
+
+    st = embedding_status()
+    if not st.usable:
+        return None
+
+    from siftd.paths import embeddings_db_path
+
+    embed_db = embed_db_path or embeddings_db_path()
+
+    from siftd.api.search import embed_status
+
+    status = embed_status(db_path=db_path, embed_db_path=embed_db)
+
+    # Nothing new or changed to embed.
+    if status.conversations_stale == 0:
+        return None
+
+    # Backlog guard: an unbuilt index (first run) or a large stale set is deferred to an
+    # explicit `siftd embed` — inline work here could hang ingest for a long time.
+    if status.total_chunks == 0:
+        return AutoIndexReport(awaiting=status.conversations_stale, skipped_reason="unbuilt")
+    if status.conversations_stale > _AUTO_INDEX_BACKLOG_LIMIT:
+        return AutoIndexReport(awaiting=status.conversations_stale, skipped_reason="backlog")
+
+    report = AutoIndexReport()
+    # Announce the first remote egress BEFORE the content leaves the machine: surface it
+    # through the caller's live callback (not the after-the-fact result render), and only
+    # then persist the shown-once flag. A caller with no callback keeps the disclosure on
+    # ``report.notice`` and does NOT burn the flag, so it isn't silently lost.
+    notice = _pending_egress_notice(st.backend, embed_db)
+    if notice:
+        report.notice = notice
+        if on_notice is not None:
+            on_notice(notice)
+            _mark_egress_notified(embed_db)
+
+    from siftd.api.search import build_index
+
+    try:
+        result = build_index(db_path=db_path, embed_db_path=embed_db, verbose=False)
+        report.ran = True
+        report.chunks_added = result["chunks_added"]
+        report.conversations_indexed = result["conversations_indexed"]
+    except Exception as e:  # noqa: BLE001 — any embedding failure is isolated, never aborts ingest
+        # A locked DB (concurrent serve), a malformed remote 200 body, an ONNX runtime fault —
+        # all degrade to a reported error. KeyboardInterrupt/SystemExit aren't Exception, so
+        # they still propagate.
+        report.error = str(e)
+    return report
+
+
+def _pending_egress_notice(configured_backend: str | None, embed_db: Path) -> str | None:
+    """Text for the one-time remote first-egress disclosure, or None if N/A or already shown.
+
+    Read-only: it does NOT persist the shown flag — the caller persists via
+    :func:`_mark_egress_notified` only once the notice has actually been surfaced, so a
+    disclosure is never burned unshown. Local backends (fastembed) send nothing off-machine.
+    """
+    if not configured_backend or not configured_backend.startswith("remote:"):
+        return None
+    if not embed_db.exists():
+        return None
+
+    from siftd.storage.embeddings import config_backend_name, get_meta, open_embeddings_db
+
+    conn = open_embeddings_db(embed_db, read_only=True)
+    try:
+        if get_meta(conn, _EGRESS_NOTICE_META_KEY):
+            return None
+    finally:
+        conn.close()
+
+    provider = config_backend_name(configured_backend)
+    return (
+        f"auto-indexing sends new conversation content to {provider}; "
+        "disable with 'siftd config set embed.auto_index false'"
+    )
+
+
+def _mark_egress_notified(embed_db: Path) -> None:
+    """Persist the remote first-egress shown-once flag (called only after the notice fired)."""
+    if not embed_db.exists():
+        return
+    from siftd.storage.embeddings import open_embeddings_db, set_meta
+
+    conn = open_embeddings_db(embed_db)
+    try:
+        set_meta(conn, _EGRESS_NOTICE_META_KEY, "1")
+    finally:
+        conn.close()
 
 
 def run_rebuild_fts(*, db_path: Path) -> IngestRunResult:

@@ -67,6 +67,7 @@ from siftd.api.file_refs import (
 )
 from siftd.api.ingest import (
     AdapterSelectionError,
+    AutoIndexReport,
     IngestRunResult,
     run_ingest,
     run_rebuild_fts,
@@ -273,6 +274,7 @@ __all__ = [
     "fetch_file_refs",
     # ingest
     "AdapterSelectionError",
+    "AutoIndexReport",
     "IngestRunResult",
     "run_ingest",
     "run_rebuild_fts",
