@@ -334,18 +334,14 @@ class TestResolveCandidates:
 
 class TestAPIHybridSearchBranches:
     @pytest.mark.embeddings
-    def test_retry_embed_one_then_propagate_index_compat_error(self, monkeypatch, tmp_path):
-        calls = {"n": 0, "invalidate": 0}
-
+    def test_index_compat_error_propagates(self, monkeypatch, tmp_path):
+        """A compat mismatch raises out of the engine — never silently degraded."""
         class _Backend:
             name = "b"
             model = "m"
             dimension = 2
 
             def embed_query(self, _q):
-                calls["n"] += 1
-                if calls["n"] == 1:
-                    raise RuntimeError("down")
                 return [1.0, 0.0]
 
         import siftd.embeddings.base as emb_base
@@ -353,12 +349,6 @@ class TestAPIHybridSearchBranches:
 
         monkeypatch.setattr(emb_indexer, "SCHEMA_VERSION", 1, raising=False)
         monkeypatch.setattr(emb_base, "get_backend", lambda **_k: _Backend(), raising=False)
-        monkeypatch.setattr(
-            emb_base,
-            "invalidate_backend_cache",
-            lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1),
-            raising=False,
-        )
 
         class _Conn:
             def close(self):
@@ -367,8 +357,6 @@ class TestAPIHybridSearchBranches:
         monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
         monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
         monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
-        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
-        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
 
         class CompatErr(Exception):
             pass
@@ -377,19 +365,13 @@ class TestAPIHybridSearchBranches:
         monkeypatch.setattr("siftd.api.search.search_similar", lambda *_a, **_k: [])
 
         with pytest.raises(CompatErr):
-            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db")
-
-        assert calls["invalidate"] == 1
-        assert calls["n"] == 2
+            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db", mode="semantic")
 
     @pytest.mark.embeddings
-    def test_transient_error_retries_once_then_propagates(self, monkeypatch, tmp_path):
-        # Interim behavior (pre slice-4 degrade): a persistent transient remote failure
-        # retries once then propagates as EmbeddingTransientError — which, being a
-        # RuntimeError, the CLI boundary guard turns into status.error(), not a traceback.
+    def test_transient_error_propagates_from_engine(self, monkeypatch, tmp_path):
+        # Slice-4: the engine no longer retries. A transient embed failure propagates
+        # to search_view, which owns the degrade-to-fts. hybrid_search itself just raises.
         from siftd.embeddings.base import EmbeddingTransientError
-
-        calls = {"n": 0, "invalidate": 0}
 
         class _Backend:
             name = "remote:voyage"
@@ -397,7 +379,6 @@ class TestAPIHybridSearchBranches:
             dimension = 2
 
             def embed_query(self, _q):
-                calls["n"] += 1
                 raise EmbeddingTransientError("voyage 429")
 
         import siftd.embeddings.base as emb_base
@@ -405,12 +386,6 @@ class TestAPIHybridSearchBranches:
 
         monkeypatch.setattr(emb_indexer, "SCHEMA_VERSION", 1, raising=False)
         monkeypatch.setattr(emb_base, "get_backend", lambda **_k: _Backend(), raising=False)
-        monkeypatch.setattr(
-            emb_base,
-            "invalidate_backend_cache",
-            lambda: calls.__setitem__("invalidate", calls["invalidate"] + 1),
-            raising=False,
-        )
 
         class _Conn:
             def close(self):
@@ -418,15 +393,9 @@ class TestAPIHybridSearchBranches:
 
         monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *_a, **_k: _Conn())
         monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
-        monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
-        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
-        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
 
         with pytest.raises(EmbeddingTransientError):
-            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db")
-
-        assert calls["invalidate"] == 1
-        assert calls["n"] == 2
+            api_search.hybrid_search("q", db_path=tmp_path / "db.db", embed_db=tmp_path / "e.db", mode="semantic")
 
     def test_recency_relevance_resorts_after_weighting(self, monkeypatch, tmp_path):
         backend = SimpleNamespace(name="b", model="m", dimension=2, embed_query=lambda _q: [1.0, 0.0])
@@ -488,6 +457,8 @@ class TestAPIHybridSearchBranches:
         assert [r["conversation_id"] for r in out[:2]] == ["c_new", "c_old"]
 
     def test_mmr_candidate_cap_threshold_and_score_reporting(self, monkeypatch, tmp_path):
+        # semantic mode exercises the shared vector-list builder: MMR candidate cap,
+        # MMR-final score reporting, and the cosine-based threshold rewire.
         backend = SimpleNamespace(name="b", model="m", dimension=2, embed_query=lambda _q: [1.0, 0.0])
 
         class _Conn:
@@ -498,8 +469,6 @@ class TestAPIHybridSearchBranches:
         monkeypatch.setattr("siftd.search.resolve_candidates", lambda *_a, **_k: None)
         monkeypatch.setattr("siftd.api.search.open_embeddings_db", lambda *_a, **_k: _Conn())
         monkeypatch.setattr("siftd.api.search.validate_index_compat", lambda *_a, **_k: None)
-        monkeypatch.setattr("siftd.api.search.fts5_recall_conversations", lambda *_a, **_k: (set(), "and"))
-        monkeypatch.setattr("siftd.search.annotate_fts5_breakdown", lambda *_a, **_k: None)
 
         raw = [
             {
@@ -538,7 +507,10 @@ class TestAPIHybridSearchBranches:
             embed_backend=backend,
             threshold=0.9,
             rerank="mmr",
+            mode="semantic",
         )
         assert seen["n"] == search_mod.MAX_MMR_CANDIDATES
+        # threshold now tests cosine (embedding_sim): c1's 0.2 is filtered, c0's 0.99 kept.
         assert len(out) == 1 and out[0]["conversation_id"] == "c0"
+        # outward score is the MMR-adjusted final.
         assert out[0]["score"] == pytest.approx(0.95)

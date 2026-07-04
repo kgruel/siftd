@@ -182,8 +182,11 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
     from siftd.domain.search_types import as_search_view
 
     sv = as_search_view(result, view=context.get("view", "chunks"))
+    # ``executed_mode`` (set when the engine degraded hybrid/semantic → fts at
+    # runtime) is authoritative for the wire ``mode`` — the pre-resolved
+    # render_context mode is fixed before execution and would misreport a degrade.
     out: dict[str, Any] = {
-        "mode": context.get("mode"),
+        "mode": getattr(sv, "executed_mode", None) or context.get("mode"),
         "view": sv.view,
         "n_skipped": sv.n_skipped,
         "empty_reason": sv.empty_reason,

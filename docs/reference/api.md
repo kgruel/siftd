@@ -678,6 +678,7 @@ Post-processed, render-ready search output — the recipe's single product.
 | `tier2` | `list[dict[str, Any]] \| None` |  |
 | `n_skipped` | `int` |  |
 | `empty_reason` | `str \| None` |  |
+| `executed_mode` | `str \| None` |  |
 
 ### ScoreBreakdown
 
@@ -693,6 +694,9 @@ Detailed score components for explainability.
 | `final_score` | `float \| None` |  |
 | `fts5_matched` | `bool` |  |
 | `fts5_mode` | `str \| None` |  |
+| `vector_rank` | `int \| None` |  |
+| `keyword_rank` | `int \| None` |  |
+| `fused_score` | `float \| None` |  |
 
 ### ConversationSearchSummary
 
@@ -752,16 +756,16 @@ Unified search pipeline — FTS5, semantic, or hybrid.
 - `db_path`: Path to main database.
 - `embed_db`: Path to embeddings database. Required for hybrid/semantic modes.
 - `n`: Desired result count after all processing.
-- `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
-- `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
+- `mode`: "hybrid" (FTS5 recall narrows candidates, embeddings rerank), "fts" (keyword only), "semantic" (vector only).
+- `rerank`: "mmr" for diversity reranking of the vector list, "relevance" for pure cosine order.
 
-**Returns:** List of SearchChunk results.
+**Returns:** List of SearchChunk results. In hybrid/semantic mode ``score`` is the cosine (or MMR-adjusted) score; in fts mode it is the bounded normalized bm25 score.
 
 **Raises:**
 
 - `FileNotFoundError`: If database doesn't exist.
-- `ValueError`: If query is empty or search fails.
-- `RuntimeError`: If embedding backend unavailable.
+- `EmbeddingTransientError`: If the query embedding fails at runtime (the reachability class :func:`search_view` catches to degrade to fts).
+- `EmbeddingConfigError`: If the [embed] config is unusable (never degraded).
 
 ### process_search_view
 
@@ -795,7 +799,7 @@ def compute_thread_tiers(results: list[siftd.domain.search_types.SearchChunk] | 
 
 ### filter_by_threshold
 
-Filter chunk results by score threshold.
+Filter chunk results by *cosine* threshold (keyword-only entrants exempt).
 
 ```python
 def filter_by_threshold(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float | None) -> list[SearchChunk]

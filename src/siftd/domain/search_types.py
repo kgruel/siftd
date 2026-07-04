@@ -21,7 +21,21 @@ MATCH_ELLIPSIS: str = "..."
 
 @dataclass
 class ScoreBreakdown:
-    """Detailed score components for explainability."""
+    """Detailed score components for explainability.
+
+    ``embedding_sim`` is the raw cosine (present for vector-list chunks; 0.0 for
+    keyword-only / FTS-only entrants that never got a cosine). The RRF hybrid
+    engine additionally records the per-list ranks it fused: ``vector_rank`` and
+    ``keyword_rank`` are 1-based positions in the cosine and bm25 lists
+    respectively (``None`` when the chunk is absent from that list), and
+    ``fused_score`` is ``Σ 1/(60 + rank)`` — the value carried on
+    ``SearchChunk.score`` in hybrid mode. ``vector_rank`` doubles as the
+    "has a computed cosine" marker the similarity threshold reads: ``None`` ⇒
+    the chunk is a keyword-only entrant, exempt from cosine thresholding.
+    ``fts5_matched`` means "keyword list contributed to this chunk"; ``fts5_mode``
+    is retained for back-compat but no longer populated (the AND/OR recall
+    distinction dissolved with narrow-then-rank).
+    """
 
     embedding_sim: float
     recency_boost: float = 1.0
@@ -31,6 +45,9 @@ class ScoreBreakdown:
     final_score: float | None = None
     fts5_matched: bool = False
     fts5_mode: str | None = None
+    vector_rank: int | None = None
+    keyword_rank: int | None = None
+    fused_score: float | None = None
 
     def __post_init__(self) -> None:
         if self.pre_mmr_score is None:
@@ -50,6 +67,9 @@ class ScoreBreakdown:
             final_score=data.get("final_score"),
             fts5_matched=bool(data.get("fts5_matched", False)),
             fts5_mode=data.get("fts5_mode"),
+            vector_rank=data.get("vector_rank"),
+            keyword_rank=data.get("keyword_rank"),
+            fused_score=data.get("fused_score"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -63,6 +83,9 @@ class ScoreBreakdown:
             "final_score": round(self.final_score, 4) if self.final_score is not None else None,
             "fts5_matched": self.fts5_matched,
             "fts5_mode": self.fts5_mode,
+            "vector_rank": self.vector_rank,
+            "keyword_rank": self.keyword_rank,
+            "fused_score": round(self.fused_score, 6) if self.fused_score is not None else None,
         }
 
 
@@ -238,7 +261,12 @@ class SearchView:
     ``--around`` phrase filter. ``empty_reason`` distinguishes a deliberately
     emptied result (``"threshold"`` / ``"first"``) from an ordinary empty one,
     so a caller can phrase the right message; it is never set while ``results``
-    is non-empty.
+    is non-empty. ``executed_mode`` names the engine that *actually ran* when it
+    differs from the requested one — ``"fts"`` when a hybrid/semantic query
+    degraded to keyword search after a runtime embedding failure (§5 truthful
+    degrade); ``None`` means "the requested engine ran." Surfaces report
+    ``executed_mode or requested_mode`` as the envelope ``mode`` so an
+    owner-scoped request (which receives no caveats) still learns the truth.
 
     It lives in ``domain`` (not ``api``) so every layer that renders or
     serializes a search — ``output`` formatters, the ``serialization`` serve
@@ -253,6 +281,7 @@ class SearchView:
     tier2: list[dict[str, Any]] | None = None
     n_skipped: int = 0
     empty_reason: str | None = None
+    executed_mode: str | None = None
 
 
 def as_search_view(result: Any, *, view: str = "chunks") -> SearchView:

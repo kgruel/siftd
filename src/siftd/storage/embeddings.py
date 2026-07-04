@@ -289,6 +289,10 @@ class _EmbeddingCache:
         self.source_ids_raw: list[str | None] = []
         # Lookup: conversation_id -> list of row indices
         self.conv_id_to_indices: dict[str, list[int]] = {}
+        # Lazy lookup: event_id -> row indices of chunks whose source_ids cover it.
+        # Built on first bridge (chunks_for_events) so pure semantic/fts searches
+        # never pay the per-chunk source_ids JSON decode. None ⇒ not yet built.
+        self.event_id_to_indices: dict[str, list[int]] | None = None
 
     def is_valid(self, db_path_hint: str) -> bool:
         """Check if cache is loaded and current for this DB path.
@@ -330,6 +334,7 @@ class _EmbeddingCache:
             self.texts = []
             self.source_ids_raw = []
             self.conv_id_to_indices = {}
+            self.event_id_to_indices = None
             return
 
         embedding_dim = len(rows[0]["embedding"]) // 4
@@ -355,6 +360,7 @@ class _EmbeddingCache:
         self.conv_id_to_indices = {}
         for i, cid in enumerate(self.conversation_ids):
             self.conv_id_to_indices.setdefault(cid, []).append(i)
+        self.event_id_to_indices = None
 
         self._db_path = db_path_hint
         self._chunk_count = len(rows)
@@ -363,8 +369,46 @@ class _EmbeddingCache:
         except OSError:
             self._db_mtime = 0.0
 
+    def ensure_event_map(self) -> dict[str, list[int]]:
+        """Build (once) and return the event_id -> covering-chunk-index map.
+
+        Decodes every chunk's ``source_ids`` — deferred to the first bridge so
+        pure semantic/fts searches don't pay it. Rebuilt on cache reload.
+        """
+        if self.event_id_to_indices is None:
+            event_map: dict[str, list[int]] = {}
+            for i, raw in enumerate(self.source_ids_raw):
+                if not raw:
+                    continue
+                for eid in json.loads(raw):
+                    event_map.setdefault(eid, []).append(i)
+            self.event_id_to_indices = event_map
+        return self.event_id_to_indices
+
 
 _embedding_cache = _EmbeddingCache()
+
+
+def _ensure_cache_loaded(conn: sqlite3.Connection) -> str:
+    """Load (or reuse) the in-memory embedding cache for ``conn``'s DB.
+
+    Returns the DB path hint used as the cache key. Immutable connections
+    (``mode=ro&immutable=1``) are pinned to their open-time snapshot, so a stale
+    cache is reloaded through a fresh connection rather than the caller's.
+    """
+    db_path_hint = conn.execute("PRAGMA database_list").fetchone()[2] or ""
+    cache = _embedding_cache
+    if not cache.is_valid(db_path_hint):
+        is_immutable = getattr(conn, "siftd_immutable", False)
+        if is_immutable and db_path_hint:
+            reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
+            try:
+                cache.load(reload_conn, db_path_hint)
+            finally:
+                reload_conn.close()
+        else:
+            cache.load(conn, db_path_hint)
+    return db_path_hint
 
 
 def search_similar(
@@ -388,25 +432,8 @@ def search_similar(
     if conversation_ids is not None and not conversation_ids:
         return []
 
-    # Determine DB identity for cache validation
-    db_path_hint = conn.execute("PRAGMA database_list").fetchone()[2] or ""
-
+    _ensure_cache_loaded(conn)
     cache = _embedding_cache
-    if not cache.is_valid(db_path_hint):
-        # Immutable connections (mode=ro&immutable=1) are pinned to the snapshot
-        # at open time. If the DB was modified externally, the caller's connection
-        # still sees old data. Reopen a fresh connection for the reload.
-        # Writable connections always see their own uncommitted writes.
-        is_immutable = getattr(conn, "siftd_immutable", False)
-
-        if is_immutable and db_path_hint:
-            reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
-            try:
-                cache.load(reload_conn, db_path_hint)
-            finally:
-                reload_conn.close()
-        else:
-            cache.load(conn, db_path_hint)
 
     if cache.embeddings_normalized is None or cache._chunk_count == 0:
         return []
@@ -487,6 +514,49 @@ def search_similar(
         results.append(result)
 
     return results
+
+
+def chunks_for_events(
+    conn: sqlite3.Connection,
+    event_ids: list[str],
+) -> dict[str, list[dict]]:
+    """Map event ids to the chunk(s) whose ``source_ids`` cover them.
+
+    The FTS→embed bridge for RRF hybrid fusion: a keyword hit on a prompt/response
+    event resolves to its covering exchange chunk(s). Returns ``{event_id: [chunk
+    dicts]}`` including only events with at least one covering chunk (callers treat
+    an absent/empty entry as "no covering chunk" → an FTS-only fusion entrant).
+    Each chunk dict carries ``chunk_id``/``conversation_id``/``chunk_type``/``text``/
+    ``source_ids`` — no cosine (these chunks were not scored against the query); the
+    engine leaves their ``embedding_sim`` absent, exempting them from the
+    similarity threshold.
+    """
+    if not event_ids:
+        return {}
+
+    _ensure_cache_loaded(conn)
+    cache = _embedding_cache
+    if cache._chunk_count == 0:
+        return {}
+
+    event_map = cache.ensure_event_map()
+    out: dict[str, list[dict]] = {}
+    for eid in dict.fromkeys(event_ids):  # de-dup, preserve order
+        indices = event_map.get(eid)
+        if not indices:
+            continue
+        chunks: list[dict] = []
+        for i in indices:
+            raw_source = cache.source_ids_raw[i]
+            chunks.append({
+                "chunk_id": cache.chunk_ids[i],
+                "conversation_id": cache.conversation_ids[i],
+                "chunk_type": cache.chunk_types[i],
+                "text": cache.texts[i],
+                "source_ids": json.loads(raw_source) if raw_source else [],
+            })
+        out[eid] = chunks
+    return out
 
 
 def chunk_count(conn: sqlite3.Connection) -> int:

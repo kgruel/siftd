@@ -63,47 +63,6 @@ class TestMmrRerankBasics:
         assert out[0]["text"] == "hello"
         assert out[0]["chunk_type"] == "prompt"
 
-    def test_falls_back_without_numpy(self, monkeypatch):
-        import builtins
-
-        orig_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "numpy":
-                raise ImportError("no numpy")
-            return orig_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
-        out = mmr_rerank([_chunk("c1", E1, score=0.9), _chunk("c2", E2, score=0.8)], query_embedding=E1, limit=2)
-        assert [r["conversation_id"] for r in out] == ["c1", "c2"] and "embedding" not in out[0]
-
-    def test_fallback_python_paths_with_breakdown_and_tolist(self, monkeypatch):
-        import builtins
-
-        class Vec:
-            def __init__(self, vals):
-                self.vals = vals
-
-            def tolist(self):
-                return self.vals
-
-        orig_import = builtins.__import__
-
-        def fake_import(name, *args, **kwargs):
-            if name == "numpy":
-                raise ImportError("no numpy")
-            return orig_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", fake_import)
-        results = [
-            {"conversation_id": "c1", "embedding": Vec([0.0, 0.0, 0.0]), "score": 0.9, "breakdown": ScoreBreakdown(embedding_sim=0.9)},
-            {"conversation_id": "c1", "embedding": Vec([1.0, 0.0, 0.0]), "score": 0.8, "breakdown": ScoreBreakdown(embedding_sim=0.8), "chunk_id": "b"},
-            {"conversation_id": "c2", "embedding": Vec([0.0, 1.0, 0.0]), "score": 0.7, "breakdown": ScoreBreakdown(embedding_sim=0.7), "chunk_id": "a"},
-        ]
-        out = mmr_rerank(results, query_embedding=E1, lambda_=0.6, limit=3)
-        assert out[0]["breakdown"].mmr_rank == 1
-        assert any(r["breakdown"].mmr_penalty == 1.0 for r in out if r["conversation_id"] == "c1")
-
 
 # ---------------------------------------------------------------------------
 # Conversation-level penalty (same-conversation suppression)

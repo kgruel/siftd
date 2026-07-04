@@ -698,6 +698,36 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
     )]
 
 
+@caveat_producer(kind="search-degraded-unreachable", applies_to=_is_search_view_for_render)
+def _search_degraded_unreachable_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: a hybrid/semantic query degraded to keyword search at runtime.
+
+    Distinct from ``search-mode-degraded`` (the "no embeddings installed → resolved
+    to fts from the start" nudge): here the backend IS configured but was unreachable
+    at query time (429/5xx/network), so ``search_view`` degraded THIS query and set
+    ``SearchView.executed_mode == "fts"`` while the requested mode stayed
+    hybrid/semantic. The two are mutually exclusive on ``op.params["mode"]``.
+
+    Owner-scoped requests receive no caveats at all (the multi-tenant guard blanks
+    them), so for those the envelope ``mode`` field is the only honest channel — this
+    producer serves the un-scoped local/REST paths.
+    """
+    if getattr(result, "executed_mode", None) != "fts":
+        return []
+    if op.params.get("mode") not in ("hybrid", "semantic"):
+        return []
+    return [Finding(
+        check="search-degraded-unreachable",
+        severity="warning",
+        channel="both",
+        message=(
+            "Embedding backend configured but unreachable — search degraded to "
+            "keyword-only (fts). Results are ranked by keyword match, not semantics."
+        ),
+        fix_available=False,
+    )]
+
+
 @caveat_producer(kind="search-fts5-around-turn-index", applies_to=_is_search_view_for_render)
 def _search_fts5_around_turn_index_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
     """Hint: --around turn positions derived from FTS5 match position (no embeddings).

@@ -265,11 +265,16 @@ def cmd_search(args) -> int:
             status.error(str(e))
             return 1
 
+    # The engine that actually ran: a runtime embed failure degrades hybrid/semantic
+    # to fts (SearchView.executed_mode); a delegated read carries the server's mode.
+    # This is what gets reported — never the pre-resolved value.
+    effective_mode = getattr(view_result, "executed_mode", None) or search_mode
+
     # Empty results: distinguish a genuinely empty engine result from a
     # deliberately-emptied one (threshold / select=first) for a precise message.
     if not view_result.results:
         if args.json:
-            _print_empty_json_results(args, query, db, mode=search_mode, caveats=caveats)
+            _print_empty_json_results(args, query, db, mode=effective_mode, caveats=caveats)
         else:
             if view_result.empty_reason == "threshold":
                 status.info(f"No results above threshold {args.threshold} for: {query}")
@@ -296,7 +301,7 @@ def cmd_search(args) -> int:
         view_result,
         fidelity,
         query=query,
-        mode=search_mode,
+        mode=effective_mode,
         debug_ids=getattr(args, "debug_ids", False),
         caveats=caveats,
     )

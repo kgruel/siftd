@@ -1348,6 +1348,9 @@ def _find_search_fragment(
     except engine_errors:
         # A hybrid/semantic failure degrades to keyword search (still useful;
         # header then truthfully reads [fts]); a keyword failure → empty pane.
+        # (A runtime embed-reachability failure is already handled inside
+        # search_view, which returns executed_mode="fts"; this catch covers the
+        # broader class — index drift, corrupt DB — search_view does not swallow.)
         if engine != "fts":
             engine = "fts"
             try:
@@ -1356,6 +1359,9 @@ def _find_search_fragment(
                 sv = SearchView(results=[], view=view)
         else:
             sv = SearchView(results=[], view=view)
+    # The engine may have degraded internally (transient embed failure) — honor
+    # the executed engine so the header truthfully reads [fts].
+    engine = getattr(sv, "executed_mode", None) or engine
 
     # ``full`` shows untruncated excerpts (the CLI's --verbose). render_search's
     # chunks branch drops the truncation only when chars==0 AND depth>=2, so the
