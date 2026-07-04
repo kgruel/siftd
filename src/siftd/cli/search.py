@@ -33,19 +33,16 @@ def _print_empty_json_results(args, query: str, db: Path, *, mode: str = "fts", 
         print(result)
 
 
-def _can_delegate_to_serve(args, *, db: Path, embed_db: Path) -> bool:
-    """Conservatively decide whether it's safe to delegate to siftd-serve."""
+def _can_delegate_to_serve(args, *, db: Path) -> bool:
+    """Conservatively decide whether it's safe to delegate to siftd-serve.
+
+    A served instance uses its own [embed] config; a delegated search downgrades
+    truthfully via the envelope mode field (no embeddings-DB override rides HTTP —
+    the `--embed-db` search flag was removed with the index-management flags).
+    """
     from siftd.serve.delegation import can_delegate
 
-    if not can_delegate(db=db):
-        return False
-
-    # Embeddings DB overrides are not supported over HTTP.
-    if getattr(args, "embed_db", None):
-        if embed_db != embeddings_db_path():
-            return False
-
-    return True
+    return can_delegate(db=db)
 
 
 def _validate_search_axes(args) -> str | None:
@@ -65,21 +62,11 @@ def cmd_search(args) -> int:
     from siftd.api import embeddings_available
 
     db = resolve_db(args)
-    embed_db = Path(args.embed_db).expanduser() if args.embed_db else embeddings_db_path()
+    embed_db = embeddings_db_path()
 
     if not db.exists():
         status.db_missing(db)
         return 1
-
-    # Index or rebuild mode — requires embeddings
-    if args.index or args.rebuild:
-        if not embeddings_available():
-            status.error(
-                "Semantic search requires the [embed] extra.",
-                hint="Install with: siftd install embed",
-            )
-            return 1
-        return _search_build_index(db, embed_db, rebuild=args.rebuild, backend_name=args.backend, verbose=True)
 
     # Search mode — need a query OR a tag facet. A query ranks content; a bare
     # tag facet enumerates tagged elements (filter-only search, decision 1).
@@ -99,8 +86,7 @@ def cmd_search(args) -> int:
             lines([
                 "siftd search <query>",
                 "siftd search --tag NAME  (enumerate tagged elements)",
-                "siftd search --index     (build/update index)",
-                "siftd search --rebuild   (rebuild index from scratch)",
+                "siftd embed              (build/update the semantic index)",
             ]),
             sys.stderr,
             use_ansi=should_use_ansi(sys.stderr),
@@ -145,19 +131,19 @@ def cmd_search(args) -> int:
         import json
         if not embeddings_available():
             if args.json:
-                print(json.dumps({"error": f"Mode '{requested_mode}' requires the [embed] extra. Install with: siftd install embed"}))
+                print(json.dumps({"error": f"Mode '{requested_mode}' requires an embedding backend. Configure embed.backend or run 'siftd install embed'"}))
             else:
                 status.error(
-                    f"Mode '{requested_mode}' requires the [embed] extra.",
-                    hint="Install with: siftd install embed",
+                    f"Mode '{requested_mode}' requires an embedding backend.",
+                    hint="Configure embed.backend, or run 'siftd install embed' for the local backend.",
                 )
         else:
             if args.json:
-                print(json.dumps({"error": "No embeddings index found. Run 'siftd search --index' to build it."}))
+                print(json.dumps({"error": "No embeddings index found. Run 'siftd embed' to build it."}))
             else:
                 status.error(
                     "No embeddings index found.",
-                    hint="Run 'siftd search --index' to build it.",
+                    hint="Run 'siftd embed' to build it.",
                 )
         return 1
 
@@ -217,7 +203,6 @@ def cmd_search(args) -> int:
         params={
             "q": query,
             "db_path": db,
-            "embed_db": embed_db,
             "n": args.limit,
             "mode": search_mode,
             "workspace": filters.workspace,
@@ -239,7 +224,6 @@ def cmd_search(args) -> int:
             "recency": args.recency,
             "recency_half_life": args.recency_half_life,
             "recency_max_boost": args.recency_max_boost,
-            "backend": args.backend,
             "raw_fts": getattr(args, "raw_fts", False),
             "debug_ids": getattr(args, "debug_ids", False),
             "view": args.view,
@@ -261,7 +245,7 @@ def cmd_search(args) -> int:
     # reconstruct the SearchView from the wire — indistinguishable from local.
     view_result = None
     caveats: list = []
-    if not args.refs and _can_delegate_to_serve(args, db=db, embed_db=embed_db):
+    if not args.refs and _can_delegate_to_serve(args, db=db):
         try:
             body = try_serve(op)
         except ServeRequest4xx as e:
@@ -428,12 +412,9 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
 
     caveats: list = []
     view_result = None
-    # Resolve embed_db same as cmd_search so the custom --embed-db guard fires correctly.
-    _raw_embed_db = getattr(args, "embed_db", None)
-    _embed_db = Path(_raw_embed_db).expanduser() if _raw_embed_db else embeddings_db_path()
     # --refs forces local (file content never rides the wire); else delegate and
     # reconstruct the SearchView, indistinguishable from local execution.
-    if not args.refs and _can_delegate_to_serve(args, db=db, embed_db=_embed_db):
+    if not args.refs and _can_delegate_to_serve(args, db=db):
         from siftd.serve.client import ServeRequest4xx
         from siftd.serve.delegation import print_serve_4xx, try_serve
         try:
@@ -501,34 +482,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
         from siftd.output.painted_bridge import emit_output
 
         emit_output(output)
-
-    return 0
-
-
-def _search_build_index(db: Path, embed_db: Path, *, rebuild: bool, backend_name: str | None, verbose: bool) -> int:
-    """Build or incrementally update the embeddings index."""
-    from siftd.api import IncrementalCompatError, build_index
-
-    try:
-        result = build_index(
-            db_path=db,
-            embed_db_path=embed_db,
-            rebuild=rebuild,
-            backend=backend_name,
-            verbose=verbose,
-        )
-    except FileNotFoundError as e:
-        status.error(str(e), hint="Run 'siftd ingest' to create it.")
-        return 1
-    except IncrementalCompatError as e:
-        status.error(str(e))
-        return 1
-    except RuntimeError as e:
-        status.error(str(e))
-        return 1
-
-    if result["chunks_added"] == 0 and verbose:
-        status.confirm(f"Index is up to date. ({result['total_chunks']} chunks)")
 
     return 0
 
@@ -648,17 +601,23 @@ examples:
     scope_group.add_argument("--no-exclude-active", action="store_true", help="Include results from active sessions (excluded by default)")
     scope_group.add_argument("--include-derivative", action="store_true", help="Include derivative conversations (siftd search/query results)")
 
-    # Index management
-    index_group = p_search.add_argument_group("index")
-    index_group.add_argument("--index", action="store_true", help="Build/update embeddings index")
-    index_group.add_argument("--rebuild", action="store_true", help="Rebuild embeddings index from scratch")
-    index_group.add_argument("--backend", metavar="NAME", help="Embedding backend (ollama, fastembed)")
-    index_group.add_argument("--embed-db", metavar="PATH", help="Alternate embeddings database path")
+    # Index management moved to `siftd embed`. --index/--rebuild/--backend/--embed-db are
+    # no longer flags here; parse_known_args routes them to _search_unknown_hint below,
+    # which redirects to the new command (the --context→--around removal precedent).
 
     def _search_unknown_hint(unknowns):
-        # Both "--context 2" (two tokens) and "--context=2" (one token) must match.
-        if any(u == "--context" or u.startswith("--context=") for u in unknowns):
+        # Both "--flag value" (two tokens) and "--flag=value" (one token) must match.
+        def _seen(flag: str) -> bool:
+            return any(u == flag or u.startswith(f"{flag}=") for u in unknowns)
+
+        if _seen("--context"):
             return "note: --context N was removed in v0.9.x. Use --around PHRASE --turns -N:+N instead."
+        if any(_seen(f) for f in ("--index", "--rebuild", "--backend", "--embed-db")):
+            return (
+                "note: index management moved to 'siftd embed'. "
+                "Use 'siftd embed' (incremental) or 'siftd embed --rebuild'; "
+                "the backend is set by config (embed.backend)."
+            )
         return None
 
     p_search.set_defaults(func=cmd_search, _unknown_hint=_search_unknown_hint)

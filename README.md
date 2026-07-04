@@ -126,7 +126,7 @@ Install the embedding extra to upgrade `siftd search` to hybrid mode — same co
 
 ```bash
 pip install siftd[embed]
-siftd search --index    # build embeddings (runs locally, no API calls)
+siftd embed    # build embeddings (runs locally, no API calls)
 ```
 
 Now the same command finds by meaning:

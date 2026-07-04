@@ -856,14 +856,37 @@ class TestDataDirectBranches:
         assert "FTS index rebuilt" in data_cli._fix_rebuild_fts(object(), Path("/d"))
 
         monkeypatch.setattr("siftd.api.search.build_index", lambda **k: {"chunks_added": 3})
-        assert "3 chunk" in data_cli._fix_search_index(object(), Path("/d"))
-        assert "3 chunk" in data_cli._fix_search_rebuild(object(), Path("/d"))
+        assert "3 chunk" in data_cli._fix_embed(object(), Path("/d"))
+        assert "3 chunk" in data_cli._fix_embed_rebuild(object(), Path("/d"))
 
         monkeypatch.setattr("siftd.api.migrations.backfill_git_remotes", lambda conn: {"updated": 5})
         assert "5 workspace" in data_cli._fix_backfill_git_remote(object(), Path("/d"))
 
         monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (7, 8))
         assert "7 session" in data_cli._fix_pending_tags(object(), Path("/d"))
+
+    def test_doctor_fix_dispatches_embed_through_registry(self, test_db, monkeypatch, capsys):
+        """Integration: a cached 'siftd embed' finding resolves through _FIX_REGISTRY and
+        actually invokes the embed fixer (not just the function tested in isolation)."""
+        monkeypatch.setattr(
+            "siftd.doctor.fixes.load_findings_cache",
+            lambda: [{"fix_command": "siftd embed", "check": "embeddings_stale", "message": "x"}],
+        )
+        monkeypatch.setattr("siftd.doctor.fixes.clear_findings_cache", lambda: None)
+
+        called = {}
+
+        def fake_build_index(**kwargs):
+            called.update(kwargs)
+            return {"chunks_added": 4}
+
+        monkeypatch.setattr("siftd.api.search.build_index", fake_build_index)
+
+        rc = data_cli._doctor_fix(SimpleNamespace(db=str(test_db)))
+        assert rc == 0
+        assert called, "the 'siftd embed' fixer must run through _FIX_REGISTRY"
+        assert called.get("rebuild") is False
+        assert Path(called["db_path"]) == Path(test_db)
 
     def test_doctor_run_json_plain_and_painted_error_paths(self, test_db, monkeypatch):
         args = SimpleNamespace(db=str(test_db), json=False, strict=False)

@@ -1072,14 +1072,14 @@ def _fix_rebuild_fts(conn, db_path):
     return "FTS index rebuilt"
 
 
-def _fix_search_index(conn, db_path):
+def _fix_embed(conn, db_path):
     from siftd.api.search import build_index
 
     result = build_index(db_path=db_path, rebuild=False)
     return f"{result.get('chunks_added', 0)} chunk(s) indexed"
 
 
-def _fix_search_rebuild(conn, db_path):
+def _fix_embed_rebuild(conn, db_path):
     from siftd.api.search import build_index
 
     result = build_index(db_path=db_path, rebuild=True)
@@ -1128,8 +1128,8 @@ def _fix_blob_triggers(conn, db_path):
 _FIX_REGISTRY = {
     "siftd ingest": ("Ingesting new files", _fix_ingest),
     "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
-    "siftd search --index": ("Indexing embeddings", _fix_search_index),
-    "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
+    "siftd embed": ("Indexing embeddings", _fix_embed),
+    "siftd embed --rebuild": ("Rebuilding embeddings index", _fix_embed_rebuild),
     "siftd backfill --git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),

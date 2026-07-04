@@ -350,7 +350,6 @@ def hybrid_search(
     no_tag: list[str] | None = None,
     tag_kind: list[str] | None = None,
     include_derivative: bool = False,
-    backend: str | None = None,
     exclude_active: bool = True,
     rerank: str = "mmr",
     lambda_: float = 0.7,
@@ -377,7 +376,6 @@ def hybrid_search(
         all_tags: AND filter — conversations with all of these tags.
         no_tag: NOT filter — exclude conversations with any of these tags.
         include_derivative: Include derivative conversations (default False).
-        backend: Preferred embedding backend name (transitional --backend override).
         exclude_active: Auto-exclude conversations from active sessions (default True).
         rerank: Reranking strategy — "mmr" for diversity or "relevance" for pure similarity.
         lambda_: MMR balance between relevance (1.0) and diversity (0.0). Default 0.7.
@@ -556,7 +554,7 @@ def hybrid_search(
 
     # Embed query and search
     use_mmr = rerank == "mmr"
-    embed_backend = get_backend(preferred=backend, verbose=False)
+    embed_backend = get_backend(verbose=False)
     try:
         query_embedding = embed_backend.embed_query(q)
     except (RuntimeError, ConnectionError, OSError):
@@ -565,7 +563,7 @@ def hybrid_search(
         from siftd.embeddings.base import invalidate_backend_cache
 
         invalidate_backend_cache()
-        embed_backend = get_backend(preferred=backend, verbose=False)
+        embed_backend = get_backend(verbose=False)
         query_embedding = embed_backend.embed_query(q)
 
     # Fetch wider candidate set for MMR to select from

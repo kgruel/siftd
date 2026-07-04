@@ -51,7 +51,6 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsC
 
         try:
             _create_schema(conn)
-            _migrate(conn)
         except Exception:
             conn.close()
             raise
@@ -60,16 +59,23 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsC
 
 
 def _create_schema(conn: sqlite3.Connection) -> None:
-    """Create the embeddings schema."""
+    """Create the embeddings schema (v2).
+
+    Derived data: there is no ALTER migration. A v1 (or version-less) index is
+    detected on read/build and rebuilt from scratch — see
+    ``embeddings.indexer._validate_incremental_compat`` and ``validate_index_compat``.
+    ``CREATE TABLE IF NOT EXISTS`` on a v1 file only adds the missing ``indexed_state``
+    table (empty); the version check still forces the rebuild.
+    """
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS chunks (
             id TEXT PRIMARY KEY,
             conversation_id TEXT NOT NULL,
-            chunk_type TEXT NOT NULL,  -- 'exchange'
+            chunk_type TEXT NOT NULL,  -- 'exchange' | 'tool_summary'
             text TEXT NOT NULL,
             embedding BLOB,
             token_count INTEGER,
-            source_ids TEXT,  -- JSON array of prompt IDs in this chunk
+            source_ids TEXT,  -- JSON array of constituent event IDs (prompt + response)
             created_at TEXT NOT NULL
         );
 
@@ -83,16 +89,18 @@ def _create_schema(conn: sqlite3.Connection) -> None:
             key TEXT PRIMARY KEY,
             value TEXT NOT NULL
         );
+
+        -- Per-conversation staleness state (schema v2). The fingerprint lets the
+        -- indexer detect appends to an already-indexed conversation (the v1 append
+        -- bug: any chunk row marked a conversation permanently "indexed").
+        CREATE TABLE IF NOT EXISTS indexed_state (
+            conversation_id TEXT PRIMARY KEY,
+            fingerprint TEXT,
+            chunk_count INTEGER,
+            indexed_at TEXT
+        );
     """)
     conn.commit()
-
-
-def _migrate(conn: sqlite3.Connection) -> None:
-    """Add columns introduced after initial schema."""
-    cols = {row[1] for row in conn.execute("PRAGMA table_info(chunks)").fetchall()}
-    if "source_ids" not in cols:
-        conn.execute("ALTER TABLE chunks ADD COLUMN source_ids TEXT")
-        conn.commit()
 
 
 def store_chunk(
@@ -131,9 +139,113 @@ def get_indexed_conversation_ids(conn: sqlite3.Connection) -> set[str]:
     return {row["conversation_id"] for row in cur.fetchall()}
 
 
+def _has_table(conn: sqlite3.Connection, name: str) -> bool:
+    return (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+        ).fetchone()
+        is not None
+    )
+
+
+def get_indexed_state(conn: sqlite3.Connection) -> dict[str, tuple[str | None, int]]:
+    """Return ``{conversation_id: (fingerprint, chunk_count)}`` from indexed_state.
+
+    Empty when the table is absent (a v1 index that predates schema v2), so a
+    consumer treats every conversation as un-indexed and forces a rebuild.
+    """
+    if not _has_table(conn, "indexed_state"):
+        return {}
+    return {
+        row["conversation_id"]: (row["fingerprint"], row["chunk_count"] or 0)
+        for row in conn.execute(
+            "SELECT conversation_id, fingerprint, chunk_count FROM indexed_state"
+        ).fetchall()
+    }
+
+
+def get_indexed_state_ids(conn: sqlite3.Connection) -> set[str]:
+    """Return the conversation IDs recorded as indexed in ``indexed_state``.
+
+    Distinct from :func:`get_indexed_conversation_ids` (which reads ``chunks``): a
+    conversation counts as indexed only once its ``indexed_state`` row is written —
+    the marker the fingerprint lifecycle sets after a conversation is fully stored.
+    Empty when the table is absent (v1 index).
+    """
+    if not _has_table(conn, "indexed_state"):
+        return set()
+    return {
+        row["conversation_id"]
+        for row in conn.execute("SELECT conversation_id FROM indexed_state").fetchall()
+    }
+
+
+def upsert_indexed_state(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    fingerprint: str,
+    chunk_count: int,
+    *,
+    commit: bool = False,
+) -> None:
+    """Record (or refresh) a conversation's indexed fingerprint + chunk count."""
+    indexed_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    conn.execute(
+        "INSERT OR REPLACE INTO indexed_state "
+        "(conversation_id, fingerprint, chunk_count, indexed_at) VALUES (?, ?, ?, ?)",
+        (conversation_id, fingerprint, chunk_count, indexed_at),
+    )
+    if commit:
+        conn.commit()
+
+
+def delete_conversations(
+    conn: sqlite3.Connection, conversation_ids: set[str], *, commit: bool = False
+) -> int:
+    """Delete chunks + indexed_state for the given conversations (batched).
+
+    The single sweep the incremental indexer runs before re-indexing changed
+    conversations and pruning removed ones. Returns the number of chunk rows deleted.
+    A brand-new conversation (no chunks yet) is a harmless no-op.
+    """
+    if not conversation_ids:
+        return 0
+    deleted = batched_execute(
+        conn, "DELETE FROM chunks WHERE conversation_id IN ({placeholders})", conversation_ids
+    )
+    if _has_table(conn, "indexed_state"):
+        batched_execute(
+            conn,
+            "DELETE FROM indexed_state WHERE conversation_id IN ({placeholders})",
+            conversation_ids,
+        )
+    if commit:
+        conn.commit()
+    if deleted:
+        _embedding_cache.invalidate()
+    return deleted
+
+
+def chunk_counts_by_type(conn: sqlite3.Connection) -> dict[str, int]:
+    """Return chunk counts grouped by ``chunk_type`` (e.g. exchange, tool_summary)."""
+    return {
+        row["chunk_type"]: row["cnt"]
+        for row in conn.execute(
+            "SELECT chunk_type, COUNT(*) AS cnt FROM chunks GROUP BY chunk_type"
+        ).fetchall()
+    }
+
+
 def clear_all(conn: sqlite3.Connection) -> None:
-    """Drop and recreate chunks table (for full rebuild)."""
+    """Drop chunks, index_meta, and indexed_state, then recreate (full rebuild).
+
+    A rebuild starts from a clean slate: stale identity metadata and per-conversation
+    state must not survive, or an interrupted rebuild could leave the index describing
+    a backend it no longer holds.
+    """
     conn.execute("DROP TABLE IF EXISTS chunks")
+    conn.execute("DROP TABLE IF EXISTS index_meta")
+    conn.execute("DROP TABLE IF EXISTS indexed_state")
     _create_schema(conn)
     conn.commit()
     _embedding_cache.invalidate()
@@ -305,7 +417,7 @@ def search_similar(
     if len(query_embedding) != embedding_dim:
         raise ValueError(
             f"Query embedding dimension ({len(query_embedding)}) does not match index dimension ({embedding_dim}). "
-            f"Rebuild the index with 'siftd search --rebuild' using the same embedding backend."
+            f"Rebuild the index with 'siftd embed --rebuild' using the same embedding backend."
         )
 
     # Filter to candidate conversation IDs if provided
@@ -425,37 +537,47 @@ def validate_index_compat(
         IndexCompatError: If metadata indicates incompatibility with actionable message.
 
     Note:
-        Missing metadata keys (pre-versioning indexes) are allowed with warning-level
-        degradation — dimension validation still applies via search_similar().
+        The active backend is config-driven (``embed.backend``), so remediations name
+        a config change (or a rebuild) rather than a search flag. A version-less index
+        is a v1 (pre-schema-v2) index and is treated as rebuild-required.
     """
+    # An empty index (no chunks) has nothing to be incompatible with: a freshly
+    # created v2 DB carries no metadata yet (backend identity + schema_version are
+    # written at build time, not schema-creation time). Only a *populated* index is
+    # validated — a populated version-less index is the real v1 → rebuild.
+    chunk_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    if chunk_count == 0:
+        return
+
     stored_backend = get_meta(conn, "backend")
     stored_model = get_meta(conn, "model")
     stored_dimension = get_meta(conn, "dimension")
     stored_schema = get_meta(conn, "schema_version")
 
-    # Schema version mismatch
-    if stored_schema is not None:
-        stored_ver = int(stored_schema)
-        if stored_ver != current_schema_version:
-            raise IndexCompatError(
-                f"Index schema outdated.\n\n"
-                f"  Index schema version:   {stored_ver}\n"
-                f"  Current schema version: {current_schema_version}\n\n"
-                f"Rebuild required to upgrade index format:\n"
-                f"  siftd search --rebuild"
-            )
+    # Schema version mismatch — a v1 (or version-less) index is derived data with no
+    # migration path; rebuild is the only remediation.
+    if stored_schema is None or int(stored_schema) != current_schema_version:
+        stored_ver = stored_schema or "1 (pre-versioning)"
+        raise IndexCompatError(
+            f"Embeddings index needs rebuilding.\n\n"
+            f"  Index schema version:   {stored_ver}\n"
+            f"  Current schema version: {current_schema_version}\n\n"
+            f"The index format changed; embeddings are derived data (no migration):\n"
+            f"  siftd embed --rebuild"
+        )
 
-    # Backend mismatch
+    # Backend mismatch — the active backend is config, so the fix is a config change
+    # (point embed.backend back at the stored backend) or a rebuild.
     if stored_backend is not None and stored_backend != backend_name:
         stored_model_display = f" ({stored_model})" if stored_model else ""
         raise IndexCompatError(
             f"Embedding backend mismatch.\n\n"
             f"  Index backend:    {stored_backend}{stored_model_display}\n"
             f"  Current backend:  {backend_name} ({backend_model})\n\n"
-            f"To search with the existing index:\n"
-            f"  siftd search --backend {stored_backend} \"<query>\"\n\n"
-            f"To rebuild with the current backend:\n"
-            f"  siftd search --rebuild"
+            f"To search the existing index, restore the matching backend in config:\n"
+            f"  embed.backend = {config_backend_name(stored_backend)}\n\n"
+            f"Or rebuild with the current backend:\n"
+            f"  siftd embed --rebuild"
         )
 
     # Model mismatch (same backend, different model)
@@ -465,8 +587,8 @@ def validate_index_compat(
             f"Embedding model mismatch.\n\n"
             f"  Index model:    {stored_model} ({stored_dim} dims)\n"
             f"  Current model:  {backend_model} ({backend_dimension} dims)\n\n"
-            f"Rebuild required — different models produce incompatible embeddings:\n"
-            f"  siftd search --rebuild"
+            f"Different models produce incompatible embeddings; rebuild to switch:\n"
+            f"  siftd embed --rebuild"
         )
 
     # Dimension mismatch (covers cases where model isn't stored but dimensions differ)
@@ -480,9 +602,20 @@ def validate_index_compat(
                 f"  Index dimension:   {stored_dim} ({stored_backend_display}/{stored_model_display})\n"
                 f"  Current backend:   {backend_dimension} ({backend_name}/{backend_model})\n\n"
                 f"The index was built with a different embedding model. To search:\n"
-                f"  1. Use the same backend:   siftd search --backend {stored_backend_display} \"<query>\"\n"
-                f"  2. Or rebuild the index:   siftd search --rebuild"
+                f"  1. Restore the matching backend:  embed.backend = {config_backend_name(stored_backend_display)}\n"
+                f"  2. Or rebuild the index:          siftd embed --rebuild"
             )
+
+
+def config_backend_name(stored_backend: str | None) -> str:
+    """Turn a stored backend name into the value the user would set in config.
+
+    Stored names carry the ``remote:`` prefix (e.g. ``remote:voyage``); ``embed.backend``
+    takes the bare preset name (``voyage``). ``fastembed`` and unknown names pass through.
+    """
+    if stored_backend and stored_backend.startswith("remote:"):
+        return stored_backend[len("remote:"):]
+    return stored_backend or "<backend>"
 
 
 def prune_orphaned_chunks(

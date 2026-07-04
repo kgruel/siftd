@@ -107,6 +107,18 @@ def make_search_args(**kwargs):
     return argparse.Namespace(**defaults)
 
 
+@pytest.fixture(autouse=True)
+def _route_embed_db(monkeypatch, tmp_path):
+    """Route embeddings_db_path() at tmp_path/embeddings.db (the fixtures' embed path).
+
+    `siftd search` dropped `--embed-db`; the built index is wired in by pointing
+    embeddings_db_path() at it, the resolution the real command uses.
+    """
+    p = tmp_path / "embeddings.db"
+    monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: p)
+    monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: p)
+
+
 class TestNoEmbeddingsInstalled:
     """Tests when embeddings are NOT installed (mocked)."""
 
@@ -171,7 +183,7 @@ class TestNoEmbeddingsInstalled:
         captured = capsys.readouterr()
 
         assert result == 1
-        assert "requires the [embed] extra" in captured.err
+        assert "requires an embedding backend" in captured.err
         assert "siftd install embed" in captured.err
 
 
@@ -477,10 +489,9 @@ class TestAutoSelectionHints:
 
         assert result == 0
         # The embeddings-stale caveat surfaces both the "not indexed" note and its
-        # remediation (the caveat's fix_command, rendered as a "↳ siftd search
-        # --index" hint by status.caveats) on stderr.
+        # remediation (the caveat's fix_command, rendered as a "↳ siftd embed" hint by status.caveats) on stderr.
         assert "not indexed" in captured.err
-        assert "siftd search --index" in captured.err
+        assert "siftd embed" in captured.err
 
     def test_deps_not_installed_shows_install_hint(self, fts_db, capsys, monkeypatch):
         """When deps not installed, hints at installing."""
@@ -609,7 +620,7 @@ class TestFtsOnlyDelegation:
 
         captured_ops: list = []
 
-        def mock_can_delegate(a, *, db, embed_db):
+        def mock_can_delegate(a, *, db):
             return True
 
         def mock_try_serve(op):

@@ -292,7 +292,7 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].severity == "info"
         assert "not found" in findings[0].message
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "siftd search --index"
+        assert findings[0].fix_command == "siftd embed"
 
     def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""

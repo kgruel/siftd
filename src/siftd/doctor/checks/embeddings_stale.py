@@ -24,7 +24,7 @@ class EmbeddingsStaleCheck:
                     severity="info",
                     message="Embeddings database not found (not yet created)",
                     fix_available=True,
-                    fix_command="siftd search --index",
+                    fix_command="siftd embed",
                 )
             ]
 
@@ -34,9 +34,12 @@ class EmbeddingsStaleCheck:
         cur = conn.execute("SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'")
         main_ids = {row[0] for row in cur.fetchall()}
 
-        from siftd.storage.embeddings import get_indexed_conversation_ids
+        # indexed_state markers (fully-indexed conversations), not chunk presence: an
+        # empty conversation still counts as indexed, and a v1 index reads as empty
+        # (forcing the rebuild the compat check separately flags).
+        from siftd.storage.embeddings import get_indexed_state_ids
 
-        indexed_ids = get_indexed_conversation_ids(embed_conn)
+        indexed_ids = get_indexed_state_ids(embed_conn)
         stale_ids = main_ids - indexed_ids
 
         if stale_ids:
@@ -46,7 +49,7 @@ class EmbeddingsStaleCheck:
                     severity="info",
                     message=f"{len(stale_ids)} conversation(s) not indexed in embeddings",
                     fix_available=True,
-                    fix_command="siftd search --index",
+                    fix_command="siftd embed",
                     context={"count": len(stale_ids)},
                 )
             ]

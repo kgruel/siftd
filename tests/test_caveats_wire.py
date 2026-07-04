@@ -25,7 +25,7 @@ def test_roundtrip_preserves_all_fields():
     findings = [
         Finding(check="embeddings-stale", severity="warning",
                 message="3 conversations not indexed", fix_available=True,
-                fix_command="siftd search --index", context={"count": 3}),
+                fix_command="siftd embed", context={"count": 3}),
         Finding(check="fresh-corpus", severity="info",
                 message="Corpus contains 2 conversations", fix_available=False,
                 context={"total": 2}, target=None),

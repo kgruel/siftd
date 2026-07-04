@@ -43,11 +43,29 @@ def test_list_ids_build_index_and_fts_mode(monkeypatch, tmp_path):
         require_embeddings=lambda *_a, **_k: None,
     )
     fake_indexer = SimpleNamespace(
-        build_embeddings_index=lambda **k: SimpleNamespace(chunks_added=2, total_chunks=3),
+        build_embeddings_index=lambda **k: SimpleNamespace(
+            chunks_added=2,
+            chunks_removed=1,
+            conversations_indexed=4,
+            conversations_pruned=0,
+            total_chunks=3,
+            backend_name="fastembed",
+            model="bge",
+            dimension=384,
+        ),
     )
     monkeypatch.setitem(sys.modules, "siftd.embeddings", fake_embeddings_api)
     monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", fake_indexer)
-    assert api_search.build_index(db_path=tmp_path / "db") == {"chunks_added": 2, "total_chunks": 3}
+    assert api_search.build_index(db_path=tmp_path / "db") == {
+        "chunks_added": 2,
+        "chunks_removed": 1,
+        "conversations_indexed": 4,
+        "conversations_pruned": 0,
+        "total_chunks": 3,
+        "backend_name": "fastembed",
+        "model": "bge",
+        "dimension": 384,
+    }
 
     fake_search = SimpleNamespace(
         resolve_candidates=lambda *a, **k: {"keep"},

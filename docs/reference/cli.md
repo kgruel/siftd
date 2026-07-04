@@ -13,7 +13,7 @@ lanes:
   EXPLORE   query · search · show · report · peek
   CURATE    tag · export
   INGEST    ingest · adapters
-  MAINTAIN  doctor · db
+  MAINTAIN  doctor · db · embed
   SHARE     serve · auth
   SETUP     install · config
 

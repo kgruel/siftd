@@ -9,6 +9,7 @@ from siftd.cli._common import _get_version
 from siftd.cli.auth import build_auth_parser
 from siftd.cli.data import build_data_parser
 from siftd.cli.db import build_db_parser
+from siftd.cli.embed import build_embed_parser
 from siftd.cli.export import build_export_parser
 from siftd.cli.id_cmd import build_id_parser
 from siftd.cli.install import build_install_parser
@@ -82,7 +83,7 @@ _LANES: tuple[tuple[str, str], ...] = (
     ("EXPLORE", "query search show report peek"),
     ("CURATE", "tag export"),
     ("INGEST", "ingest adapters"),
-    ("MAINTAIN", "doctor db"),
+    ("MAINTAIN", "doctor db embed"),
     ("SHARE", "serve auth"),
     ("SETUP", "install config"),
 )
@@ -279,6 +280,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_show_parser(subparsers)
     build_report_parser(subparsers)
     build_search_parser(subparsers)
+    build_embed_parser(subparsers)
     build_peek_parser(subparsers)
     build_tags_parser(subparsers)
     build_export_parser(subparsers)

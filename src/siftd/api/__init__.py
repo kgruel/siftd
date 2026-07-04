@@ -160,6 +160,7 @@ from siftd.api.tags import (
 _LAZY_SEARCH_NAMES = {
     "ConversationScore",
     "ConversationSearchSummary",
+    "EmbedIndexStatus",
     "IncrementalCompatError",
     "IndexCompatError",
     "ScoreBreakdown",
@@ -168,6 +169,7 @@ _LAZY_SEARCH_NAMES = {
     "SearchView",
     "aggregate_by_conversation",
     "build_index",
+    "embed_status",
     "compute_thread_tiers",
     "enrich_around_window",
     "enrich_context_window",
@@ -288,6 +290,7 @@ __all__ = [
     "ScoreBreakdown",
     "ConversationSearchSummary",
     "ConversationScore",
+    "EmbedIndexStatus",
     "IndexCompatError",
     "IncrementalCompatError",
     "search_chunks",
@@ -307,6 +310,7 @@ __all__ = [
     "embeddings_available",
     "first_mention",
     "build_index",
+    "embed_status",
     # stats
     "HealthStatus",
     "CostCoverage",

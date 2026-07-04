@@ -754,7 +754,6 @@ Unified search pipeline — FTS5, semantic, or hybrid.
 - `n`: Desired result count after all processing.
 - `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
 - `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
-- `backend`: Preferred embedding backend name (transitional --backend override).
 
 **Returns:** List of SearchChunk results.
 
@@ -875,10 +874,10 @@ def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[di
 
 ### build_index
 
-Build or update the embeddings index.
+Build or incrementally update the embeddings index.
 
 ```python
-def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., backend: str | None = ..., verbose: bool = ...) -> dict
+def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., verbose: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -886,15 +885,23 @@ def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Pa
 - `db_path`: Path to main database. Uses default if not specified.
 - `embed_db_path`: Path to embeddings database. Uses default if not specified.
 - `rebuild`: If True, clear and rebuild from scratch.
-- `backend`: Preferred embedding backend name.
 
-**Returns:** Dict with 'chunks_added' and 'total_chunks' counts.
+**Returns:** Dict with add/remove counts and backend identity.
 
 **Raises:**
 
 - `FileNotFoundError`: If main database doesn't exist.
+- `IncrementalCompatError`: If an incremental build can't proceed.
 - `RuntimeError`: If no embedding backend is available.
-- `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
+- `EmbeddingsNotAvailable`: If no embedding backend is configured/installed.
+
+### embed_status
+
+Return an :class:`EmbedIndexStatus` for ``siftd embed --status``.
+
+```python
+def embed_status(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ...)
+```
 
 ## Stats
 
@@ -1338,6 +1345,32 @@ Result metadata for an ingest API run.
 | `elapsed_ms` | `int` |  |
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
 
+### EmbedIndexStatus
+
+Snapshot for ``siftd embed --status`` — configured backend + built-index stats.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `configured_backend` | `str \| None` |  |
+| `configured_usable` | `bool` |  |
+| `configured_reason` | `str` |  |
+| `index_exists` | `bool` |  |
+| `needs_rebuild` | `bool` |  |
+| `stored_backend` | `str \| None` |  |
+| `stored_model` | `str \| None` |  |
+| `stored_dimension` | `int \| None` |  |
+| `schema_version` | `int \| None` |  |
+| `strategy` | `str \| None` |  |
+| `built_at` | `str \| None` |  |
+| `total_chunks` | `int` |  |
+| `backend_mismatch` | `bool` |  |
+| `stored_backend_config` | `str \| None` |  |
+| `chunk_counts` | `dict[str, int]` |  |
+| `conversations_indexed` | `int` |  |
+| `conversations_total` | `int` |  |
+| `conversations_stale` | `int` |  |
+| `db_size_bytes` | `int` |  |
+
 ### HealthStatus
 
 Serve health payload.
@@ -1403,7 +1436,7 @@ Raised when index metadata is incompatible with current backend configuration.
 
 #### IncrementalCompatError
 
-Raised when incremental indexing would mix incompatible backends.
+Raised when an incremental build cannot proceed against the existing index.
 
 #### SyncError
 

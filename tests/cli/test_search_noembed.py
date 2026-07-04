@@ -5,14 +5,27 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from siftd.cli.search import (
     _can_delegate_to_serve,
     _print_empty_json_results,
-    _search_build_index,
     _search_fts_only,
     cmd_search,
 )
 from siftd.domain.search_types import SearchView
+
+
+@pytest.fixture(autouse=True)
+def _route_embed_db(monkeypatch, tmp_path):
+    """Point embeddings_db_path() at tmp_path/embed.db for the whole module.
+
+    `siftd search` no longer takes `--embed-db`, so tests toggle "has embeddings" by
+    creating (or not) tmp_path/"embed.db" — the path this fixture resolves to.
+    """
+    p = tmp_path / "embed.db"
+    monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: p)
+    monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: p)
 
 
 def make_args(**kwargs):
@@ -78,18 +91,23 @@ def test_search_json_refs_rejected(test_db, capsys):
     assert "--refs is not supported with --json" in capsys.readouterr().err
 
 
-def test_search_index_requires_embeddings(test_db, monkeypatch, capsys):
-    monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
-    args = make_args(db=str(test_db), index=True)
-    assert cmd_search(args) == 1
-    assert "requires the [embed] extra" in capsys.readouterr().err
+def test_search_removed_index_flags_redirect_to_embed(capsys):
+    """--index/--rebuild/--backend/--embed-db were removed from search → redirect hint."""
+    from siftd.cli import main
+
+    for flag in ("--index", "--rebuild", "--backend", "--embed-db"):
+        with pytest.raises(SystemExit) as exc:
+            main(["search", flag] if flag in ("--index", "--rebuild") else ["search", flag, "x"])
+        assert exc.value.code == 2
+        err = capsys.readouterr().err
+        assert "siftd embed" in err
 
 
 def test_search_semantic_requires_embeddings(test_db, monkeypatch, capsys):
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: False)
     args = make_args(query=["x"], db=str(test_db), mode="semantic")
     assert cmd_search(args) == 1
-    assert "requires the [embed] extra" in capsys.readouterr().err
+    assert "requires an embedding backend" in capsys.readouterr().err
 
 
 def test_search_falls_back_to_fts_mode(test_db, monkeypatch, capsys):
@@ -119,15 +137,12 @@ def test_print_empty_json_results_dict_and_str(monkeypatch, capsys, tmp_path):
 
 def test_can_delegate_to_serve(monkeypatch, tmp_path):
     db = tmp_path / "db.sqlite"
-    embed = tmp_path / "embed.sqlite"
+    # Delegation now hinges only on can_delegate(db=...); the embed-db override guard
+    # is gone (no `--embed-db` on search).
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
-    monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: embed)
-    assert _can_delegate_to_serve(make_args(embed_db=None), db=db, embed_db=embed)
-    assert not _can_delegate_to_serve(
-        make_args(embed_db=str(tmp_path / "other.db")),
-        db=db,
-        embed_db=tmp_path / "actual-other-embed.db",
-    )
+    assert _can_delegate_to_serve(make_args(), db=db)
+    monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: False)
+    assert not _can_delegate_to_serve(make_args(), db=db)
 
 
 def test_api_metadata_aggregate_and_tiers():
@@ -181,34 +196,6 @@ def test_enrich_exchanges(monkeypatch):
     assert chunks[0].exchanges == [("p2", "p", "r")]
     assert chunks[1].exchanges is sentinel
 
-
-
-def test_search_build_index_error_paths(monkeypatch, tmp_path, capsys):
-    db = tmp_path / "db.sqlite"
-    embed = tmp_path / "embed.sqlite"
-
-    class _IncErr(RuntimeError):
-        pass
-
-    # Avoid importing real embeddings.indexer in this no-embed test
-    monkeypatch.setitem(
-        __import__("sys").modules,
-        "siftd.embeddings.indexer",
-        SimpleNamespace(IncrementalCompatError=_IncErr),
-    )
-
-    monkeypatch.setattr("siftd.api.build_index", lambda **k: (_ for _ in ()).throw(FileNotFoundError("missing")))
-    assert _search_build_index(db, embed, rebuild=False, backend_name=None, verbose=True) == 1
-
-    monkeypatch.setattr("siftd.api.build_index", lambda **k: (_ for _ in ()).throw(_IncErr("bad")))
-    assert _search_build_index(db, embed, rebuild=False, backend_name=None, verbose=True) == 1
-
-    monkeypatch.setattr("siftd.api.build_index", lambda **k: (_ for _ in ()).throw(RuntimeError("oops")))
-    assert _search_build_index(db, embed, rebuild=False, backend_name=None, verbose=True) == 1
-
-    monkeypatch.setattr("siftd.api.build_index", lambda **k: {"chunks_added": 0, "total_chunks": 7})
-    assert _search_build_index(db, embed, rebuild=False, backend_name=None, verbose=True) == 0
-    assert "up to date" in capsys.readouterr().out
 
 
 def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):
@@ -356,7 +343,7 @@ def test_cmd_search_threads_tool_filters(test_db, monkeypatch):
 def test_misc_remaining_helper_branches(monkeypatch):
     # _can_delegate_to_serve: can_delegate False
     monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: False)
-    assert not _can_delegate_to_serve(make_args(), db=Path("/x"), embed_db=Path("/y"))
+    assert not _can_delegate_to_serve(make_args(), db=Path("/x"))
 
     # enrich_search_metadata: empty conv list early return (no query issued)
     from siftd.api.search import enrich_search_metadata
@@ -369,16 +356,12 @@ def test_misc_remaining_helper_branches(monkeypatch):
 
 
 
-def test_cmd_search_index_semantic_and_output_edges(test_db, tmp_path, monkeypatch, capsys):
+def test_cmd_search_semantic_and_output_edges(test_db, tmp_path, monkeypatch, capsys):
     embed = tmp_path / "embed.db"
 
-    # line 207: index path delegates to _search_build_index
+    # semantic requested but embed db missing — human text on stderr so stdout
+    # stays clean for --json | jq (I15).
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
-    monkeypatch.setattr("siftd.cli.search._search_build_index", lambda *a, **k: 0)
-    assert cmd_search(make_args(db=str(test_db), index=True)) == 0
-
-    # lines 258-262: semantic requested but embed db missing — human text on
-    # stderr so stdout stays clean for --json | jq (I15).
     args = make_args(query=["x"], db=str(test_db), mode="semantic", embed_db=str(embed))
     assert cmd_search(args) == 1
     assert "No embeddings index found" in capsys.readouterr().err

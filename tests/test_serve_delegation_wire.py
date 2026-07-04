@@ -128,7 +128,6 @@ def test_to_wire_strips_local_paths_and_translates_fidelity():
             "tool_filter": None,            # dropped (None)
             "lambda_": 0.5,                  # renamed → lambda
             "db_path": Path("/tmp/x"),       # dropped (local-only)
-            "embed_db": Path("/tmp/e.db"),   # dropped (local-only)
             "around": "phrase",              # travels — search_view recipe param (Slice 4)
             "tool": "shell.execute",         # travels — candidate filter (Slice 3b)
             "tool_tag": "shell:test",        # travels — candidate filter (Slice 3b)
@@ -139,7 +138,6 @@ def test_to_wire_strips_local_paths_and_translates_fidelity():
     )
     q = op.to_wire()
     assert "db_path" not in q
-    assert "embed_db" not in q
     assert q["around"] == "phrase"  # around now travels on the wire (Slice 4)
     assert q["tool"] == "shell.execute"  # tool filter travels (Slice 3b)
     assert q["tool_tag"] == "shell:test"

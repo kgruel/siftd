@@ -184,39 +184,22 @@ def _build_remote(name: str, settings: _EmbedSettings) -> RemoteBackend:
     )
 
 
-def get_backend(preferred: str | None = None, verbose: bool = False) -> EmbeddingBackend:
-    """Return an embedding backend, or raise if none can be constructed.
+def get_backend(verbose: bool = False) -> EmbeddingBackend:
+    """Return the configured embedding backend, or raise if none can be constructed.
 
-    Normally config-driven (``resolve_backend``). ``preferred`` is a transitional explicit
-    override (the deprecated ``--backend`` flag) naming one backend directly; it is removed
-    with that flag in a later slice.
+    Config-driven only (``resolve_backend`` over ``[embed]``). There is no per-call
+    backend override — the backend is chosen by ``embed.backend`` and switching it is a
+    config change (then ``siftd embed --rebuild``), never a flag on search or embed.
     """
-    if preferred:
-        backend = _construct_named(preferred.strip().lower())
-    else:
-        backend = resolve_backend()
-        if backend is None:
-            from siftd.embeddings.availability import require_embeddings
+    backend = resolve_backend()
+    if backend is None:
+        from siftd.embeddings.availability import require_embeddings
 
-            require_embeddings("Semantic search")  # status-aware message; raises
-            raise EmbeddingConfigError("no embedding backend is configured")
+        require_embeddings("Semantic search")  # status-aware message; raises
+        raise EmbeddingConfigError("no embedding backend is configured")
     if verbose:
         print(f"Using embedding backend: {backend.name} ({backend.model})", file=sys.stderr)
     return backend
-
-
-def _construct_named(name: str) -> EmbeddingBackend:
-    """Build exactly the named backend, raising EmbeddingConfigError on failure."""
-    if name == "off":
-        raise EmbeddingConfigError("cannot construct backend \"off\"")
-    if name == "fastembed":
-        backend = _try_fastembed()
-        if backend is None:
-            raise EmbeddingConfigError(
-                "fastembed backend requires the [embed] extra; run `siftd install embed`"
-            )
-        return backend
-    return _build_remote(name, _read_embed_config())
 
 
 def invalidate_backend_cache() -> None:

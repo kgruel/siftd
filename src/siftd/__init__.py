@@ -37,6 +37,8 @@ _LAZY_SEARCH_NAMES = {
     "SearchView",
     "aggregate_by_conversation",
     "build_index",
+    "EmbedIndexStatus",
+    "embed_status",
     "compute_thread_tiers",
     "enrich_around_window",
     "enrich_context_window",
@@ -99,6 +101,8 @@ __all__ = [
     "search_view",
     "parse_turns_range",
     "build_index",
+    "embed_status",
+    "EmbedIndexStatus",
     # stats
     "DatabaseStats",
     "TableCounts",

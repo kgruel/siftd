@@ -130,17 +130,17 @@ def test_cache_keys_on_config(monkeypatch):
     assert voyage.name == "remote:voyage" and openai.name == "remote:openai"
 
 
-def test_get_backend_preferred_override(monkeypatch):
-    _cfg(monkeypatch, **{"embed.backend": "voyage", "embed.api_key": "k"})
-    # preferred wins over config, constructing exactly that backend.
-    b = base.get_backend(preferred="openai")
+def test_get_backend_is_config_driven(monkeypatch):
+    _cfg(monkeypatch, **{"embed.backend": "openai", "embed.api_key": "k"})
+    # Resolution reads config exactly — there is no override argument.
+    b = base.get_backend()
     assert b.name == "remote:openai"
 
 
-def test_get_backend_preferred_unknown_raises(monkeypatch):
-    _cfg(monkeypatch)
+def test_get_backend_unknown_config_raises(monkeypatch):
+    _cfg(monkeypatch, **{"embed.backend": "nonexistent_backend"})
     with pytest.raises(base.EmbeddingConfigError, match="not a known backend"):
-        base.get_backend(preferred="nonexistent_backend")
+        base.get_backend()
 
 
 def test_get_backend_none_raises_not_available(monkeypatch):

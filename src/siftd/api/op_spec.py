@@ -97,11 +97,12 @@ SPECS: dict[tuple[str, str], OpSpec] = {
     ),
     ("/api/v1/search", "GET"): OpSpec(
         local_excludes=_LOCAL_FN_EXCLUDE_SEARCH,
-        # ``db_path``/``embed_db`` are local-only filesystem paths; leaking them
-        # to the remote would expose host paths and the server ignores them.
-        # Unlike the common set, ``around`` is NOT excluded — it is a real
+        # ``db_path`` is a local-only filesystem path; leaking it to the remote would
+        # expose host paths and the server ignores it. ``embed_db``/``backend`` are gone
+        # from the search op (index management moved to `siftd embed`; the backend is
+        # config). Unlike the common set, ``around`` is NOT excluded — it is a real
         # ``search_view`` recipe param that must travel on the wire (Slice 4).
-        wire_excludes=frozenset({"db_path", "embed_db"}),
+        wire_excludes=frozenset({"db_path"}),
         wire_remaps={"lambda_": "lambda"},
     ),
     ("/api/v1/stats", "GET"): OpSpec(

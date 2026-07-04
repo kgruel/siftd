@@ -205,24 +205,13 @@ siftd search --no-exclude-active "current discussion"
 ```
 Active sessions are excluded by default to avoid self-referential results.
 
-**`--index`** — build/update embeddings index:
+**Index management lives in `siftd embed`** (not `siftd search`). The search backend is
+config-driven (`embed.backend`); there is no per-search backend override.
 ```bash
-siftd search --index
-```
-
-**`--rebuild`** — rebuild embeddings index from scratch:
-```bash
-siftd search --rebuild
-```
-
-**`--backend NAME`** — embedding backend (ollama, fastembed):
-```bash
-siftd search --backend ollama "error handling"
-```
-
-**`--embed-db PATH`** — alternate embeddings database path:
-```bash
-siftd search --embed-db /path/to/alt.db "query"
+siftd embed                      # build/update the embeddings index (incremental)
+siftd embed --rebuild            # rebuild from scratch
+siftd embed --status             # backend, coverage, staleness, size
+siftd embed --embed-db PATH      # alternate embeddings database path
 ```
 
 ## Composition examples

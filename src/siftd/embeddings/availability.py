@@ -14,11 +14,14 @@ from dataclasses import dataclass
 @dataclass(frozen=True)
 class EmbedStatus:
     """Resolved embedding availability. ``backend`` is the resolved name when usable
-    (e.g. "remote:voyage", "fastembed"), else None; ``reason`` is human-readable."""
+    (e.g. "remote:voyage", "fastembed"), else None; ``reason`` is human-readable.
+    ``model`` is the configured model name when usable (resolved without an ONNX load),
+    so callers can compare a built index against the current config cheaply."""
 
     backend: str | None
     usable: bool
     reason: str
+    model: str | None = None
 
 
 def _fastembed_importable() -> bool:
@@ -51,7 +54,14 @@ def embedding_status() -> EmbedStatus:
 
     if name in ("", "fastembed"):
         if _fastembed_importable():
-            return EmbedStatus("fastembed", True, "local fastembed backend installed")
+            from siftd.embeddings.fastembed_backend import _DEFAULT_MODEL
+
+            return EmbedStatus(
+                "fastembed",
+                True,
+                "local fastembed backend installed",
+                model=settings.model or _DEFAULT_MODEL,
+            )
         if name == "fastembed":
             return EmbedStatus(
                 None,
@@ -72,7 +82,7 @@ def embedding_status() -> EmbedStatus:
         backend = _build_remote(name, settings)
     except EmbeddingConfigError as e:
         return EmbedStatus(None, False, str(e))
-    return EmbedStatus(backend.name, True, f"remote backend ({backend.model})")
+    return EmbedStatus(backend.name, True, f"remote backend ({backend.model})", model=backend.model)
 
 
 def embeddings_available() -> bool:

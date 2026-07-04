@@ -30,7 +30,7 @@ from siftd.storage.queries import (
 
 if TYPE_CHECKING:
     from siftd.embeddings.base import EmbeddingBackend
-    from siftd.embeddings.indexer import IncrementalCompatError
+    from siftd.embeddings.indexer import EmbedIndexStatus, IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
@@ -41,6 +41,7 @@ _LAZY_IMPORTS = {
     "apply_temporal_weight": "siftd.search",
     "IndexCompatError": "siftd.storage.embeddings",
     "IncrementalCompatError": "siftd.embeddings.indexer",
+    "EmbedIndexStatus": "siftd.embeddings.indexer",
 }
 
 
@@ -87,6 +88,8 @@ __all__ = [
     "search_view",
     "parse_turns_range",
     "build_index",
+    "embed_status",
+    "EmbedIndexStatus",
     # Temporal weighting
     "apply_temporal_weight",
     "fetch_conversation_timestamps",
@@ -859,28 +862,27 @@ def build_index(
     db_path: Path | None = None,
     embed_db_path: Path | None = None,
     rebuild: bool = False,
-    backend: str | None = None,
     verbose: bool = False,
 ) -> dict:
-    """Build or update the embeddings index.
+    """Build or incrementally update the embeddings index.
 
-    Thin wrapper over siftd.embeddings.build_embeddings_index that returns
-    a dict for backwards compatibility.
+    Thin wrapper over ``siftd.embeddings.indexer.build_embeddings_index`` returning a
+    dict. The backend is config-driven (``embed.backend``) — there is no override arg.
 
     Args:
         db_path: Path to main database. Uses default if not specified.
         embed_db_path: Path to embeddings database. Uses default if not specified.
         rebuild: If True, clear and rebuild from scratch.
-        backend: Preferred embedding backend name.
         verbose: Print progress messages.
 
     Returns:
-        Dict with 'chunks_added' and 'total_chunks' counts.
+        Dict with add/remove counts and backend identity.
 
     Raises:
         FileNotFoundError: If main database doesn't exist.
+        IncrementalCompatError: If an incremental build can't proceed.
         RuntimeError: If no embedding backend is available.
-        EmbeddingsNotAvailable: If embedding dependencies are not installed.
+        EmbeddingsNotAvailable: If no embedding backend is configured/installed.
     """
     from siftd.embeddings import require_embeddings
 
@@ -892,10 +894,33 @@ def build_index(
         db_path=db_path,
         embed_db_path=embed_db_path,
         rebuild=rebuild,
-        backend_name=backend,
         verbose=verbose,
     )
-    return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
+    return {
+        "chunks_added": stats.chunks_added,
+        "chunks_removed": stats.chunks_removed,
+        "conversations_indexed": stats.conversations_indexed,
+        "conversations_pruned": stats.conversations_pruned,
+        "total_chunks": stats.total_chunks,
+        "backend_name": stats.backend_name,
+        "model": stats.model,
+        "dimension": stats.dimension,
+    }
+
+
+def embed_status(
+    *,
+    db_path: Path | None = None,
+    embed_db_path: Path | None = None,
+):
+    """Return an :class:`EmbedIndexStatus` for ``siftd embed --status``.
+
+    Config/metadata-driven (no ONNX load, no network) — reports the configured backend
+    plus the built index's identity, chunk counts, coverage, staleness, and size.
+    """
+    from siftd.embeddings.indexer import embed_index_status
+
+    return embed_index_status(db_path=db_path, embed_db_path=embed_db_path)
 
 
 SEARCH_MODES = ("auto", "fts", "semantic", "hybrid")
@@ -964,7 +989,6 @@ def search_chunks(
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
     threshold: float = 0.0,
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
     raw_fts: bool = False,
 ) -> list[SearchChunk]:
@@ -995,7 +1019,6 @@ def search_chunks(
         recency_half_life=recency_half_life,
         recency_max_boost=recency_max_boost,
         threshold=threshold,
-        backend=backend,
         embed_backend=embed_backend,
         raw_fts=raw_fts,
     )
@@ -1035,7 +1058,6 @@ def hybrid_search(
     # Threshold
     threshold: float = 0.0,
     # Backend
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
 ) -> list[SearchChunk]:
     """Unified search pipeline — FTS5, semantic, or hybrid.
@@ -1047,10 +1069,9 @@ def hybrid_search(
         n: Desired result count after all processing.
         mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
         rerank: "mmr" for diversity reranking, "relevance" for pure score order.
-        backend: Preferred embedding backend name (transitional --backend override).
         embed_backend: Injected embedding backend instance. If provided, skips
-            get_backend() discovery. Must implement embed_query(text) -> list[float],
-            and have .name, .model, .dimension attributes.
+            get_backend() discovery (config-driven otherwise). Must implement
+            embed_query(text) -> list[float], and have .name, .model, .dimension attributes.
 
     Returns:
         List of SearchChunk results.
@@ -1113,8 +1134,9 @@ def hybrid_search(
             from siftd.embeddings.indexer import SCHEMA_VERSION
         except ImportError:  # pragma: no cover
             # Allows unit tests to inject a backend without requiring the optional
-            # [embed] extra to be installed.
-            SCHEMA_VERSION = 1
+            # [embed] extra to be installed. (Defensive: the indexer no longer imports
+            # fastembed, so this rarely triggers.)
+            SCHEMA_VERSION = 1  # type: ignore[assignment]
     else:
         try:
             from siftd.embeddings.base import get_backend
@@ -1131,7 +1153,7 @@ def hybrid_search(
                 return None
 
         def _resolve_backend() -> EmbeddingBackend:
-            return get_backend(preferred=backend, verbose=False)
+            return get_backend(verbose=False)
 
         _backend = _resolve_backend()
 
@@ -1604,7 +1626,6 @@ def search_view(
     recency: bool = False,
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
     raw_fts: bool = False,
     # Recipe (post-processing) controls
@@ -1681,7 +1702,6 @@ def search_view(
         recency=recency,
         recency_half_life=recency_half_life,
         recency_max_boost=recency_max_boost,
-        backend=backend,
         embed_backend=embed_backend,
         raw_fts=raw_fts,
     )

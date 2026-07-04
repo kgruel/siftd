@@ -246,13 +246,13 @@ def _install_embed(args) -> int:
         already_msg=(
             "Embed dependencies already installed.\n\n"
             "Semantic search is ready:\n"
-            "  siftd search --index    # build embeddings index\n"
+            "  siftd embed             # build embeddings index\n"
             '  siftd search "query"    # search'
         ),
         success_msg=(
             "Embed dependencies installed successfully.\n\n"
             "Next steps:\n"
-            "  siftd search --index    # build embeddings index\n"
+            "  siftd embed             # build embeddings index\n"
             '  siftd search "query"    # search'
         ),
     )
