@@ -6,6 +6,29 @@ pre-commitment artifact: the promote rules below were written **before** the swe
 per the slice-4 lesson (the F3 gate worked because it was pre-committed — no
 relitigating after seeing numbers).
 
+## BYOK amendment (2026-07-05, later same day — pre-sweep)
+
+The user resolved the parked provider question by dissolving it: production is
+**bring-your-own-key**. The default install is API-first with whatever provider key the
+user supplies; `[embed]` adds local. There is no single reference backend, so:
+
+- **The stage-2 "reference gate" becomes a cross-backend robustness gate.** The sweep
+  runs on one cheap arm; a config promotes only if the promote-rule *verdict* (not the
+  raw numbers) replicates on at least one geometrically different arm. Initial arms:
+  `local` (fastembed/bge-small) + `gemini` (gemini-embedding-001). Ordering inversion
+  between arms = defaults cannot be model-blind → surface, don't paper over.
+- **Rank-space transfer is now the load-bearing product claim**, not a convenience
+  assumption — the shipped defaults must hold for arbitrary BYOK backends.
+- **Absolute cosine score-space params (`threshold`, `first_mention 0.65`) are a design
+  smell under BYOK** — wrong for some backends by construction. Follow-up design talk
+  (not part of this bench): reformulate as corpus/rank-relative (quantile or
+  fraction-of-top-score) so they transfer by construction; anything irreducibly absolute
+  gets per-preset calibrated defaults in `embed_presets.toml`.
+
+The per-class promote rules below are unchanged; they now gate on verdict replication
+across arms instead of on a single reference backend. Build harness:
+`bench/stage1/build_index.py --backend local|<preset>`, one `embed-<backend>.db` per arm.
+
 ## The two stages and the seam
 
 - **Stage 1 — exploration, local, unbounded.** Full sweep on fastembed/bge-small
