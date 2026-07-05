@@ -140,3 +140,68 @@ def test_embed_v1_index_rebuild_hint(main_db, tmp_path, capsys):
     rc = cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
     assert rc == 1
     assert "siftd embed --rebuild" in capsys.readouterr().err
+
+
+def test_embed_first_build_surfaces_egress_notice(main_db, tmp_path, capsys, monkeypatch):
+    """The explicit build is often the FIRST egress (initial backlog): the disclosure
+    prints before the build, persists only after success, and doesn't repeat."""
+    from siftd.embeddings.availability import EmbedStatus
+    from siftd.storage.embeddings import get_meta, open_embeddings_db
+
+    edb = tmp_path / "embed.db"
+    open_embeddings_db(edb).close()  # exists so the shown-flag can persist post-build
+    monkeypatch.setattr(
+        "siftd.embeddings.availability.embedding_status",
+        lambda: EmbedStatus("remote:voyage", True, "remote backend (voyage-4)", model="voyage-4"),
+    )
+    built = []
+    monkeypatch.setattr(
+        "siftd.api.build_index",
+        lambda **_k: built.append(1) or {
+            "chunks_added": 1, "chunks_removed": 0, "conversations_pruned": 0, "total_chunks": 1,
+        },
+        raising=False,
+    )
+
+    rc = cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
+    assert rc == 0 and built
+    err = capsys.readouterr().err
+    assert "voyage" in err and "sends conversation content" in err
+
+    conn = open_embeddings_db(edb, read_only=True)
+    try:
+        assert get_meta(conn, "auto_index_egress_notified") == "1"  # burned after success
+    finally:
+        conn.close()
+
+    rc = cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
+    assert rc == 0
+    assert "sends conversation content" not in capsys.readouterr().err  # shown once
+
+
+def test_embed_failed_build_does_not_burn_the_notice_flag(main_db, tmp_path, capsys, monkeypatch):
+    """A failed first build re-discloses next time: the flag persists only after success."""
+    from siftd.embeddings.availability import EmbedStatus
+    from siftd.storage.embeddings import get_meta, open_embeddings_db
+
+    edb = tmp_path / "embed.db"
+    open_embeddings_db(edb).close()
+    monkeypatch.setattr(
+        "siftd.embeddings.availability.embedding_status",
+        lambda: EmbedStatus("remote:voyage", True, "remote backend (voyage-4)", model="voyage-4"),
+    )
+
+    def _fail(**_k):
+        raise RuntimeError("remote:voyage: transient error (HTTP 500)")
+
+    monkeypatch.setattr("siftd.api.build_index", _fail, raising=False)
+
+    rc = cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
+    assert rc == 1
+    assert "sends conversation content" in capsys.readouterr().err  # disclosed pre-attempt
+
+    conn = open_embeddings_db(edb, read_only=True)
+    try:
+        assert get_meta(conn, "auto_index_egress_notified") is None  # not burned on failure
+    finally:
+        conn.close()

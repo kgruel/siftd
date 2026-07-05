@@ -58,7 +58,7 @@ Resolution is deterministic, not a probing chain: if `embed.backend` is set, tha
 
 **The local-only guarantee holds only when the backend is `fastembed`, or `ollama`/`custom` pointed at a `localhost` server, or embeddings are off.** In those cases, everything runs locally — no API calls, no data leaves your machine.
 
-**Configuring any other remote preset (`voyage`, `openai`, `gemini`, `jina`, `mistral`, or a `custom` endpoint that isn't local) sends conversation content to that provider**: full text at index time (`siftd embed`, or auto-indexing on ingest) and your query text at search time. This is an explicit opt-in — setting `embed.backend` to a remote preset *is* the consent — but siftd also surfaces a one-time notice the first time auto-indexing actually sends content off-machine, before that first request goes out.
+**Configuring any other remote preset (`voyage`, `openai`, `gemini`, `jina`, `mistral`, or a `custom` endpoint that isn't local) sends conversation content to that provider**: full text at index time (`siftd embed`, or auto-indexing on ingest) and your query text at search time. This is an explicit opt-in — setting `embed.backend` to a remote preset *is* the consent — but siftd also surfaces a one-time notice before the first request that actually sends content off-machine, whether that's your first explicit `siftd embed` or auto-indexing on ingest. A programmatic `run_ingest()` without a notice callback skips auto-indexing (`skipped_reason: "notice"`) rather than sending content before the disclosure has been shown.
 
 ### Building the index
 

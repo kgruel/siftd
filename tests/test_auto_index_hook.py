@@ -160,19 +160,32 @@ def test_first_egress_notice_precedes_the_embed_call(remote_wired, monkeypatch, 
     assert rep.ran is True
 
 
-def test_notice_flag_not_burned_without_a_callback(remote_wired, tmp_path):
-    """No callback (programmatic caller) → notice rides the report but the shown-flag is NOT
-    persisted, so the disclosure isn't silently lost (finding 1b)."""
+def test_pending_notice_without_callback_skips_auto_index(remote_wired, wired, tmp_path):
+    """No callback (programmatic caller) → auto-index is SKIPPED so content never leaves
+    before the disclosure has been surfaced live: skipped_reason="notice", the disclosure
+    rides the report, the shown-flag is NOT burned, and no embed call happens."""
     from siftd.storage.embeddings import get_meta, open_embeddings_db
 
     rep = ingest_api._maybe_auto_index(tmp_path / "m.db", remote_wired)  # no on_notice
+    assert rep.skipped_reason == "notice" and rep.ran is False and rep.awaiting == 3
     assert rep.notice is not None and "voyage" in rep.notice
+    assert "build" not in wired  # nothing egressed
 
     conn = open_embeddings_db(remote_wired, read_only=True)
     try:
         assert get_meta(conn, "auto_index_egress_notified") is None  # flag not burned
     finally:
         conn.close()
+
+
+def test_burned_flag_unblocks_callback_less_auto_index(remote_wired, wired, tmp_path):
+    """Once ANY surface has shown the notice, a callback-less programmatic run proceeds."""
+    ingest_api._maybe_auto_index(tmp_path / "m.db", remote_wired, on_notice=lambda _t: None)
+    assert wired.pop("build", None) is not None  # first (disclosed) run embedded
+
+    rep = ingest_api._maybe_auto_index(tmp_path / "m.db", remote_wired)  # no on_notice
+    assert rep.ran is True and rep.skipped_reason is None
+    assert "build" in wired
 
 
 def test_first_egress_notice_shown_exactly_once_with_callback(remote_wired, tmp_path):

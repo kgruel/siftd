@@ -69,6 +69,8 @@ from siftd.api.ingest import (
     AdapterSelectionError,
     AutoIndexReport,
     IngestRunResult,
+    egress_notice_pending,
+    mark_egress_notified,
     run_ingest,
     run_rebuild_fts,
 )
@@ -277,6 +279,8 @@ __all__ = [
     "AdapterSelectionError",
     "AutoIndexReport",
     "IngestRunResult",
+    "egress_notice_pending",
+    "mark_egress_notified",
     "run_ingest",
     "run_rebuild_fts",
     # resources

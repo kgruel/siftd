@@ -39,7 +39,22 @@ def cmd_embed(args) -> int:
         )
         return 1
 
-    from siftd.api import EmbeddingConfigError, IncrementalCompatError, build_index
+    from siftd.api import (
+        EmbeddingConfigError,
+        IncrementalCompatError,
+        build_index,
+        egress_notice_pending,
+        mark_egress_notified,
+    )
+
+    # One-time remote first-egress disclosure: the explicit build is often the FIRST
+    # egress (initial backlog), so it discloses too — before any content leaves. The
+    # shown-flag persists only after a successful build (a failed run re-discloses),
+    # and burning it also unblocks callback-less programmatic auto-indexing
+    # (see api.ingest._maybe_auto_index).
+    notice = egress_notice_pending(embed_db_path=embed_db)
+    if notice:
+        status.info(notice)
 
     try:
         result = build_index(
@@ -56,6 +71,9 @@ def cmd_embed(args) -> int:
         # catch it for a clean error line rather than a traceback.
         status.error(str(e))
         return 1
+
+    if notice:
+        mark_egress_notified(embed_db_path=embed_db)
 
     added = result["chunks_added"]
     removed = result["chunks_removed"]

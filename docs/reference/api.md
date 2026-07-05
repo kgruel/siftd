@@ -1708,6 +1708,22 @@ Tokenize and quote a user query for safe FTS5 MATCH use.
 def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, or] = ...) -> SanitizedFts5Query
 ```
 
+### egress_notice_pending
+
+The one-time remote first-egress disclosure if it hasn't been shown yet, else None.
+
+```python
+def egress_notice_pending(embed_db_path: pathlib.Path | None = ...) -> str | None
+```
+
+### mark_egress_notified
+
+Persist the first-egress shown-once flag (call only after the notice was surfaced).
+
+```python
+def mark_egress_notified(embed_db_path: pathlib.Path | None = ...) -> None
+```
+
 ### run_ingest
 
 Run ingestion from discovered adapters.
