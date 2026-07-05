@@ -243,21 +243,39 @@ def test_dimension_mismatch_incremental_refused(tmp_path, fake_backend, monkeypa
 
 def test_incremental_seeds_backend_dimension_from_stored(tmp_path, fake_backend, monkeypatch):
     """A remote backend that hasn't learned its width (dimension None) is seeded from the
-    index's stored dimension when adding incrementally, so its response validation enforces
-    the index's width end-to-end (F1)."""
+    index's stored dimension while an incremental run is live — so its response validation
+    enforces the index's width — then restored: the backend object is process-cached, and a
+    stale seed must not leak into a later build in the same process (F1)."""
     db = tmp_path / "main.db"
     edb = tmp_path / "e.db"
-    _make_main_db(db, [("c1", [("hello", "world")])])
+    ids = _make_main_db(db, [("c1", [("hello", "world")])])
     ix.build_embeddings_index(db_path=db, embed_db_path=edb)  # stores dimension = 3
+
+    # Append a second exchange so the incremental run has real embedding work.
+    conn = create_database(db)
+    m = get_or_create_model(conn, "test-model")
+    pid = insert_prompt(conn, ids["c1"], "c1-p1", "2024-01-01T00:10:00Z")
+    insert_prompt_content(conn, pid, 0, "text", '{"text": "a follow up question"}')
+    rid = insert_response(conn, ids["c1"], pid, m, None, "c1-r1", "2024-01-01T00:10:02Z", input_tokens=5, output_tokens=10)
+    insert_response_content(conn, rid, 0, "text", '{"text": "a follow up answer"}')
+    conn.commit()
+    conn.close()
+
+    seen_at_embed: list[int | None] = []
 
     class UnlearnedBackend(FakeBackend):
         dimension = None  # not yet learned from a first response
+
+        def embed_documents(self, texts):
+            seen_at_embed.append(self.dimension)
+            return super().embed_documents(texts)
 
     seeded = UnlearnedBackend()
     monkeypatch.setattr(ix, "get_backend", lambda **_k: seeded)
 
     ix.build_embeddings_index(db_path=db, embed_db_path=edb)
-    assert seeded.dimension == 3
+    assert seen_at_embed and all(d == 3 for d in seen_at_embed)  # seed live during the run
+    assert seeded.dimension is None  # restored — the cached backend isn't poisoned
 
 
 def test_rebuild_clears_and_rewrites(tmp_path, fake_backend):

@@ -152,6 +152,7 @@ def build_embeddings_index(
     target_tokens, max_tokens, overlap_tokens = _chunk_bounds(backend)
 
     embed_conn = open_embeddings_db(embed_db)
+    seeded_dimension = False
     try:
         if rebuild:
             if verbose:
@@ -170,6 +171,7 @@ def build_embeddings_index(
                 stored_dim = get_meta(embed_conn, "dimension")
                 if stored_dim is not None:
                     backend.dimension = int(stored_dim)
+                    seeded_dimension = True
 
         # Identity-meta-first: stamp the index's self-description once, up front, in its own
         # commit — before any chunk. A zero-chunk build (all conversations contentless) is
@@ -312,6 +314,12 @@ def build_embeddings_index(
             conversations_pruned=len(to_prune),
         )
     finally:
+        # The seed is this RUN's expectation, not the backend's own knowledge: the backend
+        # object is process-cached (base.get_backend), so a stale seeded width would leak
+        # into a later build in the same process (e.g. a rebuild under serve after a
+        # width-mismatch failure) and keep failing it.
+        if seeded_dimension:
+            backend.dimension = None
         embed_conn.close()
 
 
