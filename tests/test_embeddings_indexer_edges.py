@@ -225,6 +225,41 @@ def test_backend_mismatch_incremental_refused(tmp_path, fake_backend, monkeypatc
         ix.build_embeddings_index(db_path=db, embed_db_path=edb)
 
 
+def test_dimension_mismatch_incremental_refused(tmp_path, fake_backend, monkeypatch):
+    """Same backend + model but a different width (e.g. embed.dimensions narrowed via
+    matryoshka truncation) must refuse the incremental rather than mix vector widths (F1)."""
+    db = tmp_path / "main.db"
+    edb = tmp_path / "e.db"
+    _make_main_db(db, [("c1", [("hello", "world")])])
+    ix.build_embeddings_index(db_path=db, embed_db_path=edb)  # stored dimension = 3
+
+    narrowed = FakeBackend()
+    narrowed.dimension = 5  # same name/model, different width
+    monkeypatch.setattr(ix, "get_backend", lambda **_k: narrowed)
+
+    with pytest.raises(ix.IncrementalCompatError, match="different embedding dimension"):
+        ix.build_embeddings_index(db_path=db, embed_db_path=edb)
+
+
+def test_incremental_seeds_backend_dimension_from_stored(tmp_path, fake_backend, monkeypatch):
+    """A remote backend that hasn't learned its width (dimension None) is seeded from the
+    index's stored dimension when adding incrementally, so its response validation enforces
+    the index's width end-to-end (F1)."""
+    db = tmp_path / "main.db"
+    edb = tmp_path / "e.db"
+    _make_main_db(db, [("c1", [("hello", "world")])])
+    ix.build_embeddings_index(db_path=db, embed_db_path=edb)  # stores dimension = 3
+
+    class UnlearnedBackend(FakeBackend):
+        dimension = None  # not yet learned from a first response
+
+    seeded = UnlearnedBackend()
+    monkeypatch.setattr(ix, "get_backend", lambda **_k: seeded)
+
+    ix.build_embeddings_index(db_path=db, embed_db_path=edb)
+    assert seeded.dimension == 3
+
+
 def test_rebuild_clears_and_rewrites(tmp_path, fake_backend):
     db = tmp_path / "main.db"
     edb = tmp_path / "e.db"

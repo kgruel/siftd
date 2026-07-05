@@ -107,6 +107,13 @@ class RemoteBackend:
         # OpenAI-compat responses carry an `index` per row; order by it defensively.
         ordered = sorted(rows, key=lambda r: r.get("index", 0))
         vectors = [list(r["embedding"]) for r in ordered]
+        # A response with the wrong row count is a malformed/buggy server, not an accepted
+        # result — transient (retried-or-degraded), never silently truncated (a short batch
+        # would drop a chunk yet still stamp the conversation's fingerprint as current).
+        if len(vectors) != len(batch):
+            raise EmbeddingTransientError(
+                f"{self.name}: expected {len(batch)} embeddings, got {len(vectors)}"
+            )
         if self.dimension:
             # Known dimension ⇒ validate. A provider that silently ignores the truncation
             # param would otherwise store ragged vectors the index_meta can't detect.

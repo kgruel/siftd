@@ -64,6 +64,40 @@ def test_config_dimensions_override_preset(monkeypatch):
     assert b._dimensions_param == 512
 
 
+def test_overridden_model_no_dimensions_learns_from_response(monkeypatch):
+    # openai's default model is text-embedding-3-small (1536 dims). Overriding the model
+    # without embed.dimensions must NOT inherit the preset default (the returned width may
+    # differ, e.g. text-embedding-3-large's 3072) — learn it from the first response (F4).
+    _cfg(monkeypatch, **{
+        "embed.backend": "openai",
+        "embed.api_key": "k",
+        "embed.model": "text-embedding-3-large",
+    })
+    b = base.resolve_backend()
+    assert b.model == "text-embedding-3-large"
+    assert b.dimension is None
+
+
+def test_default_model_no_dimensions_uses_preset_default(monkeypatch):
+    # The default model keeps the preset's default dimension.
+    _cfg(monkeypatch, **{"embed.backend": "openai", "embed.api_key": "k"})
+    b = base.resolve_backend()
+    assert b.model == "text-embedding-3-small"
+    assert b.dimension == 1536
+
+
+def test_overridden_model_explicit_dimensions_wins(monkeypatch):
+    # An explicit embed.dimensions always wins, even for an overridden model.
+    _cfg(monkeypatch, **{
+        "embed.backend": "openai",
+        "embed.api_key": "k",
+        "embed.model": "text-embedding-3-large",
+        "embed.dimensions": "256",
+    })
+    b = base.resolve_backend()
+    assert b.dimension == 256
+
+
 def test_preset_dimensions_param_name_resolved(monkeypatch):
     _cfg(monkeypatch, **{"embed.backend": "voyage", "embed.api_key": "k"})
     assert base.resolve_backend()._dimensions_param_name == "output_dimension"

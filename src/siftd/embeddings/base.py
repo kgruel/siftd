@@ -168,7 +168,11 @@ def _build_remote(name: str, settings: _EmbedSettings) -> RemoteBackend:
         except TokenRefError as e:
             raise EmbeddingConfigError(f"embed.api_key is unresolvable: {e}") from e
 
-    reported_dim = settings.dimensions if settings.dimensions is not None else preset.default_dimensions
+    # A preset's default dimension belongs to its default model; an overridden model's
+    # dimension is learned from the first response unless embed.dimensions sets it explicitly.
+    reported_dim = settings.dimensions if settings.dimensions is not None else (
+        preset.default_dimensions if model == preset.default_model else None
+    )
     return RemoteBackend(
         preset_name=name,
         base_url=base_url,

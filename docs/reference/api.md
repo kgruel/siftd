@@ -1449,6 +1449,10 @@ Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
 
 Raised when requested adapter names match no discovered adapters.
 
+#### EmbeddingConfigError
+
+[embed] config is present but unusable — bad backend name, unresolvable key ref, or a preset missing a required model/base_url. Never retried, never degraded.
+
 #### IndexCompatError
 
 Raised when index metadata is incompatible with current backend configuration.

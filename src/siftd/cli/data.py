@@ -1109,7 +1109,10 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
 def _fix_ingest(conn, db_path):
     from siftd.api import run_ingest
 
-    stats = run_ingest(db_path=db_path).stats
+    # Surface the remote first-egress disclosure live, BEFORE content leaves the machine —
+    # auto-index only emits it through on_notice (else it lands on a discarded result).
+    # Matches the ingest command's on_notice → status.info in its plain-text mode.
+    stats = run_ingest(db_path=db_path, on_notice=status.info).stats
     if stats is None:
         return "0 file(s) ingested, 0 skipped"
     return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"

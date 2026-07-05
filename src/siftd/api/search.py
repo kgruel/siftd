@@ -30,7 +30,7 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
-    from siftd.embeddings.base import EmbeddingBackend
+    from siftd.embeddings.base import EmbeddingBackend, EmbeddingConfigError
     from siftd.embeddings.indexer import EmbedIndexStatus, IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
@@ -43,6 +43,9 @@ _LAZY_IMPORTS = {
     "IndexCompatError": "siftd.storage.embeddings",
     "IncrementalCompatError": "siftd.embeddings.indexer",
     "EmbedIndexStatus": "siftd.embeddings.indexer",
+    # Re-exported through the api boundary so the CLI (which must not import
+    # siftd.embeddings) can catch a config failure — e.g. a revoked API key.
+    "EmbeddingConfigError": "siftd.embeddings.base",
 }
 
 
@@ -70,6 +73,7 @@ __all__ = [
     "ScoreBreakdown",
     "ConversationSearchSummary",
     "IncrementalCompatError",
+    "EmbeddingConfigError",
     "embeddings_available",
     "search_chunks",
     "hybrid_search",

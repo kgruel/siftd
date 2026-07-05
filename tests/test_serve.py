@@ -263,6 +263,29 @@ class TestSearch:
         # Either 200 (if embeddings available) or 501 (if not)
         assert resp.status_code in (200, 501)
 
+    def test_search_config_error_maps_to_503(self, tmp_path, monkeypatch):
+        """A configured remote backend that's unusable (e.g. a revoked key raises
+        EmbeddingConfigError) maps to a structured 503 with an honest message, not a
+        generic 500 (F5')."""
+        from siftd.embeddings.base import EmbeddingConfigError
+
+        team_db = _make_team_db(
+            tmp_path / "team.db",
+            conversations=[{"external_id": "c1"}],
+        )
+
+        def _boom(*a, **k):
+            raise EmbeddingConfigError(
+                "remote:openai: authentication failed (HTTP 401); check embed.api_key"
+            )
+
+        monkeypatch.setattr("siftd.api.search.search_view", _boom)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/v1/search", params={"q": "hello"})
+        assert resp.status_code == 503
+        assert "authentication failed" in resp.json()["error"]
+
 
 class TestAuthNoAuth:
     def test_no_auth_allows_all(self, tmp_path):

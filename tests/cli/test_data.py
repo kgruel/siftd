@@ -846,7 +846,7 @@ class TestDataDirectBranches:
         # _fix helpers
         monkeypatch.setattr(
             "siftd.api.run_ingest",
-            lambda db_path: SimpleNamespace(
+            lambda db_path, on_notice=None: SimpleNamespace(
                 stats=SimpleNamespace(files_ingested=1, files_skipped=2)
             ),
         )
@@ -887,6 +887,25 @@ class TestDataDirectBranches:
         assert called, "the 'siftd embed' fixer must run through _FIX_REGISTRY"
         assert called.get("rebuild") is False
         assert Path(called["db_path"]) == Path(test_db)
+
+    def test_fix_ingest_forwards_egress_notice(self, monkeypatch, capsys):
+        """_fix_ingest passes on_notice to run_ingest so the remote first-egress disclosure
+        prints live, BEFORE content leaves — without it the notice lands on a discarded
+        result (F3'). Focused check: on_notice is a callable that prints via status."""
+        captured = {}
+
+        def fake_run_ingest(*, db_path, on_notice=None):
+            captured["on_notice"] = on_notice
+            if on_notice is not None:
+                on_notice("Uploading conversation content to remote:openai for the first time.")
+            return SimpleNamespace(stats=SimpleNamespace(files_ingested=0, files_skipped=0))
+
+        monkeypatch.setattr("siftd.api.run_ingest", fake_run_ingest)
+        data_cli._fix_ingest(object(), Path("/d"))
+
+        assert callable(captured["on_notice"])
+        # status.info writes to stderr.
+        assert "Uploading conversation content" in capsys.readouterr().err
 
     def test_doctor_run_json_plain_and_painted_error_paths(self, test_db, monkeypatch):
         args = SimpleNamespace(db=str(test_db), json=False, strict=False)

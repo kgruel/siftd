@@ -179,6 +179,12 @@ def _dispatch(
     except Exception as e:
         if e.__class__.__name__ == "EmbeddingsNotAvailable":
             return Response(content={"error": str(e)}, status_code=501)
+        if e.__class__.__name__ == "EmbeddingConfigError":
+            # A configured remote backend is present but unusable (e.g. a revoked key).
+            # Not degradable (config errors never fall back to FTS) and not a generic 500 —
+            # report it honestly as an unavailable dependency. Matched by name so serve
+            # doesn't import siftd.embeddings (tests/architecture/test_imports.py).
+            return Response(content={"error": str(e)}, status_code=503)
 
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(

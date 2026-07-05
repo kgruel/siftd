@@ -158,6 +158,20 @@ def test_dimension_mismatch_raises_config_error():
         b.embed_documents(["x"])
 
 
+def test_short_response_raises_transient():
+    # A 200 with fewer rows than inputs is a malformed/buggy server — transient (retried
+    # or degraded), never silently truncated: a short batch would drop a chunk yet still
+    # stamp the shorted conversation's fingerprint as current, hiding the gap permanently.
+    def handler(request):
+        inputs = json.loads(request.content)["input"]
+        rows = [{"index": i, "embedding": [1.0] * 3} for i in range(len(inputs) - 1)]
+        return httpx.Response(200, json={"data": rows})
+
+    b = make_backend(handler, dimension=3)
+    with pytest.raises(EmbeddingTransientError, match="expected 3 embeddings, got 2"):
+        b.embed_documents(["a", "b", "c"])
+
+
 def test_retry_on_429_honors_retry_after():
     calls = {"n": 0}
     sleeps = []

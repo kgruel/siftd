@@ -159,6 +159,17 @@ def build_embeddings_index(
             clear_all(embed_conn)
         else:
             _validate_incremental_compat(embed_conn, backend)
+            # Incremental on an existing index — the index's stored dimension IS the
+            # expectation. A remote backend that hasn't learned its width yet (None) is
+            # seeded from it, so the RemoteBackend's own response validation enforces the
+            # index's width end-to-end and dimension_known stays True below (no re-stamp).
+            # Chunks-present guard: a zero-chunk index passes validation unconditionally
+            # (nothing to mix), so its meta may describe a PRIOR backend — that stale
+            # width must not be enforced on this one.
+            if backend.dimension is None and chunk_count(embed_conn) > 0:
+                stored_dim = get_meta(embed_conn, "dimension")
+                if stored_dim is not None:
+                    backend.dimension = int(stored_dim)
 
         # Identity-meta-first: stamp the index's self-description once, up front, in its own
         # commit — before any chunk. A zero-chunk build (all conversations contentless) is
@@ -243,7 +254,11 @@ def build_embeddings_index(
                     (str(backend.dimension),),
                 )
                 dimension_known = True
-            for c, emb in zip(batch, embeddings):
+            # strict=True: a short embeddings response must never silently truncate — the
+            # post-loop sweep would then stamp the shorted conversation's fingerprint as
+            # current, hiding the gap permanently (RemoteBackend already guards this at the
+            # response boundary; this is the belt for any backend that doesn't).
+            for c, emb in zip(batch, embeddings, strict=True):
                 cid = c["conversation_id"]
                 # Replace this conversation's prior chunks in the SAME transaction as its
                 # first new chunk — an interrupt before this commit leaves the old chunks
@@ -415,6 +430,26 @@ def _validate_incremental_compat(conn, backend) -> None:
             f"  Index model:    {stored_model}\n"
             f"  Current model:  {backend.model}\n\n"
             f"Different models produce incompatible embeddings; rebuild to switch:\n"
+            f"  siftd embed --rebuild"
+        )
+
+    # Dimension: a same-model narrowing (e.g. embed.dimensions 1536 → 512 via matryoshka
+    # truncation) would mix vector widths in one index. Checked here, before build stamps
+    # the current dimension over the stored one — a remote backend that hasn't learned its
+    # dimension yet (None) can't conflict and is seeded from the stored value by the caller.
+    stored_dim = get_meta(conn, "dimension")
+    if (
+        stored_dim is not None
+        and backend.dimension is not None
+        and int(stored_dim) != backend.dimension
+    ):
+        raise IncrementalCompatError(
+            f"Cannot add to an index with a different embedding dimension.\n\n"
+            f"  Index dimension:    {stored_dim}\n"
+            f"  Current dimension:  {backend.dimension}\n\n"
+            f"Set embed.dimensions to match the index:\n"
+            f"  embed.dimensions = {stored_dim}\n\n"
+            f"Or rebuild at the current dimension:\n"
             f"  siftd embed --rebuild"
         )
 

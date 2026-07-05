@@ -1339,9 +1339,13 @@ def _find_search_fragment(
         sqlite3.DatabaseError, ValueError, RuntimeError, OSError,
     )
     if has_embed:
-        from siftd.api.search import IndexCompatError
+        from siftd.api.search import EmbeddingConfigError, IndexCompatError
 
-        engine_errors = (*engine_errors, IndexCompatError)
+        # This best-effort pane never 500s — it degrades any non-transient semantic failure
+        # to keyword search with a truthful [fts] header. A config error (e.g. a revoked
+        # key) joins index-drift here: unlike the CLI/REST surfaces (which surface it), the
+        # pane keeps the user on working keyword results.
+        engine_errors = (*engine_errors, IndexCompatError, EmbeddingConfigError)
 
     try:
         sv = _run(engine)

@@ -39,7 +39,7 @@ def cmd_embed(args) -> int:
         )
         return 1
 
-    from siftd.api import IncrementalCompatError, build_index
+    from siftd.api import EmbeddingConfigError, IncrementalCompatError, build_index
 
     try:
         result = build_index(
@@ -51,7 +51,9 @@ def cmd_embed(args) -> int:
     except IncrementalCompatError as e:
         status.error(str(e))
         return 1
-    except (RuntimeError, ValueError) as e:
+    except (RuntimeError, ValueError, EmbeddingConfigError) as e:
+        # EmbeddingConfigError (e.g. a revoked key mid-embed) is not a RuntimeError;
+        # catch it for a clean error line rather than a traceback.
         status.error(str(e))
         return 1
 
