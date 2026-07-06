@@ -1,5 +1,19 @@
 # Bench stage-1 results — three-arm cross-geometry sweep (2026-07-06)
 
+> **⚠ SUPERSEDED IN PART — read this first.** The "RRF does not promote" headline below
+> was measured at 10 chunk *slots*, which handicaps RRF: narrow-then-rank is MMR
+> conversation-deduped but the RRF path is not, so one conversation's many matching
+> chunks flood the slot budget. Re-scored at 10 distinct *conversations*
+> (`sweep.py --unit conversation`, `sweep-report-<arm>-conversation.md`), RRF **wins
+> composite on voyage and gemini** and passes all no-worse gates on voyage with
+> paraphrase +10.3% (blocked from promotion only by the un-re-ratified +20% margin);
+> it loses only on the weak bge arm. The honest conclusion is "RRF is better on strong
+> embedders, worse on the weak one" — a model-dependent advantage — not "RRF loses."
+> The slot-based tables below stand as recorded but should NOT be ratified; the
+> conversation-unit results are the fair basis. See
+> `bench-stage2-chunking-design-2026-07-06.md` for what comes next.
+
+
 Companion to `bench-plan-2026-07-05.md` (the pre-committed plan + promote rules).
 This is the results record; the promote rules were fixed **before** these numbers
 existed and are not adjusted here. Raw data (gitignored): `bench/runs/stage1-2026-07-05/`
