@@ -202,6 +202,41 @@ S0.** The open question S1 tests: typed chunks are homogeneous (all-prompt / all
 which may give top-k-sum more clean signal — does conv-sum3's margin over dedup *grow*
 under S1? If not, ship dedup and drop aggregate.
 
+## Voyage results (Phase 2, strong arm) — both levers fail; the rollup is the win
+
+Voyage S1 built in 17 min (243,084 chunks: 110.8k prompt / 121.3k response / 10.9k
+tool_summary; 1.20× S0). Full 5-rollup sweep, S0 vs S1, best-RRF (H1) composite
+(narrow80: S0=0.5339, S1=0.5286):
+
+| rollup | S0 RRF | S1 RRF | S1−S0 |
+|---|---|---|---|
+| slot | 0.4082 | 0.4030 | −0.005 |
+| **dedup** | **0.5468** | **0.5322** | **−0.015** |
+| conv-sum3 | 0.5276 | 0.5281 | +0.000 |
+| conv-mean | 0.5237 | 0.5087 | −0.015 |
+| conv-sum | 0.5080 | 0.5094 | +0.001 |
+
+**Lever A (typed chunking) — negative.** S1 ≤ S0 in nearly every cell; best config drops
+0.5468 → 0.5322. Splitting prompt from response loses the cross-context the embedding
+used. **H-A1 falsified**: paraphrase *drops* under S1 (0.680→0.670), not rises.
+
+**Lever B (aggregate) — never beats dedup on the strong arm.** dedup is the ceiling in
+both chunkings. conv-sum3 (the only aggregate that ever won) beat dedup ONLY on weak-bge
++ S0 (+0.0023); on voyage it loses in both S0 (0.5276<0.5468) and S1 (0.5281<0.5322).
+
+**What paid off: the dedup rollup itself.** `slot`→`dedup` is +0.14 (bge) / +0.14 (voyage)
+— it's the entire reason RRF becomes competitive. narrow already gets it via MMR; **RRF
+does not**. So the shippable win is H-B1: apply the dedup rollup uniformly to the RRF
+path in the engine (extend MMR's existing conversation-suppression to the RRF branch) —
+NOT typed chunks, NOT aggregate.
+
+Caveats before a hard drop: (1) local/bge S1 still building — the weak arm where aggregate
+had its one marginal S0 win; it may nuance but is unlikely to flip a voyage-negative into
+adopt-S1. (2) S1−S0 composite deltas are small (~0.015 on RRF-dedup); direction is
+consistent across cells but a paired CI + the local arm should confirm before finalizing.
+(3) S1 was swept at S0's token bounds (256/512/25); a granularity re-sweep *could* differ,
+but prompt/response context-loss looks structural, not a granularity artifact.
+
 ## The reframe
 
 Stage 1 asked "how do we fuse two search signals." Stage 2 asks the question under it:
