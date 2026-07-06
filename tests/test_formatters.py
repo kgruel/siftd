@@ -261,10 +261,11 @@ class TestTerminalRenderSearch:
         from siftd.output import terminal_fmt
 
         output = _search_text(
-            terminal_fmt.render_search(enriched_results, Fidelity(), query="caching", mode="chunks")
+            terminal_fmt.render_search(enriched_results, Fidelity(), query="caching", mode="hybrid")
         )
 
         assert "Results for: caching" in output
+        assert "[hybrid]" in output  # the resolved engine tag rides the title line
         # Score (now a 2dp quiet metric)
         assert "0.85" in output
         # Role labels (lowercased; assistant abbreviates to asst)
@@ -273,13 +274,29 @@ class TestTerminalRenderSearch:
         # Workspace
         assert "project" in output
 
+    def test_engine_tag_reflects_executed_engine(self):
+        """The terminal — the primary human surface — must surface the engine that
+        actually RAN, not the requested one (mirrors the serve_fmt executed-mode test).
+
+        The CLI resolves executed_mode → the ``mode`` context key before calling here,
+        so a hybrid search degraded to fts must read ``[fts]``, never ``[hybrid]``."""
+        from siftd.output import terminal_fmt
+
+        output = _search_text(
+            terminal_fmt.render_search(
+                SearchView(results=[], view="chunks"), Fidelity(), query="q", mode="fts"
+            )
+        )
+        assert "Results for: q" in output
+        assert "[fts]" in output and "[hybrid]" not in output
+
     def test_verbose_fidelity_shows_full_text(self, enriched_results):
         """With high depth fidelity, full text is shown."""
         from siftd.output import terminal_fmt
 
         fidelity = Fidelity(depth=3, chars=0)  # --full equivalent
         output = _search_text(
-            terminal_fmt.render_search(enriched_results, fidelity, query="caching", mode="chunks")
+            terminal_fmt.render_search(enriched_results, fidelity, query="caching", mode="hybrid")
         )
 
         assert "How do I implement caching?" in output
@@ -307,7 +324,7 @@ class TestTerminalRenderSearch:
         ]
 
         output = _search_text(
-            terminal_fmt.render_search(results, Fidelity(), query="x", mode="chunks")
+            terminal_fmt.render_search(results, Fidelity(), query="x", mode="hybrid")
         )
 
         # The tail's long snippet is clipped to its one-line form; never shown whole.
@@ -382,7 +399,7 @@ class TestTerminalRenderSearch:
         from siftd.output import terminal_fmt
 
         output = _search_text(
-            terminal_fmt.render_search([], Fidelity(), query="nothing", mode="chunks")
+            terminal_fmt.render_search([], Fidelity(), query="nothing", mode="hybrid")
         )
 
         assert "Results for: nothing" in output
@@ -404,7 +421,7 @@ class TestTerminalRenderSearch:
 
         fidelity = Fidelity(depth=3, chars=0)
         output = _search_text(
-            terminal_fmt.render_search(results, fidelity, query="test", mode="chunks")
+            terminal_fmt.render_search(results, fidelity, query="test", mode="hybrid")
         )
 
         assert "Line one" in output
@@ -426,7 +443,7 @@ class TestTerminalRenderSearch:
         }]
 
         output = _search_text(
-            terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
+            terminal_fmt.render_search(results, Fidelity(), query="test", mode="hybrid")
         )
 
         assert "No workspace" in output
@@ -450,7 +467,7 @@ class TestTerminalRenderSearch:
 
         output = _search_text(
             terminal_fmt.render_search(
-                results, Fidelity(depth=3, chars=0), query="test", mode="chunks"
+                results, Fidelity(depth=3, chars=0), query="test", mode="hybrid"
             )
         )
 
@@ -478,7 +495,7 @@ class TestTerminalRenderSearch:
         }]
 
         output = _search_text(
-            terminal_fmt.render_search(results, Fidelity(), query="test", mode="chunks")
+            terminal_fmt.render_search(results, Fidelity(), query="test", mode="hybrid")
         )
 
         # Matched-turn caret (▸ on a Unicode TTY, * degraded on this non-TTY

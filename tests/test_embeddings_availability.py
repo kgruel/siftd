@@ -1,122 +1,122 @@
-"""Tests for graceful degradation when embeddings not installed."""
+"""Embedding availability — status-driven (config/installed), not reachability."""
 
 import pytest
 
+import siftd.embeddings.availability as avail
+from siftd.embeddings.availability import (
+    EmbeddingsNotAvailable,
+    EmbedStatus,
+    embedding_status,
+    embeddings_available,
+    require_embeddings,
+)
 
-class TestEmbeddingsAvailability:
-    """Tests for the embeddings availability detection."""
 
-    def test_embeddings_available_returns_bool(self):
-        """embeddings_available() returns a boolean."""
-        from siftd.embeddings import embeddings_available
+def _cfg(monkeypatch, **values):
+    """Point config + resolver at an in-memory [embed] table."""
+    import siftd.config as config
+    import siftd.embeddings.base as base
 
-        result = embeddings_available()
-        assert isinstance(result, bool)
+    monkeypatch.setattr(config, "get_config", lambda key: values.get(key))
+    base.invalidate_backend_cache()
 
-    def test_availability_is_cached(self, monkeypatch):
-        """Result is cached after first check."""
-        import siftd.embeddings.availability as avail
 
-        # Reset cached value
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", None)
+class TestEmbeddingStatus:
+    def test_off_is_unusable(self, monkeypatch):
+        _cfg(monkeypatch, **{"embed.backend": "off"})
+        st = embedding_status()
+        assert st.usable is False
+        assert st.backend is None
+        assert "off" in st.reason
 
-        # First call caches the result
-        first = avail.embeddings_available()
+    def test_remote_configured_is_usable_without_fastembed(self, monkeypatch):
+        # Configuration alone makes a remote backend available — no fastembed, no network.
+        _cfg(monkeypatch, **{"embed.backend": "voyage", "embed.api_key": "sk-literal"})
+        monkeypatch.setattr(avail, "_fastembed_importable", lambda: False)
+        st = embedding_status()
+        assert st.usable is True
+        assert st.backend == "remote:voyage"
+        assert embeddings_available() is True
 
-        # Force a different result in the cache
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", not first)
+    def test_remote_misconfigured_is_unusable_with_reason(self, monkeypatch):
+        # ollama preset without embed.model → config error surfaces as an actionable reason.
+        _cfg(monkeypatch, **{"embed.backend": "ollama"})
+        st = embedding_status()
+        assert st.usable is False
+        assert "model" in st.reason
 
-        # Second call should return cached value
-        second = avail.embeddings_available()
-        assert second == (not first)  # Proves it read from cache
+    def test_unset_without_fastembed_is_unusable(self, monkeypatch):
+        _cfg(monkeypatch)
+        monkeypatch.setattr(avail, "_fastembed_importable", lambda: False)
+        st = embedding_status()
+        assert st.usable is False
+        assert st.backend is None
+        assert "install" in st.reason.lower()
 
-    def test_require_embeddings_does_nothing_when_available(self, monkeypatch):
-        """require_embeddings() passes silently when deps are installed."""
-        import siftd.embeddings.availability as avail
+    def test_unset_with_fastembed_is_usable(self, monkeypatch):
+        _cfg(monkeypatch)
+        monkeypatch.setattr(avail, "_fastembed_importable", lambda: True)
+        st = embedding_status()
+        assert st.usable is True
+        assert st.backend == "fastembed"
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+    def test_embeddings_available_returns_bool(self, monkeypatch):
+        _cfg(monkeypatch, **{"embed.backend": "off"})
+        assert embeddings_available() is False
 
-        # Should not raise
-        avail.require_embeddings("test operation")
 
-    def test_require_embeddings_raises_when_unavailable(self, monkeypatch):
-        """require_embeddings() raises EmbeddingsNotAvailable when deps missing."""
-        import siftd.embeddings.availability as avail
+class TestRequireEmbeddings:
+    def test_passes_when_usable(self, monkeypatch):
+        monkeypatch.setattr(avail, "embedding_status", lambda: EmbedStatus("fastembed", True, "ok"))
+        require_embeddings("test operation")  # no raise
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
-        with pytest.raises(avail.EmbeddingsNotAvailable) as exc_info:
-            avail.require_embeddings("Semantic search")
-
+    def test_raises_with_reason_when_unusable(self, monkeypatch):
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: EmbedStatus(None, False, "no backend configured")
+        )
+        with pytest.raises(EmbeddingsNotAvailable) as exc_info:
+            require_embeddings("Semantic search")
         assert "Semantic search" in str(exc_info.value)
+        assert "no backend configured" in str(exc_info.value)
         assert "siftd install embed" in str(exc_info.value)
-        assert "siftd query -s" in str(exc_info.value)
-
-    def test_exception_message_includes_install_hint(self, monkeypatch):
-        """EmbeddingsNotAvailable message tells user how to install."""
-        import siftd.embeddings.availability as avail
-
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
-        try:
-            avail.require_embeddings("Building index")
-        except avail.EmbeddingsNotAvailable as e:
-            assert "siftd install embed" in e.message
-            assert "Building index" in e.message
 
 
 class TestEmbeddingsModuleExports:
-    """Tests for conditional exports in embeddings/__init__.py."""
-
-    def test_always_exports_availability_functions(self):
-        """Availability functions are always exported."""
+    def test_availability_names_always_importable(self):
         from siftd.embeddings import (
             EmbeddingsNotAvailable,
+            EmbedStatus,
+            embedding_status,
             embeddings_available,
             require_embeddings,
         )
 
         assert callable(embeddings_available)
+        assert callable(embedding_status)
         assert callable(require_embeddings)
         assert issubclass(EmbeddingsNotAvailable, Exception)
+        assert EmbedStatus is not None
 
-    def test_conditional_exports_match_availability(self):
-        """Backend exports only present when embeddings available."""
-        from siftd.embeddings import embeddings_available
+    def test_backend_symbols_live_in_submodules_not_package_root(self):
+        import siftd.embeddings as emb
 
-        if embeddings_available():
-            # Should be able to import these
-            from siftd.embeddings import (
-                EmbeddingBackend,
-                IndexStats,
-                build_embeddings_index,
-                get_backend,
-            )
-
-            assert callable(get_backend)
-            assert callable(build_embeddings_index)
-            # Verify types exist (accessing to silence F401 unused import)
-            assert EmbeddingBackend is not None
-            assert IndexStats is not None
-        else:
-            # These should not be importable
-            import siftd.embeddings as emb
-
-            assert not hasattr(emb, "get_backend")
-            assert not hasattr(emb, "EmbeddingBackend")
-            assert not hasattr(emb, "build_embeddings_index")
+        # Backend/index symbols are imported from concrete submodules to keep numpy off
+        # the light CLI paths (see tests/architecture/test_hard_rules.py).
+        assert not hasattr(emb, "get_backend")
+        assert not hasattr(emb, "build_embeddings_index")
+        from siftd.embeddings.base import get_backend  # noqa: F401
 
 
 class TestDoctorChecks:
-    """Tests for doctor checks with embeddings unavailable."""
+    def _force_unavailable(self, monkeypatch):
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: EmbedStatus(None, False, "not configured")
+        )
 
     def test_embeddings_stale_check_skips_when_unavailable(self, tmp_path, monkeypatch):
-        """EmbeddingsStaleCheck returns no findings when embeddings not installed."""
-        import siftd.embeddings.availability as avail
         from siftd.doctor.checks import CheckContext, EmbeddingsStaleCheck
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
+        self._force_unavailable(monkeypatch)
         ctx = CheckContext(
             db_path=tmp_path / "main.db",
             embed_db_path=tmp_path / "embed.db",
@@ -124,19 +124,12 @@ class TestDoctorChecks:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-
-        check = EmbeddingsStaleCheck()
-        findings = check.run(ctx)
-
-        assert findings == []
+        assert EmbeddingsStaleCheck().run(ctx) == []
 
     def test_orphaned_chunks_check_skips_when_unavailable(self, tmp_path, monkeypatch):
-        """OrphanedChunksCheck returns no findings when embeddings not installed."""
-        import siftd.embeddings.availability as avail
         from siftd.doctor.checks import CheckContext, OrphanedChunksCheck
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
+        self._force_unavailable(monkeypatch)
         ctx = CheckContext(
             db_path=tmp_path / "main.db",
             embed_db_path=tmp_path / "embed.db",
@@ -144,23 +137,14 @@ class TestDoctorChecks:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-
-        check = OrphanedChunksCheck()
-        findings = check.run(ctx)
-
-        assert findings == []
+        assert OrphanedChunksCheck().run(ctx) == []
 
     def test_embeddings_available_check_reports_when_db_exists(self, tmp_path, monkeypatch):
-        """EmbeddingsAvailableCheck reports warning when DB exists but deps missing."""
-        import siftd.embeddings.availability as avail
         from siftd.doctor.checks import CheckContext, EmbeddingsAvailableCheck
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
-        # Create the embed DB file
+        self._force_unavailable(monkeypatch)
         embed_db = tmp_path / "embed.db"
         embed_db.touch()
-
         ctx = CheckContext(
             db_path=tmp_path / "main.db",
             embed_db_path=embed_db,
@@ -168,30 +152,20 @@ class TestDoctorChecks:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-
-        check = EmbeddingsAvailableCheck()
-        findings = check.run(ctx)
-
+        findings = EmbeddingsAvailableCheck().run(ctx)
         assert len(findings) == 1
         assert findings[0].severity == "warning"
         assert "not installed" in findings[0].message
 
     def test_embeddings_available_check_silent_when_no_db(self, tmp_path, monkeypatch):
-        """EmbeddingsAvailableCheck returns nothing when no embeddings DB exists."""
-        import siftd.embeddings.availability as avail
         from siftd.doctor.checks import CheckContext, EmbeddingsAvailableCheck
 
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
-
+        self._force_unavailable(monkeypatch)
         ctx = CheckContext(
             db_path=tmp_path / "main.db",
-            embed_db_path=tmp_path / "embed.db",  # Does not exist
+            embed_db_path=tmp_path / "embed.db",  # does not exist
             adapters_dir=tmp_path / "adapters",
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-
-        check = EmbeddingsAvailableCheck()
-        findings = check.run(ctx)
-
-        assert findings == []
+        assert EmbeddingsAvailableCheck().run(ctx) == []

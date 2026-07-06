@@ -1,0 +1,85 @@
+# siftd embedding presets — reference data for the generic remote embedding client.
+#
+# A preset is REFERENCE DATA: a fact about a provider's OpenAI-compatible embeddings
+# endpoint, identical on every machine, sourced from the provider's docs. It carries the
+# defaults the RemoteBackend needs; per-machine choices (which backend, which key, a
+# dimension override) live in ~/.config/siftd/config.toml under [embed].
+#
+# Every surveyed provider and local server speaks POST {base_url}/embeddings with an
+# `input` array and Bearer auth — one generic client covers the matrix. Code dispatches
+# only on `intent_style`; adding a provider is a data edit, not a code change (or use the
+# `custom` preset with embed.base_url/embed.model to reach any compatible endpoint).
+#
+# Each entry:
+#   name                preset name, selected via `embed.backend`
+#   base_url            OpenAI-compatible base; the client POSTs `{base_url}/embeddings`
+#   default_model       model used when embed.model is unset (omit to require embed.model)
+#   default_dimensions  reported/native output dimension (omit to learn from first response)
+#   intent_style        query/document asymmetry handling — one of:
+#                         none              symmetric model, no per-intent handling
+#                         param:input_type  send input_type=document|query (Voyage)
+#                         param:task        send task=retrieval.passage|retrieval.query (Jina)
+#                         prefix            prepend embed.document_prefix/embed.query_prefix
+#   max_batch           max inputs per request (conservative per provider ceilings)
+#   dimensions_param    wire field name for truncation when embed.dimensions is set
+#                       (optional; defaults to OpenAI's `dimensions`. Voyage and Mistral
+#                       spell it `output_dimension`.)
+#
+# Dimension resolution: embed.dimensions (config) > default_dimensions (here) > learned
+# from the first real embedding response (recorded on the backend instance).
+
+[[preset]]
+name = "voyage"
+base_url = "https://api.voyageai.com/v1"
+default_model = "voyage-4-lite"
+default_dimensions = 1024
+intent_style = "param:input_type"
+max_batch = 128
+dimensions_param = "output_dimension"
+
+[[preset]]
+name = "openai"
+base_url = "https://api.openai.com/v1"
+default_model = "text-embedding-3-small"
+default_dimensions = 1536
+intent_style = "none"
+max_batch = 512
+
+[[preset]]
+name = "gemini"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+default_model = "gemini-embedding-001"
+default_dimensions = 3072
+intent_style = "none"
+max_batch = 64
+
+[[preset]]
+name = "jina"
+base_url = "https://api.jina.ai/v1"
+default_model = "jina-embeddings-v3"
+default_dimensions = 1024
+intent_style = "param:task"
+max_batch = 64
+
+[[preset]]
+name = "mistral"
+base_url = "https://api.mistral.ai/v1"
+default_model = "mistral-embed"
+default_dimensions = 1024
+intent_style = "none"
+max_batch = 64
+dimensions_param = "output_dimension"
+
+# Local Ollama server. No default model — set embed.model to a pulled embedding model
+# (e.g. nomic-embed-text). Dimension is learned from the first response.
+[[preset]]
+name = "ollama"
+base_url = "http://localhost:11434/v1"
+intent_style = "prefix"
+max_batch = 64
+
+# Any other OpenAI-compatible endpoint. Requires embed.base_url and embed.model.
+[[preset]]
+name = "custom"
+intent_style = "prefix"
+max_batch = 64

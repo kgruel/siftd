@@ -336,6 +336,17 @@ def deprecation_notice(old: str, new: str) -> None:
     )
 
 
+def embedding_awaiting_message(count: int) -> tuple[str, str]:
+    """The single (subject, hint) pair for "N conversations await embedding".
+
+    Shared so ``siftd embed --status`` and the ingest auto-index skip line phrase it
+    identically — one string, one remedy.
+    """
+    from siftd.output import fmt_count
+
+    return (f"{fmt_count(count)} conversation(s) awaiting embedding.", "Run 'siftd embed'.")
+
+
 def _get_version() -> str:
     """Get package version from metadata."""
     try:

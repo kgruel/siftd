@@ -241,69 +241,66 @@ def test_extract_tool_summary_chunks_raw_names_use_category():
         conn.close()
 
 
-def test_hybrid_search_fts5_passthrough_is_opt_in(tmp_path):
-    pytest.importorskip("fastembed")
+def _seed_keyword_corpus(conn, n: int, text: str = "needle haystack") -> None:
+    """Insert n conversations, each a single prompt event carrying ``text``."""
+    from siftd.storage.fts import rebuild_fts_index
 
-    from siftd.search import hybrid_search
+    conn.execute("INSERT INTO harnesses (id, name) VALUES ('h1', 'test')")
+    for i in range(n):
+        conn.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at) VALUES (?, ?, 'h1', '2024-01-01')",
+            (f"c_{i}", f"ext_{i}"),
+        )
+        conn.execute(
+            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, 'prompt', ?, '2024-01-01')",
+            (f"ev_{i}", f"c_{i}"),
+        )
+        conn.execute(
+            "INSERT INTO event_content (id, event_id, block_index, block_type, content) VALUES (?, ?, 0, 'text', ?)",
+            (f"ec_{i}", f"ev_{i}", f'{{"text":"{text}"}}'),
+        )
+    rebuild_fts_index(conn)
+    conn.commit()
+
+
+def test_hybrid_rrf_surfaces_keyword_hits_with_empty_index(tmp_path, monkeypatch):
+    """RRF regression teeth: keyword hits surface through hybrid search even with an
+    EMPTY embeddings index — as FTS-only fusion entrants. This is the exact-identifier
+    win RRF exists for: a keyword hit with no vector rank still reaches results. RRF is
+    dormant post-F3, so opt in via the experiment-only knob."""
+    pytest.importorskip("fastembed")
+    monkeypatch.setenv("SIFTD_HYBRID_STRATEGY", "rrf")
+
+    from siftd.api.search import hybrid_search
     from siftd.storage.embeddings import open_embeddings_db
-    from siftd.storage.fts import insert_fts_content
     from siftd.storage.sqlite import open_database
 
     db_path = tmp_path / "siftd.db"
     embed_db_path = tmp_path / "embeddings.db"
 
-    # Create an empty embeddings DB (valid schema, but no chunks).
-    embed_conn = open_embeddings_db(embed_db_path)
-    embed_conn.close()
+    # Empty embeddings DB (valid schema, zero chunks) — the vector list is empty.
+    open_embeddings_db(embed_db_path).close()
 
-    # Create a main DB and seed FTS with enough matches to fill limit.
     conn = open_database(db_path, read_only=False)
     try:
-        for i in range(3):
-            insert_fts_content(conn, f"ec_{i}", f"ev_{i}", f"c_{i}", "needle haystack")
-        conn.commit()
+        _seed_keyword_corpus(conn, 3)
     finally:
         conn.close()
 
-    # Default behavior: no passthrough, so empty embeddings index => no results.
-    no_pass = hybrid_search(
+    out = hybrid_search(
         "needle",
         db_path=db_path,
-        embed_db_path=embed_db_path,
-        embeddings_only=False,
+        embed_db=embed_db_path,
+        mode="hybrid",
         exclude_active=False,
         include_derivative=True,
         n=3,
-        recall=80,
-        fts5_passthrough=False,
     )
-    assert no_pass == []
-
-    # Opt-in passthrough: return FTS5 snippets even with empty embeddings index.
-    passed = hybrid_search(
-        "needle",
-        db_path=db_path,
-        embed_db_path=embed_db_path,
-        embeddings_only=False,
-        exclude_active=False,
-        include_derivative=True,
-        n=3,
-        recall=80,
-        fts5_passthrough=True,
-    )
-    assert len(passed) == 3
-    assert all(r.chunk_type == "fts5" for r in passed)
-
-    # Passthrough only triggers when FTS5 can fill `n`.
-    not_enough = hybrid_search(
-        "needle",
-        db_path=db_path,
-        embed_db_path=embed_db_path,
-        embeddings_only=False,
-        exclude_active=False,
-        include_derivative=True,
-        n=4,
-        recall=80,
-        fts5_passthrough=True,
-    )
-    assert not_enough == []
+    # All three keyword hits surface as FTS-only entrants: keyword_rank set,
+    # vector_rank absent, fused solely from the keyword list.
+    assert len(out) == 3
+    assert all(r.breakdown is not None for r in out)
+    assert all(r.breakdown.vector_rank is None for r in out)
+    assert all(r.breakdown.keyword_rank is not None for r in out)
+    assert all(r.breakdown.fts5_matched for r in out)
+    assert all(r.score > 0 for r in out)

@@ -634,7 +634,7 @@ class TestTerminalRenderSearch:
         from siftd.output.terminal_fmt import render_search
 
         output = _search_text(
-            render_search([_chunk_result()], Fidelity(depth=1), query="test query", mode="chunks")
+            render_search([_chunk_result()], Fidelity(depth=1), query="test query", mode="hybrid")
         )
         assert "Results for: test query" in output
         assert "01ABC123" in output

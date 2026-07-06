@@ -444,8 +444,7 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         return []
 
     from siftd.paths import embeddings_db_path
-    # CLI keys the param as "embed_db"; "embed_db_path" is a legacy alias
-    embed_path = op.params.get("embed_db") or op.params.get("embed_db_path") or embeddings_db_path()
+    embed_path = embeddings_db_path()
 
     # Compare against conversations in main db
     conn = ctx.db()
@@ -453,6 +452,11 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         "SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'"
     ).fetchall()}
 
+    # Presence-based (indexed_state markers), not fingerprint-diff: a fingerprint pass
+    # would re-query event_content on every list render (a hot path). This catches
+    # unindexed *new* conversations cheaply; changed-content staleness is surfaced by
+    # `siftd embed --status`. indexed_state (not chunk presence) is the "fully indexed"
+    # marker — an empty conversation counts as indexed, and a v1 index reads as empty.
     if not Path(embed_path).exists():
         # Index has never been built — all conversations are unindexed
         missing = main_ids
@@ -460,8 +464,8 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         from siftd.api.database import open_database
         embed_conn = open_database(Path(embed_path), read_only=True)
         try:
-            from siftd.storage.embeddings import get_indexed_conversation_ids
-            indexed_ids = get_indexed_conversation_ids(embed_conn)
+            from siftd.storage.embeddings import get_indexed_state_ids
+            indexed_ids = get_indexed_state_ids(embed_conn)
         finally:
             embed_conn.close()
         missing = main_ids - indexed_ids
@@ -475,7 +479,7 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
         severity="warning",
         message=f"{n} conversation{'s' if n != 1 else ''} not indexed — search results may be incomplete",
         fix_available=True,
-        fix_command="siftd search --index",
+        fix_command="siftd embed",
         context={"count": n},
     )]
 
@@ -690,6 +694,36 @@ def _search_mode_degraded_caveats(op, result, ctx: ProducerContext) -> list[Find
         severity="hint",
         channel="both",
         message="Search running in keyword-only mode — install embeddings for semantic ranking: siftd install embed",
+        fix_available=False,
+    )]
+
+
+@caveat_producer(kind="search-degraded-unreachable", applies_to=_is_search_view_for_render)
+def _search_degraded_unreachable_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
+    """Caveat: a hybrid/semantic query degraded to keyword search at runtime.
+
+    Distinct from ``search-mode-degraded`` (the "no embeddings installed → resolved
+    to fts from the start" nudge): here the backend IS configured but was unreachable
+    at query time (429/5xx/network), so ``search_view`` degraded THIS query and set
+    ``SearchView.executed_mode == "fts"`` while the requested mode stayed
+    hybrid/semantic. The two are mutually exclusive on ``op.params["mode"]``.
+
+    Owner-scoped requests receive no caveats at all (the multi-tenant guard blanks
+    them), so for those the envelope ``mode`` field is the only honest channel — this
+    producer serves the un-scoped local/REST paths.
+    """
+    if getattr(result, "executed_mode", None) != "fts":
+        return []
+    if op.params.get("mode") not in ("hybrid", "semantic"):
+        return []
+    return [Finding(
+        check="search-degraded-unreachable",
+        severity="warning",
+        channel="both",
+        message=(
+            "Embedding backend configured but unreachable — search degraded to "
+            "keyword-only (fts). Results are ranked by keyword match, not semantics."
+        ),
         fix_available=False,
     )]
 

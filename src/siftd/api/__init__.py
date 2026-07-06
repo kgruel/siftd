@@ -67,7 +67,10 @@ from siftd.api.file_refs import (
 )
 from siftd.api.ingest import (
     AdapterSelectionError,
+    AutoIndexReport,
     IngestRunResult,
+    egress_notice_pending,
+    mark_egress_notified,
     run_ingest,
     run_rebuild_fts,
 )
@@ -154,11 +157,14 @@ from siftd.api.tags import (
     rename_tag_safe,
 )
 
-# Search symbols are lazy-imported to avoid pulling numpy into non-search commands.
+# Search symbols are lazy-imported so non-search commands (`siftd query`, `siftd tag`)
+# don't pay numpy's import latency (tens of ms) on paths that never touch vector search.
 # Access via siftd.api.SearchResult etc. triggers __getattr__ below.
 _LAZY_SEARCH_NAMES = {
     "ConversationScore",
     "ConversationSearchSummary",
+    "EmbedIndexStatus",
+    "EmbeddingConfigError",
     "IncrementalCompatError",
     "IndexCompatError",
     "ScoreBreakdown",
@@ -167,6 +173,7 @@ _LAZY_SEARCH_NAMES = {
     "SearchView",
     "aggregate_by_conversation",
     "build_index",
+    "embed_status",
     "compute_thread_tiers",
     "enrich_around_window",
     "enrich_context_window",
@@ -270,7 +277,10 @@ __all__ = [
     "fetch_file_refs",
     # ingest
     "AdapterSelectionError",
+    "AutoIndexReport",
     "IngestRunResult",
+    "egress_notice_pending",
+    "mark_egress_notified",
     "run_ingest",
     "run_rebuild_fts",
     # resources
@@ -287,6 +297,8 @@ __all__ = [
     "ScoreBreakdown",
     "ConversationSearchSummary",
     "ConversationScore",
+    "EmbedIndexStatus",
+    "EmbeddingConfigError",
     "IndexCompatError",
     "IncrementalCompatError",
     "search_chunks",
@@ -306,6 +318,7 @@ __all__ = [
     "embeddings_available",
     "first_mention",
     "build_index",
+    "embed_status",
     # stats
     "HealthStatus",
     "CostCoverage",

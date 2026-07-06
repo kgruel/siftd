@@ -4,7 +4,7 @@
 Covers:
 - chunker: extract_exchange_window_chunks()
 - indexer: build_embeddings_index()
-- backend: get_backend() and embed() contract
+- backend: get_backend() and embed_documents()/embed_query() contract
 """
 
 import sqlite3
@@ -38,15 +38,6 @@ from siftd.storage.sqlite import (
 )
 
 # Uses semantic_search_db fixture from conftest.py
-
-
-@pytest.fixture(scope="module")
-def tokenizer():
-    """Shared tokenizer for the entire test module."""
-    from fastembed import TextEmbedding
-
-    emb = TextEmbedding("BAAI/bge-small-en-v1.5")
-    return emb.model.tokenizer
 
 
 @pytest.fixture
@@ -90,13 +81,13 @@ def main_db_with_tool_calls(tmp_path):
 class TestExtractExchangeWindowChunks:
     """Tests for the exchange-window chunking strategy."""
 
-    def test_extracts_chunks_from_conversations(self, main_db_with_conversations, tokenizer):
+    def test_extracts_chunks_from_conversations(self, main_db_with_conversations):
         """extract_exchange_window_chunks returns chunks from all conversations."""
         db_path = main_db_with_conversations["db_path"]
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
 
-        chunks = extract_exchange_window_chunks(conn, tokenizer)
+        chunks = extract_exchange_window_chunks(conn)
         conn.close()
 
         assert len(chunks) >= 2, "Expected at least one chunk per conversation"
@@ -112,20 +103,20 @@ class TestExtractExchangeWindowChunks:
             assert chunk["token_count"] > 0
             assert len(chunk["source_ids"]) > 0
 
-    def test_filters_by_conversation_id(self, main_db_with_conversations, tokenizer):
+    def test_filters_by_conversation_id(self, main_db_with_conversations):
         """Can filter to a specific conversation."""
         db_path = main_db_with_conversations["db_path"]
         conv1_id = main_db_with_conversations["conv1_id"]
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
 
-        chunks = extract_exchange_window_chunks(conn, tokenizer, conversation_id=conv1_id)
+        chunks = extract_exchange_window_chunks(conn, conversation_id=conv1_id)
         conn.close()
 
         assert len(chunks) >= 1
         assert all(c["conversation_id"] == conv1_id for c in chunks)
 
-    def test_excludes_conversation_ids(self, main_db_with_conversations, tokenizer):
+    def test_excludes_conversation_ids(self, main_db_with_conversations):
         """exclude_conversation_ids filters out specified conversations."""
         db_path = main_db_with_conversations["db_path"]
         conv1_id = main_db_with_conversations["conv1_id"]
@@ -133,39 +124,45 @@ class TestExtractExchangeWindowChunks:
         conn.row_factory = sqlite3.Row
 
         chunks = extract_exchange_window_chunks(
-            conn, tokenizer, exclude_conversation_ids={conv1_id}
+            conn, exclude_conversation_ids={conv1_id}
         )
         conn.close()
 
         assert all(c["conversation_id"] != conv1_id for c in chunks)
 
-    def test_empty_db_returns_empty(self, tmp_path, tokenizer):
+    def test_empty_db_returns_empty(self, tmp_path):
         """Empty database returns no chunks."""
         db_path = tmp_path / "empty.db"
         conn = create_database(db_path)
         conn.row_factory = sqlite3.Row
 
-        chunks = extract_exchange_window_chunks(conn, tokenizer)
+        chunks = extract_exchange_window_chunks(conn)
         conn.close()
 
         assert chunks == []
 
-    def test_source_ids_reference_prompts(self, main_db_with_conversations, tokenizer):
-        """source_ids contain prompt IDs from the exchange."""
+    def test_source_ids_widen_to_prompt_and_response_events(self, main_db_with_conversations):
+        """source_ids carry every constituent event id (prompt AND response) — the bridge."""
         db_path = main_db_with_conversations["db_path"]
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
 
-        chunks = extract_exchange_window_chunks(conn, tokenizer)
+        chunks = extract_exchange_window_chunks(conn)
+
+        # Which event ids are prompts vs responses in the main DB?
+        prompt_ids = {r[0] for r in conn.execute("SELECT id FROM events WHERE kind='prompt'").fetchall()}
+        response_ids = {r[0] for r in conn.execute("SELECT id FROM events WHERE kind='response'").fetchall()}
         conn.close()
 
-        # Collect all source_ids
-        all_source_ids = set()
+        all_source_ids: set[str] = set()
         for chunk in chunks:
             all_source_ids.update(chunk["source_ids"])
+            # prompt id anchors the chunk (source_ids[0]), so turn positioning is stable
+            assert chunk["source_ids"][0] in prompt_ids
 
-        # Should have multiple prompt references
         assert len(all_source_ids) >= 2
+        # The widening: response event ids appear in source_ids, not just prompts.
+        assert all_source_ids & response_ids, "response event ids missing from source_ids"
 
 
 class TestBuildEmbeddingsIndex:
@@ -185,7 +182,7 @@ class TestBuildEmbeddingsIndex:
         assert isinstance(stats, IndexStats)
         assert stats.chunks_added > 0
         assert stats.total_chunks == stats.chunks_added
-        assert stats.backend_name in ("fastembed", "ollama")
+        assert stats.backend_name == "fastembed"
         assert stats.dimension > 0
 
         # Verify database has chunks
@@ -247,6 +244,51 @@ class TestBuildEmbeddingsIndex:
                 embed_db_path=tmp_path / "embed.db",
             )
 
+    def test_v2_lifecycle_end_to_end(self, main_db_with_tool_calls, tmp_path):
+        """Real-backend v2 build: identity meta, indexed_state, append re-index, status."""
+        from siftd.embeddings.indexer import embed_index_status
+        from siftd.storage.embeddings import get_indexed_state, get_meta
+
+        db_path = main_db_with_tool_calls["db_path"]
+        conv_id = main_db_with_tool_calls["conv_id"]
+        embed_db_path = tmp_path / "embeddings.db"
+
+        build_embeddings_index(db_path=db_path, embed_db_path=embed_db_path, verbose=False)
+
+        conn = open_embeddings_db(embed_db_path, read_only=True)
+        try:
+            assert get_meta(conn, "schema_version") == "2"
+            assert get_meta(conn, "backend") == "fastembed"
+            assert conv_id in get_indexed_state(conn)
+        finally:
+            conn.close()
+
+        rep = embed_index_status(db_path=db_path, embed_db_path=embed_db_path)
+        assert rep.index_exists and not rep.needs_rebuild
+        assert rep.conversations_stale == 0
+
+        # Append a new prompt/response → fingerprint changes → conversation re-indexes.
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_model,
+            insert_prompt,
+            insert_prompt_content,
+            insert_response,
+            insert_response_content,
+        )
+
+        conn = create_database(db_path)
+        m = get_or_create_model(conn, "test-model")
+        pid = insert_prompt(conn, conv_id, "p-appended", "2024-01-15T11:00:00Z")
+        insert_prompt_content(conn, pid, 0, "text", '{"text": "a brand new follow-up question"}')
+        rid = insert_response(conn, conv_id, pid, m, None, "r-appended", "2024-01-15T11:00:01Z", input_tokens=5, output_tokens=10)
+        insert_response_content(conn, rid, 0, "text", '{"text": "a brand new answer to it"}')
+        conn.commit()
+        conn.close()
+
+        stats = build_embeddings_index(db_path=db_path, embed_db_path=embed_db_path, verbose=False)
+        assert stats.chunks_added >= 1 and stats.conversations_indexed == 1
+
     def test_search_finds_indexed_content(self, main_db_with_conversations, tmp_path):
         """Indexed content is searchable via search_similar."""
         db_path = main_db_with_conversations["db_path"]
@@ -261,7 +303,7 @@ class TestBuildEmbeddingsIndex:
 
         # Search for Python content
         backend = get_backend()
-        query_embedding = backend.embed_one("Python programming language")
+        query_embedding = backend.embed_query("Python programming language")
 
         conn = open_embeddings_db(embed_db_path, read_only=True)
         results = search_similar(conn, query_embedding, limit=5)
@@ -304,49 +346,65 @@ class TestEmbeddingBackend:
 
         assert hasattr(backend, "name")
         assert hasattr(backend, "dimension")
-        assert hasattr(backend, "embed")
-        assert hasattr(backend, "embed_one")
+        assert hasattr(backend, "embed_documents")
+        assert hasattr(backend, "embed_query")
         assert backend.dimension > 0
 
-    def test_embed_batch(self):
-        """embed() handles batches of texts."""
+    def test_embed_documents_batch(self):
+        """embed_documents() handles batches of texts."""
         backend = get_backend()
 
         texts = ["Hello world", "Python programming", "Machine learning"]
-        embeddings = backend.embed(texts)
+        embeddings = backend.embed_documents(texts)
 
         assert len(embeddings) == len(texts)
         for emb in embeddings:
             assert len(emb) == backend.dimension
             assert all(isinstance(v, float) for v in emb)
 
-    def test_embed_one(self):
-        """embed_one() returns a single embedding."""
+    def test_embed_query(self):
+        """embed_query() returns a single embedding."""
         backend = get_backend()
 
-        embedding = backend.embed_one("Test sentence")
+        embedding = backend.embed_query("Test sentence")
 
         assert len(embedding) == backend.dimension
         assert all(isinstance(v, float) for v in embedding)
 
-    def test_embed_empty_batch(self):
-        """embed() handles empty batch."""
+    def test_embed_documents_empty_batch(self):
+        """embed_documents() handles empty batch."""
         backend = get_backend()
 
-        embeddings = backend.embed([])
+        embeddings = backend.embed_documents([])
 
         assert embeddings == []
 
-    def test_preferred_backend_fastembed(self):
-        """Can explicitly request fastembed backend."""
-        backend = get_backend(preferred="fastembed")
+    def test_get_backend_is_config_driven_no_override(self):
+        """get_backend takes no per-call override — the backend is config (embed.backend)."""
+        import inspect
 
-        assert backend.name == "fastembed"
+        params = inspect.signature(get_backend).parameters
+        assert "preferred" not in params
+        # Unset config resolves to the local fastembed backend (installed in this lane).
+        assert get_backend().name == "fastembed"
 
-    def test_unknown_backend_raises(self):
-        """Requesting unknown backend raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown backend"):
-            get_backend(preferred="nonexistent_backend")
+    def test_unknown_backend_raises(self, monkeypatch):
+        """An unknown embed.backend value is a config error, not a silent fallthrough."""
+        import siftd.config
+        from siftd.embeddings import base
+        from siftd.embeddings.base import EmbeddingConfigError
+
+        base.invalidate_backend_cache()
+        # _read_embed_config reads via siftd.config.get_config (local import each call).
+        monkeypatch.setattr(
+            siftd.config, "get_config",
+            lambda key: "nonexistent_backend" if key == "embed.backend" else None,
+        )
+        try:
+            with pytest.raises(EmbeddingConfigError, match="not a known backend"):
+                get_backend()
+        finally:
+            base.invalidate_backend_cache()
 
 
 class TestIndexedConversationTracking:

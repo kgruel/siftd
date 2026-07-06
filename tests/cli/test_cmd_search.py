@@ -35,8 +35,13 @@ def populated_db(semantic_search_db):
 
 
 @pytest.fixture
-def indexed_db(populated_db, tmp_path):
-    """Create database with embeddings index built."""
+def indexed_db(populated_db, tmp_path, monkeypatch):
+    """Create database with embeddings index built, and route search at it.
+
+    `siftd search` no longer takes `--embed-db` (index management moved to
+    `siftd embed`), so the built index is wired in by pointing embeddings_db_path()
+    at it — the same resolution the real command uses.
+    """
     embed_db_path = tmp_path / "embeddings.db"
 
     build_embeddings_index(
@@ -44,6 +49,8 @@ def indexed_db(populated_db, tmp_path):
         embed_db_path=embed_db_path,
         verbose=False,
     )
+    monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: embed_db_path)
+    monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: embed_db_path)
 
     return {
         **populated_db,
@@ -69,9 +76,6 @@ def make_args(**kwargs):
         "model": None,
         "since": None,
         "before": None,
-        "index": False,
-        "rebuild": False,
-        "backend": None,
         "embeddings_only": False,
         "recall": 80,
         "role": None,
@@ -93,53 +97,6 @@ def make_args(**kwargs):
     }
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
-
-
-class TestSearchIndexing:
-    """Tests for --index and --rebuild modes."""
-
-    def test_index_builds_embeddings(self, populated_db, tmp_path, capsys):
-        """--index creates embeddings database."""
-        embed_db_path = tmp_path / "embeddings.db"
-
-        args = make_args(
-            db=str(populated_db["db_path"]),
-            embed_db=str(embed_db_path),
-            index=True,
-        )
-
-        result = cmd_search(args)
-        captured = capsys.readouterr()
-
-        assert result == 0
-        assert embed_db_path.exists()
-        assert "Embedding" in captured.out or "chunks" in captured.out
-
-    def test_rebuild_clears_and_rebuilds(self, indexed_db, capsys):
-        """--rebuild clears existing index and rebuilds."""
-        args = make_args(
-            db=str(indexed_db["db_path"]),
-            embed_db=str(indexed_db["embed_db_path"]),
-            rebuild=True,
-        )
-
-        result = cmd_search(args)
-        captured = capsys.readouterr()
-
-        assert result == 0
-        assert "Clearing" in captured.out or "chunks" in captured.out
-
-    def test_index_requires_main_db(self, tmp_path):
-        """--index fails if main database doesn't exist."""
-        args = make_args(
-            db=str(tmp_path / "nonexistent.db"),
-            embed_db=str(tmp_path / "embed.db"),
-            index=True,
-        )
-
-        result = cmd_search(args)
-
-        assert result == 1
 
 
 class TestSearchSearch:
@@ -176,12 +133,13 @@ class TestSearchSearch:
         assert result == 1
         assert "A search query or tag filter is required" in captured.err
 
-    def test_missing_embed_db_shows_hint(self, populated_db, tmp_path, capsys):
+    def test_missing_embed_db_shows_hint(self, populated_db, tmp_path, capsys, monkeypatch):
         """Missing embeddings database shows helpful message when --mode=semantic used."""
+        monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: tmp_path / "nonexistent_embed.db")
+        monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: tmp_path / "nonexistent_embed.db")
         args = make_args(
             query=["test"],
             db=str(populated_db["db_path"]),
-            embed_db=str(tmp_path / "nonexistent_embed.db"),
             mode="semantic",  # Explicitly request the semantic engine to trigger the error
         )
 
@@ -191,7 +149,8 @@ class TestSearchSearch:
         assert result == 1
         # Human text on stderr keeps stdout clean for --json | jq (I15).
         assert "No embeddings index found" in captured.err
-        assert "--index" in captured.err
+        # index management moved to `siftd embed`
+        assert "siftd embed" in captured.err
 
     def test_missing_main_db_shows_hint(self, tmp_path, capsys):
         """Missing main database shows helpful message."""
@@ -340,12 +299,12 @@ class TestSearchServeDelegation:
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda *a, **k: fake_body)
 
         # If local semantic path is used, this would be called.
-        import siftd.embeddings as embeddings
+        import siftd.embeddings.base as embeddings_base
 
         def _should_not_be_called(*_a, **_k):
             raise AssertionError("expected serve delegation (no local embedding backend init)")
 
-        monkeypatch.setattr(embeddings, "get_backend", _should_not_be_called)
+        monkeypatch.setattr(embeddings_base, "get_backend", _should_not_be_called)
 
         result = cmd_search(args)
         captured = capsys.readouterr()
@@ -607,7 +566,7 @@ class TestSearchThreadMode:
     """Tests for --thread mode candidate pool handling."""
 
     @pytest.fixture
-    def multi_chunk_db(self, tmp_path):
+    def multi_chunk_db(self, tmp_path, monkeypatch):
         """Create database with many chunks across conversations for thread tests."""
         db_path = tmp_path / "main.db"
         conn = create_database(db_path)
@@ -651,6 +610,8 @@ class TestSearchThreadMode:
 
         embed_db_path = tmp_path / "embeddings.db"
         build_embeddings_index(db_path=db_path, embed_db_path=embed_db_path, verbose=False)
+        monkeypatch.setattr("siftd.paths.embeddings_db_path", lambda: embed_db_path)
+        monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: embed_db_path)
 
         return {"db_path": db_path, "embed_db_path": embed_db_path}
 

@@ -13,7 +13,7 @@ siftd follows the XDG Base Directory specification:
 | `~/.config/siftd/` | Configuration, custom adapters, queries |
 | `~/.cache/siftd/` | Reserved for cache files (currently unused; embedding backends manage their own caches) |
 
-The main database contains everything except embeddings. You can delete `embeddings.db` and rebuild it with `siftd search --rebuild` — it's derived data.
+The main database contains everything except embeddings. You can delete `embeddings.db` and rebuild it with `siftd embed --rebuild` — it's derived data. `embed.db_path` in config overrides the default location, mirroring `db.path`.
 
 ```bash
 siftd db path    # show all paths
@@ -42,7 +42,7 @@ siftd uses separate databases for conversations and embeddings:
 
 **Embeddings database (`embeddings.db`):**
 - Vector embeddings for semantic search
-- Chunk metadata linking back to main database
+- Chunk metadata linking back to main database, plus per-conversation indexing state (a fingerprint of event count/timestamp/content that detects staleness, including appends to already-indexed conversations)
 - Derived data — can be rebuilt from main database
 
 Separation means you can:
@@ -180,7 +180,7 @@ siftd db restore ~/backup/siftd-20250115.db
 The embeddings database can be rebuilt from the main database:
 
 ```bash
-siftd search --rebuild
+siftd embed --rebuild
 ```
 
 ## Database size

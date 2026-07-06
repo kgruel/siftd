@@ -75,6 +75,7 @@ def run_siftd(*args: str) -> str:
 SUBCOMMANDS = [
     "ingest",
     "search",
+    "embed",
     "install",
     "register",
     "session-id",

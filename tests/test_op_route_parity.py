@@ -170,8 +170,12 @@ def test_search_op_keys_accepted_by_route():
     Slice 4 update: the op fn is now ``search_view`` (engine + recipe), so the
     post-processing controls (view/sort/select/threshold/full/around/turns)
     travel on the wire and ``around`` is NO LONGER excluded — it is a real
-    recipe param the route runs server-side. Only the local-only filesystem
-    paths (db_path/embed_db) stay off the wire.
+    recipe param the route runs server-side.
+
+    Embed-rebuild slice 2: ``backend`` and ``embed_db`` are gone from the search
+    op entirely — index management moved to `siftd embed`, and the backend is
+    config-driven (embed.backend). Only the local-only ``db_path`` stays off the
+    wire.
     """
     from pathlib import Path as _Path
 
@@ -184,7 +188,6 @@ def test_search_op_keys_accepted_by_route():
         params={
             "q": "hello",
             "db_path": _Path("/tmp/x"),
-            "embed_db": _Path("/tmp/embed.db"),  # local-only — must not reach wire
             "n": 10,
             "mode": "hybrid",                    # now travels on the wire (ST-4a)
             # Optionals are set non-None so to_wire() (which drops None) emits
@@ -208,7 +211,6 @@ def test_search_op_keys_accepted_by_route():
             "recency": False,
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
-            "backend": "fastembed",
             "raw_fts": False,
             "debug_ids": False,                  # render annotation (wire param)
             # Slice 4 recipe controls — all travel on the wire.
@@ -231,9 +233,8 @@ def test_search_op_keys_accepted_by_route():
     leftover = wire_keys - route_keys
     assert not leftover, (
         f"CLI search op sends wire keys the route doesn't declare: "
-        f"{sorted(leftover)}. Round-4 caught this for embed_db/around — "
-        f"any new addition needs either a Parameter() on the route or an "
-        f"entry in the search OpSpec's wire_excludes in siftd.api.op_spec.SPECS."
+        f"{sorted(leftover)}. Any new addition needs either a Parameter() on the "
+        f"route or an entry in the search OpSpec's wire_excludes in siftd.api.op_spec.SPECS."
     )
     # Inverse direction (I19): a route query param the CLI op never sends is
     # dead delegation surface. Anything the server genuinely accepts on its own
@@ -245,9 +246,10 @@ def test_search_op_keys_accepted_by_route():
         f"Either remove the dead Parameter()+forward, or add it to "
         f"SERVER_ONLY_SEARCH_PARAMS with a reason."
     )
-    # Local paths must not bleed to the wire.
-    assert "embed_db" not in wire_keys, "local embeddings DB path must not leak to the wire"
+    # Local path must not bleed to the wire; backend/embed_db are gone from the op.
     assert "db_path" not in wire_keys, "local db path must not leak to the wire"
+    assert "backend" not in wire_keys, "backend is config-driven; it must not ride the wire"
+    assert "embed_db" not in wire_keys, "embed_db is not a search op param (moved to `siftd embed`)"
     # mode + the Slice-4 recipe controls all travel to the route.
     assert "mode" in wire_keys, "mode must travel to the route (ST-4a: fts/hybrid/semantic)"
     assert {"view", "sort", "select", "threshold", "full", "around", "turns"} <= wire_keys, (

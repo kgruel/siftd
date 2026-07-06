@@ -463,6 +463,11 @@ def deserialize_search_view(body: dict[str, Any]) -> Any:
     view = body.get("view", "chunks")
     n_skipped = _coerce_int(body.get("n_skipped"))
     empty_reason = body.get("empty_reason")
+    # Serve delegation is server-authoritative for the executed engine: the wire
+    # ``mode`` is what the server actually ran (a degrade to fts included), so the
+    # delegated CLI reports it via ``SearchView.executed_mode`` rather than its own
+    # pre-resolved mode. ``None`` when the server omitted it (legacy envelope).
+    executed_mode = body.get("mode")
 
     try:
         if view == "thread":
@@ -475,6 +480,7 @@ def deserialize_search_view(body: dict[str, Any]) -> Any:
                 tier2=tier2,
                 n_skipped=n_skipped,
                 empty_reason=empty_reason,
+                executed_mode=executed_mode,
             )
         rows = _coerce_list(body.get("results"))
         if view == "conversations":
@@ -486,6 +492,7 @@ def deserialize_search_view(body: dict[str, Any]) -> Any:
             view=view,
             n_skipped=n_skipped,
             empty_reason=empty_reason,
+            executed_mode=executed_mode,
         )
     except Exception:
         return None

@@ -50,7 +50,7 @@ class OrphanedChunksCheck:
                 severity="warning",
                 message=f"{count} orphaned chunk(s) from {len(orphaned_ids)} deleted conversation(s)",
                 fix_available=True,
-                fix_command="siftd search --rebuild",
+                fix_command="siftd embed --rebuild",
                 context={"chunk_count": count, "conversation_count": len(orphaned_ids)},
             )
         ]

@@ -26,6 +26,20 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `theme` | string | `siftd` | Terminal colour theme (values: siftd, nord); terminal only — does not affect the web UI |
 
+## [embed]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `backend` | string | — | Embedding backend: voyage\|openai\|gemini\|jina\|mistral\|ollama\|fastembed\|custom\|off |
+| `api_key` | string | — | Remote-backend API key (supports env:/file:/literal via the credentials grammar) |
+| `model` | string | — | Embedding model name (overrides the preset default) |
+| `dimensions` | int | — | Output dimensions (provider matryoshka truncation; overrides preset default) |
+| `base_url` | string | — | OpenAI-compatible embeddings base URL (custom/self-hosted override) |
+| `auto_index` | bool | `true` | Incrementally embed new conversations at the end of ingest (steady-state only; the first-run backlog goes through an explicit 'siftd embed') |
+| `db_path` | string | — | Override the embeddings database path (mirrors db.path) |
+| `query_prefix` | string | — | Prefix prepended to queries for prefix-style models (ollama/custom) |
+| `document_prefix` | string | — | Prefix prepended to documents for prefix-style models (ollama/custom) |
+
 ## [ingestion]
 
 | Key | Type | Default | Description |

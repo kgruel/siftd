@@ -283,7 +283,7 @@ class TestEmbeddingsStaleCheck:
     def test_no_embeddings_db(self, check_context, monkeypatch):
         """Reports info when embeddings DB doesn't exist."""
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
 
         check = EmbeddingsStaleCheck()
         findings = check.run(check_context)
@@ -292,13 +292,13 @@ class TestEmbeddingsStaleCheck:
         assert findings[0].severity == "info"
         assert "not found" in findings[0].message
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "siftd search --index"
+        assert findings[0].fix_command == "siftd embed"
 
     def test_stale_conversations(self, check_context, monkeypatch):
         """Reports stale conversations when embeddings DB exists but is empty."""
         pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
 
         from siftd.storage.embeddings import open_embeddings_db
 
@@ -666,7 +666,7 @@ class TestOrphanedChunksCheck:
     def test_no_embeddings_db(self, check_context, monkeypatch):
         """Returns no findings when embeddings DB doesn't exist."""
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
 
         check = OrphanedChunksCheck()
         findings = check.run(check_context)
@@ -676,7 +676,7 @@ class TestOrphanedChunksCheck:
         """Returns no findings when all chunks match conversations."""
         pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
 
         from siftd.storage.embeddings import open_embeddings_db, store_chunk
 
@@ -705,7 +705,7 @@ class TestOrphanedChunksCheck:
         """Reports orphaned chunks for conversations not in main DB."""
         pytest.importorskip("numpy")
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", True)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "ok"))
 
         from siftd.storage.embeddings import open_embeddings_db, store_chunk
 
@@ -1217,6 +1217,52 @@ class TestConfigValidCheck:
 
         assert ConfigValidCheck().run(check_context) == []
 
+    def test_valid_embed_backend(self, check_context, monkeypatch, tmp_path):
+        """A known embed.backend with a literal key yields no findings."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\napi_key = "sk-literal"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        assert ConfigValidCheck().run(check_context) == []
+
+    def test_unknown_embed_backend(self, check_context, monkeypatch, tmp_path):
+        """Reports a warning for an unknown embed.backend name."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "cohere"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        findings = ConfigValidCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "cohere" in findings[0].message
+        assert "embed.backend" in findings[0].message
+
+    def test_invalid_embed_dimensions(self, check_context, monkeypatch, tmp_path):
+        """Reports a warning for non-positive embed.dimensions."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\napi_key = "k"\ndimensions = 0\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        findings = ConfigValidCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "dimensions" in findings[0].message
+
+    def test_unresolvable_embed_api_key(self, check_context, monkeypatch, tmp_path):
+        """Reports a warning when embed.api_key references an unset env var (no network)."""
+        monkeypatch.delenv("SIFTD_DOCTOR_NOPE", raising=False)
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\napi_key = "env:SIFTD_DOCTOR_NOPE"\n')
+
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        findings = ConfigValidCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "api_key" in findings[0].message
+
     def test_finding_structure(self, check_context):
         """Check has correct attributes."""
         check = ConfigValidCheck()
@@ -1658,7 +1704,7 @@ class TestEmbeddingsAvailableCheck:
     def test_no_embed_db_no_findings(self, check_context, monkeypatch):
         """No findings when embeddings are unavailable and no DB exists."""
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         check_context.embed_db_path.unlink(missing_ok=True)
 
@@ -1670,7 +1716,7 @@ class TestEmbeddingsAvailableCheck:
     def test_embed_db_exists_without_extra_is_warning(self, check_context, monkeypatch):
         """Warning (not info) when embed DB exists but embed extra is not installed."""
         import siftd.embeddings.availability as avail
-        monkeypatch.setattr(avail, "_EMBEDDINGS_AVAILABLE", False)
+        monkeypatch.setattr(avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "not configured"))
 
         embed_db = check_context.embed_db_path
         embed_db.touch()

@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.api import open_database
-from siftd.cli._common import resolve_db
+from siftd.cli._common import embedding_awaiting_message, resolve_db
 from siftd.output import fmt_count, fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
@@ -429,6 +429,15 @@ def cmd_ingest(args) -> int:
     consumer = ProgressConsumer(shape="bars", live=LiveRegion(enabled=not quiet and not json_mode))
     if not json_mode:
         renderer.attach_consumer(consumer)  # type: ignore[union-attr]
+
+    def _on_egress_notice(text: str) -> None:
+        # The remote first-egress disclosure surfaces the moment auto-index decides to send,
+        # BEFORE the content leaves — never gated by --quiet (it's a privacy notice).
+        if json_mode:
+            renderer._emit({"type": "auto_index_notice", "message": text})
+        else:
+            status.info(text)
+
     try:
         with consumer:
             result = run_ingest(
@@ -436,6 +445,7 @@ def cmd_ingest(args) -> int:
                 adapter_names=args.adapter,
                 scan_paths=args.path,
                 on_event=renderer.handle_event,
+                on_notice=_on_egress_notice,
             )
     except AdapterSelectionError as exc:
         message = str(exc)
@@ -477,7 +487,47 @@ def cmd_ingest(args) -> int:
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
+    _render_auto_index(result.auto_index, json_mode=json_mode, quiet=quiet, renderer=renderer)
     return 0
+
+
+def _render_auto_index(report, *, json_mode: bool, quiet: bool, renderer) -> None:
+    """Surface the post-ingest auto-index OUTCOME (embedded / awaiting / warning).
+
+    The first-egress notice is NOT rendered here — it is surfaced live, pre-embed, through
+    run_ingest's on_notice callback (see cmd_ingest). This runs after run_ingest returns.
+    """
+    if report is None:
+        return
+    if json_mode:
+        renderer._emit({
+            "type": "auto_index",
+            "ran": report.ran,
+            "chunks_added": report.chunks_added,
+            "conversations_indexed": report.conversations_indexed,
+            "awaiting": report.awaiting,
+            "skipped_reason": report.skipped_reason,
+            "notice": report.notice,
+            "error": report.error,
+        })
+        return
+    if quiet:
+        return
+    if report.error:
+        status.warning(
+            f"Auto-index skipped: {report.error}",
+            hint="Run 'siftd embed' to catch up.",
+        )
+    elif report.skipped_reason:
+        subject, hint = embedding_awaiting_message(report.awaiting)
+        status.info(subject, hint=hint)
+    elif report.ran:
+        # Honest at 0 chunks (a stale conversation whose new content all filtered away still
+        # counts as embedded — its old chunks were legitimately swept).
+        status.info(
+            f"Embedded {fmt_count(report.conversations_indexed)} new conversation(s) "
+            f"({fmt_count(report.chunks_added)} chunks)."
+        )
 
 
 def cmd_backfill(args) -> int:
@@ -1059,7 +1109,10 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
 def _fix_ingest(conn, db_path):
     from siftd.api import run_ingest
 
-    stats = run_ingest(db_path=db_path).stats
+    # Surface the remote first-egress disclosure live, BEFORE content leaves the machine —
+    # auto-index only emits it through on_notice (else it lands on a discarded result).
+    # Matches the ingest command's on_notice → status.info in its plain-text mode.
+    stats = run_ingest(db_path=db_path, on_notice=status.info).stats
     if stats is None:
         return "0 file(s) ingested, 0 skipped"
     return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"
@@ -1072,14 +1125,14 @@ def _fix_rebuild_fts(conn, db_path):
     return "FTS index rebuilt"
 
 
-def _fix_search_index(conn, db_path):
+def _fix_embed(conn, db_path):
     from siftd.api.search import build_index
 
     result = build_index(db_path=db_path, rebuild=False)
     return f"{result.get('chunks_added', 0)} chunk(s) indexed"
 
 
-def _fix_search_rebuild(conn, db_path):
+def _fix_embed_rebuild(conn, db_path):
     from siftd.api.search import build_index
 
     result = build_index(db_path=db_path, rebuild=True)
@@ -1128,8 +1181,8 @@ def _fix_blob_triggers(conn, db_path):
 _FIX_REGISTRY = {
     "siftd ingest": ("Ingesting new files", _fix_ingest),
     "siftd ingest --rebuild-fts": ("Rebuilding FTS index", _fix_rebuild_fts),
-    "siftd search --index": ("Indexing embeddings", _fix_search_index),
-    "siftd search --rebuild": ("Rebuilding embeddings index", _fix_search_rebuild),
+    "siftd embed": ("Indexing embeddings", _fix_embed),
+    "siftd embed --rebuild": ("Rebuilding embeddings index", _fix_embed_rebuild),
     "siftd backfill --git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
     "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),

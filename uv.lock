@@ -1460,6 +1460,7 @@ dependencies = [
     { name = "asyncssh" },
     { name = "httpx" },
     { name = "mistune" },
+    { name = "numpy" },
     { name = "painted" },
     { name = "tomlkit" },
 ]
@@ -1480,7 +1481,6 @@ dev = [
 embed = [
     { name = "fastembed" },
     { name = "huggingface-hub" },
-    { name = "numpy" },
     { name = "onnxruntime" },
     { name = "tokenizers" },
 ]
@@ -1500,7 +1500,7 @@ requires-dist = [
     { name = "huggingface-hub", marker = "extra == 'embed'" },
     { name = "litestar", extras = ["standard"], marker = "extra == 'serve'" },
     { name = "mistune", specifier = ">=3.0" },
-    { name = "numpy", marker = "extra == 'embed'" },
+    { name = "numpy" },
     { name = "onnxruntime", marker = "extra == 'embed'" },
     { name = "painted", specifier = ">=0.4.0" },
     { name = "prysk", marker = "extra == 'dev'" },

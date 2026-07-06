@@ -1223,12 +1223,18 @@ def render_search_block(
     *,
     query: str = "",
     mode: str = "chunks",
+    engine: str | None = None,
     tier1: list | None = None,
     tier2: list | None = None,
     caveats: list | None = None,
     **_ignore,
 ) -> Block:
     """Render search results as a painted Block (chunks / conversations / thread).
+
+    ``mode`` is the view shape; ``engine`` is the resolved engine that ran
+    ("fts"/"semantic"/"hybrid") — rendered as a muted ``[engine]`` tag after the
+    query, mirroring the markdown/html surfaces so a degraded search reads truthfully
+    on the terminal too.
 
     Matched terms render as accent spans; a left rail encodes relevance rank. Like
     the detail/peek paths, the meta line reads off DomainStyles (ids terracotta,
@@ -1249,7 +1255,10 @@ def render_search_block(
 
     out: list[Block] = []
     title_label = "Conversations for: " if mode == "conversations" else "Results for: "
-    out.append(_line_block(_line((title_label, ds.label), (query, p.accent))))
+    title_segs = [(title_label, ds.label), (query, p.accent)]
+    if engine:
+        title_segs.append((f" [{engine}]", ds.summary))
+    out.append(_line_block(_line(*title_segs)))
     out.append(_blank_block())
 
     if mode == "conversations":

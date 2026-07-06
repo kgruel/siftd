@@ -42,14 +42,16 @@ class EmbeddingsCompatCheck:
                     severity="info",
                     message=f"Index missing compatibility metadata: {', '.join(missing)}",
                     fix_available=True,
-                    fix_command="siftd search --rebuild",
+                    fix_command="siftd embed --rebuild",
                     context={"missing_keys": missing},
                 )
             )
 
+        from siftd.embeddings.base import EmbeddingError
+
         try:
             backend = get_backend(verbose=False)
-        except RuntimeError:
+        except (RuntimeError, EmbeddingError):
             return findings
 
         stored_backend = get_meta(embed_conn, "backend")
@@ -64,7 +66,7 @@ class EmbeddingsCompatCheck:
                         severity="info",
                         message=f"Index schema outdated (v{stored_ver} → v{SCHEMA_VERSION})",
                         fix_available=True,
-                        fix_command="siftd search --rebuild",
+                        fix_command="siftd embed --rebuild",
                         context={"stored_version": stored_ver, "current_version": SCHEMA_VERSION},
                     )
                 )
@@ -76,7 +78,7 @@ class EmbeddingsCompatCheck:
                     severity="warning",
                     message=f"Backend mismatch: index={stored_backend}, current={backend.name}",
                     fix_available=True,
-                    fix_command="siftd search --rebuild",
+                    fix_command="siftd embed --rebuild",
                     context={"stored_backend": stored_backend, "current_backend": backend.name},
                 )
             )
@@ -87,7 +89,7 @@ class EmbeddingsCompatCheck:
                     severity="warning",
                     message=f"Model mismatch: index={stored_model}, current={backend.model}",
                     fix_available=True,
-                    fix_command="siftd search --rebuild",
+                    fix_command="siftd embed --rebuild",
                     context={"stored_model": stored_model, "current_model": backend.model},
                 )
             )
@@ -101,7 +103,7 @@ class EmbeddingsCompatCheck:
                         severity="warning",
                         message=f"Dimension mismatch: index={stored_dim}, current={backend.dimension}",
                         fix_available=True,
-                        fix_command="siftd search --rebuild",
+                        fix_command="siftd embed --rebuild",
                         context={"stored_dimension": stored_dim, "current_dimension": backend.dimension},
                     )
                 )

@@ -133,8 +133,9 @@ siftd search -n 20 "error handling"
 Select which retrieval engine runs. (Before 0.10.0 this flag chose the result
 shape — that moved to `--view`.)
 
-**`--mode=auto`** (default) — hybrid (FTS5 + embeddings rerank) when embeddings are
-installed, else FTS5:
+**`--mode=auto`** (default) — hybrid (FTS5 + embeddings rerank) when an embedding
+backend is configured and usable (local `[embed]` extra or a remote provider),
+else FTS5:
 ```bash
 siftd search "chunking strategy"
 ```
@@ -143,8 +144,9 @@ siftd search "chunking strategy"
 ```bash
 siftd search --mode=semantic "chunking strategy"
 ```
-Use when FTS5 keyword terms don't match your semantic intent. Requires the `[embed]`
-extra. (Replaces the removed `--embeddings-only` flag.)
+Use when FTS5 keyword terms don't match your semantic intent. Requires a configured,
+usable embedding backend (local `[embed]` extra or a remote provider). (Replaces the
+removed `--embeddings-only` flag.)
 
 **`--mode=fts`** — keyword-only FTS5 search, no embeddings:
 ```bash
@@ -205,24 +207,13 @@ siftd search --no-exclude-active "current discussion"
 ```
 Active sessions are excluded by default to avoid self-referential results.
 
-**`--index`** — build/update embeddings index:
+**Index management lives in `siftd embed`** (not `siftd search`). The search backend is
+config-driven (`embed.backend`); there is no per-search backend override.
 ```bash
-siftd search --index
-```
-
-**`--rebuild`** — rebuild embeddings index from scratch:
-```bash
-siftd search --rebuild
-```
-
-**`--backend NAME`** — embedding backend (ollama, fastembed):
-```bash
-siftd search --backend ollama "error handling"
-```
-
-**`--embed-db PATH`** — alternate embeddings database path:
-```bash
-siftd search --embed-db /path/to/alt.db "query"
+siftd embed                      # build/update the embeddings index (incremental)
+siftd embed --rebuild            # rebuild from scratch
+siftd embed --status             # backend, coverage, staleness, size
+siftd embed --embed-db PATH      # alternate embeddings database path
 ```
 
 ## Composition examples

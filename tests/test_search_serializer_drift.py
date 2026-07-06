@@ -3,6 +3,8 @@
 from dataclasses import fields
 from types import SimpleNamespace as NS
 
+import pytest
+
 from siftd.domain.search_types import ConversationSearchSummary, ScoreBreakdown, SearchChunk
 from siftd.serialization.serve_fmt import render_search
 
@@ -74,6 +76,40 @@ def test_serve_search_curated_shape_and_roundtrip():
     assert r0["_workspace"] == "/repo" and r0["_started_at"] == "2024-01-01"
     assert r0["_exchanges"] == [("p1", "q", "a")]
     assert r0["chunk_id"] == "k1" and r0["source_ids"] == ["p1"]
+
+
+def test_scorebreakdown_rrf_fields_survive_wire_roundtrip():
+    """Slice 4: vector_rank / keyword_rank / fused_score must survive render_search
+    (into the wire dict) AND deserialize_search_view (back onto ScoreBreakdown).
+
+    The prior round-trip test only asserted ``"breakdown" in result`` — vacuous for
+    the new fields; a serializer that dropped them would still pass. This pins the
+    exact keys/values on both wire crossings."""
+    from siftd.api.deserialize import deserialize_search_view
+    from siftd.domain.search_types import SearchView
+
+    chunk = SearchChunk(
+        conversation_id="c1",
+        score=0.031513,  # the fused score in hybrid mode
+        text="hello",
+        chunk_type="exchange",
+        chunk_id="k1",
+        source_ids=["p1"],
+        breakdown=ScoreBreakdown(
+            embedding_sim=0.42, vector_rank=2, keyword_rank=5, fused_score=0.031513
+        ),
+    )
+    out = render_search(SearchView(results=[chunk.to_render_dict()], view="chunks"), NS(depth=1), mode="hybrid")
+    wire_bd = out["results"][0]["breakdown"]
+    assert wire_bd["vector_rank"] == 2
+    assert wire_bd["keyword_rank"] == 5
+    assert wire_bd["fused_score"] == pytest.approx(0.031513)  # to_dict rounds to 6dp
+
+    back_bd = deserialize_search_view(out).results[0]["breakdown"]
+    assert isinstance(back_bd, ScoreBreakdown)
+    assert back_bd.vector_rank == 2
+    assert back_bd.keyword_rank == 5
+    assert back_bd.fused_score == pytest.approx(0.031513)
 
 
 def test_conversation_summary_render_mapping_is_explicit():

@@ -219,9 +219,9 @@ def cmd_status(args) -> int:
     report.section(
         "Features",
         {
-            "Embeddings": "installed"
+            "Embeddings": "configured (see: siftd embed --status)"
             if embeddings_available()
-            else "not installed (run: siftd install embed)"
+            else "not configured (run: siftd install embed, or set embed.backend for a remote provider)"
         },
     )
     report.render()

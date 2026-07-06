@@ -1339,7 +1339,7 @@ class TestEmbeddingsStaleProducer:
         # Mock indexed_ids to return the same set as main IDs
         indexed_ids_set = {"conv-001", "conv-002"}
         monkeypatch.setattr(
-            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            "siftd.storage.embeddings.get_indexed_state_ids",
             lambda conn: indexed_ids_set,
         )
 
@@ -1388,7 +1388,7 @@ class TestEmbeddingsStaleProducer:
         # Mock indexed_ids to return only 1 conversation
         indexed_ids_set = {"conv-001"}
         monkeypatch.setattr(
-            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            "siftd.storage.embeddings.get_indexed_state_ids",
             lambda conn: indexed_ids_set,
         )
 
@@ -1418,7 +1418,7 @@ class TestEmbeddingsStaleProducer:
         assert findings[0].check == "embeddings-stale"
         assert findings[0].severity == "warning"
         assert findings[0].fix_available is True
-        assert findings[0].fix_command == "siftd search --index"
+        assert findings[0].fix_command == "siftd embed"
         assert findings[0].context == {"count": 2}
         assert "2 conversations not indexed" in findings[0].message
 
@@ -1442,7 +1442,7 @@ class TestEmbeddingsStaleProducer:
 
         # Mock indexed_ids to return empty set
         monkeypatch.setattr(
-            "siftd.storage.embeddings.get_indexed_conversation_ids",
+            "siftd.storage.embeddings.get_indexed_state_ids",
             lambda conn: set(),
         )
 

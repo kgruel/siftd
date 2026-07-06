@@ -678,6 +678,7 @@ Post-processed, render-ready search output — the recipe's single product.
 | `tier2` | `list[dict[str, Any]] \| None` |  |
 | `n_skipped` | `int` |  |
 | `empty_reason` | `str \| None` |  |
+| `executed_mode` | `str \| None` |  |
 
 ### ScoreBreakdown
 
@@ -693,6 +694,9 @@ Detailed score components for explainability.
 | `final_score` | `float \| None` |  |
 | `fts5_matched` | `bool` |  |
 | `fts5_mode` | `str \| None` |  |
+| `vector_rank` | `int \| None` |  |
+| `keyword_rank` | `int \| None` |  |
+| `fused_score` | `float \| None` |  |
 
 ### ConversationSearchSummary
 
@@ -730,17 +734,9 @@ Conversation-level aggregate derived from chunk results.
 
 Canonical entry point for retrieving search chunks.
 
-```python
-def search_chunks(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ...) -> list[SearchChunk]
-```
-
 ### search_view
 
 The whole search Operation: engine retrieval + the post-processing recipe.
-
-```python
-def search_view(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ..., raw_fts: bool = ..., view: str = ..., sort: str = ..., select: str = ..., threshold: float | None = ..., full: bool = ..., around: str | None = ..., turns: str | None = ...) -> SearchView
-```
 
 ### parse_turns_range
 
@@ -754,27 +750,22 @@ def parse_turns_range(s: str) -> tuple[int, int]
 
 Unified search pipeline — FTS5, semantic, or hybrid.
 
-```python
-def hybrid_search(q: str, *, db_path: Path, embed_db: pathlib.Path | None = ..., n: int = ..., mode: str = ..., workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., exclude_active: bool = ..., include_derivative: bool = ..., owner: str | None = ..., tool: str | None = ..., tool_tag: str | None = ..., recall: int = ..., raw_fts: bool = ..., rerank: str = ..., lambda_: float = ..., recency: bool = ..., recency_half_life: float = ..., recency_max_boost: float = ..., threshold: float = ..., backend: str | None = ..., embed_backend: siftd.api.search.EmbeddingBackend | None = ...) -> list[SearchChunk]
-```
-
 **Parameters:**
 
 - `q`: Search query string.
 - `db_path`: Path to main database.
 - `embed_db`: Path to embeddings database. Required for hybrid/semantic modes.
 - `n`: Desired result count after all processing.
-- `mode`: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
-- `rerank`: "mmr" for diversity reranking, "relevance" for pure score order.
-- `backend`: Preferred embedding backend name (ollama, fastembed).
+- `mode`: "hybrid" (FTS5 recall narrows candidates, embeddings rerank), "fts" (keyword only), "semantic" (vector only).
+- `rerank`: "mmr" for diversity reranking of the vector list, "relevance" for pure cosine order.
 
-**Returns:** List of SearchChunk results.
+**Returns:** List of SearchChunk results. In hybrid/semantic mode ``score`` is the cosine (or MMR-adjusted) score; in fts mode it is the bounded normalized bm25 score.
 
 **Raises:**
 
 - `FileNotFoundError`: If database doesn't exist.
-- `ValueError`: If query is empty or search fails.
-- `RuntimeError`: If embedding backend unavailable.
+- `EmbeddingTransientError`: If the query embedding fails at runtime (the reachability class :func:`search_view` catches to degrade to fts).
+- `EmbeddingConfigError`: If the [embed] config is unusable (never degraded).
 
 ### process_search_view
 
@@ -808,7 +799,7 @@ def compute_thread_tiers(results: list[siftd.domain.search_types.SearchChunk] | 
 
 ### filter_by_threshold
 
-Filter chunk results by score threshold.
+Filter chunk results by *cosine* threshold (keyword-only entrants exempt).
 
 ```python
 def filter_by_threshold(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float | None) -> list[SearchChunk]
@@ -887,10 +878,10 @@ def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[di
 
 ### build_index
 
-Build or update the embeddings index.
+Build or incrementally update the embeddings index.
 
 ```python
-def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., backend: str | None = ..., verbose: bool = ...) -> dict
+def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., verbose: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -898,15 +889,23 @@ def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Pa
 - `db_path`: Path to main database. Uses default if not specified.
 - `embed_db_path`: Path to embeddings database. Uses default if not specified.
 - `rebuild`: If True, clear and rebuild from scratch.
-- `backend`: Preferred embedding backend name.
 
-**Returns:** Dict with 'chunks_added' and 'total_chunks' counts.
+**Returns:** Dict with add/remove counts and backend identity.
 
 **Raises:**
 
 - `FileNotFoundError`: If main database doesn't exist.
+- `IncrementalCompatError`: If an incremental build can't proceed.
 - `RuntimeError`: If no embedding backend is available.
-- `EmbeddingsNotAvailable`: If embedding dependencies are not installed.
+- `EmbeddingsNotAvailable`: If no embedding backend is configured/installed.
+
+### embed_status
+
+Return an :class:`EmbedIndexStatus` for ``siftd embed --status``.
+
+```python
+def embed_status(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ...)
+```
 
 ## Stats
 
@@ -1335,6 +1334,20 @@ A single event with content, tags, and kind-specific data.
 | `conversation` | `dict[str, Any] \| None` |  |
 | `neighbors` | `dict[str, str \| None] \| None` |  |
 
+### AutoIndexReport
+
+Outcome of the post-ingest auto-index hook, surfaced by the ingest renderer.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ran` | `bool` |  |
+| `chunks_added` | `int` |  |
+| `conversations_indexed` | `int` |  |
+| `awaiting` | `int` |  |
+| `skipped_reason` | `str \| None` |  |
+| `notice` | `str \| None` |  |
+| `error` | `str \| None` |  |
+
 ### IngestRunResult
 
 Result metadata for an ingest API run.
@@ -1349,6 +1362,33 @@ Result metadata for an ingest API run.
 | `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
 | `elapsed_ms` | `int` |  |
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
+| `auto_index` | `siftd.api.ingest.AutoIndexReport \| None` |  |
+
+### EmbedIndexStatus
+
+Snapshot for ``siftd embed --status`` — configured backend + built-index stats.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `configured_backend` | `str \| None` |  |
+| `configured_usable` | `bool` |  |
+| `configured_reason` | `str` |  |
+| `index_exists` | `bool` |  |
+| `needs_rebuild` | `bool` |  |
+| `stored_backend` | `str \| None` |  |
+| `stored_model` | `str \| None` |  |
+| `stored_dimension` | `int \| None` |  |
+| `schema_version` | `int \| None` |  |
+| `strategy` | `str \| None` |  |
+| `built_at` | `str \| None` |  |
+| `total_chunks` | `int` |  |
+| `backend_mismatch` | `bool` |  |
+| `stored_backend_config` | `str \| None` |  |
+| `chunk_counts` | `dict[str, int]` |  |
+| `conversations_indexed` | `int` |  |
+| `conversations_total` | `int` |  |
+| `conversations_stale` | `int` |  |
+| `db_size_bytes` | `int` |  |
 
 ### HealthStatus
 
@@ -1409,13 +1449,17 @@ Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
 
 Raised when requested adapter names match no discovered adapters.
 
+#### EmbeddingConfigError
+
+[embed] config is present but unusable — bad backend name, unresolvable key ref, or a preset missing a required model/base_url. Never retried, never degraded.
+
 #### IndexCompatError
 
 Raised when index metadata is incompatible with current backend configuration.
 
 #### IncrementalCompatError
 
-Raised when incremental indexing would mix incompatible backends.
+Raised when an incremental build cannot proceed against the existing index.
 
 #### SyncError
 
@@ -1664,12 +1708,28 @@ Tokenize and quote a user query for safe FTS5 MATCH use.
 def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, or] = ...) -> SanitizedFts5Query
 ```
 
+### egress_notice_pending
+
+The one-time remote first-egress disclosure if it hasn't been shown yet, else None.
+
+```python
+def egress_notice_pending(embed_db_path: pathlib.Path | None = ...) -> str | None
+```
+
+### mark_egress_notified
+
+Persist the first-egress shown-once flag (call only after the notice was surfaced).
+
+```python
+def mark_egress_notified(embed_db_path: pathlib.Path | None = ...) -> None
+```
+
 ### run_ingest
 
 Run ingestion from discovered adapters.
 
 ```python
-def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ...) -> IngestRunResult
+def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ..., on_notice: collections.abc.Callable[[str], None] | None = ...) -> IngestRunResult
 ```
 
 ### run_rebuild_fts

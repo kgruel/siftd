@@ -35,6 +35,11 @@ dependencies = [
     # for the terminal, output/narrative HtmlEmitter for serve). Pure-Python, no
     # compiled deps (same philosophy as httpx above).
     "mistune>=3.0",
+    # Vector math for semantic search scoring (brute-force cosine + MMR). In base (not
+    # [embed]) so a remote-backend user gets hybrid search without the local ONNX stack;
+    # the [embed] extra adds only the fastembed inference chain. Import stays lazy on hot
+    # non-search paths for startup latency, not because it might be absent.
+    "numpy",
 ]
 
 [project.scripts]
@@ -43,7 +48,6 @@ siftd = "siftd.cli:main"
 [project.optional-dependencies]
 embed = [
     "fastembed",
-    "numpy",
     "onnxruntime",
     "tokenizers",
     "huggingface-hub",

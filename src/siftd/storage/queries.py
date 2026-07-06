@@ -10,7 +10,7 @@ The API layer handles parameter validation and dataclass mapping.
 """
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from siftd.storage.sql_helpers import (
@@ -29,6 +29,10 @@ class ExchangeRow:
     prompt_timestamp: str
     prompt_text: str
     response_text: str
+    response_ids: list[str] = field(default_factory=list)
+    """Event IDs of the responses in this exchange (timestamp order). Carried so an
+    embedding chunk's ``source_ids`` can cover response events too — the bridge the
+    hybrid engine uses to map an FTS hit on response text back to its chunk."""
 
 
 def fetch_exchanges(
@@ -167,10 +171,13 @@ def fetch_exchanges(
             resp_id, prompt_id, timestamp = row
             responses_by_prompt.setdefault(prompt_id, []).append((resp_id, timestamp))
 
-        # Build response text by prompt (multiple responses concatenated)
+        # Build response text by prompt (multiple responses concatenated) and the
+        # ordered response-event-id list (the source_ids bridge for the hybrid engine).
         response_texts: dict[str, str] = {}
+        response_ids_by_prompt: dict[str, list[str]] = {}
         for prompt_id, resp_list in responses_by_prompt.items():
             # resp_list is already ordered by timestamp from the query
+            response_ids_by_prompt[prompt_id] = [resp_id for resp_id, _ in resp_list]
             parts = []
             for resp_id, _ in resp_list:
                 blocks = response_content_texts.get(resp_id, [])
@@ -180,6 +187,7 @@ def fetch_exchanges(
                 response_texts[prompt_id] = "\n\n".join(parts)
     else:  # pragma: no cover — prompts with zero responses (rare in ingested data)
         response_texts = {}
+        response_ids_by_prompt = {}
 
     # Build final result in prompt timestamp order
     result = []
@@ -196,6 +204,7 @@ def fetch_exchanges(
                 prompt_timestamp=timestamp,
                 prompt_text=prompt_text.strip(),
                 response_text=response_text.strip(),
+                response_ids=response_ids_by_prompt.get(prompt_id, []),
             )
         )
 
@@ -229,8 +238,11 @@ def fetch_conversation_exchanges(
 ) -> dict[str, list[dict]]:
     """Load prompt/response pairs grouped by conversation, ordered by timestamp.
 
-    Each exchange is: {"text": str, "prompt_id": str}
-    where text is prompt_text + response_text concatenated.
+    Each exchange is: {"text": str, "prompt_id": str, "event_ids": list[str]}
+    where text is prompt_text + response_text concatenated and ``event_ids`` is the
+    prompt id followed by every response event id in the exchange (the widened
+    source_ids the chunker records — the bridge that lets the hybrid engine map an
+    FTS hit on prompt OR response text back to its covering chunk).
 
     Args:
         conn: Database connection.
@@ -266,9 +278,39 @@ def fetch_conversation_exchanges(
         result[ex.conversation_id].append({
             "text": exchange_text,
             "prompt_id": ex.prompt_id,
+            # Prompt id stays first so consumers that anchor on source_ids[0] (turn
+            # positioning) are unaffected; response ids follow.
+            "event_ids": [ex.prompt_id, *ex.response_ids],
         })
 
     return result
+
+
+def fetch_conversation_fingerprints(conn: sqlite3.Connection) -> dict[str, str]:
+    """Return a cheap staleness fingerprint per conversation.
+
+    Fingerprint = ``"{event_count}:{max_event_timestamp}:{event_content_count}"``.
+    The event-content count catches block-level appends to existing events (ingest is
+    INSERT-OR-IGNORE on both events and (event_id, block_index)), which an events-only
+    fingerprint would miss. One GROUP BY over ``events`` LEFT JOIN ``event_content``;
+    the ``events.timestamp`` column is the ingest-time ordering key (there is no
+    ``events.created_at``).
+    """
+    rows = conn.execute(
+        """
+        SELECT e.conversation_id AS cid,
+               COUNT(DISTINCT e.id) AS event_count,
+               MAX(e.timestamp) AS max_ts,
+               COUNT(ec.id) AS content_count
+        FROM events e
+        LEFT JOIN event_content ec ON ec.event_id = e.id
+        GROUP BY e.conversation_id
+        """
+    ).fetchall()
+    return {
+        row["cid"]: f"{row['event_count']}:{row['max_ts'] or ''}:{row['content_count']}"
+        for row in rows
+    }
 
 
 # =============================================================================

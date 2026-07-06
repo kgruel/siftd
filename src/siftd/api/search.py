@@ -2,16 +2,18 @@
 
 Re-exports core search functionality and adds post-processing functions.
 
-Heavy dependencies (numpy via siftd.search, siftd.storage.embeddings) are
-lazy-imported so that non-search CLI commands don't pull in numpy.
+Heavy dependencies (numpy via siftd.search, siftd.storage.embeddings) are lazy-imported so
+that non-search CLI commands (`siftd query`, `siftd tag`) don't pay numpy's import latency
+(tens of ms) on paths that never touch vector search.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
 from siftd.domain.search_types import (
     ConversationSearchSummary,
@@ -28,26 +30,22 @@ from siftd.storage.queries import (
 )
 
 if TYPE_CHECKING:
-    from siftd.embeddings.indexer import IncrementalCompatError
+    from siftd.embeddings.base import EmbeddingBackend, EmbeddingConfigError
+    from siftd.embeddings.indexer import EmbedIndexStatus, IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
 
-
-class EmbeddingBackend(Protocol):
-    """Minimal protocol for embedding backends (real or fake)."""
-
-    name: str
-    model: str
-    dimension: int
-
-    def embed_one(self, text: str) -> list[float]: ...
-
-# Lazy re-exports — resolved on first access to avoid eager numpy import.
+# Lazy re-exports — resolved on first access to keep numpy's import latency off hot
+# non-search paths.
 _LAZY_IMPORTS = {
     "SearchResult": "siftd.search",
     "apply_temporal_weight": "siftd.search",
     "IndexCompatError": "siftd.storage.embeddings",
     "IncrementalCompatError": "siftd.embeddings.indexer",
+    "EmbedIndexStatus": "siftd.embeddings.indexer",
+    # Re-exported through the api boundary so the CLI (which must not import
+    # siftd.embeddings) can catch a config failure — e.g. a revoked API key.
+    "EmbeddingConfigError": "siftd.embeddings.base",
 }
 
 
@@ -75,6 +73,7 @@ __all__ = [
     "ScoreBreakdown",
     "ConversationSearchSummary",
     "IncrementalCompatError",
+    "EmbeddingConfigError",
     "embeddings_available",
     "search_chunks",
     "hybrid_search",
@@ -94,6 +93,8 @@ __all__ = [
     "search_view",
     "parse_turns_range",
     "build_index",
+    "embed_status",
+    "EmbedIndexStatus",
     # Temporal weighting
     "apply_temporal_weight",
     "fetch_conversation_timestamps",
@@ -103,8 +104,6 @@ __all__ = [
     "search_similar",
     "validate_index_compat",
     "IndexCompatError",
-    # Candidate resolution
-    "resolve_candidates",
     # FTS5
     "fts5_recall_conversations",
     "rebuild_fts_index",
@@ -161,6 +160,20 @@ def search_similar(
         conversation_ids=conversation_ids,
         include_embeddings=include_embeddings,
     )
+
+
+def chunks_for_events(
+    conn: sqlite3.Connection,
+    event_ids: list[str],
+) -> dict[str, list[dict]]:
+    """Map event ids to their covering embed chunk(s) — the RRF FTS→vector bridge.
+
+    Thin lazy re-export of :func:`siftd.storage.embeddings.chunks_for_events` so the
+    engine (and its tests) reach the bridge through the api search surface.
+    """
+    from siftd.storage.embeddings import chunks_for_events as _chunks_for_events
+
+    return _chunks_for_events(conn, event_ids)
 
 
 def validate_index_compat(
@@ -256,48 +269,6 @@ def list_conversation_ids(conn: sqlite3.Connection) -> set[str]:
     return set(fetch_all_conversation_ids(conn))
 
 
-def resolve_candidates(
-    db: Path,
-    *,
-    workspace: str | None = None,
-    model: str | None = None,
-    since: str | None = None,
-    before: str | None = None,
-    tag: list[str] | None = None,
-    all_tags: list[str] | None = None,
-    no_tag: list[str] | None = None,
-    tag_kind: list[str] | None = None,
-    exclude_active: bool = True,
-    include_derivative: bool = False,
-    owner: str | None = None,
-    tool: str | None = None,
-    tool_tag: str | None = None,
-) -> set[str] | None:
-    """Resolve candidate conversation IDs from filters + scope options.
-
-    Composes filter_conversations() with active-session exclusion and
-    the derivative-tag default. Returns None if no constraints apply.
-    """
-    from siftd.search import resolve_candidates as _resolve
-
-    return _resolve(
-        db,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        tag=tag,
-        all_tags=all_tags,
-        no_tag=no_tag,
-        tag_kind=tag_kind,
-        exclude_active=exclude_active,
-        include_derivative=include_derivative,
-        owner=owner,
-        tool=tool,
-        tool_tag=tool_tag,
-    )
-
-
 ConversationScore = ConversationSearchSummary
 SearchResult = SearchChunk
 
@@ -307,6 +278,38 @@ def _as_chunk(r: SearchChunk | dict[str, Any]) -> SearchChunk:
     if isinstance(r, SearchChunk):
         return r
     return SearchChunk.from_mapping(r)
+
+
+def _passes_relevance_threshold(score: float, breakdown: Any, threshold: float) -> bool:
+    """Whether a chunk clears a relevance threshold — the rewired ``--threshold`` /
+    ``first_mention`` gate, shared by the engine, :func:`filter_by_threshold`, and
+    :func:`first_mention` so a threshold means the same thing across engines.
+
+    The signal tested depends on what the chunk carries:
+
+    * A **vector chunk** (breakdown with a ``vector_rank``) is tested on its cosine
+      ``embedding_sim`` — NOT ``SearchChunk.score``, which in hybrid mode is the
+      ~0.02-scale fused RRF score.
+    * A **keyword-only / FTS-only entrant** (breakdown present, ``vector_rank`` None)
+      is EXEMPT: it has no cosine, and thresholding it out would delete fusion's
+      keyword-recall reason to exist (§5).
+    * A chunk with **no breakdown** (an fts-mode result, or a bare programmatic
+      result) is tested on its ``score`` — the fts path's bounded 0-1 normalized
+      bm25, and the documented ``first_mention`` contract ("minimum score").
+    """
+    from collections.abc import Mapping
+
+    if threshold <= 0:
+        return True
+    if isinstance(breakdown, ScoreBreakdown):
+        if breakdown.vector_rank is None:
+            return True
+        return breakdown.embedding_sim >= threshold
+    if isinstance(breakdown, Mapping):
+        if breakdown.get("vector_rank") is None:
+            return True
+        return float(breakdown.get("embedding_sim", 0.0)) >= threshold
+    return score >= threshold
 
 
 def aggregate_by_conversation(
@@ -363,11 +366,15 @@ def filter_by_threshold(
     *,
     threshold: float | None,
 ) -> list[SearchChunk]:
-    """Filter chunk results by score threshold."""
+    """Filter chunk results by *cosine* threshold (keyword-only entrants exempt).
+
+    Tests ``breakdown.embedding_sim`` (not ``SearchChunk.score``, which is the
+    ~0.02-scale fused RRF score) so ``--threshold 0.5`` keeps its 0-1 cosine
+    meaning across engines; FTS-only entrants have no cosine and are retained."""
     chunks = [_as_chunk(r) for r in results]
     if threshold is None:
         return chunks
-    return [r for r in chunks if r.score >= threshold]
+    return [r for r in chunks if _passes_relevance_threshold(r.score, r.breakdown, threshold)]
 
 
 def sort_chunks_by_time(
@@ -727,8 +734,12 @@ def first_mention(
             return r.get(key)
         return getattr(r, key, None)
 
-    # Filter to results above threshold
-    above = [r for r in results if _get(r, "score") >= threshold]
+    # Filter to results above the relevance threshold — cosine for vector chunks,
+    # score for breakdown-less results, entrants exempt (matching filter_by_threshold).
+    above = [
+        r for r in results
+        if _passes_relevance_threshold(_get(r, "score") or 0.0, _get(r, "breakdown"), threshold)
+    ]
     if not above:
         return None
 
@@ -866,28 +877,27 @@ def build_index(
     db_path: Path | None = None,
     embed_db_path: Path | None = None,
     rebuild: bool = False,
-    backend: str | None = None,
     verbose: bool = False,
 ) -> dict:
-    """Build or update the embeddings index.
+    """Build or incrementally update the embeddings index.
 
-    Thin wrapper over siftd.embeddings.build_embeddings_index that returns
-    a dict for backwards compatibility.
+    Thin wrapper over ``siftd.embeddings.indexer.build_embeddings_index`` returning a
+    dict. The backend is config-driven (``embed.backend``) — there is no override arg.
 
     Args:
         db_path: Path to main database. Uses default if not specified.
         embed_db_path: Path to embeddings database. Uses default if not specified.
         rebuild: If True, clear and rebuild from scratch.
-        backend: Preferred embedding backend name.
         verbose: Print progress messages.
 
     Returns:
-        Dict with 'chunks_added' and 'total_chunks' counts.
+        Dict with add/remove counts and backend identity.
 
     Raises:
         FileNotFoundError: If main database doesn't exist.
+        IncrementalCompatError: If an incremental build can't proceed.
         RuntimeError: If no embedding backend is available.
-        EmbeddingsNotAvailable: If embedding dependencies are not installed.
+        EmbeddingsNotAvailable: If no embedding backend is configured/installed.
     """
     from siftd.embeddings import require_embeddings
 
@@ -899,10 +909,33 @@ def build_index(
         db_path=db_path,
         embed_db_path=embed_db_path,
         rebuild=rebuild,
-        backend_name=backend,
         verbose=verbose,
     )
-    return {"chunks_added": stats.chunks_added, "total_chunks": stats.total_chunks}
+    return {
+        "chunks_added": stats.chunks_added,
+        "chunks_removed": stats.chunks_removed,
+        "conversations_indexed": stats.conversations_indexed,
+        "conversations_pruned": stats.conversations_pruned,
+        "total_chunks": stats.total_chunks,
+        "backend_name": stats.backend_name,
+        "model": stats.model,
+        "dimension": stats.dimension,
+    }
+
+
+def embed_status(
+    *,
+    db_path: Path | None = None,
+    embed_db_path: Path | None = None,
+):
+    """Return an :class:`EmbedIndexStatus` for ``siftd embed --status``.
+
+    Config/metadata-driven (no ONNX load, no network) — reports the configured backend
+    plus the built index's identity, chunk counts, coverage, staleness, and size.
+    """
+    from siftd.embeddings.indexer import embed_index_status
+
+    return embed_index_status(db_path=db_path, embed_db_path=embed_db_path)
 
 
 SEARCH_MODES = ("auto", "fts", "semantic", "hybrid")
@@ -971,7 +1004,6 @@ def search_chunks(
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
     threshold: float = 0.0,
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
     raw_fts: bool = False,
 ) -> list[SearchChunk]:
@@ -1002,10 +1034,225 @@ def search_chunks(
         recency_half_life=recency_half_life,
         recency_max_boost=recency_max_boost,
         threshold=threshold,
-        backend=backend,
         embed_backend=embed_backend,
         raw_fts=raw_fts,
     )
+
+
+# Reciprocal-rank-fusion constant. 60 is the field-standard damping term (Cormack
+# et al. 2009): it flattens the 1/rank curve so a rank-1-vs-rank-2 gap doesn't
+# dominate, letting a strong keyword hit at a middling vector rank still surface.
+_RRF_K = 60
+
+
+def _normalize_fts_score(rank: float) -> float:
+    """Map a bm25 rank to a bounded (0,1) score, monotone-increasing with quality.
+
+    FTS5 ranks are negative and more-negative = better; ``abs(rank)/(1+abs(rank))``
+    is bounded and rises with ``|rank|``, so the best (most-negative) hit carries
+    the max score. This inverts v1's ``1/(1+abs(rank))``, which ranked the weakest
+    match highest."""
+    a = abs(rank)
+    return a / (1.0 + a)
+
+
+def _resolve_search_backend(embed_backend: EmbeddingBackend | None) -> EmbeddingBackend:
+    """Return the injected backend, or resolve the config-driven one.
+
+    No probe/retry chain: resolution is deterministic (``embed.backend``); a
+    transient reachability failure surfaces later at ``embed_query`` and is
+    handled by the degrade in :func:`search_view`, not here."""
+    if embed_backend is not None:
+        return embed_backend
+    from siftd.embeddings.base import get_backend
+
+    return get_backend(verbose=False)
+
+
+def _build_vector_list(
+    embed_conn: sqlite3.Connection,
+    query_embedding: list[float],
+    candidate_ids: set[str] | None,
+    *,
+    search_limit: int,
+    mmr_limit: int,
+    use_mmr: bool,
+    lambda_: float,
+    mmr_cap: int,
+    recency: bool,
+    recency_half_life: float,
+    recency_max_boost: float,
+    db_path: Path,
+) -> list[dict]:
+    """The vector ranked list: cosine → recency → MMR, ordered best-first.
+
+    Shared by semantic mode (returned directly) and hybrid mode (fed to fusion).
+    Each result's ``breakdown.vector_rank`` is stamped with its 1-based position —
+    the "has a computed cosine" marker the similarity threshold reads."""
+    from siftd.search import apply_temporal_weight, mmr_rerank
+    from siftd.storage.sqlite import open_database
+
+    results = search_similar(
+        embed_conn,
+        query_embedding,
+        limit=search_limit,
+        conversation_ids=candidate_ids,
+        include_embeddings=use_mmr,
+    )
+    if not results:
+        return []
+
+    if recency:
+        conv_ids_for_ts = list({r["conversation_id"] for r in results})
+        ts_conn = open_database(db_path, read_only=True)
+        try:
+            timestamps = fetch_conversation_timestamps(ts_conn, conv_ids_for_ts)
+        finally:
+            ts_conn.close()
+        results = apply_temporal_weight(
+            results, timestamps,
+            half_life_days=recency_half_life, max_boost=recency_max_boost,
+        )
+
+    if use_mmr:
+        # Cap candidates to bound the np.vstack inside mmr_rerank().
+        if len(results) > mmr_cap:
+            results = sorted(results, key=lambda r: -r["score"])[:mmr_cap]
+        results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=mmr_limit)
+        # Outward score = MMR-adjusted final (for semantic display / downstream sort).
+        for r in results:
+            breakdown = r.get("breakdown")
+            final_score = getattr(breakdown, "final_score", None)
+            if final_score is not None:
+                r["score"] = float(final_score)
+    else:
+        # Deterministic relevance order; chunk_id (ULID) breaks ties.
+        results = sorted(results, key=lambda r: (-r["score"], r.get("chunk_id", "")))
+        results = results[:mmr_limit]
+
+    for i, r in enumerate(results):
+        breakdown = r.get("breakdown")
+        if isinstance(breakdown, ScoreBreakdown):
+            breakdown.vector_rank = i + 1
+    return results
+
+
+def _entrant_result(hit: dict) -> dict:
+    """An FTS hit with no covering chunk → an engine result dict (vector-free)."""
+    return {
+        "conversation_id": hit["conversation_id"],
+        "chunk_id": None,
+        "chunk_type": hit["kind"],
+        "text": hit["snippet"],
+        "source_ids": [],
+        "event_id": hit.get("event_id"),
+        "breakdown": ScoreBreakdown(embedding_sim=0.0),
+    }
+
+
+def _keyword_only_result(chunk: dict) -> dict:
+    """A covering chunk absent from the vector list → a vector-free result dict."""
+    return {
+        "conversation_id": chunk["conversation_id"],
+        "chunk_id": chunk["chunk_id"],
+        "chunk_type": chunk["chunk_type"],
+        "text": chunk["text"],
+        "source_ids": chunk.get("source_ids") or [],
+        "breakdown": ScoreBreakdown(embedding_sim=0.0),
+    }
+
+
+@dataclass
+class _FusionItem:
+    """One member of the RRF fusion universe: an engine result plus its per-list ranks.
+
+    ``vector_rank``/``keyword_rank`` are 1-based positions (``None`` = absent from
+    that list). ``result`` is the engine result dict (a vector chunk, a keyword-only
+    covering chunk, or an FTS-only entrant)."""
+
+    result: dict
+    vector_rank: int | None
+    keyword_rank: int | None
+
+    def note_keyword_rank(self, rank: int) -> None:
+        """Record the best (lowest) keyword rank seen for this item."""
+        if self.keyword_rank is None or rank < self.keyword_rank:
+            self.keyword_rank = rank
+
+    def fused_score(self) -> float:
+        """``Σ 1/(60 + rank)`` over the lists this item appears in."""
+        fused = 0.0
+        if self.vector_rank is not None:
+            fused += 1.0 / (_RRF_K + self.vector_rank)
+        if self.keyword_rank is not None:
+            fused += 1.0 / (_RRF_K + self.keyword_rank)
+        return fused
+
+
+def _fuse_hybrid(
+    vector_results: list[dict],
+    keyword_hits: list[dict],
+    embed_conn: sqlite3.Connection,
+    *,
+    n: int,
+) -> list[dict]:
+    """Reciprocal-rank-fuse the vector and keyword lists into one ordered list.
+
+    Two ranked lists over the same candidate set combine by ``Σ 1/(60 + rank)``:
+    the vector list carries ``vector_rank`` (cosine order, post-MMR); each FTS hit
+    bridges via ``source_ids`` membership to its covering chunk(s), contributing the
+    best (lowest) bm25 position as ``keyword_rank``. FTS hits with no covering chunk
+    become vector-free entrants. Dedup: a hit that bridges never also becomes an
+    entrant. Returns the top-``n`` fused result dicts, each breakdown stamped with
+    ``vector_rank``/``keyword_rank``/``fused_score`` and ``score`` = fused score."""
+    # key = chunk_id for real chunks, "entrant:<event_id>" for FTS-only entrants.
+    fusion: dict[str, _FusionItem] = {}
+    for r in vector_results:
+        breakdown = r.get("breakdown")
+        vr = breakdown.vector_rank if isinstance(breakdown, ScoreBreakdown) else None
+        fusion[r["chunk_id"]] = _FusionItem(result=r, vector_rank=vr, keyword_rank=None)
+
+    event_ids = [h["event_id"] for h in keyword_hits if h.get("event_id")]
+    covering = chunks_for_events(embed_conn, event_ids)
+
+    for pos, hit in enumerate(keyword_hits):
+        kr = pos + 1
+        eid = hit.get("event_id")
+        chunks = covering.get(eid) if eid else None
+        if chunks:
+            for ch in chunks:
+                cid = ch["chunk_id"]
+                item = fusion.get(cid)
+                if item is None:
+                    item = _FusionItem(result=_keyword_only_result(ch), vector_rank=None, keyword_rank=None)
+                    fusion[cid] = item
+                item.note_keyword_rank(kr)
+        elif eid:
+            ekey = f"entrant:{eid}"
+            item = fusion.get(ekey)
+            if item is None:
+                fusion[ekey] = _FusionItem(result=_entrant_result(hit), vector_rank=None, keyword_rank=kr)
+            else:
+                item.note_keyword_rank(kr)
+
+    # Fused desc; the fusion key (chunk_id / entrant:event_id) breaks ties deterministically.
+    scored = sorted(fusion.items(), key=lambda kv: (-kv[1].fused_score(), kv[0]))
+
+    out: list[dict] = []
+    for _key, item in scored[:n]:
+        r = dict(item.result)
+        breakdown = r.get("breakdown")
+        if not isinstance(breakdown, ScoreBreakdown):
+            breakdown = ScoreBreakdown(embedding_sim=0.0)
+        fused = item.fused_score()
+        breakdown.vector_rank = item.vector_rank
+        breakdown.keyword_rank = item.keyword_rank
+        breakdown.fused_score = fused
+        breakdown.fts5_matched = item.keyword_rank is not None
+        r["breakdown"] = breakdown
+        r["score"] = fused
+        out.append(r)
+    return out
 
 
 def hybrid_search(
@@ -1042,7 +1289,6 @@ def hybrid_search(
     # Threshold
     threshold: float = 0.0,
     # Backend
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
 ) -> list[SearchChunk]:
     """Unified search pipeline — FTS5, semantic, or hybrid.
@@ -1052,26 +1298,25 @@ def hybrid_search(
         db_path: Path to main database.
         embed_db: Path to embeddings database. Required for hybrid/semantic modes.
         n: Desired result count after all processing.
-        mode: "hybrid" (FTS5 + semantic), "fts" (keyword only), "semantic" (embeddings only).
-        rerank: "mmr" for diversity reranking, "relevance" for pure score order.
-        backend: Preferred embedding backend name (ollama, fastembed).
+        mode: "hybrid" (FTS5 recall narrows candidates, embeddings rerank), "fts"
+            (keyword only), "semantic" (vector only).
+        rerank: "mmr" for diversity reranking of the vector list, "relevance" for
+            pure cosine order.
         embed_backend: Injected embedding backend instance. If provided, skips
-            get_backend() discovery. Must implement embed_one(text) -> list[float],
-            and have .name, .model, .dimension attributes.
+            get_backend() discovery (config-driven otherwise). Must implement
+            embed_query(text) -> list[float], and have .name, .model, .dimension attributes.
 
     Returns:
-        List of SearchChunk results.
+        List of SearchChunk results. In hybrid/semantic mode ``score`` is the cosine
+        (or MMR-adjusted) score; in fts mode it is the bounded normalized bm25 score.
 
     Raises:
         FileNotFoundError: If database doesn't exist.
-        ValueError: If query is empty or search fails.
-        RuntimeError: If embedding backend unavailable.
+        EmbeddingTransientError: If the query embedding fails at runtime (the
+            reachability class :func:`search_view` catches to degrade to fts).
+        EmbeddingConfigError: If the [embed] config is unusable (never degraded).
     """
-    from siftd.search import annotate_fts5_breakdown, mmr_rerank, resolve_candidates
-    try:
-        from siftd.search import MAX_MMR_CANDIDATES
-    except ImportError:  # pragma: no cover
-        MAX_MMR_CANDIDATES = 1000
+    from siftd.search import resolve_candidates
     from siftd.storage.sqlite import open_database
 
     # --- FTS-only mode ---
@@ -1092,7 +1337,7 @@ def hybrid_search(
             chunks = [
                 SearchChunk(
                     conversation_id=r["conversation_id"],
-                    score=abs(r["rank"]),
+                    score=_normalize_fts_score(r["rank"]),
                     text=r["snippet"],
                     chunk_type=r["kind"],
                     source_ids=[],
@@ -1108,41 +1353,12 @@ def hybrid_search(
             conn.close()
 
     # --- Hybrid / semantic modes need embeddings ---
+    from siftd.embeddings.indexer import SCHEMA_VERSION
     from siftd.paths import embeddings_db_path as default_embed_db
-    from siftd.search import apply_temporal_weight
+    from siftd.search import MAX_MMR_CANDIDATES
 
     effective_embed_db = embed_db or default_embed_db()
-
-    if embed_backend is not None:
-        _backend = embed_backend
-        # Caller injected a backend — still need SCHEMA_VERSION for compat check
-        try:
-            from siftd.embeddings.indexer import SCHEMA_VERSION
-        except ImportError:  # pragma: no cover
-            # Allows unit tests to inject a backend without requiring the optional
-            # [embed] extra to be installed.
-            SCHEMA_VERSION = 1
-    else:
-        try:
-            from siftd.embeddings.base import get_backend
-            from siftd.embeddings.indexer import SCHEMA_VERSION
-        except ImportError:
-            from siftd.embeddings import require_embeddings
-
-            require_embeddings("Semantic search")
-            raise
-        try:
-            from siftd.embeddings.base import invalidate_backend_cache
-        except ImportError:  # pragma: no cover
-            def invalidate_backend_cache() -> None:
-                return None
-
-        def _resolve_backend() -> EmbeddingBackend:
-            return get_backend(preferred=backend, verbose=False)
-
-        _backend = _resolve_backend()
-
-    embeddings_only = mode == "semantic"
+    _backend = _resolve_search_backend(embed_backend)
 
     candidate_ids = resolve_candidates(
         db_path,
@@ -1151,41 +1367,15 @@ def hybrid_search(
         exclude_active=exclude_active, include_derivative=include_derivative,
         owner=owner, tool=tool, tool_tag=tool_tag,
     )
-
-    # FTS5 recall (hybrid mode only — narrows candidates before embeddings)
-    fts5_ids: set[str] | None = None
-    fts5_mode: str | None = None
-    if not embeddings_only:
-        conn = open_database(db_path, read_only=True)
-        try:
-            fts5_ids, fts5_mode = fts5_recall_conversations(conn, q, limit=recall, raw_fts=raw_fts)
-        finally:
-            conn.close()
-
-        if fts5_ids:
-            if candidate_ids is not None:
-                intersected = fts5_ids & candidate_ids
-                candidate_ids = intersected if intersected else candidate_ids
-            else:
-                candidate_ids = fts5_ids
-
     if candidate_ids is not None and not candidate_ids:
         return []
 
-    # Embed query and search
     use_mmr = rerank == "mmr"
-    try:
-        query_embedding = _backend.embed_one(q)
-    except (RuntimeError, ConnectionError, OSError):
-        # Cached backend may have become unavailable (e.g., ollama stopped).
-        # Invalidate and retry with fallback chain (production path only).
-        if embed_backend is not None:
-            raise
-        invalidate_backend_cache()
-        _backend = _resolve_backend()
-        query_embedding = _backend.embed_one(q)
-    embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
+    # Query embed. A transient (429/5xx/network) failure propagates as
+    # EmbeddingTransientError to search_view, which degrades this query to fts.
+    query_embedding = _backend.embed_query(q)
 
+    embed_conn = open_embeddings_db(effective_embed_db, read_only=True)
     try:
         validate_index_compat(
             embed_conn,
@@ -1195,58 +1385,59 @@ def hybrid_search(
             current_schema_version=SCHEMA_VERSION,
         )
 
-        # Widen for MMR to have candidates to diversify from
-        search_limit = max(n * 3, n) if use_mmr else n
-
-        results = search_similar(
-            embed_conn,
-            query_embedding,
-            limit=search_limit,
-            conversation_ids=candidate_ids,
-            include_embeddings=use_mmr,
-        )
+        if mode == "semantic":
+            results = _build_vector_list(
+                embed_conn, query_embedding, candidate_ids,
+                search_limit=max(n * 3, n) if use_mmr else n,
+                mmr_limit=n, use_mmr=use_mmr, lambda_=lambda_,
+                mmr_cap=MAX_MMR_CANDIDATES, recency=recency,
+                recency_half_life=recency_half_life, recency_max_boost=recency_max_boost,
+                db_path=db_path,
+            )
+        elif _hybrid_strategy() == "rrf":
+            # Dormant RRF engine — opt-in via the experiment-only SIFTD_HYBRID_STRATEGY
+            # knob (see _hybrid_strategy) for the slice-5 re-gate. The vector list runs
+            # over the full candidate set (no FTS narrowing), fused with a chunk-level
+            # keyword list.
+            pool = max(n * 3, n)
+            vector_results = _build_vector_list(
+                embed_conn, query_embedding, candidate_ids,
+                search_limit=pool, mmr_limit=pool, use_mmr=use_mmr, lambda_=lambda_,
+                mmr_cap=MAX_MMR_CANDIDATES, recency=recency,
+                recency_half_life=recency_half_life, recency_max_boost=recency_max_boost,
+                db_path=db_path,
+            )
+            kw_conn = open_database(db_path, read_only=True)
+            try:
+                keyword_hits = fts5_search_content(kw_conn, q, limit=max(pool, n), raw_fts=raw_fts)
+            finally:
+                kw_conn.close()
+            if candidate_ids is not None:
+                keyword_hits = [h for h in keyword_hits if h["conversation_id"] in candidate_ids]
+            results = _fuse_hybrid(vector_results, keyword_hits, embed_conn, n=n)
+        else:
+            # Default hybrid: narrow-then-rank (FTS5 recall narrows candidates,
+            # embeddings rerank). Kept the default by the F3 bench ruling — see
+            # _hybrid_strategy for why RRF stays dormant.
+            results = _narrow_then_rank(
+                q, embed_conn, query_embedding, candidate_ids, db_path,
+                n=n, recall=recall, raw_fts=raw_fts, use_mmr=use_mmr, lambda_=lambda_,
+                mmr_cap=MAX_MMR_CANDIDATES, recency=recency,
+                recency_half_life=recency_half_life, recency_max_boost=recency_max_boost,
+            )
     finally:
         embed_conn.close()
 
     if not results:
         return []
 
-    # Mark FTS5 recall matches in breakdown
-    annotate_fts5_breakdown(results, fts5_ids, fts5_mode)
-
-    # Temporal weighting (before MMR so it affects reranking)
-    if recency and results:
-        conv_ids_for_ts = list({r["conversation_id"] for r in results})
-        ts_conn = open_database(db_path, read_only=True)
-        try:
-            timestamps = fetch_conversation_timestamps(ts_conn, conv_ids_for_ts)
-        finally:
-            ts_conn.close()
-        results = apply_temporal_weight(
-            results, timestamps,
-            half_life_days=recency_half_life, max_boost=recency_max_boost,
-        )
-        # Re-sort by weighted score (MMR does its own reranking).
-        # Use chunk_id as deterministic tie-breaker (ULIDs sort by creation time).
-        if not use_mmr:
-            results = sorted(results, key=lambda r: (-r["score"], r.get("chunk_id", "")))
-
-    # MMR diversity reranking
-    if use_mmr and results:
-        # Cap candidates to prevent unbounded memory usage in np.vstack inside mmr_rerank().
-        if len(results) > MAX_MMR_CANDIDATES:
-            results = sorted(results, key=lambda r: -r["score"])[:MAX_MMR_CANDIDATES]
-        results = mmr_rerank(results, query_embedding, lambda_=lambda_, limit=n)
-        # Ensure outward score matches MMR-adjusted final score for display and downstream sorting.
-        for r in results:
-            breakdown = r.get("breakdown")
-            final_score = getattr(breakdown, "final_score", None)
-            if final_score is not None:
-                r["score"] = float(final_score)
-
-    # Score threshold filtering
+    # Score threshold — rewired to relevance (cosine for vector chunks, score for
+    # fts, entrants exempt), consistent with the recipe's filter_by_threshold.
     if threshold > 0:
-        results = [r for r in results if r.get("score", 0) >= threshold]
+        results = [
+            r for r in results
+            if _passes_relevance_threshold(r.get("score", 0.0), r.get("breakdown"), threshold)
+        ]
 
     final_chunks = [SearchChunk.from_mapping(r) for r in results]
     if final_chunks:
@@ -1256,6 +1447,76 @@ def hybrid_search(
         finally:
             _pos_conn.close()
     return final_chunks
+
+
+def _hybrid_strategy() -> str:
+    """Return the hybrid strategy: ``"narrow"`` (default) or ``"rrf"`` (dormant).
+
+    ``SIFTD_HYBRID_STRATEGY`` is an EXPERIMENT-ONLY knob — deliberately absent from
+    ``--help``, the docs, and config. ``=rrf`` opts into the complete-but-dormant RRF
+    engine so the slice-5 re-gate can measure a *tuned* RRF; the knob dies or gets
+    promoted to a real default there.
+
+    Default = narrow-then-rank (FTS5 recall narrows candidates, embeddings rerank),
+    per the F3 bench ruling. RRF's avg_top1 win is partly structural — it ranks over
+    the full candidate set, so its top hit's cosine is quasi-guaranteed >= narrow's,
+    and avg_top1 alone is not a retrieval-quality verdict (see the 2026-03 model-
+    comparison finding). recall@10 — the gate's only known-answer relevance metric —
+    regressed, and the exact-identifier motivation showed no advantage at k=60. So RRF
+    stays dormant until it earns the default on a real metric."""
+    import os
+
+    return "rrf" if os.environ.get("SIFTD_HYBRID_STRATEGY") == "rrf" else "narrow"
+
+
+def _narrow_then_rank(
+    q: str,
+    embed_conn: sqlite3.Connection,
+    query_embedding: list[float],
+    candidate_ids: set[str] | None,
+    db_path: Path,
+    *,
+    n: int,
+    recall: int,
+    raw_fts: bool,
+    use_mmr: bool,
+    lambda_: float,
+    mmr_cap: int,
+    recency: bool,
+    recency_half_life: float,
+    recency_max_boost: float,
+) -> list[dict]:
+    """Default hybrid engine: FTS5 recall narrows candidates, embeddings rerank.
+
+    The F3 bench kept this the default over RRF (see _hybrid_strategy). Faithful to
+    the shipped v1 behavior."""
+    from siftd.search import annotate_fts5_breakdown
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        fts5_ids, fts5_mode = fts5_recall_conversations(conn, q, limit=recall, raw_fts=raw_fts)
+    finally:
+        conn.close()
+    narrowed = candidate_ids
+    if fts5_ids:
+        if narrowed is not None:
+            intersected = fts5_ids & narrowed
+            narrowed = intersected if intersected else narrowed
+        else:
+            narrowed = fts5_ids
+    if narrowed is not None and not narrowed:
+        return []
+
+    results = _build_vector_list(
+        embed_conn, query_embedding, narrowed,
+        search_limit=max(n * 3, n) if use_mmr else n,
+        mmr_limit=n, use_mmr=use_mmr, lambda_=lambda_, mmr_cap=mmr_cap,
+        recency=recency, recency_half_life=recency_half_life,
+        recency_max_boost=recency_max_boost, db_path=db_path,
+    )
+    annotate_fts5_breakdown(results, fts5_ids, fts5_mode)
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -1611,7 +1872,6 @@ def search_view(
     recency: bool = False,
     recency_half_life: float = 30.0,
     recency_max_boost: float = 1.15,
-    backend: str | None = None,
     embed_backend: EmbeddingBackend | None = None,
     raw_fts: bool = False,
     # Recipe (post-processing) controls
@@ -1663,44 +1923,63 @@ def search_view(
         parse_turns_range(turns) if (around is not None and turns is not None) else None
     )
 
-    chunks = search_chunks(
-        q,
-        db_path=db_path,
-        embed_db=embed_db,
-        n=_engine_limit(n, view=view, select=select),
-        mode=mode,
-        workspace=workspace,
-        model=model,
-        since=since,
-        before=before,
-        tag=tag,
-        all_tags=all_tags,
-        no_tag=no_tag,
-        tag_kind=tag_kind,
-        exclude_active=exclude_active,
-        include_derivative=include_derivative,
-        owner=owner,
-        tool=tool,
-        tool_tag=tool_tag,
-        recall=recall,
-        rerank=rerank,
-        lambda_=lambda_,
-        recency=recency,
-        recency_half_life=recency_half_life,
-        recency_max_boost=recency_max_boost,
-        backend=backend,
-        embed_backend=embed_backend,
-        raw_fts=raw_fts,
-    )
+    def _run_engine(engine_mode: str) -> list[SearchChunk]:
+        return search_chunks(
+            q,
+            db_path=db_path,
+            embed_db=embed_db,
+            n=_engine_limit(n, view=view, select=select),
+            mode=engine_mode,
+            workspace=workspace,
+            model=model,
+            since=since,
+            before=before,
+            tag=tag,
+            all_tags=all_tags,
+            no_tag=no_tag,
+            tag_kind=tag_kind,
+            exclude_active=exclude_active,
+            include_derivative=include_derivative,
+            owner=owner,
+            tool=tool,
+            tool_tag=tool_tag,
+            recall=recall,
+            rerank=rerank,
+            lambda_=lambda_,
+            recency=recency,
+            recency_half_life=recency_half_life,
+            recency_max_boost=recency_max_boost,
+            embed_backend=embed_backend,
+            raw_fts=raw_fts,
+        )
+
+    # §5 truthful degrade: a runtime query-embed failure (backend configured but
+    # unreachable — 429/5xx/network) degrades THIS query to keyword search and
+    # re-derives the reported engine. Config errors (EmbeddingConfigError) are not
+    # caught here — they raise. This is the single seam all surfaces inherit (CLI
+    # local, REST route, HTML pane), so ``executed_mode`` on the SearchView is the
+    # owner-safe channel that reports what actually ran.
+    from siftd.embeddings.base import EmbeddingTransientError
+
+    executed_mode = mode
+    try:
+        chunks = _run_engine(mode)
+    except EmbeddingTransientError:
+        if mode == "fts":
+            raise  # fts never embeds — not our failure to swallow
+        executed_mode = "fts"
+        chunks = _run_engine("fts")
+
+    degraded = executed_mode if executed_mode != mode else None
 
     if not chunks:
-        return SearchView(results=[], view=view)
+        return SearchView(results=[], view=view, executed_mode=degraded)
 
     from siftd.storage.sqlite import open_database
 
     conn = open_database(db_path, read_only=True)
     try:
-        return process_search_view(
+        sv = process_search_view(
             chunks,
             conn,
             view=view,
@@ -1715,3 +1994,8 @@ def search_view(
         )
     finally:
         conn.close()
+    if degraded is not None:
+        import dataclasses
+
+        sv = dataclasses.replace(sv, executed_mode=degraded)
+    return sv

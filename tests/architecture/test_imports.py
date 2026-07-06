@@ -94,11 +94,7 @@ MODULE_GROUPS: dict[str, str] = {
 # Known violations pending refactor.
 # Format: (relative_path_from_src_siftd, imported_group)
 KNOWN_VIOLATIONS = {
-    ("cli/meta.py", "embeddings"),  # CLI entrypoint reads embeddings status
     ("cli/peek.py", "peek"),  # CLI entrypoint needs peek error type
-    ("cli/search.py", "embeddings"),  # CLI entrypoint uses embeddings utilities
-    ("cli/search.py", "search"),  # CLI entrypoint calls search module directly
-    ("storage/embeddings.py", "search"),  # storage depends on search scoring types
 }
 
 
@@ -240,7 +236,7 @@ def test_import_rules():
 
 def test_known_violations_ratchet():
     """Known violations must not increase. Ratchet down, never up."""
-    max_allowed = 5
+    max_allowed = 1
     actual = len(KNOWN_VIOLATIONS)
     assert actual <= max_allowed, (
         f"KNOWN_VIOLATIONS grew from {max_allowed} to {actual}. "

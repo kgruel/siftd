@@ -179,6 +179,12 @@ def _dispatch(
     except Exception as e:
         if e.__class__.__name__ == "EmbeddingsNotAvailable":
             return Response(content={"error": str(e)}, status_code=501)
+        if e.__class__.__name__ == "EmbeddingConfigError":
+            # A configured remote backend is present but unusable (e.g. a revoked key).
+            # Not degradable (config errors never fall back to FTS) and not a generic 500 —
+            # report it honestly as an unavailable dependency. Matched by name so serve
+            # doesn't import siftd.embeddings (tests/architecture/test_imports.py).
+            return Response(content={"error": str(e)}, status_code=503)
 
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
@@ -986,7 +992,6 @@ def search_route(
     recency: bool = Parameter(query="recency", default=False),
     recency_half_life: float = Parameter(query="recency_half_life", default=30.0),
     recency_max_boost: float = Parameter(query="recency_max_boost", default=1.15),
-    backend: str | None = Parameter(query="backend", default=None),
     tag: list[str] | None = Parameter(query="tag", default=None),
     all_tags: list[str] | None = Parameter(query="all_tags", default=None),
     no_tag: list[str] | None = Parameter(query="no_tag", default=None),
@@ -1048,7 +1053,7 @@ def search_route(
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
              "model": model, "since": since, "before": before,
-             "backend": backend, "exclude_active": exclude_active,
+             "exclude_active": exclude_active,
              "rerank": rerank, "lambda_": lambda_, "recency": recency,
              "recency_half_life": recency_half_life,
              "recency_max_boost": recency_max_boost,

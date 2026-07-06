@@ -13,15 +13,31 @@ from siftd.serialization.backfill import (
     serialize_backfill_run_payload,
     to_backfill_run_payload,
 )
+from siftd.api.ingest import AutoIndexReport
 from siftd.serialization.ingest import (
+    AutoIndexPayload,
     IngestRunPayload,
     IngestStatsPayload,
     serialize_ingest_run_payload,
     to_ingest_run_payload,
 )
 
+# IngestRunResult fields that intentionally do NOT cross the wire payload.
+# - dropin_failures: a CLI-only adapter-health surface (list of (Path, str)); pre-existing
+#   exclusion, out of scope for this slice — do not "fix" it here.
+_INGEST_RESULT_WIRE_EXCLUSIONS = {"dropin_failures"}
 
-def test_ingest_payload_serializer_key_drift_guard():
+
+def test_ingest_payload_covers_every_result_field():
+    """Every IngestRunResult field is represented in IngestRunPayload except an explicit,
+    documented exclusion list — this catches a new result field silently dropped from the
+    wire (exactly how auto_index was missed on first pass)."""
+    result_fields = {f.name for f in fields(IngestRunResult)}
+    payload_fields = {f.name for f in fields(IngestRunPayload)}
+    assert result_fields - _INGEST_RESULT_WIRE_EXCLUSIONS == payload_fields
+
+
+def test_ingest_payload_serializer_shapes():
     result = IngestRunResult(
         db_path=Path("/tmp/siftd.db"),
         db_created=True,
@@ -41,6 +57,7 @@ def test_ingest_payload_serializer_key_drift_guard():
             by_harness={"claude_code": {"conversations": 1}},
         ),
         elapsed_ms=42,
+        auto_index=AutoIndexReport(ran=True, chunks_added=5, conversations_indexed=2),
     )
 
     payload = to_ingest_run_payload(result)
@@ -48,6 +65,8 @@ def test_ingest_payload_serializer_key_drift_guard():
 
     assert set(out.keys()) == {f.name for f in fields(IngestRunPayload)}
     assert set(out["stats"].keys()) == {f.name for f in fields(IngestStatsPayload)}
+    assert set(out["auto_index"].keys()) == {f.name for f in fields(AutoIndexPayload)}
+    assert out["auto_index"]["chunks_added"] == 5 and out["auto_index"]["conversations_indexed"] == 2
 
 
 def test_backfill_payload_serializer_key_drift_guard():

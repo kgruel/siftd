@@ -85,7 +85,8 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> Any:
         sv.results,
         fidelity,
         query=context.get("query", ""),
-        mode=sv.view,
+        mode=sv.view,  # view shape drives chunks/conversations/thread branching
+        engine=context.get("mode"),  # resolved engine → [engine] tag (truthful degrade)
         tier1=sv.tier1,
         tier2=sv.tier2,
         caveats=context.get("caveats"),

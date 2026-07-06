@@ -20,7 +20,7 @@ def test_constructor_importerror_message(monkeypatch):
         FastEmbedBackend()
 
 
-def test_embed_and_embed_one_and_dimension_probe(monkeypatch):
+def test_embed_documents_query_and_dimension_probe(monkeypatch):
     class _Vec:
         def __init__(self, vals):
             self._vals = vals
@@ -37,13 +37,14 @@ def test_embed_and_embed_one_and_dimension_probe(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=_TextEmbedding))
 
+    # Dimension comes from a one-off local probe (embed of "dimension probe" ⇒ len 2).
     b = FastEmbedBackend(model="demo/model")
     assert b.name == "fastembed" and b.model == "demo/model" and b.dimension == 2
-    assert b.embed(["a", "abcd"]) == [[1.0, 1.0], [4.0, 1.0]]
-    assert b.embed_one("xyz") == [3.0, 1.0]
+    assert b.embed_documents(["a", "abcd"]) == [[1.0, 1.0], [4.0, 1.0]]
+    assert b.embed_query("xyz") == [3.0, 1.0]
 
 
-def test_probe_dimension_uses_embed_one(monkeypatch):
+def test_resolve_dimension_probe(monkeypatch):
     class _TextEmbedding:
         def __init__(self, model_name):
             self.model_name = model_name
@@ -53,4 +54,4 @@ def test_probe_dimension_uses_embed_one(monkeypatch):
 
     monkeypatch.setitem(sys.modules, "fastembed", types.SimpleNamespace(TextEmbedding=_TextEmbedding))
     b = FastEmbedBackend()
-    assert b._probe_dimension() == 3
+    assert b._resolve_dimension() == 3

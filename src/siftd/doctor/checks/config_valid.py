@@ -59,6 +59,10 @@ class ConfigValidCheck:
             if theme is not None:
                 findings.extend(self._validate_theme(str(theme)))
 
+        embed_config = doc.get("embed", {})
+        if isinstance(embed_config, dict):
+            findings.extend(self._validate_embed(embed_config))
+
         return findings
 
     def _validate_formatter(self, formatter_name: str) -> list[Finding]:
@@ -77,6 +81,65 @@ class ConfigValidCheck:
                 )
             ]
         return []
+
+    def _validate_embed(self, embed_config: dict) -> list[Finding]:
+        """Validate the [embed] table: backend membership, dimensions sanity, and
+        api_key-ref resolvability *shape* (no network calls)."""
+        findings: list[Finding] = []
+
+        backend = embed_config.get("backend")
+        if backend is not None:
+            from siftd.embeddings.presets import preset_names
+
+            valid = [*preset_names(), "fastembed", "off"]
+            name = str(backend).strip().lower()
+            if name and name not in valid:
+                findings.append(
+                    Finding(
+                        check=self.name,
+                        severity="warning",
+                        message=f"Unknown embed.backend '{backend}' (valid: {', '.join(valid)})",
+                        fix_available=False,
+                        context={"backend": str(backend), "valid_backends": valid},
+                    )
+                )
+
+        dimensions = embed_config.get("dimensions")
+        if dimensions is not None:
+            try:
+                dim = int(dimensions)
+                ok = dim > 0
+            except (ValueError, TypeError):
+                ok = False
+            if not ok:
+                findings.append(
+                    Finding(
+                        check=self.name,
+                        severity="warning",
+                        message=f"embed.dimensions must be a positive integer, got {dimensions!r}",
+                        fix_available=False,
+                        context={"dimensions": str(dimensions)},
+                    )
+                )
+
+        api_key = embed_config.get("api_key")
+        if api_key:
+            from siftd.credentials import TokenRefError, resolve_token_ref
+
+            try:
+                resolve_token_ref(str(api_key))
+            except TokenRefError as e:
+                findings.append(
+                    Finding(
+                        check=self.name,
+                        severity="warning",
+                        message=f"embed.api_key is unresolvable: {e}",
+                        fix_available=False,
+                        context={"error": str(e)},
+                    )
+                )
+
+        return findings
 
     def _validate_theme(self, theme_name: str) -> list[Finding]:
         """Validate that the ui.theme name is a known terminal theme."""

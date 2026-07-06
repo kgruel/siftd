@@ -9,7 +9,7 @@ siftd must be installed and indexed:
 ```bash
 uv pip install /path/to/siftd   # or pip install .
 siftd ingest                     # ingest conversation logs
-siftd search --index             # build embeddings index
+siftd embed                      # build embeddings index (optional; configure embed.backend first for semantic search)
 ```
 
 ## Install
