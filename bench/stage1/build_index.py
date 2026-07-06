@@ -161,6 +161,7 @@ def main() -> None:
     pending = 0
     t0 = time.time()
     started = counts["convs"]
+    last_progress = started
     for cid in conv_ids:
         if cid in done:
             continue
@@ -171,7 +172,10 @@ def main() -> None:
         if pending >= GROUP_CHUNKS:
             flush_group(econn, backend, group, counts)
             pending = 0
-        if counts["convs"] % 100 == 0:
+        # Counter advances in flush-sized strides, so an exact %100 check can miss
+        # every multiple forever — track the delta since the last write instead.
+        if counts["convs"] - last_progress >= 100:
+            last_progress = counts["convs"]
             elapsed = time.time() - t0
             rate = (counts["convs"] - started) / elapsed if elapsed > 0 else 0.0
             progress.write_text(
