@@ -48,6 +48,13 @@ RUN_DIR = Path(__file__).parent.parent / "runs" / "stage1-2026-07-05"
 SNAPSHOT = RUN_DIR / "siftd-snapshot.db"
 SCHEMA_VERSION = 2
 GROUP_CHUNKS = 256  # embed+commit granularity (conversation-aligned)
+# fastembed/onnxruntime keeps a CPU memory arena sized to the largest (batch x seq)
+# tensor it ever sees and never shrinks it, so a 256-wide embed call ratchets RSS up
+# unboundedly across a long build (observed 5.2G -> 9.3G -> OOM on an 11G VM). Capping
+# the per-inference batch bounds that high-water directly. Remote backends batch
+# internally by preset max_batch and rate-limit on request count, so the cap is
+# fastembed-only (0 = uncapped, hand the whole group to the backend at once).
+LOCAL_EMBED_BATCH = 32
 
 
 def make_backend(name: str, dimensions: int | None):
@@ -86,7 +93,15 @@ def flush_group(econn, backend, group: list[tuple[str, list[dict]]], counts: dic
     recorded there is fully stored — the resume-skip invariant.
     """
     texts = [c["text"] for _, chunks in group for c in chunks]
-    vecs = backend.embed_documents(texts) if texts else []
+    cap = LOCAL_EMBED_BATCH if backend.name == "fastembed" else 0
+    if not texts:
+        vecs: list[list[float]] = []
+    elif cap and len(texts) > cap:
+        vecs = []
+        for i in range(0, len(texts), cap):
+            vecs.extend(backend.embed_documents(texts[i : i + cap]))
+    else:
+        vecs = backend.embed_documents(texts)
     if len(vecs) != len(texts):
         raise RuntimeError(f"embed count mismatch: {len(vecs)} != {len(texts)}")
     it = iter(vecs)
