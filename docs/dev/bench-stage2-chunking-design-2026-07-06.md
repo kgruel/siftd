@@ -119,21 +119,60 @@ not). Sequence to bound spend:
    already competitive) — this is where a chunking win would promote RRF.
 4. **gemini** only as a tie-breaker.
 
-## Open decisions for the fresh session (do not pre-decide)
+## Ratified decisions (fresh session, 2026-07-06)
 
-1. **Rollup: dedup vs aggregate**, and is it the correct *default* final stage for ALL
-   strategies (likely yes — users want conversations)? If yes, it lands independent of
-   the RRF question.
-2. **Which event kinds to index** — thinking chunks add real embed cost (thinking is
-   voluminous); worth it only if a class targets them.
-3. **Chunk strategy granularity** — how many variants to actually re-embed (cost).
-4. **Re-ratify the paraphrase +20% margin** on the fair stage-1 numbers *before* stage 2
-   layers on — on voyage RRF misses promotion only by this margin today.
-5. **Per-preset vs global defaults** — RRF-for-strong / narrow-for-weak is already on
-   the table from the fair re-run; stage 2 may dissolve it (if rollup makes RRF
-   robust) or confirm it.
-6. **Ground-truth honesty** — typed chunks change what "the answer chunk" is; keep
-   labels at conversation granularity (as now) to stay strategy-agnostic.
+1. **Rollup — dedup is the floor, not a candidate; aggregate is what we sweep.** dedup =
+   "best chunk per conversation" is *not net-new*: `mmr_rerank` in `search.py` already
+   hard-suppresses same-conversation chunks (two-tier penalty, penalty=1.0 when a
+   chunk's conv is already selected). Lever B extracts that suppression into an explicit
+   engine stage that *also* applies to the RRF path — a dissolution of duplicated
+   behavior, making narrow and RRF symmetric by construction. It ships regardless.
+   Neither variant needs pre-committing: both are post-retrieval arithmetic with **zero
+   embed cost**, run offline on the same S1 index. Trap: `aggregate=max` is identical to
+   dedup *for ranking* (rank-by-best-chunk = keep-best-chunk), so the only meaningful
+   aggregate is **sum**, which re-introduces flooding (a 40-chunk mediocre conv sum-beats
+   a 1-chunk great conv) unless *damped*. **Decision: build dedup as the mandatory stage,
+   then sweep `{dedup, aggregate-damped}` offline. Damping — sweep a couple (top-k sum,
+   mean) and report; no single form pre-chosen.**
+2. **Event kinds to index — prompt + response only (S1).** Split the blended exchange
+   into separate `prompt` and `response` chunks. Thinking and tool_call chunks are
+   *deferred* — they add real embed cost and need a GT class to justify; they can be
+   added later without rework. So stage 2 tests S0 (baseline) vs **S1 only**; S2/S3 drop.
+3. **Chunk strategy granularity — deferred.** Only S1 vs S0 this round; no target_tokens
+   sweep until S1 typing is shown to win.
+4. **Paraphrase +20% margin — defer.** Re-ratify against results, not before.
+5. **Per-preset vs global defaults — defer.** Let the S1+rollup data speak first.
+6. **Ground-truth honesty** — keep labels at conversation granularity (as now) to stay
+   strategy-agnostic. Unchanged.
+
+### Arms
+- **local (bge) + voyage only** this round. gemini dropped unless a tie-breaker is needed.
+
+## Build status (2026-07-06, Phase 1 — code, no spend)
+
+Landed on `feat/bench-stage1`:
+
+- **S1 chunker** — `chunker.extract_typed_exchange_chunks`: per-exchange `prompt` +
+  `response` chunks, windowed independently, each stamping its own `source_ids`
+  (prompt_id / response_ids) so the FTS→chunk bridge survives. Reuses `fetch_exchanges`
+  (prompt/response already separate there) — no new SQL. `tool_summary` unchanged.
+- **Build flag** — `build_index.py --chunk-strategy {S0,S1}`; S1 writes
+  `embed-<arm>-S1.db` (S0 keeps incumbent names so existing indexes resolve).
+- **Rollup dissolved into the existing metric axis** — `--unit conversation` in
+  `sweep.py` *already was* the dedup rollup (best chunk per conv), confirmed in
+  `topn_convs`/narrow. So dedup is not net-new. Aggregate added as new `--unit` choices
+  on the same axis (no separate `--rollup` knob): `conv-sum` (undamped flooding control),
+  `conv-sum3` (top-3 damped), `conv-mean` (mean damped). Narrow collapses every non-slot
+  unit to dedup (MMR already deduped it); aggregate does real work only on the RRF path.
+
+Measured (406-conv deterministic sample of the snapshot): **corpus chunk amplification
+S1/S0 ≈ 1.22×** (not the ~2× first feared — agentic convs have few real prompts and long
+responses, and S0 already windowed the blended text). Projected S1 corpus ≈ 249k chunks
+vs S0's 203k. Max chunks/conv rises (108→172 in-sample; real S0 max was 517), so flooding
+pressure does increase — the rollup earns its place this round.
+
+Phase 2 (compute): build S1 on local/bge (free) → sweep `{narrow,rrf} × {slot, conversation,
+conv-sum, conv-sum3, conv-mean}` → shortlist → confirm on voyage (paid, gated).
 
 ## The reframe
 

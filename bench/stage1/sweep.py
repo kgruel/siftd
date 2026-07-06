@@ -192,12 +192,21 @@ class Universe:
         """Return (ordered conversation ids, top-1 cosine) under one weight combo, with
         the exact (-score, key) ordering of offline_lib._fuse.
 
-        unit="slot": the first N *chunk* slots' conversations (as the engine's RRF
-        returns them today — same conversation can repeat, "flooding" the slot budget).
-        unit="conversation": the first N *distinct* conversations, i.e. the engine's
-        fused output conversation-deduped (keep the best-ranked chunk per conv). This
-        is the fair-comparison unit — narrow-then-rank already dedups via MMR, so
-        measuring both at distinct-conversation granularity removes the asymmetry."""
+        The rollup that projects chunk-ranked fusion output to conversations is this
+        `unit` axis (stage-2 lever B — no separate knob; the projection IS the metric
+        granularity). All variants share the identical per-item fused score; they only
+        differ in how a conversation's chunks combine into its rank:
+
+        - ``slot``: first N *chunk* slots (the engine's RRF today — a conversation can
+          repeat, "flooding" the slot budget). No rollup.
+        - ``conversation``: first N *distinct* conversations = **dedup** rollup (keep the
+          best-ranked chunk per conv). The fair-comparison unit — narrow already dedups
+          via MMR, so scoring both here removes the asymmetry.
+        - ``conv-sum`` / ``conv-sum3`` / ``conv-mean``: **aggregate** rollup — a conv's
+          score combines its chunk scores so multi-chunk evidence can outrank a single
+          lucky chunk. ``sum`` is undamped (flooding control: a many-chunk conv can win);
+          ``sum3`` sums the top-3; ``mean`` averages. Ties break on the conv's best
+          (lowest) key_rank for determinism."""
         score = np.zeros(len(self.vr), dtype=np.float64)
         has_v = self.vr >= 0
         has_k = self.kr >= 0
@@ -205,7 +214,12 @@ class Universe:
         score[has_k] += w_kw / (k_kw + self.kr[has_k])
         order = np.lexsort((self.key_rank, -score))
         top1_cosine = float(self.cosine[order[0]]) if len(order) else 0.0
+
+        if unit == "slot":
+            return [self.conv[i] for i in order[:N]], top1_cosine
+
         if unit == "conversation":
+            # dedup rollup: the best-ranked (first-seen) chunk represents its conv.
             seen: set[str] = set()
             convs: list[str] = []
             for i in order:
@@ -217,7 +231,30 @@ class Universe:
                 if len(convs) >= N:
                     break
             return convs, top1_cosine
-        return [self.conv[i] for i in order[:N]], top1_cosine
+
+        # aggregate rollup: combine each conversation's chunk scores over the whole
+        # fusion universe, then rank conversations by the combined score.
+        conv_scores: dict[str, list[float]] = {}
+        conv_best_rank: dict[str, int] = {}
+        for i in range(len(score)):
+            c = self.conv[i]
+            conv_scores.setdefault(c, []).append(float(score[i]))
+            kr = int(self.key_rank[i])
+            if c not in conv_best_rank or kr < conv_best_rank[c]:
+                conv_best_rank[c] = kr
+        agg: dict[str, float] = {}
+        for c, ss in conv_scores.items():
+            ss.sort(reverse=True)
+            if unit == "conv-sum":
+                agg[c] = sum(ss)
+            elif unit == "conv-sum3":
+                agg[c] = sum(ss[:3])
+            elif unit == "conv-mean":
+                agg[c] = sum(ss) / len(ss)
+            else:
+                raise ValueError(f"unknown rollup unit {unit!r}")
+        ranked = sorted(agg.items(), key=lambda kv: (-kv[1], conv_best_rank[kv[0]]))
+        return [c for c, _ in ranked[:N]], top1_cosine
 
 
 def build_universe(arm: ArmData, scores: np.ndarray, qv_list: list[float], pool: int, lam,
@@ -399,10 +436,13 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--backend", default="voyage", help="arm backend (preset name)")
     ap.add_argument(
-        "--unit", default="slot", choices=("slot", "conversation"),
-        help="recall@10 granularity. 'slot' = first 10 chunk slots (the engine's RRF "
-             "today; penalizes conversation-flooding). 'conversation' = first 10 distinct "
-             "conversations (RRF output conv-deduped — the FAIR comparison vs MMR-deduped narrow).",
+        "--unit", default="slot",
+        choices=("slot", "conversation", "conv-sum", "conv-sum3", "conv-mean"),
+        help="recall@10 granularity = the conversation-rollup stage (stage-2 lever B). "
+             "'slot' = first 10 chunk slots (engine RRF today; penalizes flooding). "
+             "'conversation' = dedup rollup (best chunk per conv; the FAIR comparison vs "
+             "MMR-deduped narrow). 'conv-sum'/'conv-sum3'/'conv-mean' = aggregate rollup "
+             "(undamped sum / top-3 sum / mean of a conv's chunk scores).",
     )
     args = ap.parse_args()
     unit = args.unit
@@ -468,8 +508,11 @@ def main() -> None:
         for r in NARROW_RECALLS:
             res = replica_narrow(arm, qv_list, recall_ids, recall=r)
             convs = [x["conversation_id"] for x in res]
-            if unit == "conversation":
-                convs = list(dict.fromkeys(convs))  # narrow's MMR already ~dedups; exact-match RRF's unit
+            if unit != "slot":
+                # narrow's MMR already conv-dedups its output, so every rollup unit
+                # (dedup or aggregate) collapses to the same distinct-conv list here —
+                # aggregate only does real work on the flooding-prone RRF path.
+                convs = list(dict.fromkeys(convs))
             recall_narrow[r][qi] = recall_at_10(convs, lab)
             mrr_narrow[r][qi] = mrr_at_10(convs, lab)
             top1_narrow[r][qi] = float(res[0]["score"]) if res else 0.0

@@ -3,7 +3,9 @@
 Provides:
 - chunk_text(): splits a single text into token-bounded chunks with overlap
 - extract_exchange_window_chunks(): groups prompt+response exchanges into
-  token-bounded windows, the primary chunking strategy for `siftd embed`
+  token-bounded windows, the primary chunking strategy for `siftd embed` (S0)
+- extract_typed_exchange_chunks(): splits each exchange into separate `prompt`
+  and `response` chunks, windowed independently (S1, bench stage 2)
 
 Token accounting uses a cheap character-based estimator, not the fastembed ONNX
 tokenizer — indexing must not force a model load (a remote backend has no local
@@ -15,7 +17,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from siftd.storage.queries import fetch_conversation_exchanges
+from siftd.storage.queries import fetch_conversation_exchanges, fetch_exchanges
 
 # Characters per token — the standard English heuristic (~4 chars/token). Deliberately
 # an estimate: the real tokenizer lives in the backend, and every backend's true count
@@ -196,6 +198,67 @@ def extract_exchange_window_chunks(
                 "token_count": token_count,
                 "source_ids": event_ids,
             })
+
+    return chunks
+
+
+def extract_typed_exchange_chunks(
+    main_conn: sqlite3.Connection,
+    *,
+    target_tokens: int = 256,
+    max_tokens: int = 512,
+    overlap_tokens: int = 25,
+    exclude_conversation_ids: set[str] | None = None,
+    conversation_id: str | None = None,
+) -> list[dict]:
+    """Extract per-exchange typed chunks (S1: prompt/response split).
+
+    Where :func:`extract_exchange_window_chunks` (S0) blends prompt+response text
+    and accumulates several exchanges into one ``exchange`` window, this emits
+    each side of each exchange as its own chunk, windowed independently:
+
+    - a ``prompt`` chunk carrying ``source_ids=[prompt_id]``
+    - a ``response`` chunk carrying ``source_ids=response_ids``
+
+    Long text is split via :func:`chunk_text`; short text stays one chunk. An
+    empty side yields no chunk. This raises chunk count (one exchange -> up to two
+    chunks, each possibly windowed) and so leans on the conversation-rollup stage
+    to control flooding — see bench-stage2-chunking-design-2026-07-06.
+
+    Token bounds are estimator tokens (see :func:`estimate_tokens`). The caller
+    still emits ``tool_summary`` chunks separately; those are unaffected here.
+
+    Returns list of dicts with keys: conversation_id, chunk_type, text,
+    token_count, source_ids.
+    """
+    exchanges = fetch_exchanges(
+        main_conn,
+        conversation_id=conversation_id,
+        exclude_conversation_ids=exclude_conversation_ids,
+    )
+
+    chunks: list[dict] = []
+    for ex in exchanges:
+        sides = (
+            (ex.prompt_text, "prompt", [ex.prompt_id]),
+            # response id anchors the FTS->chunk bridge; fall back to the turn
+            # anchor if a response somehow carries text but no ids.
+            (ex.response_text, "response", ex.response_ids or [ex.prompt_id]),
+        )
+        for text, chunk_type, source_ids in sides:
+            for piece in chunk_text(
+                text,
+                target_tokens=target_tokens,
+                max_tokens=max_tokens,
+                overlap_tokens=overlap_tokens,
+            ):
+                chunks.append({
+                    "conversation_id": ex.conversation_id,
+                    "chunk_type": chunk_type,
+                    "text": piece,
+                    "token_count": estimate_tokens(piece),
+                    "source_ids": list(source_ids),
+                })
 
     return chunks
 

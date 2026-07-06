@@ -36,6 +36,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from siftd.embeddings.chunker import (  # noqa: E402
     extract_exchange_window_chunks,
     extract_tool_summary_chunks,
+    extract_typed_exchange_chunks,
 )
 from siftd.storage.embeddings import (  # noqa: E402
     open_embeddings_db,
@@ -128,6 +129,12 @@ def flush_group(econn, backend, group: list[tuple[str, list[dict]]], counts: dic
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--backend", default="local", help="'local' or a remote preset name")
+    ap.add_argument(
+        "--chunk-strategy",
+        default="S0",
+        choices=["S0", "S1"],
+        help="S0 = blended exchange-window (incumbent); S1 = prompt/response split (stage 2)",
+    )
     ap.add_argument("--limit", type=int, default=None, help="conversation cap (smoke runs)")
     ap.add_argument("--fresh", action="store_true", help="discard existing DB instead of resuming")
     ap.add_argument(
@@ -135,8 +142,11 @@ def main() -> None:
     )
     args = ap.parse_args()
 
-    embed_db = RUN_DIR / f"embed-{args.backend}.db"
-    progress = RUN_DIR / f"build-progress-{args.backend}.json"
+    # S0 keeps the incumbent artifact names so existing stage-1 indexes resolve
+    # unchanged; S1 carries a suffix so both chunkings sit side-by-side per arm.
+    suffix = "" if args.chunk_strategy == "S0" else f"-{args.chunk_strategy}"
+    embed_db = RUN_DIR / f"embed-{args.backend}{suffix}.db"
+    progress = RUN_DIR / f"build-progress-{args.backend}{suffix}.json"
 
     conn = sqlite3.connect(f"file:{SNAPSHOT}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
@@ -148,6 +158,13 @@ def main() -> None:
 
     backend = make_backend(args.backend, args.dimensions)
     print(f"backend: {backend.name} {backend.model} dim={backend.dimension}", file=sys.stderr)
+
+    extract_exchanges = (
+        extract_exchange_window_chunks
+        if args.chunk_strategy == "S0"
+        else extract_typed_exchange_chunks
+    )
+    print(f"chunk strategy: {args.chunk_strategy}", file=sys.stderr)
 
     if args.fresh and embed_db.exists():
         embed_db.unlink()
@@ -180,7 +197,7 @@ def main() -> None:
     for cid in conv_ids:
         if cid in done:
             continue
-        cchunks = extract_exchange_window_chunks(conn, conversation_id=cid)
+        cchunks = extract_exchanges(conn, conversation_id=cid)
         cchunks.extend(extract_tool_summary_chunks(conn, conversation_ids={cid}))
         group.append((cid, cchunks))
         pending += len(cchunks)
