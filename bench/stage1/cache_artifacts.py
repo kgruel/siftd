@@ -109,7 +109,13 @@ def embed_queries(backend, queries: list[dict], out_dir: Path) -> np.ndarray:
     texts = [q["query"] for q in queries]
     t0 = time.time()
     # "query" intent, batched by the backend's max_batch (Voyage: 128 -> ~5 requests).
-    vecs = backend._embed(texts, intent="query")  # noqa: SLF001 — bench harness, batched query intent
+    # Remote backends expose the internal batched _embed(intent=...); the local
+    # fastembed backend has no intent asymmetry (bge is symmetric) and no _embed, so
+    # its public embed_documents IS the query embedding.
+    if hasattr(backend, "_embed"):
+        vecs = backend._embed(texts, intent="query")  # noqa: SLF001 — bench harness, batched query intent
+    else:
+        vecs = backend.embed_documents(texts)
     if len(vecs) != len(texts):
         raise RuntimeError(f"embed count mismatch: {len(vecs)} != {len(texts)}")
     arr = np.asarray(vecs, dtype=np.float32)
