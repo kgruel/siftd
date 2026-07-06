@@ -174,6 +174,34 @@ pressure does increase — the rollup earns its place this round.
 Phase 2 (compute): build S1 on local/bge (free) → sweep `{narrow,rrf} × {slot, conversation,
 conv-sum, conv-sum3, conv-mean}` → shortlist → confirm on voyage (paid, gated).
 
+### Lever B in isolation on S0 (free validation, local/bge arm)
+
+Ran all five rollups against the *existing* S0 local index (no S1 build needed) — both
+a code check and a real data point. best-RRF (H1) composite vs the fixed narrow80
+baseline (0.4585), bge/local:
+
+| rollup | best-RRF | Δ vs narrow | note |
+|---|---|---|---|
+| slot | 0.3249 | −0.1343 | flooding tax — RRF craters |
+| dedup (`conversation`) | 0.4424 | −0.0161 | the fair baseline |
+| **conv-sum3** | **0.4447** | **−0.0138** | best; top-3 damped sum |
+| conv-mean | 0.4182 | −0.0404 | mean dilutes → worse than dedup |
+| conv-sum | 0.4335 | −0.0250 | undamped → flooding returns (topical→0.000) |
+
+Damping order is exactly the predicted physics: **sum3 > dedup > sum > mean**. Two reads:
+
+1. **`slot`→`dedup` is the whole ballgame** (−0.118). That's the flooding tax, and dedup
+   — already shipped via MMR — removes nearly all of it. Lever B's core value confirmed.
+2. **Aggregate adds a hair at best.** Only conv-sum3 beats dedup, by +0.0023 composite;
+   `sum` reintroduces flooding, `mean` dilutes. Per-class, aggregate helps identifier
+   (0.875→0.902) and mixed (0.679→0.708) but *hurts paraphrase* (0.460→0.430) — multi-
+   chunk evidence aids repeated-term classes, dilutes single-chunk semantic matches.
+
+**S0 verdict: dedup is the workhorse; aggregate does not clearly earn its complexity on
+S0.** The open question S1 tests: typed chunks are homogeneous (all-prompt / all-response),
+which may give top-k-sum more clean signal — does conv-sum3's margin over dedup *grow*
+under S1? If not, ship dedup and drop aggregate.
+
 ## The reframe
 
 Stage 1 asked "how do we fuse two search signals." Stage 2 asks the question under it:
