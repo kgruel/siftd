@@ -55,7 +55,7 @@ GROUP_CHUNKS = 256  # embed+commit granularity (conversation-aligned)
 # the per-inference batch bounds that high-water directly. Remote backends batch
 # internally by preset max_batch and rate-limit on request count, so the cap is
 # fastembed-only (0 = uncapped, hand the whole group to the backend at once).
-LOCAL_EMBED_BATCH = 32
+LOCAL_EMBED_BATCH = 16
 
 
 def make_backend(name: str, dimensions: int | None):
