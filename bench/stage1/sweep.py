@@ -188,18 +188,36 @@ class Universe:
         self.key_rank = np.empty(m, dtype=np.int64)
         self.key_rank[order] = np.arange(m)
 
-    def topn_convs(self, w_kw: float, k_kw: int, k_vec: int) -> tuple[list[str], float]:
-        """Return (ordered top-N conversation ids, top-1 cosine) under one weight combo,
-        with the exact (-score, key) ordering of offline_lib._fuse."""
+    def topn_convs(self, w_kw: float, k_kw: int, k_vec: int, *, unit: str = "slot") -> tuple[list[str], float]:
+        """Return (ordered conversation ids, top-1 cosine) under one weight combo, with
+        the exact (-score, key) ordering of offline_lib._fuse.
+
+        unit="slot": the first N *chunk* slots' conversations (as the engine's RRF
+        returns them today — same conversation can repeat, "flooding" the slot budget).
+        unit="conversation": the first N *distinct* conversations, i.e. the engine's
+        fused output conversation-deduped (keep the best-ranked chunk per conv). This
+        is the fair-comparison unit — narrow-then-rank already dedups via MMR, so
+        measuring both at distinct-conversation granularity removes the asymmetry."""
         score = np.zeros(len(self.vr), dtype=np.float64)
         has_v = self.vr >= 0
         has_k = self.kr >= 0
         score[has_v] += 1.0 / (k_vec + self.vr[has_v])
         score[has_k] += w_kw / (k_kw + self.kr[has_k])
-        order = np.lexsort((self.key_rank, -score))[:N]
-        convs = [self.conv[i] for i in order]
+        order = np.lexsort((self.key_rank, -score))
         top1_cosine = float(self.cosine[order[0]]) if len(order) else 0.0
-        return convs, top1_cosine
+        if unit == "conversation":
+            seen: set[str] = set()
+            convs: list[str] = []
+            for i in order:
+                c = self.conv[i]
+                if c in seen:
+                    continue
+                seen.add(c)
+                convs.append(c)
+                if len(convs) >= N:
+                    break
+            return convs, top1_cosine
+        return [self.conv[i] for i in order[:N]], top1_cosine
 
 
 def build_universe(arm: ArmData, scores: np.ndarray, qv_list: list[float], pool: int, lam,
@@ -380,7 +398,14 @@ def cfg_id(c: dict) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--backend", default="voyage", help="arm backend (preset name)")
+    ap.add_argument(
+        "--unit", default="slot", choices=("slot", "conversation"),
+        help="recall@10 granularity. 'slot' = first 10 chunk slots (the engine's RRF "
+             "today; penalizes conversation-flooding). 'conversation' = first 10 distinct "
+             "conversations (RRF output conv-deduped — the FAIR comparison vs MMR-deduped narrow).",
+    )
     args = ap.parse_args()
+    unit = args.unit
     t_start = time.time()
 
     q_lines, emb, fts_by_qid, arm = load_artifacts(args.backend)
@@ -443,6 +468,8 @@ def main() -> None:
         for r in NARROW_RECALLS:
             res = replica_narrow(arm, qv_list, recall_ids, recall=r)
             convs = [x["conversation_id"] for x in res]
+            if unit == "conversation":
+                convs = list(dict.fromkeys(convs))  # narrow's MMR already ~dedups; exact-match RRF's unit
             recall_narrow[r][qi] = recall_at_10(convs, lab)
             mrr_narrow[r][qi] = mrr_at_10(convs, lab)
             top1_narrow[r][qi] = float(res[0]["score"]) if res else 0.0
@@ -450,7 +477,7 @@ def main() -> None:
         for (pool, lam), members in grp.items():
             uni = build_universe(arm, scores, qv_list, pool, lam, content)
             for idx, c in members:
-                convs, t1 = uni.topn_convs(c["w_kw"], c["k_kw"], c["k_vec"])
+                convs, t1 = uni.topn_convs(c["w_kw"], c["k_kw"], c["k_vec"], unit=unit)
                 recall_h1[idx, qi] = recall_at_10(convs, lab)
                 mrr_h1[idx, qi] = mrr_at_10(convs, lab)
                 top1_h1[idx, qi] = t1
@@ -564,7 +591,7 @@ def main() -> None:
         uni = build_universe(arm, scores, qv_list, pool_h2, lam_h2, content)
         for ci2, c in enumerate(h2_configs):
             w = c["w_high"] if mdf <= c["D"] else c["w_low"]
-            convs, t1 = uni.topn_convs(w, c["k_kw"], c["k_vec"])
+            convs, t1 = uni.topn_convs(w, c["k_kw"], c["k_vec"], unit=unit)
             recall_h2[ci2, qi] = recall_at_10(convs, lab)
             mrr_h2[ci2, qi] = mrr_at_10(convs, lab)
             top1_h2[ci2, qi] = t1
@@ -628,6 +655,7 @@ def main() -> None:
     # --- write outputs ---
     meta = {
         "backend": args.backend,
+        "recall_unit": unit,
         "n_queries": nq,
         "class_counts": {c: int(len(class_idx[c])) for c in CLASSES},
         "recall_at_10_definition": "ab_rrf mirror: {conv_id for r in results[:10]} & labels / min(10,|labels|); "
@@ -654,12 +682,14 @@ def main() -> None:
         "h2_vs_h1": h2_vs_h1,
         "anomalies": anomalies,
     }
-    out_json = RUN_DIR / f"sweep-results-{args.backend}.json"
+    suffix = "" if unit == "slot" else f"-{unit}"
+    out_json = RUN_DIR / f"sweep-results-{args.backend}{suffix}.json"
     out_json.write_text(json.dumps(results, indent=2))
     print(f"wrote {out_json}", file=sys.stderr)
 
-    write_report(RUN_DIR / f"sweep-report-{args.backend}.md", results)
-    print(f"wrote {RUN_DIR / f'sweep-report-{args.backend}.md'}", file=sys.stderr)
+    report_path = RUN_DIR / f"sweep-report-{args.backend}{suffix}.md"
+    write_report(report_path, results)
+    print(f"wrote {report_path}", file=sys.stderr)
     print(f"DONE in {meta['wall_seconds']}s", file=sys.stderr)
 
 
@@ -670,7 +700,7 @@ def _fmt_pc(pc: dict[str, float]) -> str:
 def write_report(path: Path, R: dict) -> None:
     m = R["meta"]
     L = []
-    L.append(f"# Stage-1 sweep report — {m['backend']} arm\n")
+    L.append(f"# Stage-1 sweep report — {m['backend']} arm (recall unit: {m.get('recall_unit', 'slot')})\n")
     L.append(f"- Queries: {m['n_queries']}  ({', '.join(f'{k}={v}' for k, v in m['class_counts'].items())})")
     L.append(f"- H1 configs: {m['n_h1_configs']}  |  H2 configs: {m['n_h2_configs']}  "
              f"|  baseline: {m['baseline']}")
