@@ -303,13 +303,16 @@ def build_universe(arm: ArmData, scores: np.ndarray, qv_list: list[float], pool:
 # --------------------------------------------------------------------------- #
 
 
-def load_artifacts(backend: str):
+def load_artifacts(backend: str, chunk_strategy: str = "S0"):
     art = RUN_DIR / f"artifacts-{backend}"
-    embed_db = RUN_DIR / f"embed-{backend}.db"
+    # Only the arm matrix changes with chunk strategy — query embeddings and the
+    # event-level FTS lists are chunking-independent, so S1 reuses artifacts-<backend>.
+    suffix = "" if chunk_strategy == "S0" else f"-{chunk_strategy}"
+    embed_db = RUN_DIR / f"embed-{backend}{suffix}.db"
     if not (art / "query_emb.npy").exists():
         sys.exit(f"artifacts not found: {art} (run cache_artifacts.py first)")
     if not embed_db.exists():
-        sys.exit(f"arm DB not found: {embed_db}")
+        sys.exit(f"arm DB not found: {embed_db} (run build_index.py --chunk-strategy {chunk_strategy})")
 
     q_lines = [json.loads(x) for x in (art / "queries.jsonl").read_text().splitlines() if x.strip()]
     emb = np.load(art / "query_emb.npy").astype(np.float32)
@@ -436,6 +439,11 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--backend", default="voyage", help="arm backend (preset name)")
     ap.add_argument(
+        "--chunk-strategy", default="S0", choices=("S0", "S1"),
+        help="which chunk index to sweep: S0 = embed-<arm>.db (incumbent), "
+             "S1 = embed-<arm>-S1.db (prompt/response split).",
+    )
+    ap.add_argument(
         "--unit", default="slot",
         choices=("slot", "conversation", "conv-sum", "conv-sum3", "conv-mean"),
         help="recall@10 granularity = the conversation-rollup stage (stage-2 lever B). "
@@ -448,7 +456,7 @@ def main() -> None:
     unit = args.unit
     t_start = time.time()
 
-    q_lines, emb, fts_by_qid, arm = load_artifacts(args.backend)
+    q_lines, emb, fts_by_qid, arm = load_artifacts(args.backend, args.chunk_strategy)
     nq = len(q_lines)
     labels = [set(q["labels"]) for q in q_lines]
     classes = [q["class"] for q in q_lines]
@@ -698,6 +706,7 @@ def main() -> None:
     # --- write outputs ---
     meta = {
         "backend": args.backend,
+        "chunk_strategy": args.chunk_strategy,
         "recall_unit": unit,
         "n_queries": nq,
         "class_counts": {c: int(len(class_idx[c])) for c in CLASSES},
@@ -725,7 +734,8 @@ def main() -> None:
         "h2_vs_h1": h2_vs_h1,
         "anomalies": anomalies,
     }
-    suffix = "" if unit == "slot" else f"-{unit}"
+    strat = "" if args.chunk_strategy == "S0" else f"-{args.chunk_strategy}"
+    suffix = strat + ("" if unit == "slot" else f"-{unit}")
     out_json = RUN_DIR / f"sweep-results-{args.backend}{suffix}.json"
     out_json.write_text(json.dumps(results, indent=2))
     print(f"wrote {out_json}", file=sys.stderr)
@@ -743,7 +753,8 @@ def _fmt_pc(pc: dict[str, float]) -> str:
 def write_report(path: Path, R: dict) -> None:
     m = R["meta"]
     L = []
-    L.append(f"# Stage-1 sweep report — {m['backend']} arm (recall unit: {m.get('recall_unit', 'slot')})\n")
+    L.append(f"# Stage-1 sweep report — {m['backend']} arm "
+             f"(chunk: {m.get('chunk_strategy', 'S0')}, recall unit: {m.get('recall_unit', 'slot')})\n")
     L.append(f"- Queries: {m['n_queries']}  ({', '.join(f'{k}={v}' for k, v in m['class_counts'].items())})")
     L.append(f"- H1 configs: {m['n_h1_configs']}  |  H2 configs: {m['n_h2_configs']}  "
              f"|  baseline: {m['baseline']}")
