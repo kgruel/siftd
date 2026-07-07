@@ -50,8 +50,8 @@ def test_hybrid_strategy_is_per_preset_with_env_override(monkeypatch):
 
 
 def test_preset_recall_defaults(monkeypatch):
-    """Narrow FTS width resolves per preset: strong 80, weak/local 40."""
-    assert s._preset_recall(NS(name="remote:voyage")) == 80
+    """Narrow FTS width is a global default (40) regardless of preset strength."""
+    assert s._preset_recall(NS(name="remote:voyage")) == 40
     assert s._preset_recall(NS(name="fastembed")) == 40
     assert s._preset_recall(NS(name="remote:ollama")) == 40
 

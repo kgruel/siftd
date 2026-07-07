@@ -1308,8 +1308,9 @@ def hybrid_search(
     owner: str | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
-    # FTS5 tuning. recall=None ⇒ resolve the narrow-path candidate width from the
-    # embedder's preset (strong: 80, weak/local: 40); an explicit int overrides.
+    # FTS5 tuning. recall=None ⇒ the shipped narrow-path candidate width (40, see
+    # NARROW_RECALL_DEFAULT); an explicit int overrides (wider = more semantic reach on a
+    # strong embedder, more FTS dilution on a weak one).
     recall: int | None = None,
     raw_fts: bool = False,
     # Reranking
@@ -1510,7 +1511,7 @@ def _hybrid_strategy(backend: EmbeddingBackend) -> str:
 
 
 def _preset_recall(backend: EmbeddingBackend) -> int:
-    """The narrow-path FTS candidate width for ``backend``'s preset (strong 80, weak 40)."""
+    """The narrow-path FTS candidate width for ``backend``'s preset (global default 40)."""
     from siftd.embeddings.presets import hybrid_defaults_for_backend
 
     return hybrid_defaults_for_backend(getattr(backend, "name", "") or "").recall
@@ -1912,7 +1913,7 @@ def search_view(
     owner: str | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
-    # Engine tuning. recall=None ⇒ preset default (strong 80, weak/local 40).
+    # Engine tuning. recall=None ⇒ the shipped default (40; see NARROW_RECALL_DEFAULT).
     recall: int | None = None,
     rerank: str = "mmr",
     lambda_: float = 0.7,

@@ -25,11 +25,15 @@
 #                       (optional; defaults to OpenAI's `dimensions`. Voyage and Mistral
 #                       spell it `output_dimension`.)
 #   strength            "strong" | "weak" (optional; defaults to "weak") — selects the
-#                       shipped hybrid-search default. strong ⇒ dedup-on-RRF fusion;
-#                       weak ⇒ narrow-then-rank with FTS recall 40. Data-derived from the
-#                       0.11.0 bench (docs/dev/bench-stage2-chunking-design-2026-07-06.md);
-#                       hosted commercial embedders are strong, local/self-hosted weak.
-#                       Picking a provider picks the behavior — there is no user knob.
+#                       shipped hybrid-search strategy. strong ⇒ dedup-on-RRF fusion;
+#                       weak ⇒ narrow-then-rank. Records whether RRF cleared every
+#                       no-worse promote gate on the 0.11.0 bench for that arm (docs/dev/
+#                       bench-stage2-chunking-design-2026-07-06.md) — NOT raw model
+#                       quality: voyage passed (measured); gemini won composite but
+#                       failed the tool gate, so it ships narrow; openai/jina/mistral are
+#                       unmeasured, extrapolated strong as voyage-class hosted embedders.
+#                       Local/self-hosted default weak (measured on bge; conservative for
+#                       the rest). Picking a provider picks the behavior — no user knob.
 #
 # Dimension resolution: embed.dimensions (config) > default_dimensions (here) > learned
 # from the first real embedding response (recorded on the backend instance).
@@ -59,7 +63,10 @@ base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 default_model = "gemini-embedding-001"
 default_dimensions = 3072
 intent_style = "none"
-strength = "strong"
+# Bench-measured weak: RRF won composite on this arm but FAILED the tool no-worse gate
+# (CI [-0.120,-0.020]), and its narrow optimum is recall 40 — "strength" records whether
+# RRF cleared the promote gates, not raw model quality.
+strength = "weak"
 max_batch = 64
 
 [[preset]]

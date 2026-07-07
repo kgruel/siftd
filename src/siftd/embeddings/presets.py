@@ -32,11 +32,21 @@ class EmbedPreset(NamedTuple):
 
 
 # Hybrid-search defaults selected by an embedder's `strength`. Data-derived from the
-# 0.11.0 bench (docs/dev/bench-stage2-chunking-design-2026-07-06.md): strong embedders
-# (voyage validated, +0.0129 composite) promote the dedup-on-RRF engine; weak/local ones
-# keep narrow-then-rank, whose FTS candidate pool wants recall 40 (stage-1: gemini+local
-# monotone prefer 40 over 80). Picking a provider picks the behavior — no user knob.
+# 0.11.0 bench (docs/dev/bench-stage2-chunking-design-2026-07-06.md): strong = RRF
+# cleared every no-worse promote gate on that arm (voyage validated, +0.0129 composite)
+# → dedup-on-RRF; weak = it didn't (bge: narrow beat every RRF config; gemini: won
+# composite but FAILED the tool no-worse gate) → narrow-then-rank. Picking a provider
+# picks the behavior — no user knob.
 STRENGTHS = frozenset({"strong", "weak"})
+
+# Narrow-path FTS candidate width (unused under rrf). Global, not per-strength: 40 is
+# the measured optimum on every arm that runs narrow by default (gemini + local are
+# monotone 40 > 80 > 160 > 320 — weaker embedders want less FTS dilution before the
+# rerank). The one measured 80-preference is voyage (+0.010 at 80), which ships on RRF
+# and only hits this value under an explicit narrow override; power users can widen via
+# the per-call `recall` parameter (wider = more semantic reach for a strong embedder,
+# more dilution for a weak one).
+NARROW_RECALL_DEFAULT = 40
 
 
 class HybridDefaults(NamedTuple):
@@ -44,8 +54,8 @@ class HybridDefaults(NamedTuple):
     recall: int  # narrow-path FTS candidate width (unused under rrf)
 
 
-_STRONG_DEFAULTS = HybridDefaults(strategy="rrf", recall=80)
-_WEAK_DEFAULTS = HybridDefaults(strategy="narrow", recall=40)
+_STRONG_DEFAULTS = HybridDefaults(strategy="rrf", recall=NARROW_RECALL_DEFAULT)
+_WEAK_DEFAULTS = HybridDefaults(strategy="narrow", recall=NARROW_RECALL_DEFAULT)
 
 
 def hybrid_defaults_for_backend(backend_name: str) -> HybridDefaults:
@@ -53,8 +63,8 @@ def hybrid_defaults_for_backend(backend_name: str) -> HybridDefaults:
 
     ``backend_name`` is the :class:`~siftd.embeddings.base.EmbeddingBackend` ``name``:
     ``"fastembed"`` (the local model — always weak) or ``"remote:<preset>"``. A remote
-    preset's ``strength`` field selects the default; anything unknown or local falls to
-    the weak defaults (narrow-then-rank, recall 40), the conservative incumbent."""
+    preset's ``strength`` field selects the strategy; anything unknown or local falls to
+    the weak defaults (narrow-then-rank), the conservative incumbent."""
     if backend_name and backend_name.startswith("remote:"):
         preset = get_preset(backend_name.split(":", 1)[1])
         if preset is not None and preset.strength == "strong":
