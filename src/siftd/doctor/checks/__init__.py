@@ -132,6 +132,7 @@ from siftd.doctor.checks.db_blob_refcount_drift import DbBlobRefcountDriftCheck 
 from siftd.doctor.checks.db_fk_integrity import DbFkIntegrityCheck  # noqa: E402
 from siftd.doctor.checks.db_trigger_presence import DbTriggerPresenceCheck  # noqa: E402
 from siftd.doctor.checks.drop_ins_valid import DropInsValidCheck  # noqa: E402
+from siftd.doctor.checks.embed_config import EmbedConfigCheck  # noqa: E402
 from siftd.doctor.checks.embeddings_available import EmbeddingsAvailableCheck  # noqa: E402
 from siftd.doctor.checks.embeddings_compat import EmbeddingsCompatCheck  # noqa: E402
 from siftd.doctor.checks.embeddings_stale import EmbeddingsStaleCheck  # noqa: E402
@@ -150,6 +151,7 @@ from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noq
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
     IngestErrorsCheck(),
+    EmbedConfigCheck(),
     EmbeddingsAvailableCheck(),
     EmbeddingsCompatCheck(),
     EmbeddingsStaleCheck(),

@@ -18,6 +18,7 @@ from siftd.doctor.checks import (
     DbFkIntegrityCheck,
     DbTriggerPresenceCheck,
     DropInsValidCheck,
+    EmbedConfigCheck,
     EmbeddingsStaleCheck,
     FreelistCheck,
     FtsIntegrityCheck,
@@ -79,6 +80,7 @@ class TestListChecks:
         assert "fts-stale" in names
         assert "fts-integrity" in names
         assert "config-valid" in names
+        assert "embed-config" in names
         # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
         assert "embeddings-compat" in names
         assert "workspace-identity" in names
@@ -313,6 +315,202 @@ class TestEmbeddingsStaleCheck:
         assert "conversation" in findings[0].message
         assert "not indexed" in findings[0].message
         assert findings[0].fix_available is True
+
+
+class TestEmbedConfigCheck:
+    """Tests for the embed-config check."""
+
+    def test_finding_structure(self):
+        """Check has correct attributes."""
+        check = EmbedConfigCheck()
+        assert check.name == "embed-config"
+        assert check.has_fix is True
+        assert check.requires_db is False
+        assert check.requires_embed_db is False
+        assert check.cost == "fast"
+
+    def test_nothing_configured_no_db_is_info(self, check_context, monkeypatch, tmp_path):
+        """No embed.backend set and no embeddings DB yet — informational, not an error."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "no embedding backend configured")
+        )
+
+        findings = EmbedConfigCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert "not set up" in findings[0].message
+        assert findings[0].fix_available is True
+
+    def test_nothing_configured_but_db_exists_is_silent(self, check_context, monkeypatch, tmp_path):
+        """No backend configured, but an embeddings DB already exists — the missing-extra
+        case belongs to embeddings-available, not this check; avoid duplicate noise."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text("")
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+        check_context.embed_db_path.touch()
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus(None, False, "no embedding backend configured")
+        )
+
+        assert EmbedConfigCheck().run(check_context) == []
+
+    def test_configured_backend_unusable_is_warning(self, check_context, monkeypatch, tmp_path):
+        """embed.backend set but not usable (e.g. missing extra) — surfaced regardless
+        of whether an embeddings DB has ever been built."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "fastembed"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail,
+            "embedding_status",
+            lambda: avail.EmbedStatus(
+                None,
+                False,
+                'embed.backend = "fastembed" but the [embed] extra is not installed; '
+                "run `siftd install embed`",
+            ),
+        )
+
+        findings = EmbedConfigCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "unusable" in findings[0].message
+        assert findings[0].fix_command == "siftd install embed"
+
+    def test_off_backend_is_silent(self, check_context, monkeypatch, tmp_path):
+        """embed.backend = 'off' is an explicit opt-out, not a misconfiguration."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "off"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus(None, False, 'embeddings disabled (embed.backend = "off")')
+        )
+
+        assert EmbedConfigCheck().run(check_context) == []
+
+    def test_remote_backend_missing_api_key_is_warning(self, check_context, monkeypatch, tmp_path):
+        """A cloud preset with no api_key set will 401 at request time — flagged early."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.egress as egress_mod
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus("remote:voyage", True, "remote backend (voyage-4-lite)")
+        )
+        monkeypatch.setattr(egress_mod, "egress_notice_pending", lambda embed_db_path=None: None)
+
+        findings = EmbedConfigCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "warning"
+        assert "api_key" in findings[0].message
+        assert findings[0].context["backend"] == "voyage"
+
+    def test_remote_backend_with_api_key_no_finding(self, check_context, monkeypatch, tmp_path):
+        """A cloud preset with an api_key set draws no missing-key warning."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\napi_key = "sk-literal"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.egress as egress_mod
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus("remote:voyage", True, "remote backend (voyage-4-lite)")
+        )
+        monkeypatch.setattr(egress_mod, "egress_notice_pending", lambda embed_db_path=None: None)
+
+        assert EmbedConfigCheck().run(check_context) == []
+
+    def test_self_hosted_preset_no_key_required(self, check_context, monkeypatch, tmp_path):
+        """ollama/custom presets are self-hosted by design — no key expected."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "ollama"\nmodel = "nomic-embed-text"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.egress as egress_mod
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus("remote:ollama", True, "remote backend (nomic-embed-text)")
+        )
+        monkeypatch.setattr(egress_mod, "egress_notice_pending", lambda embed_db_path=None: None)
+
+        assert EmbedConfigCheck().run(check_context) == []
+
+    def test_egress_notice_pending_is_info(self, check_context, monkeypatch, tmp_path):
+        """A pending first-egress disclosure surfaces as an actionable info finding."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "voyage"\napi_key = "sk-literal"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus("remote:voyage", True, "remote backend (voyage-4-lite)")
+        )
+
+        import siftd.embeddings.egress as egress_mod
+
+        monkeypatch.setattr(
+            egress_mod,
+            "egress_notice_pending",
+            lambda embed_db_path=None: "semantic indexing sends conversation content to voyage",
+        )
+
+        findings = EmbedConfigCheck().run(check_context)
+
+        assert len(findings) == 1
+        assert findings[0].severity == "info"
+        assert "Pending first-egress disclosure" in findings[0].message
+        assert findings[0].fix_command == "siftd embed"
+
+    def test_no_egress_notice_no_finding(self, check_context, monkeypatch, tmp_path):
+        """A usable, already-notified (or local) backend draws no findings."""
+        config_path = tmp_path / "config.toml"
+        config_path.write_text('[embed]\nbackend = "fastembed"\n')
+        monkeypatch.setattr("siftd.paths.config_file", lambda: config_path)
+        monkeypatch.setattr("siftd.config.config_file", lambda: config_path)
+
+        import siftd.embeddings.availability as avail
+
+        monkeypatch.setattr(
+            avail, "embedding_status", lambda: avail.EmbedStatus("fastembed", True, "local fastembed backend installed")
+        )
+
+        import siftd.embeddings.egress as egress_mod
+
+        monkeypatch.setattr(egress_mod, "egress_notice_pending", lambda embed_db_path=None: None)
+
+        assert EmbedConfigCheck().run(check_context) == []
 
 
 class TestCostCoverageCheck:
