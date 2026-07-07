@@ -140,8 +140,13 @@ not). Sequence to bound spend:
    added later without rework. So stage 2 tests S0 (baseline) vs **S1 only**; S2/S3 drop.
 3. **Chunk strategy granularity — deferred.** Only S1 vs S0 this round; no target_tokens
    sweep until S1 typing is shown to win.
-4. **Paraphrase +20% margin — defer.** Re-ratify against results, not before.
-5. **Per-preset vs global defaults — defer.** Let the S1+rollup data speak first.
+4. **Paraphrase +20% margin — RESOLVED (2026-07-07): relaxed.** The winning voyage config
+   passes all no-worse gates and wins composite with paraphrase +10.3% (CI-solid); the
+   user ratified relaxing the pre-committed +20% bar to "positive + no-worse-elsewhere".
+   RRF therefore promotes on strong embedders.
+5. **Per-preset vs global defaults — RESOLVED (2026-07-07): per-preset.** strong embedder
+   → dedup-on-RRF, weak/local → narrow. Shipped as a preset `strength` data field
+   (`src/siftd/data/embed_presets.toml`); picking a provider picks the behavior.
 6. **Ground-truth honesty** — keep labels at conversation granularity (as now) to stay
    strategy-agnostic. Unchanged.
 
@@ -269,16 +274,21 @@ branch. Dissolves into `mmr_rerank`'s existing two-tier penalty.
 (voyage +0.0129), weak → narrow (bge −0.0167). NOT a global default. The BYOK preset is
 the natural carrier for the strong/weak split.
 
-**5. The one live gate (decision #4 — paraphrase margin).** Winning voyage config
-(`w1.0_kkw20_kvec20_p300_l1.0`) passes ALL no-worse gates (identifier/tool/topical) and
-wins composite, but paraphrase is **+10.3%** relative (0.617→0.680), not the pre-committed
-**+20%**. So whether RRF promotes on strong arms hinges entirely on re-ratifying that bar:
-- Keep +20% → RRF does not promote; ship narrow everywhere; the dedup-on-RRF change has no
-  consumer and the whole arc ships *nothing*.
-- Relax to ~+10% / "positive + no-worse-elsewhere" → RRF promotes on strong arms; ship
-  per-preset default + the dedup-on-RRF engine stage.
-
-Everything downstream waits on that one product judgment.
+**5. The one live gate (decision #4 — paraphrase margin) — RESOLVED (2026-07-07: relaxed).**
+Winning voyage config (`w1.0_kkw20_kvec20_p300_l1.0`) passes ALL no-worse gates
+(identifier/tool/topical) and wins composite, with paraphrase **+10.3%** relative
+(0.617→0.680) rather than the pre-committed **+20%**. The user relaxed the bar to
+"positive + no-worse-elsewhere", so **RRF promotes on strong embedders**. Shipped in
+0.11.0:
+- dedup-on-RRF engine stage (`_fuse_hybrid` conversation rollup + weighted fusion
+  `w1.0/kkw20/kvec20`, pool 300, λ=1.0) in `src/siftd/api/search.py`;
+- per-preset default via preset `strength` (`src/siftd/data/embed_presets.toml`): strong →
+  RRF, weak/local → narrow with FTS recall 40;
+- `SIFTD_HYBRID_STRATEGY` retained as an experiment-only override (env > preset default);
+- fidelity gate re-run and PASS on the local arm (28/28 exact, both configs) with the
+  offline replica extended to mirror the new fusion + rollup. (Voyage re-gate is blocked
+  by a stale query-embedding cache predating the topical-GT regen — no new API spend
+  allowed; the local pass validates the arm-independent ranking/rollup math.)
 
 ## The reframe
 

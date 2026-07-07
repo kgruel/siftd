@@ -40,11 +40,18 @@ import numpy as np
 
 # Engine constants (kept in lockstep with the source — asserted against import in the
 # gate so a drift in the engine is caught, not silently diverged from).
-RRF_K = 60  # siftd.api.search._RRF_K
 MMR_CAP = 1000  # siftd.search.MAX_MMR_CANDIDATES — engine truncates before MMR
-DEFAULT_LAMBDA = 0.7  # search default rerank lambda
-DEFAULT_RECALL = 80  # hybrid_search default recall
+DEFAULT_LAMBDA = 0.7  # narrow-path rerank lambda (search default)
+DEFAULT_RECALL = 80  # narrow strong-preset recall (the gate's closed-universe config)
 DEFAULT_N = 10  # top-n the gate compares
+
+# Shipped dedup-on-RRF fusion parameters — siftd.api.search._RRF_* (winning bench config
+# w1.0_kkw20_kvec20_p300_l1.0). Mirrored here so replica_rrf reproduces the LIVE engine.
+RRF_W_KW = 1.0  # siftd.api.search._RRF_W_KW
+RRF_K_KW = 20  # siftd.api.search._RRF_K_KW
+RRF_K_VEC = 20  # siftd.api.search._RRF_K_VEC
+RRF_POOL = 300  # siftd.api.search._RRF_POOL
+RRF_LAMBDA = 1.0  # siftd.api.search._RRF_LAMBDA (pure-relevance vector list)
 
 
 # --------------------------------------------------------------------------- #
@@ -347,18 +354,29 @@ class _FusionItem:
         if self.keyword_rank is None or rank < self.keyword_rank:
             self.keyword_rank = rank
 
-    def fused_score(self) -> float:
+    def fused_score(self, *, w_kw: float = RRF_W_KW, k_kw: int = RRF_K_KW, k_vec: int = RRF_K_VEC) -> float:
         fused = 0.0
         if self.vector_rank is not None:
-            fused += 1.0 / (RRF_K + self.vector_rank)
+            fused += 1.0 / (k_vec + self.vector_rank)
         if self.keyword_rank is not None:
-            fused += 1.0 / (RRF_K + self.keyword_rank)
+            fused += w_kw / (k_kw + self.keyword_rank)
         return fused
 
 
-def _fuse(vector_results: list[dict], keyword_hits: list[dict], arm: ArmData, *, n: int) -> list[dict]:
-    """Port of _fuse_hybrid: RRF over vector_rank + keyword_rank, FTS->chunk bridge,
-    entrant handling, sort by (-fused, key)."""
+def _fuse(
+    vector_results: list[dict],
+    keyword_hits: list[dict],
+    arm: ArmData,
+    *,
+    n: int,
+    w_kw: float = RRF_W_KW,
+    k_kw: int = RRF_K_KW,
+    k_vec: int = RRF_K_VEC,
+    dedup: bool = True,
+) -> list[dict]:
+    """Port of _fuse_hybrid: weighted RRF over vector_rank + keyword_rank, FTS->chunk
+    bridge, entrant handling, sort by (-fused, key), then the conversation-dedup rollup
+    (best-ranked chunk per conversation) projecting onto n distinct conversations."""
     fusion: dict[str, _FusionItem] = {}
     for r in vector_results:
         fusion[r["chunk_id"]] = _FusionItem(result=r, vector_rank=r.get("vector_rank"), keyword_rank=None)
@@ -394,14 +412,24 @@ def _fuse(vector_results: list[dict], keyword_hits: list[dict], arm: ArmData, *,
             else:
                 item.note_keyword_rank(kr)
 
-    scored = sorted(fusion.items(), key=lambda kv: (-kv[1].fused_score(), kv[0]))
+    def _fused(item: _FusionItem) -> float:
+        return item.fused_score(w_kw=w_kw, k_kw=k_kw, k_vec=k_vec)
+
+    scored = sorted(fusion.items(), key=lambda kv: (-_fused(kv[1]), kv[0]))
     out: list[dict] = []
-    for _key, item in scored[:n]:
+    seen: set[str] = set()
+    for _key, item in scored:
+        conv_id = item.result["conversation_id"]
+        if dedup and conv_id in seen:
+            continue
+        seen.add(conv_id)
         r = dict(item.result)
-        r["score"] = item.fused_score()
+        r["score"] = _fused(item)
         r["vector_rank"] = item.vector_rank
         r["keyword_rank"] = item.keyword_rank
         out.append(r)
+        if len(out) >= n:
+            break
     return out
 
 
@@ -411,18 +439,24 @@ def replica_rrf(
     keyword_hits: list[dict],
     *,
     n: int = DEFAULT_N,
-    lambda_: float = DEFAULT_LAMBDA,
+    pool: int = RRF_POOL,
+    lambda_: float = RRF_LAMBDA,
+    w_kw: float = RRF_W_KW,
+    k_kw: int = RRF_K_KW,
+    k_vec: int = RRF_K_VEC,
+    dedup: bool = True,
 ) -> list[dict]:
-    """Port of the hybrid rrf branch: full-set vector list (no FTS narrowing) fused
-    with the chunk-level keyword list. ``keyword_hits`` is the cached fts_content list
-    (event-level, ordered by bm25 rank); the engine uses the top ``max(pool, n)``."""
-    pool = max(n * 3, n)
+    """Port of the hybrid dedup-on-RRF branch: full-set vector list (no FTS narrowing) at
+    the shipped pool/λ fused with the chunk-level keyword list, then the conversation
+    rollup. ``keyword_hits`` is the cached fts_content list (event-level, ordered by bm25
+    rank); the engine uses the top ``max(pool, n)``. Defaults mirror the shipped engine;
+    the sweep self-check overrides them to probe the legacy k=60/pool=30 formula."""
     vector_results = _vector_list(
         arm, query_embedding, None,
         search_limit=pool, mmr_limit=pool, lambda_=lambda_,
     )
     kw = keyword_hits[: max(pool, n)]
-    return _fuse(vector_results, kw, arm, n=n)
+    return _fuse(vector_results, kw, arm, n=n, w_kw=w_kw, k_kw=k_kw, k_vec=k_vec, dedup=dedup)
 
 
 # --------------------------------------------------------------------------- #

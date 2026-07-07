@@ -60,7 +60,14 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import offline_lib  # noqa: E402
 from offline_lib import ArmData, load_queries, replica_narrow, replica_rrf  # noqa: E402
 
-from siftd.api.search import _RRF_K, hybrid_search  # noqa: E402
+from siftd.api.search import (  # noqa: E402
+    _RRF_K_KW,
+    _RRF_K_VEC,
+    _RRF_LAMBDA,
+    _RRF_POOL,
+    _RRF_W_KW,
+    hybrid_search,
+)
 from siftd.search import MAX_MMR_CANDIDATES  # noqa: E402
 
 RUN_DIR = Path(__file__).parent.parent / "runs" / "stage1-2026-07-05"
@@ -126,6 +133,13 @@ def run_config(
 ) -> dict:
     """Run one config (narrow|rrf) over the probe; return the report block."""
     os.environ["SIFTD_HYBRID_STRATEGY"] = "rrf" if config == "rrf" else "narrow"
+    # Narrow's FTS candidate width is now per-preset (strong 80, weak/local 40). Pin it
+    # explicitly on BOTH sides so the gate compares like for like across arms — the env
+    # knob forces the strategy but not the width, and recall=None would resolve from the
+    # injected backend's name (which the replica must match).
+    from siftd.embeddings.presets import hybrid_defaults_for_backend
+
+    narrow_recall = hybrid_defaults_for_backend(backend.name).recall
     mismatches: list[dict] = []
     n_match = 0
     for q in probe:
@@ -137,13 +151,16 @@ def run_config(
         # --- LIVE engine (real code path) ---
         engine_chunks = hybrid_search(
             q["query"], db_path=SNAPSHOT, embed_db=embed_db, mode="hybrid", n=N,
-            exclude_active=False, include_derivative=True, embed_backend=backend,
+            recall=narrow_recall, exclude_active=False, include_derivative=True,
+            embed_backend=backend,
         )
         engine_seq = conv_seq(engine_chunks)
 
         # --- offline replica (from cached artifacts) ---
         if config == "narrow":
-            rep = replica_narrow(arm, emb_list, fts["recall"]["conversation_ids"])
+            rep = replica_narrow(
+                arm, emb_list, fts["recall"]["conversation_ids"], recall=narrow_recall
+            )
         else:
             kw = [{"conversation_id": h["c"], "event_id": h["e"]} for h in fts["content"]]
             rep = replica_rrf(arm, emb_list, kw)
@@ -174,7 +191,15 @@ def main() -> None:
     ap.add_argument("--backend", default="voyage")
     args = ap.parse_args()
 
-    assert _RRF_K == offline_lib.RRF_K, f"RRF k drift: engine {_RRF_K} != replica {offline_lib.RRF_K}"
+    rrf_drift = [
+        ("w_kw", _RRF_W_KW, offline_lib.RRF_W_KW),
+        ("k_kw", _RRF_K_KW, offline_lib.RRF_K_KW),
+        ("k_vec", _RRF_K_VEC, offline_lib.RRF_K_VEC),
+        ("pool", _RRF_POOL, offline_lib.RRF_POOL),
+        ("lambda", _RRF_LAMBDA, offline_lib.RRF_LAMBDA),
+    ]
+    for name, engine_v, replica_v in rrf_drift:
+        assert engine_v == replica_v, f"RRF {name} drift: engine {engine_v} != replica {replica_v}"
     assert MAX_MMR_CANDIDATES == offline_lib.MMR_CAP, (
         f"MMR cap drift: engine {MAX_MMR_CANDIDATES} != replica {offline_lib.MMR_CAP}"
     )

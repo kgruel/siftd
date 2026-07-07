@@ -591,7 +591,7 @@ examples:
 
     # Search tuning — join the "search" section
     tuning_group = p_search.add_argument_group("search")
-    tuning_group.add_argument("--recall", type=int, default=80, metavar="N", help="FTS5 conversation recall limit (default: 80)")
+    tuning_group.add_argument("--recall", type=int, default=None, metavar="N", help="FTS5 conversation recall limit (default: per-embedder)")
     tuning_group.add_argument("--threshold", type=float, metavar="SCORE", help="Filter results below this score (e.g., 0.7)")
     tuning_group.add_argument("--raw-fts", action="store_true", help="Pass query directly to FTS5 without tokenization (advanced: skips OR fallback)")
 

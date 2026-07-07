@@ -390,9 +390,14 @@ def self_check(arm: ArmData, emb: np.ndarray, q_lines: list[dict], fts_by_qid: d
         fts = fts_by_qid[q_lines[qi]["qid"]]
         content = fts["content"]
         uni = build_universe(arm, scores, qv.tolist(), pool=30, lam=0.7, content=content)
-        gen_convs, _ = uni.topn_convs(w_kw=1.0, k_kw=60, k_vec=60)
+        gen_convs, _ = uni.topn_convs(w_kw=1.0, k_kw=60, k_vec=60)  # slot unit, no rollup
         kw = [{"conversation_id": h["c"], "event_id": h["e"]} for h in content]
-        ref = replica_rrf(arm, qv.tolist(), kw)
+        # Pin replica_rrf to the SAME legacy formula this check validates (the shipped
+        # defaults now differ: k=20, pool=300, dedup on). Self-check A proves the
+        # generalized fuse == offline_lib._fuse mechanics, not the shipped config.
+        ref = replica_rrf(
+            arm, qv.tolist(), kw, pool=30, lambda_=0.7, w_kw=1.0, k_kw=60, k_vec=60, dedup=False
+        )
         ref_convs = [r["conversation_id"] for r in ref[:N]]
         if gen_convs != ref_convs:
             return {"pass": False, "which": "A", "detail": f"qid={q_lines[qi]['qid']}",

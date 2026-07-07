@@ -699,7 +699,7 @@
   SEARCH
     --mode ENGINE      Search engine: auto (default), fts, semantic, or hybrid.
                        auto picks hybrid when embeddings are installed, else fts.
-    --recall N         FTS5 conversation recall limit (default: 80)
+    --recall N         FTS5 conversation recall limit (default: per-embedder)
     --threshold SCORE  Filter results below this score (e.g., 0.7)
     --raw-fts          Pass query directly to FTS5 without tokenization (advanced:
                        skips OR fallback)

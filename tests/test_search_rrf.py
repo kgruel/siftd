@@ -28,17 +28,32 @@ def _hit(conv, event_id, rank=-1.0, kind="response"):
 # ---------------------------------------------------------------------------
 
 
-def test_hybrid_strategy_default_is_narrow(monkeypatch):
-    """F3 ruling: hybrid defaults to narrow-then-rank; RRF is opt-in only.
+def test_hybrid_strategy_is_per_preset_with_env_override(monkeypatch):
+    """0.11.0: the default strategy is per-preset (strong → rrf, weak/local → narrow);
+    SIFTD_HYBRID_STRATEGY still force-overrides either way."""
+    strong = NS(name="remote:voyage")
+    weak = NS(name="fastembed")
 
-    Guards against an accidental re-flip — RRF stays dormant until it earns the
-    default on a real metric in the slice-5 re-gate."""
     monkeypatch.delenv("SIFTD_HYBRID_STRATEGY", raising=False)
-    assert s._hybrid_strategy() == "narrow"
+    assert s._hybrid_strategy(strong) == "rrf"
+    assert s._hybrid_strategy(weak) == "narrow"
+
+    # env override wins over the preset default, both directions.
+    monkeypatch.setenv("SIFTD_HYBRID_STRATEGY", "narrow")
+    assert s._hybrid_strategy(strong) == "narrow"
     monkeypatch.setenv("SIFTD_HYBRID_STRATEGY", "rrf")
-    assert s._hybrid_strategy() == "rrf"
-    monkeypatch.setenv("SIFTD_HYBRID_STRATEGY", "narrow")  # anything != "rrf" → narrow
-    assert s._hybrid_strategy() == "narrow"
+    assert s._hybrid_strategy(weak) == "rrf"
+    # an unrecognized value is ignored → falls back to the preset default.
+    monkeypatch.setenv("SIFTD_HYBRID_STRATEGY", "bogus")
+    assert s._hybrid_strategy(strong) == "rrf"
+    assert s._hybrid_strategy(weak) == "narrow"
+
+
+def test_preset_recall_defaults(monkeypatch):
+    """Narrow FTS width resolves per preset: strong 80, weak/local 40."""
+    assert s._preset_recall(NS(name="remote:voyage")) == 80
+    assert s._preset_recall(NS(name="fastembed")) == 40
+    assert s._preset_recall(NS(name="remote:ollama")) == 40
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +95,7 @@ def test_unbridged_hit_becomes_entrant(monkeypatch):
     assert out[0]["event_id"] == "e1"
     bd = out[0]["breakdown"]
     assert bd.vector_rank is None and bd.keyword_rank == 1
-    assert out[0]["score"] == pytest.approx(1 / 61)
+    assert out[0]["score"] == pytest.approx(1 / 21)  # w_kw=1.0 / (k_kw=20 + rank 1)
 
 
 def test_bridged_hit_never_also_an_entrant(monkeypatch):
@@ -123,8 +138,9 @@ def test_fused_score_math_and_both_lists_outrank_one(monkeypatch):
     })
     out = s._fuse_hybrid(vec, kw, object(), n=10)
     assert [r["chunk_id"] for r in out] == ["k_both", "k_vec"]
-    assert out[0]["score"] == pytest.approx(1 / 62 + 1 / 61)
-    assert out[1]["score"] == pytest.approx(1 / 61)
+    # k_both: vector rank 2 + keyword rank 1; k_vec: vector rank 1 only (k_vec=k_kw=20).
+    assert out[0]["score"] == pytest.approx(1 / 22 + 1 / 21)
+    assert out[1]["score"] == pytest.approx(1 / 21)
 
 
 def test_keyword_rank_is_best_among_bridged_hits(monkeypatch):
@@ -140,6 +156,42 @@ def test_keyword_rank_is_best_among_bridged_hits(monkeypatch):
     out = s._fuse_hybrid(vec, kw, object(), n=10)
     k1 = next(r for r in out if r["chunk_id"] == "k1")
     assert k1["breakdown"].keyword_rank == 1
+
+
+# ---------------------------------------------------------------------------
+# Conversation-dedup rollup (the flooding fix on the RRF path)
+# ---------------------------------------------------------------------------
+
+
+def test_dedup_keeps_best_ranked_chunk_per_conversation(monkeypatch):
+    """The fused chunk ranking is projected onto distinct conversations: a conversation
+    with several fused chunks contributes only its best-ranked one."""
+    vec = [
+        _vec("k1", "c1", vector_rank=1),  # c1's best chunk
+        _vec("k2", "c1", vector_rank=2),  # c1 again — flooding
+        _vec("k3", "c2", vector_rank=3),  # c2
+    ]
+    monkeypatch.setattr(s, "chunks_for_events", lambda conn, eids: {})
+    out = s._fuse_hybrid(vec, [], object(), n=10)
+    assert [r["chunk_id"] for r in out] == ["k1", "k3"]  # k2 (c1 dup) suppressed
+    assert [r["conversation_id"] for r in out] == ["c1", "c2"]
+
+
+def test_dedup_trims_to_n_distinct_conversations(monkeypatch):
+    """n bounds distinct conversations, not chunk slots."""
+    vec = [_vec(f"k{i}", f"c{i}", vector_rank=i + 1) for i in range(5)]
+    monkeypatch.setattr(s, "chunks_for_events", lambda conn, eids: {})
+    out = s._fuse_hybrid(vec, [], object(), n=3)
+    assert [r["conversation_id"] for r in out] == ["c0", "c1", "c2"]
+
+
+def test_dedup_off_preserves_all_chunk_slots(monkeypatch):
+    """dedup=False is the pre-rollup slot behavior (a conv may repeat) — the mode the
+    sweep self-check pins."""
+    vec = [_vec("k1", "c1", vector_rank=1), _vec("k2", "c1", vector_rank=2)]
+    monkeypatch.setattr(s, "chunks_for_events", lambda conn, eids: {})
+    out = s._fuse_hybrid(vec, [], object(), n=10, dedup=False)
+    assert [r["chunk_id"] for r in out] == ["k1", "k2"]
 
 
 # ---------------------------------------------------------------------------

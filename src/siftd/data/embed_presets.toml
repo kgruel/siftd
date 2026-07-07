@@ -24,6 +24,12 @@
 #   dimensions_param    wire field name for truncation when embed.dimensions is set
 #                       (optional; defaults to OpenAI's `dimensions`. Voyage and Mistral
 #                       spell it `output_dimension`.)
+#   strength            "strong" | "weak" (optional; defaults to "weak") — selects the
+#                       shipped hybrid-search default. strong ⇒ dedup-on-RRF fusion;
+#                       weak ⇒ narrow-then-rank with FTS recall 40. Data-derived from the
+#                       0.11.0 bench (docs/dev/bench-stage2-chunking-design-2026-07-06.md);
+#                       hosted commercial embedders are strong, local/self-hosted weak.
+#                       Picking a provider picks the behavior — there is no user knob.
 #
 # Dimension resolution: embed.dimensions (config) > default_dimensions (here) > learned
 # from the first real embedding response (recorded on the backend instance).
@@ -36,6 +42,7 @@ default_dimensions = 1024
 intent_style = "param:input_type"
 max_batch = 128
 dimensions_param = "output_dimension"
+strength = "strong"
 
 [[preset]]
 name = "openai"
@@ -43,6 +50,7 @@ base_url = "https://api.openai.com/v1"
 default_model = "text-embedding-3-small"
 default_dimensions = 1536
 intent_style = "none"
+strength = "strong"
 max_batch = 512
 
 [[preset]]
@@ -51,6 +59,7 @@ base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
 default_model = "gemini-embedding-001"
 default_dimensions = 3072
 intent_style = "none"
+strength = "strong"
 max_batch = 64
 
 [[preset]]
@@ -60,6 +69,7 @@ default_model = "jina-embeddings-v3"
 default_dimensions = 1024
 intent_style = "param:task"
 max_batch = 64
+strength = "strong"
 
 [[preset]]
 name = "mistral"
@@ -69,6 +79,7 @@ default_dimensions = 1024
 intent_style = "none"
 max_batch = 64
 dimensions_param = "output_dimension"
+strength = "strong"
 
 # Local Ollama server. No default model — set embed.model to a pulled embedding model
 # (e.g. nomic-embed-text). Dimension is learned from the first response.
@@ -77,9 +88,11 @@ name = "ollama"
 base_url = "http://localhost:11434/v1"
 intent_style = "prefix"
 max_batch = 64
+strength = "weak"
 
 # Any other OpenAI-compatible endpoint. Requires embed.base_url and embed.model.
 [[preset]]
 name = "custom"
 intent_style = "prefix"
 max_batch = 64
+strength = "weak"
