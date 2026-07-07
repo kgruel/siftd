@@ -237,6 +237,49 @@ consistent across cells but a paired CI + the local arm should confirm before fi
 (3) S1 was swept at S0's token bounds (256/512/25); a granularity re-sweep *could* differ,
 but prompt/response context-loss looks structural, not a granularity artifact.
 
+## Complete verdict — both arms (Phase 2 done)
+
+Local/bge S1 built (243,084 chunks, identical type split to voyage) and swept. Full
+best-RRF composite grid, both arms:
+
+| | bge S0 | bge S1 | voyage S0 | voyage S1 |
+|---|---|---|---|---|
+| narrow80 | 0.4592 | 0.4580 | 0.5339 | 0.5286 |
+| slot | 0.3249 | 0.3203 | 0.4082 | 0.4030 |
+| **dedup** | 0.4424 | 0.4312 | **0.5468** | 0.5322 |
+| conv-sum3 | 0.4447 | 0.4359 | 0.5276 | 0.5281 |
+| conv-mean | 0.4182 | 0.4095 | 0.5237 | 0.5087 |
+| conv-sum | 0.4335 | 0.4271 | 0.5080 | 0.5094 |
+
+**1. Typed chunking (lever A) — REJECTED, both arms.** S1 ≤ S0 in all 10 best-config
+cells; the sign is consistent (not noise). H-A1 falsified on both arms (paraphrase drops
+under S1). Ship S0 chunking.
+
+**2. Aggregate rollup (lever B) — REJECTED.** Voyage: dedup is the ceiling, aggregate
+never beats it. bge: conv-sum3 edges dedup (+0.0023 S0, +0.0047 S1) — but narrow beats
+*every* RRF config on bge, so aggregate's only win is over a config that already loses to
+the default. It changes no decision. Drop aggregate; ship dedup.
+
+**3. Dedup rollup on RRF — SHIP (the sole net-positive).** slot→dedup is +0.13/+0.14 both
+arms (the flooding tax removed). It makes RRF+dedup *beat* narrow on voyage (+0.0129).
+narrow already gets dedup via MMR; the change is extending that suppression to the RRF
+branch. Dissolves into `mmr_rerank`'s existing two-tier penalty.
+
+**4. Default = per-preset (decision #5 RESOLVED by data).** strong embedder → RRF+dedup
+(voyage +0.0129), weak → narrow (bge −0.0167). NOT a global default. The BYOK preset is
+the natural carrier for the strong/weak split.
+
+**5. The one live gate (decision #4 — paraphrase margin).** Winning voyage config
+(`w1.0_kkw20_kvec20_p300_l1.0`) passes ALL no-worse gates (identifier/tool/topical) and
+wins composite, but paraphrase is **+10.3%** relative (0.617→0.680), not the pre-committed
+**+20%**. So whether RRF promotes on strong arms hinges entirely on re-ratifying that bar:
+- Keep +20% → RRF does not promote; ship narrow everywhere; the dedup-on-RRF change has no
+  consumer and the whole arc ships *nothing*.
+- Relax to ~+10% / "positive + no-worse-elsewhere" → RRF promotes on strong arms; ship
+  per-preset default + the dedup-on-RRF engine stage.
+
+Everything downstream waits on that one product judgment.
+
 ## The reframe
 
 Stage 1 asked "how do we fuse two search signals." Stage 2 asks the question under it:
