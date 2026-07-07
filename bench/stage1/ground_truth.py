@@ -190,9 +190,51 @@ def mine_tool(conn: sqlite3.Connection, max_out: int = 100) -> list[dict]:
 # --- topical class ----------------------------------------------------------
 
 
-def tag_to_query(name: str) -> str:
-    phrase = name.split(":", 1)[-1].replace("-", " ")
-    return phrase
+# The original miner mapped every curated tag to `name.replace('-', ' ')`. Stage-1
+# results (bench-stage1-results-2026-07-06.md) showed that class was structurally dead:
+# 13/16 queries scored recall@10=0 under EVERY config including baselines, so its
+# "no-worse" promote gate passed vacuously (both sides pinned at the floor). Diagnosis +
+# redesign: bench-topical-regen-2026-07-07.md.
+#
+# The split is content-reachability: a tag discriminates only when its SLUG's plain
+# meaning names something the conversation literally discusses (so a natural query a
+# retrospective-writer would type can reach the members via content). Editorial tags
+# encode judgment ABOUT a conversation ("dissolution", "inciting-friction") — the tag
+# filter is their retrieval channel, not search — and coordination-noise bodies (the
+# browser-research arc) are vector-unreachable regardless of phrasing. Those are dropped.
+#
+# TOPICAL_GLOSS carries the kept tags to a richer query. The query text is derived from
+# the tag slug's plain meaning plus the user's own project vocabulary (ev / prism /
+# ticks / siftd / tbd) — knowledge a real user who coined the tag has — NOT from reading
+# member content, so no label information leaks beyond what the tagger already knows. It
+# is a static mapping: fully deterministic, no seed/random (reproducible by construction).
+TOPICAL_GLOSS: dict[str, str] = {
+    "the-great-deletion": "removing and decoupling large chunks of code, moving example-only code out "
+    "of the framework and deleting scaffolding",
+    "principles:cli": "designing the command-line interface and implementing the doctor health-check command",
+    "principles:architecture": "the architecture refactor to domain objects and protocol-based interfaces "
+    "with a storage seam",
+    "vocabulary-as-architecture": "the domain vocabulary refactor, renaming core types and evolving the "
+    "naming as the architecture",
+}
+
+# Judgment-only or unreachable tags, dropped with rationale (see the regen doc). Kept as
+# an explicit ledger so a re-mine over a changed snapshot flags any *unclassified* tag
+# rather than silently regressing to the dead 1-2-word phrasing.
+TOPICAL_DROP: dict[str, str] = {
+    "inciting-friction": "editorial: the tension that started an arc — judgment about the conversation, not words in it",
+    "dissolution": "editorial: the user's design principle (dissolve a type into existing primitives), not a topic in the body",
+    "self-similarity": "editorial: abstract framing over concrete ticks/vertex work; slug does not name the content",
+    "forcing-function": "editorial: warmup-bodied convs, vector-unreachable (>2k)",
+    "observation-as-participation": "editorial: philosophical framing, body is unrelated ev work",
+    "the-missing-middle": "editorial: abstract 'missing layer' framing over project reviews",
+    "co-creation": "editorial: names the collaboration mode, not a retrievable topic",
+    "research:principles": "too generic: 'design principles' saturates; body is diverse",
+    "research:browser-tool": "coordination-noise body (teammate shutdown messages); vector-unreachable (>2k)",
+    "rationale:source-boundary": "same coordination-noise body as the browser-research arc; vector-unreachable",
+    "research:token-efficient-browsing": "same coordination-noise body; vector-unreachable",
+    "research:agent-team-patterns": "same coordination-noise body; vector-unreachable",
+}
 
 
 def mine_topical(conn: sqlite3.Connection) -> list[dict]:
@@ -204,15 +246,26 @@ def mine_topical(conn: sqlite3.Connection) -> list[dict]:
         GROUP BY t.id HAVING COUNT(*) BETWEEN 3 AND 50
         """
     ).fetchall()
-    return [
-        {
-            "class": "topical",
-            "query": tag_to_query(name),
-            "labels": sorted(set(ids.split(","))),
-            "meta": {"tag": name},
-        }
-        for name, ids in rows
-    ]
+    out: list[dict] = []
+    for name, ids in rows:
+        if name in TOPICAL_GLOSS:
+            out.append(
+                {
+                    "class": "topical",
+                    "query": TOPICAL_GLOSS[name],
+                    "labels": sorted(set(ids.split(","))),
+                    "meta": {"tag": name, "gloss": True},
+                }
+            )
+        elif name in TOPICAL_DROP:
+            continue
+        else:
+            print(
+                f"  WARN: topical tag {name!r} is neither kept nor dropped — classify it "
+                f"in ground_truth.TOPICAL_GLOSS/TOPICAL_DROP (skipping, was dead 1-2-word phrasing)",
+                file=sys.stderr,
+            )
+    return out
 
 
 def main() -> None:
