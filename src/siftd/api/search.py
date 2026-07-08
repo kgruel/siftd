@@ -634,7 +634,20 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
 
         for chunk in conv_chunks:
             if chunk.source_ids:
-                # Semantic/hybrid chunk: use first source_id as the event anchor
+                # Semantic/hybrid chunk: use first source_id as the event anchor.
+                #
+                # For an RRF chunk bridged by a keyword hit, this anchors on the
+                # chunk's own first source event, NOT the exact keyword-matched
+                # event (eid) that bridged it — the eid isn't preserved onto the
+                # fused result. This is accepted (wont-fix) coarseness, not a
+                # wrong anchor: chunks are exchange-level (source_ids = one
+                # exchange's prompt + response(s), see storage/embeddings.py), so
+                # eid is always a constituent of the SAME exchange as
+                # source_ids[0]. turn_index — the load-bearing position for the
+                # web unfold and the folio jump — is therefore identical; only
+                # the folio jump's sub-event landing is the exchange's prompt
+                # rather than the matched response. Conversation-granularity
+                # ranking (what the fidelity gate compares) is unaffected.
                 first_src = chunk.source_ids[0]
                 chunk.event_id = first_src
                 turn_idx = prompt_id_to_idx.get(first_src)
