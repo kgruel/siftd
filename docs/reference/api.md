@@ -24,8 +24,8 @@ Extended adapter information for display/reporting.
 | `name` | `str` |  |
 | `origin` | `str` |  |
 | `locations` | `list[str]` |  |
-| `source_path` | `Union[str, None]` |  |
-| `entrypoint` | `Union[str, None]` |  |
+| `source_path` | `str \| None` |  |
+| `entrypoint` | `str \| None` |  |
 
 ### Functions
 
@@ -34,7 +34,7 @@ Extended adapter information for display/reporting.
 List all discovered adapters from all sources.
 
 ```python
-def list_adapters(*, dropin_path: Union[Path, None] = ...) -> list[AdapterInfo]
+def list_adapters(*, dropin_path: pathlib.Path | None = ...) -> list[AdapterInfo]
 ```
 
 **Returns:** List of AdapterInfo for all discovered adapters.
@@ -76,9 +76,9 @@ A single issue detected by a check.
 | `severity` | `Literal[info, warning, error, hint]` | One of "info", "warning", "error", or "hint". |
 | `message` | `str` | Human-readable description of the issue. |
 | `fix_available` | `bool` | Whether a fix suggestion exists. |
-| `fix_command` | `Union[str, None]` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
-| `context` | `Union[dict, None]` | Optional structured data for programmatic consumers. |
-| `target` | `Union[str, None]` | Optional row-scope identifier — when set, the finding refers to a specific entity (e.g., a conversation id) rather than the whole result set or DB. Used by the caveats producer registry to thread row-level annotations through dispatch into renderers. |
+| `fix_command` | `str \| None` | CLI command to fix the issue (advisory only, not executed automatically). User must run this command manually. |
+| `context` | `dict \| None` | Optional structured data for programmatic consumers. |
+| `target` | `str \| None` | Optional row-scope identifier — when set, the finding refers to a specific entity (e.g., a conversation id) rather than the whole result set or DB. Used by the caveats producer registry to thread row-level annotations through dispatch into renderers. |
 | `channel` | `Literal[text, json, both]` | Controls output-format visibility. "text" findings are excluded from --json output; "json" findings are excluded from text/TTY output; "both" (default) appears everywhere. |
 
 ### Functions
@@ -96,7 +96,7 @@ def list_checks() -> list[CheckInfo]
 Run health checks and return findings.
 
 ```python
-def run_checks(*, checks: Union[list[str], None] = ..., db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ..., deep: bool = ..., fast: bool = ..., on_check_done: Union[object, None] = ...) -> list[Finding]
+def run_checks(*, checks: list[str] | None = ..., db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., deep: bool = ..., fast: bool = ..., on_check_done: object | None = ...) -> list[Finding]
 ```
 
 **Parameters:**
@@ -123,14 +123,14 @@ A single user→assistant exchange for detail view.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timestamp` | `Union[str, None]` |  |
-| `prompt_text` | `Union[str, None]` |  |
-| `response_text` | `Union[str, None]` |  |
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `response_text` | `str \| None` |  |
 | `tool_calls` | `list[tuple[str, int]]` |  |
 | `narrative` | `list[PeekNarrativeBlock]` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
-| `prompt_external_id` | `Union[str, None]` |  |
+| `prompt_external_id` | `str \| None` |  |
 | `response_external_ids` | `list[str]` |  |
 | `tool_use_ids` | `list[str]` |  |
 
@@ -141,7 +141,7 @@ Full session detail for detail view.
 | Field | Type | Description |
 |-------|------|-------------|
 | `info` | `SessionInfo` |  |
-| `started_at` | `Union[str, None]` |  |
+| `started_at` | `str \| None` |  |
 | `exchanges` | `list[PeekExchange]` |  |
 
 ### SessionInfo
@@ -152,16 +152,16 @@ Session metadata for list display.
 |-------|------|-------------|
 | `session_id` | `str` |  |
 | `file_path` | `Path` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `workspace_name` | `Union[str, None]` |  |
-| `branch` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `workspace_name` | `str \| None` |  |
+| `branch` | `str \| None` |  |
+| `model` | `str \| None` |  |
 | `last_activity` | `float` |  |
 | `exchange_count` | `int` |  |
 | `preview_available` | `bool` |  |
-| `adapter_name` | `Union[str, None]` |  |
-| `parent_session_id` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `adapter_name` | `str \| None` |  |
+| `parent_session_id` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 
 ### Functions
 
@@ -170,7 +170,7 @@ Session metadata for list display.
 Find a session file by ID prefix match.
 
 ```python
-def find_session_file(session_id_prefix: str) -> Union[Path, None]
+def find_session_file(session_id_prefix: str) -> pathlib.Path | None
 ```
 
 **Returns:** Path to the matching file, or None if not found.
@@ -184,7 +184,7 @@ def find_session_file(session_id_prefix: str) -> Union[Path, None]
 Discover active session files and extract lightweight metadata.
 
 ```python
-def list_active_sessions(*, workspace: Union[str, None] = ..., branch: Union[str, None] = ..., threshold_seconds: int = ..., include_inactive: bool = ..., limit: Union[int, None] = ...) -> list[SessionInfo]
+def list_active_sessions(*, workspace: str | None = ..., branch: str | None = ..., threshold_seconds: int = ..., include_inactive: bool = ..., limit: int | None = ...) -> list[SessionInfo]
 ```
 
 **Parameters:**
@@ -201,7 +201,7 @@ def list_active_sessions(*, workspace: Union[str, None] = ..., branch: Union[str
 Read session detail from a session file.
 
 ```python
-def read_session_detail(path: Path, *, last_n: int = ..., include_thinking: bool = ...) -> Union[SessionDetail, None]
+def read_session_detail(path: Path, *, last_n: int = ..., include_thinking: bool = ...) -> siftd.domain.peek.SessionDetail | None
 ```
 
 **Parameters:**
@@ -237,18 +237,18 @@ Summary row for conversation listing.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `prompt_count` | `int` |  |
 | `response_count` | `int` |  |
 | `total_tokens` | `int` |  |
-| `cost` | `Union[float, None]` |  |
+| `cost` | `float \| None` |  |
 | `tags` | `list[str]` |  |
-| `owner` | `Union[str, None]` |  |
-| `external_id` | `Union[str, None]` |  |
-| `parent_external_id` | `Union[str, None]` |  |
-| `agent_type` | `Union[str, None]` |  |
+| `owner` | `str \| None` |  |
+| `external_id` | `str \| None` |  |
+| `parent_external_id` | `str \| None` |  |
+| `agent_type` | `str \| None` |  |
 
 ### ConversationDetail
 
@@ -257,14 +257,14 @@ Full conversation with timeline.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
-| `cost` | `Union[float, None]` |  |
+| `cost` | `float \| None` |  |
 | `event_tags` | `dict[str, list[tuple[str, str]]]` |  |
 
 ### Exchange
@@ -273,9 +273,9 @@ A prompt-response pair in the timeline.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timestamp` | `Union[str, None]` |  |
-| `prompt_text` | `Union[str, None]` |  |
-| `response_text` | `Union[str, None]` |  |
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
+| `response_text` | `str \| None` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
 | `tool_calls` | `list[ToolCallSummary]` |  |
@@ -287,9 +287,9 @@ A single block in the response narrative.
 | Field | Type | Description |
 |-------|------|-------------|
 | `block_type` | `str` |  |
-| `content` | `Union[str, None]` |  |
+| `content` | `str \| None` |  |
 | `tool_calls` | `list[ToolCallDetail]` |  |
-| `event_id` | `Union[str, None]` |  |
+| `event_id` | `str \| None` |  |
 
 ### ToolCallDetail
 
@@ -300,9 +300,9 @@ Tool call with optional input/result for --tools mode.
 | `tool_name` | `str` |  |
 | `status` | `str` |  |
 | `count` | `int` |  |
-| `input` | `Union[str, None]` |  |
-| `result` | `Union[str, None]` |  |
-| `tool_call_id` | `Union[str, None]` |  |
+| `input` | `str \| None` |  |
+| `result` | `str \| None` |  |
+| `tool_call_id` | `str \| None` |  |
 
 ### ToolCallSummary
 
@@ -320,13 +320,13 @@ A prompt and its full response narrative.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `timestamp` | `Union[str, None]` |  |
-| `prompt_text` | `Union[str, None]` |  |
+| `timestamp` | `str \| None` |  |
+| `prompt_text` | `str \| None` |  |
 | `total_input_tokens` | `int` |  |
 | `total_output_tokens` | `int` |  |
 | `narrative` | `list[NarrativeBlock]` |  |
 | `_tool_call_summaries` | `list[ToolCallSummary]` |  |
-| `prompt_id` | `Union[str, None]` |  |
+| `prompt_id` | `str \| None` |  |
 | `response_ids` | `list[str]` |  |
 | `tool_call_ids` | `list[str]` |  |
 
@@ -343,7 +343,7 @@ Prefix matches multiple targets — caller must use a longer prefix or full ID.
 Get IDs of the most recent conversations.
 
 ```python
-def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: Union[str, None] = ...) -> list[str]
+def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: str | None = ...) -> list[str]
 ```
 
 **Parameters:**
@@ -357,7 +357,7 @@ def get_recent_conversation_ids(conn: Connection, limit: int, *, owner: Union[st
 List conversations with optional filtering.
 
 ```python
-def list_conversations(*, fidelity: Fidelity, db_path: Union[Path, None] = ..., workspace: Union[str, None] = ..., workspace_id: Union[str, None] = ..., model: Union[str, None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., search: Union[str, None] = ..., tool: Union[str, None] = ..., tag: Union[str, list[str], None] = ..., all_tags: Union[list[str], None] = ..., no_tag: Union[list[str], None] = ..., tag_kind: Union[list[str], None] = ..., tool_tag: Union[str, None] = ..., n: int = ..., oldest: bool = ..., owner: Union[str, None] = ..., group_subagents: bool = ...) -> list[ConversationSummary]
+def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ..., workspace: str | None = ..., workspace_id: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., tool: str | None = ..., tag: str | list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool_tag: str | None = ..., n: int = ..., oldest: bool = ..., owner: str | None = ..., group_subagents: bool = ...) -> list[ConversationSummary]
 ```
 
 **Parameters:**
@@ -391,7 +391,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: Union[Path, None] = ..., 
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, fidelity: Fidelity, db_path: Union[Path, None] = ..., tool_filter: Union[str, None] = ..., owner: Union[str, None] = ..., anchor: Union[str, None] = ..., anchor_value: Union[int, str, None] = ..., window_start: Union[int, None] = ..., window_end: Union[int, None] = ..., search_event_id: Union[str, None] = ...) -> Union[ConversationDetail, None]
+def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ..., search_event_id: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -420,7 +420,7 @@ def get_conversation(id: str, *, fidelity: Fidelity, db_path: Union[Path, None] 
 Fetch workspace and started_at for a fully-resolved conversation ID.
 
 ```python
-def get_conversation_metadata(conn: Connection, conversation_id: str) -> Union[dict, None]
+def get_conversation_metadata(conn: Connection, conversation_id: str) -> dict | None
 ```
 
 **Returns:** Dict with keys 'id', 'workspace', 'started_at', or None if not found.
@@ -430,7 +430,7 @@ def get_conversation_metadata(conn: Connection, conversation_id: str) -> Union[d
 Resolve an entity ID, supporting prefix match for conversations.
 
 ```python
-def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, owner: Union[str, None] = ...) -> Union[str, None]
+def resolve_entity_id(conn: Connection, entity_type: str, entity_id: str, *, owner: str | None = ...) -> str | None
 ```
 
 **Parameters:**
@@ -459,7 +459,7 @@ def list_query_files() -> list[QueryFile]
 Run a user-defined SQL query file.
 
 ```python
-def run_query_file(name: str, variables: Union[dict[str, str], None] = ..., *, db_path: Union[Path, None] = ...) -> QueryResult
+def run_query_file(name: str, variables: dict[str, str] | None = ..., *, db_path: pathlib.Path | None = ...) -> QueryResult
 ```
 
 **Parameters:**
@@ -484,7 +484,7 @@ Metadata about an available SQL report (builtin or user-defined).
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` | Query file stem (without .sql extension). |
-| `path` | `Union[Path, None]` | Path to the .sql file, or None for a packaged builtin. |
+| `path` | `pathlib.Path \| None` | Path to the .sql file, or None for a packaged builtin. |
 | `template_vars` | `list[str]` | Variables using $var syntax (text substitution). |
 | `param_vars` | `list[str]` | Variables using :var syntax (parameterized, safe). |
 
@@ -516,7 +516,7 @@ A file operation reference from a tool call.
 | `path` | `str` |  |
 | `basename` | `str` |  |
 | `op` | `str` |  |
-| `content` | `Union[str, None]` |  |
+| `content` | `str \| None` |  |
 
 ### Functions
 
@@ -549,7 +549,7 @@ Error copying a resource.
 Copy a built-in adapter to the config directory for customization.
 
 ```python
-def copy_adapter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = ...) -> Path
+def copy_adapter(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -568,7 +568,7 @@ def copy_adapter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = 
 Copy a built-in formatter to the config directory for customization.
 
 ```python
-def copy_formatter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = ...) -> Path
+def copy_formatter(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -587,7 +587,7 @@ def copy_formatter(name: str, *, dest_dir: Union[Path, None] = ..., force: bool 
 Copy a built-in query to the config directory for customization.
 
 ```python
-def copy_query(name: str, *, dest_dir: Union[Path, None] = ..., force: bool = ...) -> Path
+def copy_query(name: str, *, dest_dir: pathlib.Path | None = ..., force: bool = ...) -> Path
 ```
 
 **Parameters:**
@@ -633,16 +633,16 @@ Canonical mutable search chunk result.
 | `score` | `float` |  |
 | `text` | `str` |  |
 | `chunk_type` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
-| `chunk_id` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `chunk_id` | `str \| None` |  |
 | `source_ids` | `list[str]` |  |
-| `breakdown` | `Union[ScoreBreakdown, None]` |  |
-| `file_refs` | `Union[list[Any], None]` |  |
-| `exchanges` | `Union[list[tuple[str, str, str]], None]` |  |
-| `context_window` | `Union[list[tuple[str, str, str, bool]], None]` |  |
-| `turn_index` | `Union[int, None]` |  |
-| `event_id` | `Union[str, None]` |  |
+| `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
+| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `turn_index` | `int \| None` |  |
+| `event_id` | `str \| None` |  |
 | `tags` | `list[str]` |  |
 
 ### SearchResult
@@ -655,16 +655,16 @@ Canonical mutable search chunk result.
 | `score` | `float` |  |
 | `text` | `str` |  |
 | `chunk_type` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
-| `chunk_id` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `chunk_id` | `str \| None` |  |
 | `source_ids` | `list[str]` |  |
-| `breakdown` | `Union[ScoreBreakdown, None]` |  |
-| `file_refs` | `Union[list[Any], None]` |  |
-| `exchanges` | `Union[list[tuple[str, str, str]], None]` |  |
-| `context_window` | `Union[list[tuple[str, str, str, bool]], None]` |  |
-| `turn_index` | `Union[int, None]` |  |
-| `event_id` | `Union[str, None]` |  |
+| `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
+| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `turn_index` | `int \| None` |  |
+| `event_id` | `str \| None` |  |
 | `tags` | `list[str]` |  |
 
 ### SearchView
@@ -675,12 +675,12 @@ Post-processed, render-ready search output — the recipe's single product.
 |-------|------|-------------|
 | `results` | `list[dict[str, Any]]` |  |
 | `view` | `str` |  |
-| `tier1` | `Union[list[dict[str, Any]], None]` |  |
-| `tier2` | `Union[list[dict[str, Any]], None]` |  |
+| `tier1` | `list[dict[str, Any]] \| None` |  |
+| `tier2` | `list[dict[str, Any]] \| None` |  |
 | `n_skipped` | `int` |  |
-| `empty_reason` | `Union[str, None]` |  |
-| `executed_mode` | `Union[str, None]` |  |
-| `search_event_id` | `Union[str, None]` |  |
+| `empty_reason` | `str \| None` |  |
+| `executed_mode` | `str \| None` |  |
+| `search_event_id` | `str \| None` |  |
 
 ### ScoreBreakdown
 
@@ -690,15 +690,15 @@ Detailed score components for explainability.
 |-------|------|-------------|
 | `embedding_sim` | `float` |  |
 | `recency_boost` | `float` |  |
-| `pre_mmr_score` | `Union[float, None]` |  |
-| `mmr_penalty` | `Union[float, None]` |  |
-| `mmr_rank` | `Union[int, None]` |  |
-| `final_score` | `Union[float, None]` |  |
+| `pre_mmr_score` | `float \| None` |  |
+| `mmr_penalty` | `float \| None` |  |
+| `mmr_rank` | `int \| None` |  |
+| `final_score` | `float \| None` |  |
 | `fts5_matched` | `bool` |  |
-| `fts5_mode` | `Union[str, None]` |  |
-| `vector_rank` | `Union[int, None]` |  |
-| `keyword_rank` | `Union[int, None]` |  |
-| `fused_score` | `Union[float, None]` |  |
+| `fts5_mode` | `str \| None` |  |
+| `vector_rank` | `int \| None` |  |
+| `keyword_rank` | `int \| None` |  |
+| `fused_score` | `float \| None` |  |
 
 ### ConversationSearchSummary
 
@@ -711,9 +711,9 @@ Conversation-level aggregate derived from chunk results.
 | `mean_score` | `float` |  |
 | `chunk_count` | `int` |  |
 | `best_excerpt` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
-| `file_refs` | `Union[list[Any], None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
 
 ### ConversationScore
 
@@ -726,9 +726,9 @@ Conversation-level aggregate derived from chunk results.
 | `mean_score` | `float` |  |
 | `chunk_count` | `int` |  |
 | `best_excerpt` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
-| `file_refs` | `Union[list[Any], None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
+| `file_refs` | `list[Any] \| None` |  |
 
 ### Functions
 
@@ -737,7 +737,7 @@ Conversation-level aggregate derived from chunk results.
 Recent captured searches (the `siftd search --history` read path).
 
 ```python
-def recent_search_history(db_path: Path, *, owner: Union[str, None] = ..., limit: int = ...) -> list[dict]
+def recent_search_history(db_path: Path, *, owner: str | None = ..., limit: int = ...) -> list[dict]
 ```
 
 ### search_chunks
@@ -782,7 +782,7 @@ Unified search pipeline — FTS5, semantic, or hybrid.
 Run the shared search post-processing recipe over engine chunks.
 
 ```python
-def process_search_view(chunks: list[SearchChunk], conn: Connection, *, view: str = ..., sort: str = ..., select: str = ..., threshold: Union[float, None] = ..., limit: int = ..., full: bool = ..., around: Union[str, None] = ..., turns_range: Union[tuple[int, int], None] = ..., db_path: Union[Path, None] = ...) -> SearchView
+def process_search_view(chunks: list[SearchChunk], conn: Connection, *, view: str = ..., sort: str = ..., select: str = ..., threshold: float | None = ..., limit: int = ..., full: bool = ..., around: str | None = ..., turns_range: tuple[int, int] | None = ..., db_path: pathlib.Path | None = ...) -> SearchView
 ```
 
 ### aggregate_by_conversation
@@ -790,7 +790,7 @@ def process_search_view(chunks: list[SearchChunk], conn: Connection, *, view: st
 Aggregate chunk results to conversation-level scores.
 
 ```python
-def aggregate_by_conversation(results: Union[list[SearchChunk], list[dict[str, Any]]], *, limit: int = ...) -> list[ConversationSearchSummary]
+def aggregate_by_conversation(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, limit: int = ...) -> list[ConversationSearchSummary]
 ```
 
 **Parameters:**
@@ -804,7 +804,7 @@ def aggregate_by_conversation(results: Union[list[SearchChunk], list[dict[str, A
 Split chunks into tier1 (expanded) and tier2 (compact) for thread mode.
 
 ```python
-def compute_thread_tiers(results: Union[list[SearchChunk], list[dict[str, Any]]]) -> tuple[list[SearchChunk], list[SearchChunk]]
+def compute_thread_tiers(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]]) -> tuple[list[SearchChunk], list[SearchChunk]]
 ```
 
 ### filter_by_threshold
@@ -812,7 +812,7 @@ def compute_thread_tiers(results: Union[list[SearchChunk], list[dict[str, Any]]]
 Filter chunk results by *cosine* threshold (keyword-only entrants exempt).
 
 ```python
-def filter_by_threshold(results: Union[list[SearchChunk], list[dict[str, Any]]], *, threshold: Union[float, None]) -> list[SearchChunk]
+def filter_by_threshold(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float | None) -> list[SearchChunk]
 ```
 
 ### sort_chunks_by_time
@@ -820,7 +820,7 @@ def filter_by_threshold(results: Union[list[SearchChunk], list[dict[str, Any]]],
 Sort chunks newest-first by date then chunk_id.
 
 ```python
-def sort_chunks_by_time(results: Union[list[SearchChunk], list[dict[str, Any]]]) -> list[SearchChunk]
+def sort_chunks_by_time(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]]) -> list[SearchChunk]
 ```
 
 ### enrich_search_metadata
@@ -876,7 +876,7 @@ def embeddings_available() -> bool
 Find chronologically earliest result above relevance threshold.
 
 ```python
-def first_mention(results: Union[list[SearchChunk], list[dict[str, Any]]], *, threshold: float = ..., db_path: Union[Path, None] = ...) -> Union[SearchChunk, dict[str, Any], None]
+def first_mention(results: list[siftd.domain.search_types.SearchChunk] | list[dict[str, Any]], *, threshold: float = ..., db_path: pathlib.Path | None = ...) -> siftd.domain.search_types.SearchChunk | dict[str, Any] | None
 ```
 
 **Parameters:**
@@ -891,7 +891,7 @@ def first_mention(results: Union[list[SearchChunk], list[dict[str, Any]]], *, th
 Build or incrementally update the embeddings index.
 
 ```python
-def build_index(*, db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ..., rebuild: bool = ..., verbose: bool = ...) -> dict
+def build_index(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ..., rebuild: bool = ..., verbose: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -914,7 +914,7 @@ def build_index(*, db_path: Union[Path, None] = ..., embed_db_path: Union[Path, 
 Return an :class:`EmbedIndexStatus` for ``siftd embed --status``.
 
 ```python
-def embed_status(*, db_path: Union[Path, None] = ..., embed_db_path: Union[Path, None] = ...)
+def embed_status(*, db_path: pathlib.Path | None = ..., embed_db_path: pathlib.Path | None = ...)
 ```
 
 ## Stats
@@ -948,8 +948,8 @@ Complete database statistics.
 | `top_tools` | `list[ToolStats]` |  |
 | `top_tags` | `list[TagStats]` |  |
 | `token_coverage` | `TokenCoverage` |  |
-| `activity_window` | `tuple[Union[str, None], Union[str, None]]` |  |
-| `last_ingest_at` | `Union[str, None]` |  |
+| `activity_window` | `tuple[str \| None, str \| None]` |  |
+| `last_ingest_at` | `str \| None` |  |
 
 ### GroupUsage
 
@@ -961,7 +961,7 @@ Token/cost breakdown for a single group (model or workspace).
 | `conversations` | `int` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
-| `cost` | `Union[float, None]` |  |
+| `cost` | `float \| None` |  |
 
 ### TableCounts
 
@@ -986,8 +986,8 @@ Harness metadata.
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` |  |
-| `source` | `Union[str, None]` |  |
-| `log_format` | `Union[str, None]` |  |
+| `source` | `str \| None` |  |
+| `log_format` | `str \| None` |  |
 
 ### UsageSummary
 
@@ -1010,7 +1010,7 @@ Workspace with conversation count.
 |-------|------|-------------|
 | `path` | `str` |  |
 | `conversation_count` | `int` |  |
-| `last_activity` | `Union[str, None]` |  |
+| `last_activity` | `str \| None` |  |
 
 ### ToolStats
 
@@ -1049,11 +1049,11 @@ Per-workspace detail, keyed by the workspace ULID.
 |-------|------|-------------|
 | `id` | `str` |  |
 | `path` | `str` |  |
-| `git_remote` | `Union[str, None]` |  |
+| `git_remote` | `str \| None` |  |
 | `sessions` | `int` |  |
 | `input_tokens` | `int` |  |
 | `output_tokens` | `int` |  |
-| `cost` | `Union[float, None]` |  |
+| `cost` | `float \| None` |  |
 | `model_mix` | `list[GroupUsage]` |  |
 | `recent` | `list` |  |
 | `cadence` | `list[Bucket]` |  |
@@ -1066,7 +1066,7 @@ Per-workspace detail, keyed by the workspace ULID.
 Get cost coverage statistics from conversation_stats.
 
 ```python
-def get_cost_coverage(conn: Union[Connection, None] = ..., *, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> Union[CostCoverage, None]
+def get_cost_coverage(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> siftd.storage.conversation_stats.CostCoverage | None
 ```
 
 ### get_stats
@@ -1074,7 +1074,7 @@ def get_cost_coverage(conn: Union[Connection, None] = ..., *, db_path: Union[Pat
 Get comprehensive database statistics.
 
 ```python
-def get_stats(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> DatabaseStats
+def get_stats(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> DatabaseStats
 ```
 
 **Returns:** DatabaseStats with counts, harnesses, workspaces, models, tools.
@@ -1088,7 +1088,7 @@ def get_stats(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...
 Get token/cost breakdown grouped by model.
 
 ```python
-def get_usage_by_model(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> list[GroupUsage]
+def get_usage_by_model(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_by_workspace
@@ -1096,7 +1096,7 @@ def get_usage_by_model(*, db_path: Union[Path, None] = ..., owner: Union[str, No
 Get token/cost breakdown grouped by workspace.
 
 ```python
-def get_usage_by_workspace(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> list[GroupUsage]
+def get_usage_by_workspace(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[GroupUsage]
 ```
 
 ### get_usage_distributions
@@ -1104,7 +1104,7 @@ def get_usage_by_workspace(*, db_path: Union[Path, None] = ..., owner: Union[str
 Daily / hourly / weekday token+cost distributions over the rollup.
 
 ```python
-def get_usage_distributions(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ..., workspace_id: Union[str, None] = ..., model_name: Union[str, None] = ...) -> UsageDistributions
+def get_usage_distributions(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., workspace_id: str | None = ..., model_name: str | None = ...) -> UsageDistributions
 ```
 
 ### get_input_economy
@@ -1112,7 +1112,7 @@ def get_usage_distributions(*, db_path: Union[Path, None] = ..., owner: Union[st
 Input-token economy over the rollup (the reckoning's cache lever).
 
 ```python
-def get_input_economy(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ..., model_name: Union[str, None] = ...) -> InputEconomy
+def get_input_economy(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., model_name: str | None = ...) -> InputEconomy
 ```
 
 ### get_usage_summary
@@ -1120,7 +1120,7 @@ def get_input_economy(*, db_path: Union[Path, None] = ..., owner: Union[str, Non
 Get aggregate token/cost totals across all conversations.
 
 ```python
-def get_usage_summary(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> UsageSummary
+def get_usage_summary(*, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> UsageSummary
 ```
 
 ### dict_to_stats
@@ -1136,7 +1136,7 @@ def dict_to_stats(data: dict) -> DatabaseStats
 List canonical model names, optionally scoped to an owner.
 
 ```python
-def list_models(conn: Union[Connection, None] = ..., *, db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> list[str]
+def list_models(conn: sqlite3.Connection | None = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[str]
 ```
 
 **Parameters:**
@@ -1151,7 +1151,7 @@ def list_models(conn: Union[Connection, None] = ..., *, db_path: Union[Path, Non
 List workspaces with conversation counts.
 
 ```python
-def list_workspaces(conn: Union[Connection, None] = ..., n: int = ..., *, db_path: Union[Path, None] = ..., owner: Union[str, None] = ..., with_usage: bool = ..., sort: str = ...) -> list[Row]
+def list_workspaces(conn: sqlite3.Connection | None = ..., n: int = ..., *, db_path: pathlib.Path | None = ..., owner: str | None = ..., with_usage: bool = ..., sort: str = ...) -> list[Row]
 ```
 
 **Parameters:**
@@ -1168,7 +1168,7 @@ def list_workspaces(conn: Union[Connection, None] = ..., n: int = ..., *, db_pat
 Detail for one workspace, addressed by its stable ULID (workspaces.id).
 
 ```python
-def workspace_detail(workspace_id: str, *, fidelity, db_path: Union[Path, None] = ..., owner: Union[str, None] = ..., recent_n: int = ...) -> Union[WorkspaceDetail, None]
+def workspace_detail(workspace_id: str, *, fidelity, db_path: pathlib.Path | None = ..., owner: str | None = ..., recent_n: int = ...) -> siftd.api.stats.WorkspaceDetail | None
 ```
 
 ### stats_cache_path
@@ -1176,7 +1176,7 @@ def workspace_detail(workspace_id: str, *, fidelity, db_path: Union[Path, None] 
 Return path to the stats cache file.
 
 ```python
-def stats_cache_path(owner: Union[str, None] = ...) -> Path
+def stats_cache_path(owner: str | None = ...) -> Path
 ```
 
 ### write_stats_cache
@@ -1184,7 +1184,7 @@ def stats_cache_path(owner: Union[str, None] = ...) -> Path
 Atomically write stats to the cache file (per-owner when scoped).
 
 ```python
-def write_stats_cache(stats: DatabaseStats, *, owner: Union[str, None] = ..., db_mtime_ns: Union[int, None] = ...) -> None
+def write_stats_cache(stats: DatabaseStats, *, owner: str | None = ..., db_mtime_ns: int | None = ...) -> None
 ```
 
 ### read_stats_cache
@@ -1192,7 +1192,7 @@ def write_stats_cache(stats: DatabaseStats, *, owner: Union[str, None] = ..., db
 Read cached stats if the cache exists and matches.
 
 ```python
-def read_stats_cache(*, db_path: Union[Path, None] = ..., owner: Union[str, None] = ..., require_fresh: bool = ...) -> Union[DatabaseStats, None]
+def read_stats_cache(*, db_path: pathlib.Path | None = ..., owner: str | None = ..., require_fresh: bool = ...) -> siftd.api.stats.DatabaseStats | None
 ```
 
 ## Export
@@ -1217,10 +1217,10 @@ A conversation prepared for export.
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `str` |  |
-| `workspace_path` | `Union[str, None]` |  |
-| `workspace_name` | `Union[str, None]` |  |
-| `model` | `Union[str, None]` |  |
-| `started_at` | `Union[str, None]` |  |
+| `workspace_path` | `str \| None` |  |
+| `workspace_name` | `str \| None` |  |
+| `model` | `str \| None` |  |
+| `started_at` | `str \| None` |  |
 | `turns` | `list[Turn]` |  |
 | `tags` | `list[str]` |  |
 | `total_tokens` | `int` |  |
@@ -1232,7 +1232,7 @@ A conversation prepared for export.
 Export conversations matching the specified criteria.
 
 ```python
-def export_conversations(*, fidelity: Fidelity, id: Union[list[str], None] = ..., last: Union[int, None] = ..., n: int = ..., workspace: Union[str, None] = ..., tag: Union[list[str], None] = ..., no_tag: Union[list[str], None] = ..., tag_kind: Union[list[str], None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., search: Union[str, None] = ..., db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> list[ExportedConversation]
+def export_conversations(*, fidelity: Fidelity, id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> list[ExportedConversation]
 ```
 
 ### export_document
@@ -1240,7 +1240,7 @@ def export_conversations(*, fidelity: Fidelity, id: Union[list[str], None] = ...
 Export conversations as a complete document.
 
 ```python
-def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: Union[list[str], None] = ..., last: Union[int, None] = ..., n: int = ..., workspace: Union[str, None] = ..., tag: Union[list[str], None] = ..., no_tag: Union[list[str], None] = ..., tag_kind: Union[list[str], None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., search: Union[str, None] = ..., view: str = ..., db_path: Union[Path, None] = ..., owner: Union[str, None] = ...) -> ExportArtifact
+def export_document(*, fidelity: Fidelity, format: str = ..., no_header: bool = ..., id: list[str] | None = ..., last: int | None = ..., n: int = ..., workspace: str | None = ..., tag: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., since: str | None = ..., before: str | None = ..., search: str | None = ..., view: str = ..., db_path: pathlib.Path | None = ..., owner: str | None = ...) -> ExportArtifact
 ```
 
 **Parameters:**
@@ -1285,7 +1285,7 @@ Batch apply/remove result with enough context for CLI messaging.
 | `results` | `list[ApplyTagOutcome]` |  |
 | `target_count` | `int` |  |
 | `entity_type` | `str` |  |
-| `resolved_entity_id` | `Union[str, None]` |  |
+| `resolved_entity_id` | `str \| None` |  |
 
 ### DeleteResult
 
@@ -1313,7 +1313,7 @@ Tag with usage counts.
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` |  |
-| `description` | `Union[str, None]` |  |
+| `description` | `str \| None` |  |
 | `created_at` | `str` |  |
 | `conversation_count` | `int` |  |
 | `workspace_count` | `int` |  |
@@ -1324,7 +1324,7 @@ Tag with usage counts.
 | `block_count` | `int` |  |
 | `pinned` | `bool` |  |
 | `auto` | `bool` |  |
-| `activity` | `Union[list[int], None]` |  |
+| `activity` | `list[int] \| None` |  |
 
 ### EventDetail
 
@@ -1335,14 +1335,14 @@ A single event with content, tags, and kind-specific data.
 | `id` | `str` |  |
 | `kind` | `str` |  |
 | `conversation_id` | `str` |  |
-| `parent_id` | `Union[str, None]` |  |
-| `external_id` | `Union[str, None]` |  |
-| `timestamp` | `Union[str, None]` |  |
+| `parent_id` | `str \| None` |  |
+| `external_id` | `str \| None` |  |
+| `timestamp` | `str \| None` |  |
 | `tags` | `list[str]` |  |
 | `content_blocks` | `list[dict[str, Any]]` |  |
 | `kind_specific` | `dict[str, Any]` |  |
-| `conversation` | `Union[dict[str, Any], None]` |  |
-| `neighbors` | `Union[dict[str, Union[str, None]], None]` |  |
+| `conversation` | `dict[str, Any] \| None` |  |
+| `neighbors` | `dict[str, str \| None] \| None` |  |
 
 ### AutoIndexReport
 
@@ -1354,9 +1354,9 @@ Outcome of the post-ingest auto-index hook, surfaced by the ingest renderer.
 | `chunks_added` | `int` |  |
 | `conversations_indexed` | `int` |  |
 | `awaiting` | `int` |  |
-| `skipped_reason` | `Union[str, None]` |  |
-| `notice` | `Union[str, None]` |  |
-| `error` | `Union[str, None]` |  |
+| `skipped_reason` | `str \| None` |  |
+| `notice` | `str \| None` |  |
+| `error` | `str \| None` |  |
 
 ### IngestRunResult
 
@@ -1369,10 +1369,10 @@ Result metadata for an ingest API run.
 | `mode` | `Literal[ingest, rebuild_fts]` |  |
 | `adapters` | `list[str]` |  |
 | `scan_paths` | `list[str]` |  |
-| `stats` | `Union[IngestStats, None]` |  |
+| `stats` | `siftd.ingestion.orchestration.IngestStats \| None` |  |
 | `elapsed_ms` | `int` |  |
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
-| `auto_index` | `Union[AutoIndexReport, None]` |  |
+| `auto_index` | `siftd.api.ingest.AutoIndexReport \| None` |  |
 
 ### EmbedIndexStatus
 
@@ -1380,20 +1380,20 @@ Snapshot for ``siftd embed --status`` — configured backend + built-index stats
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `configured_backend` | `Union[str, None]` |  |
+| `configured_backend` | `str \| None` |  |
 | `configured_usable` | `bool` |  |
 | `configured_reason` | `str` |  |
 | `index_exists` | `bool` |  |
 | `needs_rebuild` | `bool` |  |
-| `stored_backend` | `Union[str, None]` |  |
-| `stored_model` | `Union[str, None]` |  |
-| `stored_dimension` | `Union[int, None]` |  |
-| `schema_version` | `Union[int, None]` |  |
-| `strategy` | `Union[str, None]` |  |
-| `built_at` | `Union[str, None]` |  |
+| `stored_backend` | `str \| None` |  |
+| `stored_model` | `str \| None` |  |
+| `stored_dimension` | `int \| None` |  |
+| `schema_version` | `int \| None` |  |
+| `strategy` | `str \| None` |  |
+| `built_at` | `str \| None` |  |
 | `total_chunks` | `int` |  |
 | `backend_mismatch` | `bool` |  |
-| `stored_backend_config` | `Union[str, None]` |  |
+| `stored_backend_config` | `str \| None` |  |
 | `chunk_counts` | `dict[str, int]` |  |
 | `conversations_indexed` | `int` |  |
 | `conversations_total` | `int` |  |
@@ -1425,7 +1425,7 @@ Result of a push operation.
 | `dry_run` | `bool` |  |
 | `last_push_updated` | `bool` |  |
 | `windows` | `int` |  |
-| `owned` | `Union[int, None]` |  |
+| `owned` | `int \| None` |  |
 
 ### SyncRemote
 
@@ -1434,16 +1434,16 @@ A registered sync remote.
 | Field | Type | Description |
 |-------|------|-------------|
 | `name` | `str` |  |
-| `host` | `Union[str, None]` |  |
+| `host` | `str \| None` |  |
 | `path` | `str` |  |
-| `last_push` | `Union[str, None]` |  |
-| `last_pull` | `Union[str, None]` |  |
-| `last_sent` | `Union[str, None]` |  |
+| `last_push` | `str \| None` |  |
+| `last_pull` | `str \| None` |  |
+| `last_sent` | `str \| None` |  |
 | `last_push_filters` | `str` |  |
 | `last_pull_filters` | `str` |  |
 | `last_sent_filters` | `str` |  |
 | `strategy` | `str` |  |
-| `filters` | `Union[SyncFilters, None]` |  |
+| `filters` | `siftd.domain.sync.SyncFilters \| None` |  |
 
 ### Exceptions
 
@@ -1478,10 +1478,6 @@ Raised when a sync operation fails.
 ### Functions
 
 ### BackfillOperation
-
-```python
-def BackfillOperation(args, kwargs)
-```
 
 ### run_backfill
 
@@ -1525,7 +1521,7 @@ def backup_database(source_path: Path, target_path: Path) -> None
 Create or open a database, running migrations.
 
 ```python
-def create_database(db_path: Union[Path, None] = ...) -> Connection
+def create_database(db_path: pathlib.Path | None = ...) -> Connection
 ```
 
 **Returns:** An open sqlite3.Connection with schema initialized.
@@ -1535,7 +1531,7 @@ def create_database(db_path: Union[Path, None] = ...) -> Connection
 Open a database connection.
 
 ```python
-def open_database(db_path: Union[Path, None] = ..., *, read_only: bool = ..., auto_upgrade: bool = ...) -> Connection
+def open_database(db_path: pathlib.Path | None = ..., *, read_only: bool = ..., auto_upgrade: bool = ...) -> Connection
 ```
 
 **Parameters:**
@@ -1563,7 +1559,7 @@ def run_preflight(path: Path, label: str = ...) -> None
 Apply or remove tags with shared orchestration.
 
 ```python
-def apply_tags(*, db_path: Path, tags: list[str], entity_type: str = ..., entity_id: Union[str, None] = ..., last: Union[int, None] = ..., owner: Union[str, None] = ..., remove: bool = ...) -> ApplyResult
+def apply_tags(*, db_path: Path, tags: list[str], entity_type: str = ..., entity_id: str | None = ..., last: int | None = ..., owner: str | None = ..., remove: bool = ...) -> ApplyResult
 ```
 
 ### apply_tag
@@ -1571,7 +1567,7 @@ def apply_tags(*, db_path: Path, tags: list[str], entity_type: str = ..., entity
 Apply a tag to an entity.
 
 ```python
-def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *, commit: bool = ...) -> Union[str, None]
+def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *, commit: bool = ...) -> str | None
 ```
 
 **Parameters:**
@@ -1588,7 +1584,7 @@ def apply_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, *
 Delete a tag with owner-scope protections.
 
 ```python
-def delete_tag_safe(*, db_path: Path, tag_name: str, owner: Union[str, None] = ...) -> DeleteResult
+def delete_tag_safe(*, db_path: Path, tag_name: str, owner: str | None = ...) -> DeleteResult
 ```
 
 ### delete_tag
@@ -1611,7 +1607,7 @@ def delete_tag(conn: Connection, name: str, *, commit: bool = ...) -> int
 Return tag id for name, or None if not found.
 
 ```python
-def get_tag_id(conn: Connection, name: str) -> Union[str, None]
+def get_tag_id(conn: Connection, name: str) -> str | None
 ```
 
 ### get_or_create_tag
@@ -1619,7 +1615,7 @@ def get_tag_id(conn: Connection, name: str) -> Union[str, None]
 Get or create a tag by name.
 
 ```python
-def get_or_create_tag(conn: Connection, name: str, description: Union[str, None] = ...) -> str
+def get_or_create_tag(conn: Connection, name: str, description: str | None = ...) -> str
 ```
 
 **Parameters:**
@@ -1634,7 +1630,7 @@ def get_or_create_tag(conn: Connection, name: str, description: Union[str, None]
 List all tags with usage counts.
 
 ```python
-def list_tags(db_path: Union[Path, None] = ..., conn: Union[Connection, None] = ..., *, since: Union[str, None] = ..., before: Union[str, None] = ..., owner: Union[str, None] = ..., fidelity: Union[Fidelity, None] = ...) -> list[TagInfo]
+def list_tags(db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., *, since: str | None = ..., before: str | None = ..., owner: str | None = ..., fidelity: painted.core.fidelity.Fidelity | None = ...) -> list[TagInfo]
 ```
 
 **Parameters:**
@@ -1651,7 +1647,7 @@ def list_tags(db_path: Union[Path, None] = ..., conn: Union[Connection, None] = 
 Rename a tag with owner-scope protections.
 
 ```python
-def rename_tag_safe(*, db_path: Path, old_name: str, new_name: str, owner: Union[str, None] = ...) -> RenameResult
+def rename_tag_safe(*, db_path: Path, old_name: str, new_name: str, owner: str | None = ...) -> RenameResult
 ```
 
 ### remove_tag
@@ -1676,7 +1672,7 @@ def remove_tag(conn: Connection, entity_type: str, entity_id: str, tag_id: str, 
 Rename a tag.
 
 ```python
-def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: Union[Connection, None] = ..., db_path: Union[Path, None] = ..., commit: bool = ...) -> bool
+def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: sqlite3.Connection | None = ..., db_path: pathlib.Path | None = ..., commit: bool = ...) -> bool
 ```
 
 **Parameters:**
@@ -1697,7 +1693,7 @@ def rename_tag(old_name: str = ..., new_name: str = ..., *, conn: Union[Connecti
 Get a single event by ID (full or prefix).
 
 ```python
-def get_event(id: str, *, db_path: Union[Path, None] = ..., conn: Union[Connection, None] = ..., include_content: bool = ..., include_neighbors: bool = ..., owner: Union[str, None] = ...) -> Union[EventDetail, None]
+def get_event(id: str, *, db_path: pathlib.Path | None = ..., conn: sqlite3.Connection | None = ..., include_content: bool = ..., include_neighbors: bool = ..., owner: str | None = ...) -> siftd.api.events.EventDetail | None
 ```
 
 **Parameters:**
@@ -1727,7 +1723,7 @@ def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, o
 The one-time remote first-egress disclosure if it hasn't been shown yet, else None.
 
 ```python
-def egress_notice_pending(embed_db_path: Union[Path, None] = ...) -> Union[str, None]
+def egress_notice_pending(embed_db_path: pathlib.Path | None = ...) -> str | None
 ```
 
 ### mark_egress_notified
@@ -1735,7 +1731,7 @@ def egress_notice_pending(embed_db_path: Union[Path, None] = ...) -> Union[str, 
 Persist the first-egress shown-once flag (call only after the notice was surfaced).
 
 ```python
-def mark_egress_notified(embed_db_path: Union[Path, None] = ...) -> None
+def mark_egress_notified(embed_db_path: pathlib.Path | None = ...) -> None
 ```
 
 ### run_ingest
@@ -1743,7 +1739,7 @@ def mark_egress_notified(embed_db_path: Union[Path, None] = ...) -> None
 Run ingestion from discovered adapters.
 
 ```python
-def run_ingest(*, db_path: Path, adapter_names: Union[list[str], None] = ..., scan_paths: Union[list[str], None] = ..., filter_binary: Union[bool, None] = ..., on_event: Union[Callable[IngestEvent, None], None] = ..., on_notice: Union[Callable[str, None], None] = ...) -> IngestRunResult
+def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ..., on_notice: collections.abc.Callable[[str], None] | None = ...) -> IngestRunResult
 ```
 
 ### run_rebuild_fts
@@ -1767,7 +1763,7 @@ def get_health_status(db_path: Path) -> HealthStatus
 Record a push event in the push_log table.
 
 ```python
-def record_push_log(*, db_path: Path, identity: str, conversations: int, size_bytes: int, source_ip: Union[str, None], push_id: Union[str, None] = ...) -> None
+def record_push_log(*, db_path: Path, identity: str, conversations: int, size_bytes: int, source_ip: str | None, push_id: str | None = ...) -> None
 ```
 
 ### record_audit_event
@@ -1775,7 +1771,7 @@ def record_push_log(*, db_path: Path, identity: str, conversations: int, size_by
 Record a state-changing operation in the audit_log table.
 
 ```python
-def record_audit_event(*, db_path: Path, actor: str, action: str, target_type: Union[str, None] = ..., target: Union[str, None] = ..., detail: Union[str, None] = ..., source_ip: Union[str, None] = ...) -> None
+def record_audit_event(*, db_path: Path, actor: str, action: str, target_type: str | None = ..., target: str | None = ..., detail: str | None = ..., source_ip: str | None = ...) -> None
 ```
 
 ### merge_database
@@ -1783,7 +1779,7 @@ def record_audit_event(*, db_path: Path, actor: str, action: str, target_type: U
 Merge a source database (slice) into the target database.
 
 ```python
-def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: Union[Callable[Connection, dict, None], None] = ..., preflight: bool = ..., user_id: Union[str, None] = ...) -> dict
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ..., user_id: str | None = ...) -> dict
 ```
 
 **Parameters:**
@@ -1808,7 +1804,7 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 Create or merge a source database into the target.
 
 ```python
-def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: Union[str, None] = ..., push_id: Union[str, None] = ..., preflight: bool = ...) -> dict
+def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: str | None = ..., push_id: str | None = ..., preflight: bool = ...) -> dict
 ```
 
 **Parameters:**
@@ -1832,7 +1828,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 Export filtered conversations into a standalone SQLite database.
 
 ```python
-def slice_database(source_db: Path, target_path: Path, *, workspace: Union[str, None] = ..., model: Union[str, None] = ..., since: Union[str, None] = ..., before: Union[str, None] = ..., tag: Union[list[str], None] = ..., all_tags: Union[list[str], None] = ..., no_tag: Union[list[str], None] = ..., tag_kind: Union[list[str], None] = ..., tool: Union[str, None] = ..., tool_tag: Union[str, None] = ..., search: Union[str, None] = ..., rebuild_fts: bool = ..., owner: Union[str, None] = ...) -> dict
+def slice_database(source_db: Path, target_path: Path, *, workspace: str | None = ..., model: str | None = ..., since: str | None = ..., before: str | None = ..., tag: list[str] | None = ..., all_tags: list[str] | None = ..., no_tag: list[str] | None = ..., tag_kind: list[str] | None = ..., tool: str | None = ..., tool_tag: str | None = ..., search: str | None = ..., rebuild_fts: bool = ..., owner: str | None = ...) -> dict
 ```
 
 **Parameters:**

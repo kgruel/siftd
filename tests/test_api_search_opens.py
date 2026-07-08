@@ -7,13 +7,13 @@ from siftd.storage.search_log import SearchEventFingerprint, record_search
 from siftd.storage.sqlite import open_database
 
 
-def _seed_search(test_db, *, result_ids, session_id=None):
+def _seed_search(test_db, *, result_ids, session_id=None, owner=""):
     conn = open_database(test_db, read_only=False)
     try:
         sid = record_search(
             conn, query="python", issuer="cli", fingerprint=SearchEventFingerprint(),
             executed_mode="fts", result_ids=result_ids, result_count=len(result_ids),
-            session_id=session_id, commit=True,
+            session_id=session_id, owner=owner, commit=True,
         )
         return sid
     finally:
@@ -51,6 +51,28 @@ class TestWebClickLinkage:
         assert opens[0]["conversation_id"] == conv2
         assert opens[0]["rank"] == 1
         assert opens[0]["surface"] == "web-click"
+
+    def test_cross_owner_search_event_id_records_nothing(self, test_db):
+        # A search owned by someone else must not be bindable by this caller's
+        # click, even if they supply its (guessed/leaked) event id.
+        conv2 = _conv_id(test_db, "conv2")
+        sid = _seed_search(test_db, result_ids=[conv2], owner="someone-else")
+
+        get_conversation(
+            conv2, fidelity=Fidelity(depth=1), db_path=test_db, search_event_id=sid,
+        )
+
+        assert _opens(test_db) == []
+
+    def test_nonexistent_search_event_id_records_nothing(self, test_db):
+        conv2 = _conv_id(test_db, "conv2")
+
+        get_conversation(
+            conv2, fidelity=Fidelity(depth=1), db_path=test_db,
+            search_event_id="01BOGUSNONEXISTENTEVENTID00",
+        )
+
+        assert _opens(test_db) == []
 
 
 class TestCliHeuristicLinkage:

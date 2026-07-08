@@ -876,15 +876,17 @@ def _capture_open(
             if not has_search_log_table(conn):
                 return
             if search_event_id is not None:
+                # Owner-scope the lookup: a click may only bind to a search this
+                # caller owns. A cross-owner or nonexistent id resolves to no row
+                # and records nothing (guards against forged/injected event ids).
                 row = conn.execute(
-                    "SELECT result_ids FROM search_events WHERE id = ?",
-                    (search_event_id,),
+                    "SELECT result_ids FROM search_events WHERE id = ? AND owner = ?",
+                    (search_event_id, owner or ""),
                 ).fetchone()
-                rank = None
-                if row is not None:
-                    ids = json.loads(row["result_ids"])
-                    if conversation_id in ids:
-                        rank = ids.index(conversation_id) + 1
+                if row is None:
+                    return
+                ids = json.loads(row["result_ids"])
+                rank = ids.index(conversation_id) + 1 if conversation_id in ids else None
                 record_open(
                     conn, search_event_id=search_event_id, conversation_id=conversation_id,
                     rank=rank, surface="web-click", commit=True,
