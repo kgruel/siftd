@@ -1,4 +1,7 @@
-"""Phase 4: smart-routing of `siftd query <id>` between conversations and events."""
+"""Phase 4: smart-routing of `siftd show <id>` between conversations and events.
+
+Ported from query <id> after query lost its detail-view positional
+(docs/dev/cli-verb-coherence-2026-07-07.md)."""
 
 from __future__ import annotations
 
@@ -50,7 +53,7 @@ def event_db(tmp_path):
 class TestSmartRouting:
     def test_conversation_id_routes_to_conversation_detail(self, event_db, capsys):
         db, c, *_ = event_db
-        rc = main(["--db", str(db), "query", c, "--json"])
+        rc = main(["--db", str(db), "show", c, "--json"])
         assert rc == 0
         out = capsys.readouterr().out.strip()
         # Conversation JSON has "turns"; event JSON has "kind"
@@ -60,7 +63,7 @@ class TestSmartRouting:
 
     def test_event_id_routes_to_event_detail(self, event_db, capsys):
         db, _c, _p, r, _tc = event_db
-        rc = main(["--db", str(db), "query", r, "--json"])
+        rc = main(["--db", str(db), "show", r, "--json"])
         assert rc == 0
         d = json.loads(capsys.readouterr().out.strip())
         assert d["id"] == r
@@ -68,14 +71,14 @@ class TestSmartRouting:
 
     def test_event_id_prefix_routes_to_event_detail(self, event_db, capsys):
         db, _c, _p, r, _tc = event_db
-        rc = main(["--db", str(db), "query", r[:12], "--json"])
+        rc = main(["--db", str(db), "show", r[:12], "--json"])
         assert rc == 0
         d = json.loads(capsys.readouterr().out.strip())
         assert d["id"] == r
 
     def test_tool_call_id_routes_to_event_detail(self, event_db, capsys):
         db, *_, tc = event_db
-        rc = main(["--db", str(db), "query", tc, "--json"])
+        rc = main(["--db", str(db), "show", tc, "--json"])
         assert rc == 0
         d = json.loads(capsys.readouterr().out.strip())
         assert d["kind"] == "tool_call"
@@ -84,13 +87,13 @@ class TestSmartRouting:
     def test_unknown_id_returns_error(self, event_db, capsys):
         db, *_ = event_db
         # Plausible-looking ULID prefix that doesn't match anything
-        rc = main(["--db", str(db), "query", "ZZZZZZZZZZZZZZZZZZZ"])
+        rc = main(["--db", str(db), "show", "ZZZZZZZZZZZZZZZZZZZ"])
         assert rc == 1
 
     def test_neighbors_flag_enables_neighbors_block(self, event_db, capsys):
         db, _c, _p, r, _tc = event_db
         rc = main([
-            "--db", str(db), "query", r, "--json", "--neighbors",
+            "--db", str(db), "show", r, "--json", "--neighbors",
         ])
         assert rc == 0
         d = json.loads(capsys.readouterr().out.strip())

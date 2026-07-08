@@ -1,9 +1,8 @@
 """Tests for `siftd report` — the canonical named-SQL runner.
 
-`report` was extracted from `query sql` (CLI UX audit, read-surface slice).
-These cover the canonical verb; the deprecated `query sql` alias is covered in
-test_cli.py::TestQuerySqlCommand. The final test pins the alias-first contract:
-`query sql` keeps working but warns to stderr and steers to `report`.
+`report` was extracted from `query sql` (CLI UX audit, read-surface slice). These
+cover the canonical verb; `query sql`'s removal (clean break, exit 2 + hint, no
+alias) is covered in test_cli.py::TestQuerySqlRemoved.
 """
 
 from siftd.cli import main
@@ -88,22 +87,3 @@ class TestReportCommand:
 
         assert rc == 0
         assert "cost" in capsys.readouterr().out  # a built-in report
-
-
-def test_query_sql_alias_warns_and_runs(test_db, tmp_path, monkeypatch, capsys):
-    """`query sql` keeps working (alias-first) but warns to stderr, not stdout."""
-    queries = tmp_path / "queries"
-    queries.mkdir()
-    (queries / "count.sql").write_text("SELECT COUNT(*) as n FROM conversations")
-    monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
-    # The notice fires once per process; clear so this test is order-independent.
-    monkeypatch.setattr("siftd.cli._common._DEPRECATION_EMITTED", set())
-
-    rc = main(["--db", str(test_db), "query", "sql", "count"])
-
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "2" in captured.out  # still produces the result
-    assert "deprecated" in captured.err  # steer to `report`, on stderr
-    assert "report" in captured.err
-    assert "deprecated" not in captured.out  # never pollutes stdout/pipes

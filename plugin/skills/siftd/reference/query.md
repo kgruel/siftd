@@ -95,8 +95,8 @@ siftd query -w myproject --tool-tag shell:test # combine with workspace filter
 
 ## Conversation drill-down
 
-Pass a conversation ID to `show` to see its full timeline (`query 01HX...` still
-works as an alias):
+`query` only lists; to read one conversation's full timeline, use `show`
+(`query <id>` was removed — it is a separate verb now):
 ```bash
 siftd show 01HX...
 ```
@@ -106,7 +106,8 @@ Shows prompts, responses, and tool calls in chronological order with tags displa
 ## SQL reports
 
 Run user-defined `.sql` files from `~/.config/siftd/queries/` with `siftd report`
-(the older `query sql` alias still works but is deprecated):
+(the older `query sql` form was removed; `siftd query sql ...` now exits 2 with
+a hint to use `siftd report`):
 
 **List available queries:**
 ```bash

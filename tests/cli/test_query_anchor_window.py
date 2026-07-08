@@ -1,14 +1,19 @@
-"""Tests for anchor + window axes on siftd query <id>."""
+"""Tests for anchor + window axes on siftd show <id>.
+
+The handler (`_query_detail`) still lives in `siftd.cli.query` — it's shared
+by `show`, which is the only verb exposing these flags on its parser now that
+`query` lost its detail-view positional (docs/dev/cli-verb-coherence-2026-07-07.md).
+"""
 
 import argparse
 import sqlite3
 from types import SimpleNamespace
 
 import pytest
-
 from painted import Fidelity
 
-from siftd.cli.query import _parse_turns_range, _query_detail, build_query_parser
+from siftd.cli.query import _parse_turns_range, _query_detail
+from siftd.cli.show import build_show_parser
 from siftd.storage.fts import fts5_first_event_in_conversation
 
 
@@ -202,13 +207,15 @@ class TestForceExplicit:
 
 class TestParserWindowMutualExclusion:
     def test_exchanges_and_turns_are_mutually_exclusive(self, capsys):
+        # Anchor/window flags live on `show`'s parser (query lost its detail-view
+        # positional; see docs/dev/cli-verb-coherence-2026-07-07.md).
         parser = argparse.ArgumentParser(prog="siftd")
         subparsers = parser.add_subparsers(dest="command")
-        build_query_parser(subparsers)
+        build_show_parser(subparsers)
 
         with pytest.raises(SystemExit) as exc:
             parser.parse_args(
-                ["query", "conv1", "--from-end", "--exchanges", "3", "--turns=-1:+1"]
+                ["show", "conv1", "--from-end", "--exchanges", "3", "--turns=-1:+1"]
             )
         assert exc.value.code == 2
         err = capsys.readouterr().err

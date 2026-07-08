@@ -1,27 +1,28 @@
-"""CLI-layer argparse tests for anchor + window flags on siftd query <id>.
+"""CLI-layer argparse tests for anchor + window flags on siftd show <id>.
 
 Exercises parse_args() directly — not SimpleNamespace hand-builds — so that
 pre-parse bugs (mutex enforcement, prefix heuristics, type coercion) are caught
-by CI rather than escaping to runtime.
+by CI rather than escaping to runtime. Ported from query <id> after query lost
+its detail-view positional (docs/dev/cli-verb-coherence-2026-07-07.md).
 """
 
 import argparse
 
 import pytest
 
-from siftd.cli.query import build_query_parser
+from siftd.cli.show import build_show_parser
 
 
 @pytest.fixture()
 def parser():
     p = argparse.ArgumentParser(prog="siftd")
     subs = p.add_subparsers(dest="command")
-    build_query_parser(subs)
+    build_show_parser(subs)
     return p
 
 
 def parse(parser, args):
-    return parser.parse_args(["query", "conv1"] + args)
+    return parser.parse_args(["show", "conv1"] + args)
 
 
 class TestAnchors:

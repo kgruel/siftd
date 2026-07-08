@@ -528,13 +528,7 @@
                      [-l NAME] [--all-tags NAME] [--no-tag NAME] [--on KIND]
                      [-t NAME] [--tool-tag NAME] [--owner USER] [--json]
                      [-n LIMIT] [--no-hints] [-F] [-b] [--chars N] [--thinking]
-                     [--tools [FILTER]] [--tool-chars N]
-                     [--from-start | --from-end | --at-turn N | --around PHRASE]
-                     [--exchanges N | --turns A:B] [-v] [--oldest] [--stats]
-                     [--summary] [--neighbors] [conversation_id]
-  
-  ARGUMENTS
-    conversation_id  Conversation ID for detail view
+                     [--tools [FILTER]] [--tool-chars N] [-v] [--oldest] [--stats]
   
   FILTERS
     -w, --workspace SUBSTR  Filter by workspace path substring
@@ -569,19 +563,9 @@
     --tools [FILTER]  Show tool inputs/results (optional filter: tool name prefix
                       or 'errors')
     --tool-chars N    Truncate tool input/result at N characters (default: 120)
-    --from-start      Anchor at the start of the conversation (turn 0)
-    --from-end        Anchor at the end of the conversation (last turn)
-    --at-turn N       Anchor at the N-th turn (0-indexed)
-    --around PHRASE   Anchor at the first FTS5 phrase match in the conversation
-    --exchanges N     Number of turns to show from anchor (requires an anchor
-                      flag)
-    --turns A:B       Turn range relative to anchor, e.g. -2:+2 or 5:10 (requires
-                      an anchor flag)
-    --summary         Summary only (metadata, no turns)
-    --neighbors       Include prev_event_id/next_event_id in event detail output
   
-  IDs shown are 12-char prefixes; any unambiguous prefix works. Pass an
-  ID to read that conversation (alias for 'siftd show <id>'); content search is 'siftd search'.
+  IDs shown are 12-char prefixes; any unambiguous prefix works. To read one
+  conversation use 'siftd show <id>'; content search is 'siftd search'.
   
   examples:
     siftd query                          # recent conversations
@@ -589,7 +573,7 @@
     siftd query -w myproject             # filter by workspace
     siftd query --since 7d               # started in the last 7 days
     siftd query -l research:auth         # tagged research:auth
-    siftd query <id>                     # read one (alias for siftd show)
+    siftd show <id>                      # read one conversation
   
   '''
 # ---

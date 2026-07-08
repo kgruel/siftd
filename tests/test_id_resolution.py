@@ -325,10 +325,13 @@ def _invoke(argv):
 # Argparse-layer: siftd query <id>
 # ---------------------------------------------------------------------------
 
-class TestQueryAmbiguousPrefix:
+class TestShowAmbiguousPrefix:
+    """Ported from `query <id>` after query lost its detail-view positional
+    (docs/dev/cli-verb-coherence-2026-07-07.md); `show` is the sole detail verb now."""
+
     def test_ambiguous_prefix_exits_2(self, tmp_path, capsys):
         db_path, id_a, id_b = _make_collision_db(tmp_path)
-        code = _invoke(["--db", str(db_path), "query", "01TESTCOLL"])
+        code = _invoke(["--db", str(db_path), "show", "01TESTCOLL"])
         assert code == 2
         err = capsys.readouterr().err
         assert "01TESTCOLL" in err
@@ -337,7 +340,7 @@ class TestQueryAmbiguousPrefix:
 
     def test_ambiguous_stderr_lists_matched_ids(self, tmp_path, capsys):
         db_path, id_a, id_b = _make_collision_db(tmp_path)
-        _invoke(["--db", str(db_path), "query", "01TESTCOLL"])
+        _invoke(["--db", str(db_path), "show", "01TESTCOLL"])
         err = capsys.readouterr().err
         assert id_a in err
         assert id_b in err
@@ -347,7 +350,7 @@ class TestQueryAmbiguousPrefix:
         db_path, id_a, id_b = _make_unique_db(tmp_path)
         # First 10 chars of id_a are unique (id_b starts with "01BBB...")
         prefix = id_a[:10]
-        code = _invoke(["--db", str(db_path), "query", "--summary", prefix])
+        code = _invoke(["--db", str(db_path), "show", "--summary", prefix])
         assert code == 0
         out = capsys.readouterr().out
         assert short_id(id_a) in out
@@ -355,7 +358,7 @@ class TestQueryAmbiguousPrefix:
     def test_full_id_resolves_successfully(self, tmp_path, capsys):
         """Full 26-char ULID always resolves unambiguously (exit 0)."""
         db_path, id_a, id_b = _make_unique_db(tmp_path)
-        code = _invoke(["--db", str(db_path), "query", "--summary", id_a])
+        code = _invoke(["--db", str(db_path), "show", "--summary", id_a])
         assert code == 0
         out = capsys.readouterr().out
         assert short_id(id_a) in out

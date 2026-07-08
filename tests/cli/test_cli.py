@@ -296,102 +296,30 @@ class TestBackfillCommand:
         assert "not found" in captured.err.lower() or "Database" in captured.err
 
 
-class TestQuerySqlCommand:
-    """Smoke tests for siftd query sql (run-query) command."""
+class TestQuerySqlRemoved:
+    """`query sql` was removed outright (C3, docs/dev/cli-verb-coherence-2026-07-07.md).
 
-    def test_query_sql_list(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql (no args) lists available query files."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        (queries / "count_convs.sql").write_text("SELECT COUNT(*) FROM conversations")
-        (queries / "by_workspace.sql").write_text("SELECT * FROM conversations WHERE workspace_id = :ws")
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+    It now exits 2 with a hint to `siftd report`, same treatment as the
+    `query <id>` detail-view removal. `report`'s own behavior (list/run/vars)
+    is covered by tests/cli/test_report.py.
+    """
 
-        rc = main(["--db", str(test_db), "query", "sql"])
+    def test_query_sql_exits_2_with_report_hint(self, test_db, capsys):
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", str(test_db), "query", "sql"])
 
-        assert rc == 0
+        assert exc.value.code == 2
         captured = capsys.readouterr()
-        assert "count_convs" in captured.out
-        assert "by_workspace" in captured.out
-        assert "(vars: ws)" in captured.out or "ws" in captured.out
+        assert "unrecognized arguments" in captured.err
+        assert "siftd report" in captured.err
 
-    def test_query_sql_run(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql <name> runs the query."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        (queries / "count.sql").write_text("SELECT COUNT(*) as n FROM conversations")
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
+    def test_query_sql_with_name_exits_2_with_report_hint(self, test_db, capsys):
+        with pytest.raises(SystemExit) as exc:
+            main(["--db", str(test_db), "query", "sql", "count"])
 
-        rc = main(["--db", str(test_db), "query", "sql", "count"])
-
-        assert rc == 0
+        assert exc.value.code == 2
         captured = capsys.readouterr()
-        # Should show the count (2 from test_db)
-        assert "2" in captured.out
-
-    def test_query_sql_with_var(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql <name> --var key=value works."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        (queries / "find.sql").write_text(
-            "SELECT id FROM conversations WHERE external_id = :ext_id"
-        )
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
-
-        import sqlite3
-        expected_id = sqlite3.connect(str(test_db)).execute(
-            "SELECT id FROM conversations WHERE external_id = 'conv1'"
-        ).fetchone()[0]
-
-        rc = main([
-            "--db", str(test_db),
-            "query", "sql", "find",
-            "--var", "ext_id=conv1",
-        ])
-
-        assert rc == 0
-        captured = capsys.readouterr()
-        # The query must actually return conv1's row, not merely print something.
-        assert expected_id[:12] in captured.out
-
-    def test_query_sql_missing_var(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql with missing required var returns error."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        (queries / "needs.sql").write_text("SELECT * FROM $table")
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
-
-        rc = main(["--db", str(test_db), "query", "sql", "needs"])
-
-        assert rc == 1
-        captured = capsys.readouterr()
-        assert "table" in captured.err.lower()  # Should mention missing var
-
-    def test_query_sql_not_found(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql with unknown query returns error."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
-
-        rc = main(["--db", str(test_db), "query", "sql", "nonexistent"])
-
-        assert rc == 1
-        captured = capsys.readouterr()
-        assert "not found" in captured.err.lower()
-
-    def test_query_sql_empty_queries_dir(self, test_db, tmp_path, monkeypatch, capsys):
-        """siftd query sql with an empty user dir still lists the builtins."""
-        queries = tmp_path / "queries"
-        queries.mkdir()
-        monkeypatch.setattr("siftd.paths.queries_dir", lambda: queries)
-
-        rc = main(["--db", str(test_db), "query", "sql"])
-
-        assert rc == 0
-        captured = capsys.readouterr()
-        # 'query sql' now routes to the report subsystem (deprecated alias);
-        # builtins are always available even with an empty user dir.
-        assert "cost" in captured.out
+        assert "siftd report" in captured.err
 
 
 class TestAdaptersCommand:

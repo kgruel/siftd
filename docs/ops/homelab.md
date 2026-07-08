@@ -294,7 +294,7 @@ siftd db push homelab
 
 # Read the homelab's view via the local CLI. Reads delegate over HTTP via [serve.auth].
 siftd query
-siftd query <id> --json
+siftd show <id> --json
 siftd search "foo"
 ```
 
@@ -322,7 +322,7 @@ Or systemd-timer (per-user) — adapt to your preferred scheduler.
 siftd query
 
 # Drill into a specific one
-siftd query 01HX... --json
+siftd show 01HX... --json
 
 # Search across the unified store
 siftd search "migration failed"
@@ -342,8 +342,8 @@ The wire-form dissolution closed the previously-deferred delegation gaps; the cu
 | Command | Delegates to remote? |
 |---|---|
 | `siftd query` (list mode) | Yes |
-| `siftd query <id> --json` | Yes (correct anchor + fidelity) |
-| `siftd query <id>` (non-JSON) | Yes (reconstructed `ConversationDetail` via `from_wire`) |
+| `siftd show <id> --json` | Yes (correct anchor + fidelity) |
+| `siftd show <id>` (non-JSON) | Yes (reconstructed `ConversationDetail` via `from_wire`) |
 | `siftd search` | **Partial** — ranking and chunk retrieval run on the homelab; **but** the CLI exits before any delegation attempt if the local DB path doesn't exist (`cmd_search` requires it for FTS init), and after delegation returns, the CLI re-opens the local DB for metadata + file-ref enrichment and for `--around` context windows. A truly DB-less laptop cannot use `siftd search` today; with a local DB, ranking goes remote but enrichment is still local. Fully thin-client search is tracked as follow-up. |
 | `siftd tag` (read + write) | Yes |
 | `siftd stats` / `siftd db status` | Yes |
