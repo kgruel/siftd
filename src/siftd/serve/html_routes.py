@@ -1537,6 +1537,7 @@ def ui_find_context(
     at: int = Parameter(query="at", default=0),
     w: int = Parameter(query="w", default=0),
     event: str | None = Parameter(query="event", default=None),
+    search_event_id: str | None = Parameter(query="search_event_id", default=None),
 ) -> Response:
     """Render one search hit's inline context slice — the chunks-view 'unfold'.
 
@@ -1566,8 +1567,15 @@ def ui_find_context(
     w = w if w in SEARCH_CONTEXT_RINGS else 0
     conv_id = (id or "").strip()
     # The matched event rides the ring URLs so the last ring's 'open in folio'
-    # jump stays event-precise; validated to a safe anchor token.
-    ctx: dict[str, Any] = {"conv_id": conv_id, "at": at, "w": w, "event": _safe_event_id(event)}
+    # jump stays event-precise; validated to a safe anchor token. The originating
+    # search_event_id rides the same way (same ULID-shaped validation as the
+    # folio route) so that jump records a precise web-click open-signal rather
+    # than falling back to the CLI heuristic.
+    ctx: dict[str, Any] = {
+        "conv_id": conv_id, "at": at, "w": w,
+        "event": _safe_event_id(event),
+        "search_event_id": _safe_event_id(search_event_id),
+    }
 
     if w <= 0 or at < 0 or not conv_id:
         return _html_response(fmt.render_search_context(None, _fidelity(), **ctx))

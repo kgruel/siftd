@@ -642,7 +642,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             if conv_id and turn_index is not None:
                 parts.append(
                     f'<div class="hit-context">'
-                    f'{_unfold_trigger(conv_id, int(turn_index), event_id)}</div>'
+                    f'{_unfold_trigger(conv_id, int(turn_index), event_id, sv.search_event_id)}</div>'
                 )
             parts.append("</div></article>")  # .hit-body, article
 
@@ -675,25 +675,41 @@ def _unfold_button(label: str, attrs: str, *, classes: str = "") -> str:
     return f'<button class="{cls}" type="button"{attrs}>{escape(label)}</button>'
 
 
-def _ctx_attrs(conv_id: str, at: int, w: int, event: str | None = None) -> str:
+def _ctx_attrs(
+    conv_id: str,
+    at: int,
+    w: int,
+    event: str | None = None,
+    search_event_id: str | None = None,
+) -> str:
     """htmx attrs for a same-region context step: fetch ring ``w`` and swap it
     into the closest ``.hit-context`` (so hits unfold independently, no id
     plumbing). ``w=0`` is the collapsed trigger. ``event`` (the matched chunk's
     ULID) rides every ring URL so it survives the re-render and the last ring's
-    'open in folio' jump stays event-precise."""
+    'open in folio' jump stays event-precise. ``search_event_id`` (the
+    originating search's ``SearchView.search_event_id``) rides the same way so
+    that jump records a precise web-click open-signal, matching the initial
+    hit link (else the context-expanded open falls back to the CLI heuristic)."""
     evt = f"&event={escape(event)}" if event else ""
+    sev = f"&search_event_id={escape(search_event_id)}" if search_event_id else ""
     return (
-        f' hx-get="/find/context?id={escape(conv_id)}&at={at}&w={w}{evt}"'
+        f' hx-get="/find/context?id={escape(conv_id)}&at={at}&w={w}{evt}{sev}"'
         f' hx-target="closest .hit-context" hx-swap="innerHTML"'
     )
 
 
-def _unfold_trigger(conv_id: str, at: int, event: str | None = None) -> str:
+def _unfold_trigger(
+    conv_id: str,
+    at: int,
+    event: str | None = None,
+    search_event_id: str | None = None,
+) -> str:
     """The collapsed state of a chunk's context region — a single control that
     fetches the first ring. Shared by the initial hit render and the 'collapse'
     action (which restores exactly this)."""
     return _unfold_button(
-        "unfold context", _ctx_attrs(conv_id, at, SEARCH_CONTEXT_RINGS[0], event)
+        "unfold context",
+        _ctx_attrs(conv_id, at, SEARCH_CONTEXT_RINGS[0], event, search_event_id),
     )
 
 
@@ -717,9 +733,10 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
     w = int(context.get("w", 0))
     anchor_pos = context.get("anchor_pos")
     event = context.get("event") or None
+    search_event_id = context.get("search_event_id") or None
 
     if w <= 0 or detail is None:
-        return _unfold_trigger(conv_id, at, event)
+        return _unfold_trigger(conv_id, at, event, search_event_id)
 
     turns = getattr(detail, "turns", []) or []
     # The unfold is a READING preview: it lets you read the prose around the
@@ -732,14 +749,19 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
     )
     if not body:
         # Same collapsed-trigger fallback as the w<=0 path above — must thread
-        # `event` identically, else a re-unfold from here loses event-precision.
-        return _unfold_trigger(conv_id, at, event)
+        # `event` and `search_event_id` identically, else a re-unfold from here
+        # loses event-precision and the open-signal linkage.
+        return _unfold_trigger(conv_id, at, event, search_event_id)
 
     parts: list[str] = ['<div class="hit-context__slice">', *body, "</div>"]
     parts.append('<div class="hit-context__controls">')
     next_w = next((r for r in SEARCH_CONTEXT_RINGS if r > w), None)
     if next_w is not None:
-        parts.append(_unfold_button("more context", _ctx_attrs(conv_id, at, next_w, event)))
+        parts.append(
+            _unfold_button(
+                "more context", _ctx_attrs(conv_id, at, next_w, event, search_event_id)
+            )
+        )
     else:
         # Last ring → the deliberate jump into the full folio. Reuse _hx_detail
         # so the folio-jump contract (target #main, push-url, quote()-encoded id)
@@ -748,7 +770,10 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
         parts.append(
             _unfold_button(
                 "open in folio",
-                _hx_detail("/folio", conv_id, "/", mode="trace", event=event),
+                _hx_detail(
+                    "/folio", conv_id, "/", mode="trace", event=event,
+                    search_event_id=search_event_id,
+                ),
                 classes="hit-unfold--folio",
             )
         )
