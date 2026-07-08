@@ -734,6 +734,22 @@ def test_unfold_last_ring_jump_carries_search_event_id():
     assert "search_event_id=01SEARCHEVT" in html
 
 
+def test_unfold_collapse_link_threads_search_event_id():
+    # The COLLAPSE control (w=0) is part of the same round trip: collapse →
+    # re-unfold → open in folio must keep precise attribution, so its ring URL
+    # carries search_event_id like every other _ctx_attrs call site.
+    html = render_search_context(
+        _anchored_detail(), _FID_TRACE,
+        conv_id="01CONV", at=0, w=2, anchor_pos=0, event="01EVT",
+        search_event_id="01SEARCHEVT",
+    )
+    assert "collapse" in html
+    assert (
+        "/find/context?id=01CONV&at=0&w=0&event=01EVT&search_event_id=01SEARCHEVT"
+        in html
+    )
+
+
 def test_unfold_empty_window_threads_search_event_id():
     # The collapsed-trigger fallback (window with no renderable turns) must keep
     # search_event_id too, so a re-unfold from there stays attributed.
