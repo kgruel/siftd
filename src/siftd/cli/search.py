@@ -68,6 +68,11 @@ def cmd_search(args) -> int:
         status.db_missing(db)
         return 1
 
+    # History mode — mutually exclusive with a query (enforced at parse time).
+    # Reads captured search_events via the api layer; no engine work.
+    if getattr(args, "history", None) is not None:
+        return _search_history(args, db)
+
     # Search mode — need a query OR a tag facet. A query ranks content; a bare
     # tag facet enumerates tagged elements (filter-only search, decision 1).
     query = " ".join(args.query) if args.query else ""
@@ -495,6 +500,60 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
     return 0
 
 
+def _search_history(args, db: Path) -> int:
+    """List recent captured searches (search_events) — `siftd search --history [N]`.
+
+    Local-only read through the api boundary (`recent_search_history`); owner
+    scoping mirrors the capture side (`--owner`, defaulting to the unscoped
+    local bucket). Empty history is informational, never an error: the
+    search.log config state decides which message explains it.
+    """
+    from siftd.api import recent_search_history
+
+    rows = recent_search_history(
+        db, owner=getattr(args, "owner", None), limit=args.history
+    )
+
+    if args.json:
+        import json
+
+        print(json.dumps({"history": rows}, indent=2))
+        return 0
+
+    if not rows:
+        from siftd.config import get_search_log_enabled
+
+        if not get_search_log_enabled():
+            status.info(
+                "Search history is empty — search-log capture is disabled "
+                "(search.log = false). Enable with: siftd config set search.log true"
+            )
+        else:
+            status.info("No search history yet. Searches are captured as you run them.")
+        return 0
+
+    from painted import print_block
+
+    from siftd.output.common import should_use_ansi
+    from siftd.output.listing import lines
+
+    def _fmt(row: dict) -> str:
+        ts = row["issued_at"][:16].replace("T", " ")
+        opened = "opened" if row["opened"] else "      "
+        return (
+            f"{ts}  {row['executed_mode']:<8} {row['result_count']:>4}r  "
+            f"{row['issuer']:<5} {opened}  {row['query']}"
+        )
+
+    header = f"{'when':<16}  {'mode':<8} {'hits':>5}  {'issuer':<5} {'open':<6}  query"
+    print_block(
+        lines([header, *(_fmt(r) for r in rows)]),
+        sys.stdout,
+        use_ansi=should_use_ansi(sys.stdout),
+    )
+    return 0
+
+
 def _engine_mode(value: str) -> str:
     """argparse type for ``--mode``: validate the engine selector and redirect the
     old render values to ``--view`` with a clear hint (clean-break migration)."""
@@ -532,8 +591,20 @@ examples:
 (--context was removed; use --around PHRASE --turns -N:+N)""",
     )
 
-    # Positional argument
-    p_search.add_argument("query", nargs="*", help="Natural language search query")
+    # Positional argument — mutually exclusive with --history (a query runs a
+    # search; --history lists captured ones). argparse allows a nargs='*'
+    # positional in a mutex group, so exclusion is enforced at parse time.
+    query_or_history = p_search.add_mutually_exclusive_group()
+    query_or_history.add_argument("query", nargs="*", default=[], help="Natural language search query")
+    query_or_history.add_argument(
+        "--history",
+        nargs="?",
+        type=int,
+        const=20,
+        default=None,
+        metavar="N",
+        help="List the last N captured searches (default: 20) instead of searching. Local-only; see search.log config.",
+    )
 
     # Filtering options (most commonly used)
     from siftd.cli._filters import add_filter_args

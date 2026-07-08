@@ -256,3 +256,88 @@ siftd search --json "query" | jq '.results[0].breakdown'
 ```
 
 This shows how the final score was computed: raw embedding similarity, recency boost, MMR diversity penalty, and whether FTS5 matched. `--threshold` and `--select=first` test `embedding_sim` directly (not `final_score`) for chunks that went through the embedding stage — that's the cosine-similarity scale ("0.7+ on-topic, 0.6–0.7 tangential, below 0.6 noise" as a rough guide). In FTS5-only mode, `embedding_sim` is absent and the normalized bm25 score (see above) is what's tested instead.
+
+## The search log
+
+siftd records the searches you run — the search log — so recent searches can be
+listed and re-run, and so search-quality changes can eventually be evaluated
+against real usage instead of synthetic queries.
+
+### What is captured
+
+One row per executed search (with a non-empty query; bare tag-facet enumerations
+are skipped):
+
+- **The query text**, verbatim.
+- **The results** — the ranked conversation IDs (capped at the top 50) and the
+  total result count.
+- **A config fingerprint** — which engine configuration produced the ranking:
+  embedding backend, model, dimension, strategy (`narrow`/`rrf`/`fts`), preset,
+  FTS recall width, MMR lambda, the requested mode, and the mode that actually
+  ran (degrade-aware). The fingerprint is what makes rankings comparable: a
+  backend or strategy change means two searches' rankings can't be compared
+  directly, and the fingerprint says so.
+- **Context** — issuer, workspace filter, and harness session ID when one is
+  registered.
+
+Capture is on by default and best-effort: the write happens after results are
+computed and is never allowed to fail or slow a search. Opt out with:
+
+```console
+siftd config set search.log false
+```
+
+View your history with `siftd search --history [N]`.
+
+### Local-only, always
+
+**The search log never syncs and never leaves your machine.** It is not part of
+conversation data — `siftd sync` pushes conversations, and the search log is
+deliberately excluded, the same way owner-scoped preference tables (tag pins,
+workspace pins) are. Queries can contain sensitive strings (names, secrets,
+intent), which is exactly why this is a hard invariant rather than a default:
+there is no configuration that ships search history to a remote server.
+
+### Issuer semantics
+
+Each search records who issued it — `web`, `agent`, or `cli`:
+
+- **`web`** — the serve routes set this explicitly; every search through the
+  web UI or REST API is `web`.
+- **`agent`** — inferred from session registration: the session-start hook runs
+  `siftd register`, and a CLI search from a workspace with a live registered
+  session is attributed to `agent`.
+- **`cli`** — the fallback: a CLI search with no registered session.
+
+The `SIFTD_ISSUER` environment variable (`cli`/`agent`/`web`) overrides all of
+the above, for harnesses that can't run the session-start hook. An
+un-instrumented agent logs as `cli` — the column under-counts `agent` rather
+than guessing.
+
+### The opened signal (and its limits)
+
+When you open a conversation after a search, siftd tries to link the open back
+to the search that surfaced it:
+
+- **Web (precise):** clicking a search result carries the originating search's
+  ID, so the link is exact.
+- **CLI (heuristic):** a later `siftd show <id>` binds to the most recent
+  search that shares the current registered session — or, absent a session, was
+  issued within the last **30 minutes** — *and* whose result list actually
+  contained that conversation. The result-list requirement is the safety: an
+  unrelated `show` never creates a spurious link.
+
+Treat opened-signal data with epistemic care:
+
+- **Opened ≠ relevant.** You may open a result, find it wrong, and move on.
+- **Position bias.** Top-ranked results get opened more regardless of true
+  relevance.
+- **The CLI heuristic is fuzzy.** Two searches close in time can mis-bind, and
+  an ID pasted from memory is missed entirely.
+- **No open is not a negative.** The snippet may have answered the question.
+
+Downstream readers of this data should treat "opened" as a **weak regression
+signal** — useful for comparing configurations over the same queries ("did
+config B get more, higher-ranked opens than config A?") — never as ground-truth
+relevance labels. The full rationale lives in the design record
+(`docs/dev/search-log-design-2026-07-07.md`).
