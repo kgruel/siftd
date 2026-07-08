@@ -1,9 +1,10 @@
 """Additional no-embed tests for siftd.cli.query branches."""
 
-import pytest
 from types import SimpleNamespace
 
-from siftd.cli.query import _query_detail, _query_sql, cmd_query
+import pytest
+
+from siftd.cli.query import _query_detail, cmd_query
 
 
 def _args(**kwargs):
@@ -12,8 +13,6 @@ def _args(**kwargs):
         "json": False,
         "limit": 10,
         "conversation_id": None,
-        "sql_name": None,
-        "var": None,
         "workspace": None,
         "model": None,
         "since": None,
@@ -92,50 +91,7 @@ def test_query_detail_branches(monkeypatch, capsys, tmp_path):
     assert _query_detail(_args(conversation_id="c1", exchanges=1, from_end=True, tools="shell", db=str(tmp_path / "db.sqlite"))) == 0
 
 
-def test_query_sql_and_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
-    # _query_sql list and parse failures
-    monkeypatch.setattr("siftd.api.list_query_files", lambda: [])
-    assert _query_sql(_args(sql_name=None)) == 0
-
-    qf = [SimpleNamespace(name="cost", variables=["ws"])]
-    monkeypatch.setattr("siftd.api.list_query_files", lambda: qf)
-    assert _query_sql(_args(sql_name=None)) == 0
-
-    assert _query_sql(_args(sql_name="cost", var=["bad"])) == 1
-
-    # query not found + db missing + missing vars + generic query error
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("Query file not found: x")))
-    assert _query_sql(_args(sql_name="cost")) == 1
-
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: (_ for _ in ()).throw(FileNotFoundError("missing db")))
-    assert _query_sql(_args(sql_name="cost")) == 1
-
-    class _QErr(Exception):
-        pass
-
-    monkeypatch.setattr("siftd.api.QueryError", _QErr)
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: (_ for _ in ()).throw(_QErr("Missing variables: ws")))
-    assert _query_sql(_args(sql_name="cost")) == 1
-
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: (_ for _ in ()).throw(_QErr("boom")))
-    assert _query_sql(_args(sql_name="cost")) == 1
-
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: SimpleNamespace(rows=[], columns=[]))
-    assert _query_sql(_args(sql_name="cost")) == 0
-
-    monkeypatch.setattr("siftd.api.run_query_file", lambda *a, **k: SimpleNamespace(rows=[[1, None]], columns=["a", "b"]))
-    printed = []
-    monkeypatch.setattr("siftd.output.print_table", lambda cols, rows: printed.append((cols, rows)))
-    assert _query_sql(_args(sql_name="cost")) == 0
-    assert printed
-
-    # cmd_query: sql dispatch, detail dispatch, list paths
-    monkeypatch.setattr("siftd.cli.query._query_sql", lambda a: 7)
-    assert cmd_query(_args(conversation_id="sql")) == 7
-
-    monkeypatch.setattr("siftd.cli.query._query_detail", lambda a: 8)
-    assert cmd_query(_args(conversation_id="c1")) == 8
-
+def test_cmd_query_list_branches(monkeypatch, capsys, tmp_path):
     # list: serve dict deserialization + stats
     monkeypatch.setattr(
         "siftd.serve.delegation.try_serve",

@@ -985,7 +985,7 @@ def search_route(
     before: str | None = Parameter(query="before", default=None),
     model: str | None = Parameter(query="model", default=None),
     n: int = Parameter(query="n", default=10),
-    recall: int = Parameter(query="recall", default=80),
+    recall: int | None = Parameter(query="recall", default=None),
     exclude_active: bool = Parameter(query="exclude_active", default=True),
     rerank: str = Parameter(query="rerank", default="mmr"),
     lambda_: float = Parameter(query="lambda", default=0.7),
@@ -1065,7 +1065,8 @@ def search_route(
              # Recipe controls — search_view runs the post-processing recipe.
              "view": view, "sort": sort, "select": select,
              "threshold": threshold, "full": full,
-             "around": around, "turns": turns},
+             "around": around, "turns": turns,
+             "issuer": "web"},
             "search", db_path,
             render_context={"debug_ids": debug_ids, "mode": mode},
         )

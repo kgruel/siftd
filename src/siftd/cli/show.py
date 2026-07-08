@@ -1,10 +1,11 @@
 """CLI handler for `show` — read one conversation (or event) in detail.
 
-`show <id>` is the canonical conversation reader. `query <id>` remains a working
-alias that routes through the same `_dispatch_detail` handler. That handler (and
-the conversation/event detail renderers) still live in `query.py` to preserve
-their established test surface; `show` is a thin, discoverable front-end over it
-so the detail job has its own verb instead of riding query's magic positional.
+`show <id>` is the canonical conversation reader. The detail handler
+(`_dispatch_detail`) and the conversation/event detail renderers still live in
+`query.py`, where they were originally built as `query <id>`'s dispatch branch;
+`show` is a thin, discoverable front-end over them now that `query` no longer
+exposes a detail-view positional (clean break, no alias — see
+docs/dev/cli-verb-coherence-2026-07-07.md).
 
 Part of the CLI UX audit read-surface redesign (read-surface slice 2).
 """
@@ -18,8 +19,8 @@ def cmd_show(args) -> int:
     from siftd.cli.query import _dispatch_detail
     from siftd.config import get_query_defaults
 
-    # Honor the same configured fidelity defaults query <id> applies, so the
-    # alias and the canonical verb render identically.
+    # Honor the same configured fidelity defaults `query` list applies, so
+    # `show` renders identically to the old `query <id>` behavior it replaces.
     apply_config_defaults(
         args,
         lambda: {k: v for k, v in get_query_defaults().items() if k in {"chars", "tool_chars"}},

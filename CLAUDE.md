@@ -77,7 +77,7 @@ siftd ingest              # Import conversation logs from all adapters
 siftd search "<query>"    # Hybrid search; falls back to FTS5 without embeddings
 siftd query               # List recent conversations
 siftd search -w proj "error"    # Search content, filtered by workspace
-siftd query <id>          # View conversation detail
+siftd show <id>           # View conversation detail
 siftd peek                # View live/recent sessions (bypasses DB)
 siftd tag <id> <tag>      # Tag a conversation
 siftd export --last       # Export most recent session

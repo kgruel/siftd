@@ -1,7 +1,7 @@
 ---
 name: "siftd:query"
-description: "List or drill into conversations directly"
-argument-hint: '[conversation-id] or [-w workspace] [-n count]'
+description: "List and filter conversations by metadata"
+argument-hint: '[-w workspace] [-n count] [--since date] [-l tag]'
 ---
 
 # /siftd:query

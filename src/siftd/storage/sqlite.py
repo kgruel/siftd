@@ -30,6 +30,7 @@ from siftd.storage.events import (
 )
 from siftd.storage.fts import ensure_fts_table, insert_fts_content
 from siftd.storage.queries import ensure_workspace_pins_table
+from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
 from siftd.storage.tags import (
     ensure_tag_pins_table,
@@ -242,6 +243,7 @@ def open_database(
             _ensure_conversation_stats_table(conn)
             ensure_conversation_owners_table(conn)
             ensure_sync_inbox_table(conn)
+            ensure_search_log_tables(conn)
 
             # Versioned migration dispatch: run each un-applied version in order.
             # MIGRATIONS[v] runs only when the DB is below version v.

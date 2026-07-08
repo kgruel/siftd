@@ -28,6 +28,48 @@ class EmbedPreset(NamedTuple):
     intent_style: str
     max_batch: int
     dimensions_param: str  # wire field for truncation (OpenAI `dimensions`, Voyage/Mistral `output_dimension`)
+    strength: str  # "strong" | "weak" — selects the shipped hybrid default (see hybrid_defaults_for_backend)
+
+
+# Hybrid-search defaults selected by an embedder's `strength`. Data-derived from the
+# 0.11.0 bench (docs/dev/bench-stage2-chunking-design-2026-07-06.md): strong = RRF
+# cleared every no-worse promote gate on that arm (voyage validated, +0.0129 composite)
+# → dedup-on-RRF; weak = it didn't (bge: narrow beat every RRF config; gemini: won
+# composite but FAILED the tool no-worse gate) → narrow-then-rank. Picking a provider
+# picks the behavior — no user knob.
+STRENGTHS = frozenset({"strong", "weak"})
+
+# Narrow-path FTS candidate width (unused under rrf). Global, not per-strength: 40 is
+# the measured optimum on every arm that runs narrow by default (gemini + local are
+# monotone 40 > 80 > 160 > 320 — weaker embedders want less FTS dilution before the
+# rerank). The one measured 80-preference is voyage (+0.010 at 80), which ships on RRF
+# and only hits this value under an explicit narrow override; power users can widen via
+# the per-call `recall` parameter (wider = more semantic reach for a strong embedder,
+# more dilution for a weak one).
+NARROW_RECALL_DEFAULT = 40
+
+
+class HybridDefaults(NamedTuple):
+    strategy: str  # "rrf" | "narrow"
+    recall: int  # narrow-path FTS candidate width (unused under rrf)
+
+
+_STRONG_DEFAULTS = HybridDefaults(strategy="rrf", recall=NARROW_RECALL_DEFAULT)
+_WEAK_DEFAULTS = HybridDefaults(strategy="narrow", recall=NARROW_RECALL_DEFAULT)
+
+
+def hybrid_defaults_for_backend(backend_name: str) -> HybridDefaults:
+    """Map a resolved backend to its shipped hybrid defaults (strategy + narrow recall).
+
+    ``backend_name`` is the :class:`~siftd.embeddings.base.EmbeddingBackend` ``name``:
+    ``"fastembed"`` (the local model — always weak) or ``"remote:<preset>"``. A remote
+    preset's ``strength`` field selects the strategy; anything unknown or local falls to
+    the weak defaults (narrow-then-rank), the conservative incumbent."""
+    if backend_name and backend_name.startswith("remote:"):
+        preset = get_preset(backend_name.split(":", 1)[1])
+        if preset is not None and preset.strength == "strong":
+            return _STRONG_DEFAULTS
+    return _WEAK_DEFAULTS
 
 
 def _preset_from_row(row: dict) -> EmbedPreset:
@@ -47,7 +89,18 @@ def _preset_from_row(row: dict) -> EmbedPreset:
         intent_style=intent_style,
         max_batch=int(row.get("max_batch") or 64),
         dimensions_param=str(row.get("dimensions_param") or "dimensions"),
+        strength=_strength(row),
     )
+
+
+def _strength(row: dict) -> str:
+    value = str(row.get("strength") or "weak")
+    if value not in STRENGTHS:
+        raise ValueError(
+            f"embed preset {row.get('name')!r}: unknown strength {value!r} "
+            f"(valid: {', '.join(sorted(STRENGTHS))})"
+        )
+    return value
 
 
 def _parse_toml(text: str) -> dict[str, EmbedPreset]:

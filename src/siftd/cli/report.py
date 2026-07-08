@@ -2,8 +2,9 @@
 
 Extracted from `query sql` (CLI UX audit, read-surface slice). A named-SQL
 report composes from neither the conversation list nor the detail view; it only
-*looked* unified by squatting `query`'s positional slot. `query sql [name]`
-remains as a deprecated alias that routes here.
+*looked* unified by squatting `query`'s positional slot. `query sql [name]` was
+removed outright (clean break, no alias); the `query` parser now redirects it
+with an exit-2 hint to `report` (see docs/dev/cli-verb-coherence-2026-07-07.md).
 """
 
 from pathlib import Path

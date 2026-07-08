@@ -347,21 +347,6 @@ def _query_detail(args) -> int:
     return 0
 
 
-def _query_sql(args) -> int:
-    """Deprecated alias for `siftd report`. Routes named-SQL to the report handler.
-
-    Named-SQL composes from neither the conversation list nor the detail view;
-    it only looked unified by squatting query's positional slot. Kept working
-    (alias-first migration) with a one-time deprecation notice to stderr.
-    """
-    from siftd.cli._common import deprecation_notice
-    from siftd.cli.report import run_report
-
-    deprecation_notice("query sql", "report")
-    db = Path(args.db) if args.db else None
-    return run_report(args.sql_name, args.var, db)
-
-
 def _emit_stats_footer(view_convs: int, view_tokens: int, corpus, corpus_tokens: int) -> None:
     """Print the --stats view/corpus comparison as a themed metric listing.
 
@@ -400,15 +385,6 @@ def cmd_query(args) -> int:
         lambda: {k: v for k, v in query_defaults.items() if k in {"limit", "chars", "tool_chars"}},
         {"limit": 10, "tool_chars": 120},
     )
-
-    # Dispatch to sql subcommand if conversation_id is "sql"
-    if args.conversation_id == "sql":
-        return _query_sql(args)
-
-    # Dispatch to detail view: classify the ID once, then route. Pass the
-    # probe connection through to the event path so we don't re-open.
-    if args.conversation_id:
-        return _dispatch_detail(args)
 
     from dataclasses import asdict
 
@@ -525,8 +501,8 @@ def build_query_parser(subparsers) -> None:
         "query",
         help="List and filter conversations by metadata",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""IDs shown are 12-char prefixes; any unambiguous prefix works. Pass an
-ID to read that conversation (alias for 'siftd show <id>'); content search is 'siftd search'.
+        epilog="""IDs shown are 12-char prefixes; any unambiguous prefix works. To read one
+conversation use 'siftd show <id>'; content search is 'siftd search'.
 
 examples:
   siftd query                          # recent conversations
@@ -534,24 +510,16 @@ examples:
   siftd query -w myproject             # filter by workspace
   siftd query --since 7d               # started in the last 7 days
   siftd query -l research:auth         # tagged research:auth
-  siftd query <id>                     # read one (alias for siftd show)""",
+  siftd show <id>                      # read one conversation""",
     )
 
-    # Positional arguments
-    p_query.add_argument("conversation_id", nargs="?", help="Conversation ID for detail view")
-    # 'sql_name' supports the deprecated `query sql <name>` alias; use `siftd report`.
-    p_query.add_argument("sql_name", nargs="?", help=argparse.SUPPRESS)
-
     # Filtering options
-    from siftd.cli._common import add_anchor_window_args, add_fidelity_args, add_output_args
+    from siftd.cli._common import add_fidelity_args, add_output_args
     from siftd.cli._filters import add_filter_args
 
     add_filter_args(p_query, include_tool=True, include_tool_tag=True)
     add_output_args(p_query, json=True, limit=True, limit_default=None, no_hints=True)
     add_fidelity_args(p_query, full=True, brief=True, chars=True, thinking=True, tools=True, tool_chars=True)
-
-    # Anchor + window flags for detail view (Slice 1: query <id>; Slice 2: search)
-    add_anchor_window_args(p_query)
 
     # List options — join the shared "output" section (renderer merges by title).
     list_group = p_query.add_argument_group("output")
@@ -559,21 +527,17 @@ examples:
     list_group.add_argument("--oldest", action="store_true", help="Sort by oldest first (default: newest first)")
     list_group.add_argument("--stats", action="store_true", help="Show summary totals after list")
 
-    # Detail-view options (when conversation_id is given) — join the "view" section.
-    detail_group = p_query.add_argument_group("view")
-    detail_group.add_argument("--summary", action="store_true", help="Summary only (metadata, no turns)")
-    detail_group.add_argument("--neighbors", action="store_true",
-        help="Include prev_event_id/next_event_id in event detail output")
-
-    # Deprecated `query sql <name> --var` alias support (use `siftd report`).
-    p_query.add_argument("--var", action="append", metavar="KEY=VALUE", help=argparse.SUPPRESS)
-
     _SEARCH_HINT_FLAGS = frozenset(["-s", "--search", "--fts", "--semantic"])
 
     def _query_unknown_hint(unknowns):
         for u in unknowns:
             if u in _SEARCH_HINT_FLAGS:
                 return 'Did you mean: siftd search "<query>"?'
+        positional = [u for u in unknowns if not u.startswith("-")]
+        if positional and positional[0] == "sql":
+            return "note: 'query sql <name>' was removed. Use 'siftd report <name>' instead."
+        if positional:
+            return "'query' lists conversations; to read one use 'siftd show <id>'"
         return None
 
     p_query.set_defaults(func=cmd_query, _unknown_hint=_query_unknown_hint)

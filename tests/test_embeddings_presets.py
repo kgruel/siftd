@@ -53,3 +53,40 @@ def test_dimensions_param_defaults_when_omitted():
     """
     parsed = presets._parse_toml(row)
     assert parsed["plain"].dimensions_param == "dimensions"
+
+
+def test_strength_classification_and_hybrid_defaults():
+    loaded = presets.load_presets()
+    # strength = "did RRF clear the promote gates on this arm", not raw model quality:
+    # voyage measured-pass; openai extrapolated voyage-class; gemini measured-FAIL (tool
+    # gate) despite a composite win; local/self-hosted weak.
+    assert loaded["voyage"].strength == "strong"
+    assert loaded["openai"].strength == "strong"
+    assert loaded["gemini"].strength == "weak"
+    assert loaded["ollama"].strength == "weak"
+    assert loaded["custom"].strength == "weak"
+
+
+def test_strength_defaults_weak_when_omitted():
+    parsed = presets._parse_toml(
+        '[[preset]]\nname = "plain"\nbase_url = "https://x/v1"\nintent_style = "none"\n'
+    )
+    assert parsed["plain"].strength == "weak"
+
+
+def test_unknown_strength_rejected():
+    bad = '[[preset]]\nname = "b"\nbase_url = "https://x/v1"\nintent_style = "none"\nstrength = "mighty"\n'
+    with pytest.raises(ValueError, match="unknown strength 'mighty'"):
+        presets._parse_toml(bad)
+
+
+def test_hybrid_defaults_for_backend():
+    strong = presets.hybrid_defaults_for_backend("remote:voyage")
+    # recall is global (NARROW_RECALL_DEFAULT), not per-strength: RRF never reads it,
+    # and 40 is the measured optimum on every arm that runs narrow by default.
+    assert (strong.strategy, strong.recall) == ("rrf", 40)
+    # Local fastembed, gemini (failed the tool promote gate), and unknown/self-hosted
+    # presets fall to the weak defaults.
+    for name in ("fastembed", "remote:gemini", "remote:ollama", "remote:nonesuch", ""):
+        weak = presets.hybrid_defaults_for_backend(name)
+        assert (weak.strategy, weak.recall) == ("narrow", 40)

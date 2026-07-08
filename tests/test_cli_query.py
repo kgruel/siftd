@@ -45,8 +45,8 @@ class TestQuerySearchHint:
         assert "siftd search" not in err
 
 
-class TestQueryDetail4xxSurface:
-    """query <id> --around surfaces server 4xx instead of falling back locally."""
+class TestShowDetail4xxSurface:
+    """show <id> --around surfaces server 4xx instead of falling back locally."""
 
     def test_4xx_from_try_serve_exits_1_with_named_server_message(self, monkeypatch, tmp_path, capsys):
         """P6 path: server returns 4xx on --around phrase-not-found; CLI must surface it."""
@@ -66,7 +66,7 @@ class TestQueryDetail4xxSurface:
         # DB does not exist → _dispatch_detail routes to _query_detail which calls try_serve.
 
         from siftd.cli import main
-        rc = main(["--db", str(db), "query", "FAKEID01234567890123456789", "--around", "no-such-phrase"])
+        rc = main(["--db", str(db), "show", "FAKEID01234567890123456789", "--around", "no-such-phrase"])
 
         assert rc == 1
         err = capsys.readouterr().err

@@ -2,8 +2,9 @@
 
 `show <id>` was extracted from `query <id>` (CLI UX audit, read-surface slice 2).
 The detail handlers still live in query.py; `show` is a thin front-end over the
-same _dispatch_detail. These cover the new verb plus the `query <id>` alias
-parity contract.
+same _dispatch_detail. `query <id>` was later removed outright (clean break, no
+alias — docs/dev/cli-verb-coherence-2026-07-07.md); these cover the surviving
+`show` verb plus that removal's exit-2 contract.
 """
 
 import sqlite3
@@ -53,13 +54,13 @@ class TestShow:
             main(["--db", str(test_db), "show"])
 
 
-def test_query_id_still_aliases_show(test_db, capsys):
-    """`query <id>` keeps working and renders identically to `show <id>`."""
+def test_query_id_exits_2_with_show_hint(test_db, capsys):
+    """`query <id>` is gone (clean break) — it exits 2 pointing at `show`."""
     cid = _first_conv_id(test_db)
-    rc_query = main(["--db", str(test_db), "query", cid, "--summary"])
-    query_out = capsys.readouterr().out
-    rc_show = main(["--db", str(test_db), "show", cid, "--summary"])
-    show_out = capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        main(["--db", str(test_db), "query", cid, "--summary"])
 
-    assert rc_query == rc_show == 0
-    assert query_out == show_out  # the alias is a true pass-through
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "unrecognized arguments" in err
+    assert "siftd show" in err

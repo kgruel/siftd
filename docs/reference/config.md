@@ -46,6 +46,12 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `filter_binary` | bool | `true` | Skip binary content blobs during ingest |
 
+## [search]
+
+| Key | Type | Default | Description |
+|-----|------|---------|-------------|
+| `log` | bool | `true` | Capture executed searches (query, fingerprint, result IDs) for recent-searches UX and behavioral ground truth. Local-only, owner-scoped; queries can contain sensitive strings |
+
 ## [serve]
 
 | Key | Type | Default | Description |

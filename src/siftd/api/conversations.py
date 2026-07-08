@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -39,6 +40,8 @@ from siftd.storage.sql_helpers import (
     owner_predicate,
 )
 from siftd.storage.sqlite import open_database
+
+_logger = logging.getLogger(__name__)
 
 
 class AnchorError(Exception):
@@ -641,6 +644,7 @@ def get_conversation(
     anchor_value: int | str | None = None,
     window_start: int | None = None,
     window_end: int | None = None,
+    search_event_id: str | None = None,
 ) -> ConversationDetail | None:
     """Get full conversation detail by ID.
 
@@ -661,6 +665,11 @@ def get_conversation(
             'around'. Ignored for 'from_start' and 'from_end'.
         window_start: Turn offset from anchor (inclusive). None = anchor only.
         window_end: Turn offset from anchor (inclusive). None = anchor only.
+        search_event_id: When this open followed a specific search result click,
+            the originating search_events.id — precise 'web-click' open-signal
+            linkage. Omitted (the CLI path) falls back to the session/window
+            heuristic (see docs/dev/search-log-design-2026-07-07.md). Best-effort;
+            never affects the return value.
 
     Returns:
         ConversationDetail with timeline, or None if not found.
@@ -689,6 +698,8 @@ def get_conversation(
         conv_id = resolve_entity_id(conn, "conversation", id, owner=owner)
         if not conv_id:
             return None
+
+        _capture_open(conv_id, db=db, owner=owner, search_event_id=search_event_id)
 
         # Fetch metadata (workspace, started_at) by the now-resolved full ID.
         # conv_id was just resolved, so this is an exact match; None means a
@@ -831,6 +842,69 @@ def get_conversation(
         )
     finally:
         conn.close()
+
+
+def _capture_open(
+    conversation_id: str,
+    *,
+    db: Path,
+    owner: str | None,
+    search_event_id: str | None,
+) -> None:
+    """Best-effort opened-signal capture (S3): binds this detail-view open back
+    to the search that surfaced it. Never raises and never slows the read —
+    see docs/dev/search-log-design-2026-07-07.md, 'Opened signal'.
+
+    ``search_event_id`` given → precise 'web-click' linkage (rank looked up
+    from that search's own result_ids). Omitted → the CLI heuristic: bind to
+    the most recent search sharing this invocation's session (or, absent a
+    session, within the 30-minute window) that had ``conversation_id`` in its
+    result_ids — the load-bearing safety against spurious labels.
+    """
+    try:
+        from siftd.config import get_search_log_enabled
+
+        if not get_search_log_enabled():
+            return
+
+        from siftd.api._search_log_capture import resolve_session_id
+        from siftd.storage.search_log import find_open_link, has_search_log_table, record_open
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db, read_only=False)
+        try:
+            if not has_search_log_table(conn):
+                return
+            if search_event_id is not None:
+                row = conn.execute(
+                    "SELECT result_ids FROM search_events WHERE id = ?",
+                    (search_event_id,),
+                ).fetchone()
+                rank = None
+                if row is not None:
+                    ids = json.loads(row["result_ids"])
+                    if conversation_id in ids:
+                        rank = ids.index(conversation_id) + 1
+                record_open(
+                    conn, search_event_id=search_event_id, conversation_id=conversation_id,
+                    rank=rank, surface="web-click", commit=True,
+                )
+                return
+
+            session_id = resolve_session_id()
+            link = find_open_link(
+                conn, conversation_id=conversation_id, owner=owner or "", session_id=session_id,
+            )
+            if link is not None:
+                sid, rank = link
+                record_open(
+                    conn, search_event_id=sid, conversation_id=conversation_id,
+                    rank=rank, surface="cli-heuristic", commit=True,
+                )
+        finally:
+            conn.close()
+    except Exception:
+        _logger.debug("open-signal capture failed", exc_info=True)
 
 
 def _fetch_conversation_event_tags(

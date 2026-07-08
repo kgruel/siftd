@@ -273,6 +273,12 @@ class SearchView:
     formatter, and the ``api`` deserializer — can construct one without
     crossing an architecture boundary. ``api.search.process_search_view`` (the
     DB-touching recipe that produces it) re-exports it for back-compat.
+
+    ``search_event_id`` is the search_events row this view was captured as
+    (``None`` if capture was skipped/disabled/failed) — it rides the wire so a
+    rendered result link can carry it back to ``get_conversation`` for the
+    precise web-click open-signal (see
+    docs/dev/search-log-design-2026-07-07.md).
     """
 
     results: list[dict[str, Any]]
@@ -282,6 +288,7 @@ class SearchView:
     n_skipped: int = 0
     empty_reason: str | None = None
     executed_mode: str | None = None
+    search_event_id: str | None = None
 
 
 def as_search_view(result: Any, *, view: str = "chunks") -> SearchView:

@@ -32,6 +32,7 @@ def _hx_detail(
     key: str = "id",
     mode: str | None = None,
     event: str | None = None,
+    search_event_id: str | None = None,
 ) -> str:
     """Build htmx attributes that mount a surface into ``#main``, or "" if no base.
 
@@ -50,6 +51,12 @@ def _hx_detail(
     event ``is-target`` and scrolls it into view, so the jump lands *on the
     match*, not the folio top. Both ride the push-url too, so a reload
     deep-links to the same spot.
+
+    ``search_event_id``, when the search that produced this hit was itself
+    captured (``SearchView.search_event_id``), rides the same way so the folio
+    route can record the precise web-click open-signal (see
+    docs/dev/search-log-design-2026-07-07.md) — best-effort, never load-bearing
+    for the jump itself.
     """
     from urllib.parse import quote as _q
 
@@ -61,6 +68,8 @@ def _hx_detail(
         suffix += f"&mode={_q(mode)}"
     if event:
         suffix += f"&event={_q(event)}"
+    if search_event_id:
+        suffix += f"&search_event_id={_q(search_event_id)}"
     push = f' hx-push-url="{escape(shell_base)}?{key}={qv}{suffix}"' if shell_base else ""
     return (
         f' hx-get="{escape(detail_base)}?{key}={qv}{suffix}"'
@@ -509,7 +518,9 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             )
             for r in results:
                 conv_id = r.get("conversation_id", "")
-                parts.append(f"<tr{_hx_detail(detail_base, conv_id, shell_base)}>")
+                parts.append(
+                    f"<tr{_hx_detail(detail_base, conv_id, shell_base, search_event_id=sv.search_event_id)}>"
+                )
                 parts.append('<td class="conv-num"></td>')
                 parts.append(f'<td class="identifier">{escape(short_id(conv_id))}</td>')
                 parts.append(f'<td class="temporal">{escape(r.get("_started_at", ""))}</td>')
@@ -569,7 +580,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
                 snippet = truncate_text(r.get("text", ""), 120).replace("\n", " ")
                 parts.append(
                     f'<div class="search-hit compact"{_hit_data(r)}'
-                    f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=r.get("event_id"))}>'
+                    f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=r.get("event_id"), search_event_id=sv.search_event_id)}>'
                     '<aside class="hit-meta"><span class="hit-num"></span>'
                     f'<span class="metric">{score:.3f}</span></aside>'
                     f'<div class="hit-body"><span class="summary">{escape(snippet)}</span>'
@@ -613,7 +624,7 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> str:
             parts.append('<div class="hit-body">')
             parts.append(
                 f'<div class="search-hit__main"'
-                f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=event_id)}>'
+                f'{_hx_detail(detail_base, conv_id, shell_base, mode="trace", event=event_id, search_event_id=sv.search_event_id)}>'
             )
 
             chars = fidelity.chars

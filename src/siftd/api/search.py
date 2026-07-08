@@ -9,6 +9,7 @@ that non-search CLI commands (`siftd query`, `siftd tag`) don't pay numpy's impo
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from siftd.embeddings.indexer import EmbedIndexStatus, IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
+
+_logger = logging.getLogger(__name__)
 
 # Lazy re-exports — resolved on first access to keep numpy's import latency off hot
 # non-search paths.
@@ -997,7 +1000,7 @@ def search_chunks(
     owner: str | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
-    recall: int = 80,
+    recall: int | None = None,
     rerank: str = "mmr",
     lambda_: float = 0.7,
     recency: bool = False,
@@ -1039,10 +1042,19 @@ def search_chunks(
     )
 
 
-# Reciprocal-rank-fusion constant. 60 is the field-standard damping term (Cormack
-# et al. 2009): it flattens the 1/rank curve so a rank-1-vs-rank-2 gap doesn't
-# dominate, letting a strong keyword hit at a middling vector rank still surface.
-_RRF_K = 60
+# Shipped RRF fusion parameters — the winning 0.11.0 bench config
+# `w1.0_kkw20_kvec20_p300_l1.0` on the voyage arm (docs/dev/bench-stage2-chunking-design
+# -2026-07-06.md, "Complete verdict"). Weighted reciprocal-rank fusion with per-list
+# damping k: `score = w_kw/(k_kw + keyword_rank) + 1/(k_vec + vector_rank)`. The smaller
+# per-list k (20, vs the field-standard 60) sharpens the 1/rank curve the bench preferred;
+# the 300-deep vector pool and a pure-relevance (λ=1.0) vector list feed the fusion; the
+# conversation-dedup rollup (best-ranked chunk per conversation) runs on the fused output
+# — narrow gets that dedup for free inside MMR, RRF needs it as an explicit stage.
+_RRF_W_KW = 1.0
+_RRF_K_KW = 20
+_RRF_K_VEC = 20
+_RRF_POOL = 300
+_RRF_LAMBDA = 1.0
 
 
 def _normalize_fts_score(rank: float) -> float:
@@ -1179,13 +1191,16 @@ class _FusionItem:
         if self.keyword_rank is None or rank < self.keyword_rank:
             self.keyword_rank = rank
 
-    def fused_score(self) -> float:
-        """``Σ 1/(60 + rank)`` over the lists this item appears in."""
+    def fused_score(
+        self, *, w_kw: float = _RRF_W_KW, k_kw: int = _RRF_K_KW, k_vec: int = _RRF_K_VEC
+    ) -> float:
+        """Weighted RRF over the lists this item appears in:
+        ``1/(k_vec + vector_rank) + w_kw/(k_kw + keyword_rank)``."""
         fused = 0.0
         if self.vector_rank is not None:
-            fused += 1.0 / (_RRF_K + self.vector_rank)
+            fused += 1.0 / (k_vec + self.vector_rank)
         if self.keyword_rank is not None:
-            fused += 1.0 / (_RRF_K + self.keyword_rank)
+            fused += w_kw / (k_kw + self.keyword_rank)
         return fused
 
 
@@ -1195,15 +1210,25 @@ def _fuse_hybrid(
     embed_conn: sqlite3.Connection,
     *,
     n: int,
+    w_kw: float = _RRF_W_KW,
+    k_kw: int = _RRF_K_KW,
+    k_vec: int = _RRF_K_VEC,
+    dedup: bool = True,
 ) -> list[dict]:
-    """Reciprocal-rank-fuse the vector and keyword lists into one ordered list.
+    """Weighted-reciprocal-rank-fuse the vector and keyword lists into one ordered list.
 
-    Two ranked lists over the same candidate set combine by ``Σ 1/(60 + rank)``:
-    the vector list carries ``vector_rank`` (cosine order, post-MMR); each FTS hit
-    bridges via ``source_ids`` membership to its covering chunk(s), contributing the
-    best (lowest) bm25 position as ``keyword_rank``. FTS hits with no covering chunk
-    become vector-free entrants. Dedup: a hit that bridges never also becomes an
-    entrant. Returns the top-``n`` fused result dicts, each breakdown stamped with
+    Two ranked lists over the same candidate set combine by
+    ``1/(k_vec + vector_rank) + w_kw/(k_kw + keyword_rank)``: the vector list carries
+    ``vector_rank`` (cosine order, post-MMR); each FTS hit bridges via ``source_ids``
+    membership to its covering chunk(s), contributing the best (lowest) bm25 position as
+    ``keyword_rank``. FTS hits with no covering chunk become vector-free entrants. A hit
+    that bridges never also becomes an entrant.
+
+    ``dedup`` applies the conversation rollup: the fused list is the *chunk* ranking, but
+    a conversation is the retrieval unit, so keeping the best-ranked chunk per
+    conversation projects the chunk ranking onto ``n`` distinct conversations (the
+    flooding fix — the RRF analogue of MMR's same-conversation suppression on the narrow
+    path). Returns the top-``n`` fused result dicts, each breakdown stamped with
     ``vector_rank``/``keyword_rank``/``fused_score`` and ``score`` = fused score."""
     # key = chunk_id for real chunks, "entrant:<event_id>" for FTS-only entrants.
     fusion: dict[str, _FusionItem] = {}
@@ -1235,16 +1260,24 @@ def _fuse_hybrid(
             else:
                 item.note_keyword_rank(kr)
 
+    def _fused(item: _FusionItem) -> float:
+        return item.fused_score(w_kw=w_kw, k_kw=k_kw, k_vec=k_vec)
+
     # Fused desc; the fusion key (chunk_id / entrant:event_id) breaks ties deterministically.
-    scored = sorted(fusion.items(), key=lambda kv: (-kv[1].fused_score(), kv[0]))
+    scored = sorted(fusion.items(), key=lambda kv: (-_fused(kv[1]), kv[0]))
 
     out: list[dict] = []
-    for _key, item in scored[:n]:
+    seen_convs: set[str] = set()
+    for _key, item in scored:
+        conv_id = item.result["conversation_id"]
+        if dedup and conv_id in seen_convs:
+            continue  # conversation rollup: best-ranked chunk represents its conversation
+        seen_convs.add(conv_id)
         r = dict(item.result)
         breakdown = r.get("breakdown")
         if not isinstance(breakdown, ScoreBreakdown):
             breakdown = ScoreBreakdown(embedding_sim=0.0)
-        fused = item.fused_score()
+        fused = _fused(item)
         breakdown.vector_rank = item.vector_rank
         breakdown.keyword_rank = item.keyword_rank
         breakdown.fused_score = fused
@@ -1252,6 +1285,8 @@ def _fuse_hybrid(
         r["breakdown"] = breakdown
         r["score"] = fused
         out.append(r)
+        if len(out) >= n:
+            break
     return out
 
 
@@ -1276,8 +1311,10 @@ def hybrid_search(
     owner: str | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
-    # FTS5 tuning
-    recall: int = 80,
+    # FTS5 tuning. recall=None ⇒ the shipped narrow-path candidate width (40, see
+    # NARROW_RECALL_DEFAULT); an explicit int overrides (wider = more semantic reach on a
+    # strong embedder, more FTS dilution on a weak one).
+    recall: int | None = None,
     raw_fts: bool = False,
     # Reranking
     rerank: str = "mmr",
@@ -1359,6 +1396,8 @@ def hybrid_search(
 
     effective_embed_db = embed_db or default_embed_db()
     _backend = _resolve_search_backend(embed_backend)
+    if recall is None:
+        recall = _preset_recall(_backend)
 
     candidate_ids = resolve_candidates(
         db_path,
@@ -1394,15 +1433,16 @@ def hybrid_search(
                 recency_half_life=recency_half_life, recency_max_boost=recency_max_boost,
                 db_path=db_path,
             )
-        elif _hybrid_strategy() == "rrf":
-            # Dormant RRF engine — opt-in via the experiment-only SIFTD_HYBRID_STRATEGY
-            # knob (see _hybrid_strategy) for the slice-5 re-gate. The vector list runs
-            # over the full candidate set (no FTS narrowing), fused with a chunk-level
-            # keyword list.
-            pool = max(n * 3, n)
+        elif _hybrid_strategy(_backend) == "rrf":
+            # Dedup-on-RRF engine — the 0.11.0 default on strong embedders (see
+            # _hybrid_strategy). The vector list runs over the full candidate set (no FTS
+            # narrowing) at a 300-deep pool and pure-relevance λ=1.0, fused with a
+            # chunk-level keyword list, then the conversation-dedup rollup projects the
+            # fused chunk ranking onto n distinct conversations.
+            pool = _RRF_POOL
             vector_results = _build_vector_list(
                 embed_conn, query_embedding, candidate_ids,
-                search_limit=pool, mmr_limit=pool, use_mmr=use_mmr, lambda_=lambda_,
+                search_limit=pool, mmr_limit=pool, use_mmr=use_mmr, lambda_=_RRF_LAMBDA,
                 mmr_cap=MAX_MMR_CANDIDATES, recency=recency,
                 recency_half_life=recency_half_life, recency_max_boost=recency_max_boost,
                 db_path=db_path,
@@ -1449,24 +1489,35 @@ def hybrid_search(
     return final_chunks
 
 
-def _hybrid_strategy() -> str:
-    """Return the hybrid strategy: ``"narrow"`` (default) or ``"rrf"`` (dormant).
+def _hybrid_strategy(backend: EmbeddingBackend) -> str:
+    """Return the hybrid strategy for ``backend``: ``"rrf"`` or ``"narrow"``.
 
-    ``SIFTD_HYBRID_STRATEGY`` is an EXPERIMENT-ONLY knob — deliberately absent from
-    ``--help``, the docs, and config. ``=rrf`` opts into the complete-but-dormant RRF
-    engine so the slice-5 re-gate can measure a *tuned* RRF; the knob dies or gets
-    promoted to a real default there.
+    Precedence: ``SIFTD_HYBRID_STRATEGY`` (env) overrides, else the embedder's preset
+    default. The env knob stays an EXPERIMENT-ONLY escape hatch — deliberately absent
+    from ``--help``, config, and docs — for pinning a strategy across arms (the bench and
+    the fidelity gate rely on it); ``=rrf``/``=narrow`` force that engine, anything else
+    is ignored.
 
-    Default = narrow-then-rank (FTS5 recall narrows candidates, embeddings rerank),
-    per the F3 bench ruling. RRF's avg_top1 win is partly structural — it ranks over
-    the full candidate set, so its top hit's cosine is quasi-guaranteed >= narrow's,
-    and avg_top1 alone is not a retrieval-quality verdict (see the 2026-03 model-
-    comparison finding). recall@10 — the gate's only known-answer relevance metric —
-    regressed, and the exact-identifier motivation showed no advantage at k=60. So RRF
-    stays dormant until it earns the default on a real metric."""
+    The shipped default is per-preset (0.11.0 bench, decision #4 resolved): strong
+    embedders (voyage validated, +0.0129 composite over narrow) get dedup-on-RRF; weak/
+    local ones keep narrow-then-rank (it beat every RRF config on the bge arm). Picking a
+    provider picks the behavior — there is no user-facing strategy knob."""
     import os
 
-    return "rrf" if os.environ.get("SIFTD_HYBRID_STRATEGY") == "rrf" else "narrow"
+    env = os.environ.get("SIFTD_HYBRID_STRATEGY")
+    if env in ("rrf", "narrow"):
+        return env
+
+    from siftd.embeddings.presets import hybrid_defaults_for_backend
+
+    return hybrid_defaults_for_backend(getattr(backend, "name", "") or "").strategy
+
+
+def _preset_recall(backend: EmbeddingBackend) -> int:
+    """The narrow-path FTS candidate width for ``backend``'s preset (global default 40)."""
+    from siftd.embeddings.presets import hybrid_defaults_for_backend
+
+    return hybrid_defaults_for_backend(getattr(backend, "name", "") or "").recall
 
 
 def _narrow_then_rank(
@@ -1865,8 +1916,8 @@ def search_view(
     owner: str | None = None,
     tool: str | None = None,
     tool_tag: str | None = None,
-    # Engine tuning
-    recall: int = 80,
+    # Engine tuning. recall=None ⇒ the shipped default (40; see NARROW_RECALL_DEFAULT).
+    recall: int | None = None,
     rerank: str = "mmr",
     lambda_: float = 0.7,
     recency: bool = False,
@@ -1882,6 +1933,7 @@ def search_view(
     full: bool = False,
     around: str | None = None,
     turns: str | None = None,
+    issuer: str | None = None,
 ) -> SearchView:
     """The whole search Operation: engine retrieval + the post-processing recipe.
 
@@ -1900,11 +1952,18 @@ def search_view(
     short-circuits to an empty chunks/thread/conversations view (``empty_reason``
     stays ``None``) so the "no results" message is distinct from a deliberately
     emptied one.
+
+    ``issuer`` is an explicit override for the search-log capture (serve routes
+    pass ``"web"``); CLI callers omit it and the capture site infers cli/agent
+    from session registration (see docs/dev/search-log-design-2026-07-07.md).
+    Capture is best-effort and never affects this return value.
     """
     _validate_view_axes(view, sort, select, around, turns)
 
     # Filter-only search: no query, but a tag facet → enumerate tagged elements
     # (recency-ordered), skipping the FTS/vector engines entirely (decision 1).
+    # Not captured (OJ-6): no query text means nothing for UX re-run or GT to
+    # key on.
     if not q.strip() and (tag or all_tags):
         return enumerate_tagged(
             db_path=db_path,
@@ -1973,7 +2032,17 @@ def search_view(
     degraded = executed_mode if executed_mode != mode else None
 
     if not chunks:
-        return SearchView(results=[], view=view, executed_mode=degraded)
+        sv = SearchView(results=[], view=view, executed_mode=degraded)
+        search_event_id = _capture_search(
+            q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
+            recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
+            workspace=workspace, owner=owner, issuer=issuer,
+        )
+        if search_event_id is not None:
+            import dataclasses
+
+            sv = dataclasses.replace(sv, search_event_id=search_event_id)
+        return sv
 
     from siftd.storage.sqlite import open_database
 
@@ -1998,4 +2067,93 @@ def search_view(
         import dataclasses
 
         sv = dataclasses.replace(sv, executed_mode=degraded)
+    search_event_id = _capture_search(
+        q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
+        recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
+        workspace=workspace, owner=owner, issuer=issuer,
+    )
+    if search_event_id is not None:
+        import dataclasses
+
+        sv = dataclasses.replace(sv, search_event_id=search_event_id)
     return sv
+
+
+def _capture_search(
+    q: str,
+    *,
+    db_path: Path,
+    sv: SearchView,
+    mode: str,
+    executed_mode: str,
+    recall: int | None,
+    rerank: str,
+    lambda_: float,
+    embed_backend: EmbeddingBackend | None,
+    workspace: str | None,
+    owner: str | None,
+    issuer: str | None,
+) -> str | None:
+    """Best-effort search-log capture (OJ-5): inline, post-response, never
+    allowed to fail or slow the search this function is called for.
+
+    Skips capture when disabled via config (OJ-4) or empty query (OJ-6,
+    already filtered by the caller not reaching this function on that path).
+    Returns the new search_events row's ULID (so the caller can thread it onto
+    the returned SearchView for the web-click open-signal), or None when
+    capture was skipped/disabled/failed.
+    """
+    if not q.strip():
+        return None
+    try:
+        from siftd.config import get_search_log_enabled
+
+        if not get_search_log_enabled():
+            return None
+
+        from siftd.api._search_log_capture import resolve_issuer_and_session
+        from siftd.storage.search_log import SearchEventFingerprint, record_search
+        from siftd.storage.sqlite import open_database
+
+        fp = SearchEventFingerprint(fp_mode=mode)
+        if executed_mode in ("semantic", "hybrid"):
+            try:
+                backend = _resolve_search_backend(embed_backend)
+                fp.fp_backend = getattr(backend, "name", None)
+                fp.fp_model = getattr(backend, "model", None)
+                fp.fp_dimension = getattr(backend, "dimension", None)
+                fp.fp_preset = fp.fp_backend
+                fp.fp_strategy = _hybrid_strategy(backend)
+                fp.fp_recall = recall if recall is not None else _preset_recall(backend)
+            except Exception:
+                pass  # fingerprint enrichment is best-effort; capture the rest
+        else:
+            fp.fp_strategy = "fts"
+        if rerank == "mmr":
+            fp.fp_mmr_lambda = lambda_
+
+        resolved_issuer, session_id = resolve_issuer_and_session(issuer)
+        result_ids: list[str] = [
+            cid for r in sv.results if (cid := r.get("conversation_id"))
+        ]
+
+        conn = open_database(db_path, read_only=False)
+        try:
+            return record_search(
+                conn,
+                query=q,
+                issuer=resolved_issuer,
+                fingerprint=fp,
+                executed_mode=executed_mode,
+                result_ids=result_ids,
+                result_count=len(sv.results),
+                owner=owner or "",
+                workspace=workspace,
+                session_id=session_id,
+                commit=True,
+            )
+        finally:
+            conn.close()
+    except Exception:
+        _logger.debug("search-log capture failed", exc_info=True)
+        return None
