@@ -9,6 +9,7 @@ that non-search CLI commands (`siftd query`, `siftd tag`) don't pay numpy's impo
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +35,8 @@ if TYPE_CHECKING:
     from siftd.embeddings.indexer import EmbedIndexStatus, IncrementalCompatError
     from siftd.search import apply_temporal_weight
     from siftd.storage.embeddings import IndexCompatError
+
+_logger = logging.getLogger(__name__)
 
 # Lazy re-exports — resolved on first access to keep numpy's import latency off hot
 # non-search paths.
@@ -1930,6 +1933,7 @@ def search_view(
     full: bool = False,
     around: str | None = None,
     turns: str | None = None,
+    issuer: str | None = None,
 ) -> SearchView:
     """The whole search Operation: engine retrieval + the post-processing recipe.
 
@@ -1948,11 +1952,18 @@ def search_view(
     short-circuits to an empty chunks/thread/conversations view (``empty_reason``
     stays ``None``) so the "no results" message is distinct from a deliberately
     emptied one.
+
+    ``issuer`` is an explicit override for the search-log capture (serve routes
+    pass ``"web"``); CLI callers omit it and the capture site infers cli/agent
+    from session registration (see docs/dev/search-log-design-2026-07-07.md).
+    Capture is best-effort and never affects this return value.
     """
     _validate_view_axes(view, sort, select, around, turns)
 
     # Filter-only search: no query, but a tag facet → enumerate tagged elements
     # (recency-ordered), skipping the FTS/vector engines entirely (decision 1).
+    # Not captured (OJ-6): no query text means nothing for UX re-run or GT to
+    # key on.
     if not q.strip() and (tag or all_tags):
         return enumerate_tagged(
             db_path=db_path,
@@ -2021,7 +2032,13 @@ def search_view(
     degraded = executed_mode if executed_mode != mode else None
 
     if not chunks:
-        return SearchView(results=[], view=view, executed_mode=degraded)
+        sv = SearchView(results=[], view=view, executed_mode=degraded)
+        _capture_search(
+            q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
+            recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
+            workspace=workspace, owner=owner, issuer=issuer,
+        )
+        return sv
 
     from siftd.storage.sqlite import open_database
 
@@ -2046,4 +2063,85 @@ def search_view(
         import dataclasses
 
         sv = dataclasses.replace(sv, executed_mode=degraded)
+    _capture_search(
+        q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
+        recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
+        workspace=workspace, owner=owner, issuer=issuer,
+    )
     return sv
+
+
+def _capture_search(
+    q: str,
+    *,
+    db_path: Path,
+    sv: SearchView,
+    mode: str,
+    executed_mode: str,
+    recall: int | None,
+    rerank: str,
+    lambda_: float,
+    embed_backend: EmbeddingBackend | None,
+    workspace: str | None,
+    owner: str | None,
+    issuer: str | None,
+) -> None:
+    """Best-effort search-log capture (OJ-5): inline, post-response, never
+    allowed to fail or slow the search this function is called for.
+
+    Skips capture when disabled via config (OJ-4) or empty query (OJ-6,
+    already filtered by the caller not reaching this function on that path).
+    """
+    if not q.strip():
+        return
+    try:
+        from siftd.config import get_search_log_enabled
+
+        if not get_search_log_enabled():
+            return
+
+        from siftd.api._search_log_capture import resolve_issuer_and_session
+        from siftd.storage.search_log import SearchEventFingerprint, record_search
+        from siftd.storage.sqlite import open_database
+
+        fp = SearchEventFingerprint(fp_mode=mode)
+        if executed_mode in ("semantic", "hybrid"):
+            try:
+                backend = _resolve_search_backend(embed_backend)
+                fp.fp_backend = getattr(backend, "name", None)
+                fp.fp_model = getattr(backend, "model", None)
+                fp.fp_dimension = getattr(backend, "dimension", None)
+                fp.fp_preset = fp.fp_backend
+                fp.fp_strategy = _hybrid_strategy(backend)
+                fp.fp_recall = recall if recall is not None else _preset_recall(backend)
+            except Exception:
+                pass  # fingerprint enrichment is best-effort; capture the rest
+        else:
+            fp.fp_strategy = "fts"
+        if rerank == "mmr":
+            fp.fp_mmr_lambda = lambda_
+
+        resolved_issuer, session_id = resolve_issuer_and_session(issuer)
+        result_ids: list[str] = [
+            cid for r in sv.results if (cid := r.get("conversation_id"))
+        ]
+
+        conn = open_database(db_path, read_only=False)
+        try:
+            record_search(
+                conn,
+                query=q,
+                issuer=resolved_issuer,
+                fingerprint=fp,
+                executed_mode=executed_mode,
+                result_ids=result_ids,
+                result_count=len(sv.results),
+                owner=owner or "",
+                workspace=workspace,
+                session_id=session_id,
+                commit=True,
+            )
+        finally:
+            conn.close()
+    except Exception:
+        _logger.debug("search-log capture failed", exc_info=True)

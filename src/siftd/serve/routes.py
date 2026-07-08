@@ -1065,7 +1065,8 @@ def search_route(
              # Recipe controls — search_view runs the post-processing recipe.
              "view": view, "sort": sort, "select": select,
              "threshold": threshold, "full": full,
-             "around": around, "turns": turns},
+             "around": around, "turns": turns,
+             "issuer": "web"},
             "search", db_path,
             render_context={"debug_ids": debug_ids, "mode": mode},
         )

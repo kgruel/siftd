@@ -1325,6 +1325,7 @@ def _find_search_fragment(
             tag=tag,
             tool=tool,
             owner=owner,
+            issuer="web",
         )
 
     # sqlite3.DatabaseError (not OperationalError) is the family root — it also

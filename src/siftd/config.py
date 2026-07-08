@@ -144,6 +144,11 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Ingestion
     _SchemaEntry("ingestion.filter_binary", "bool", _is_bool_like,
                  "Skip binary content blobs during ingest", "true"),
+    # Search
+    _SchemaEntry("search.log", "bool", _is_bool_like,
+                 "Capture executed searches (query, fingerprint, result IDs) for "
+                 "recent-searches UX and behavioral ground truth. Local-only, "
+                 "owner-scoped; queries can contain sensitive strings", "true"),
     # Serve
     _SchemaEntry("serve.delegate", "bool", _is_bool_like,
                  "CLI delegates read ops to running serve instance", "true"),
@@ -692,6 +697,24 @@ def get_ingestion_filter_binary() -> bool:
             if isinstance(value, str):
                 return value.lower() not in ("false", "0", "no")
     # Default: filtering is enabled
+    return True
+
+
+def get_search_log_enabled() -> bool:
+    """Whether to capture executed searches (query/fingerprint/result IDs).
+
+    Defaults to True — local-only, owner-scoped operational data. Reads
+    [search] log. See docs/dev/search-log-design-2026-07-07.md (OJ-4).
+    """
+    doc = load_config()
+    search_config = doc.get("search", {})
+    if isinstance(search_config, dict):
+        value = search_config.get("log")
+        if value is not None:
+            if isinstance(value, bool):
+                return value
+            if isinstance(value, str):
+                return value.lower() not in ("false", "0", "no")
     return True
 
 
