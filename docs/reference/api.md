@@ -680,6 +680,7 @@ Post-processed, render-ready search output — the recipe's single product.
 | `n_skipped` | `int` |  |
 | `empty_reason` | `str \| None` |  |
 | `executed_mode` | `str \| None` |  |
+| `search_event_id` | `str \| None` |  |
 
 ### ScoreBreakdown
 

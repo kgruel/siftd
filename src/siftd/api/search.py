@@ -2033,11 +2033,15 @@ def search_view(
 
     if not chunks:
         sv = SearchView(results=[], view=view, executed_mode=degraded)
-        _capture_search(
+        search_event_id = _capture_search(
             q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
             recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
             workspace=workspace, owner=owner, issuer=issuer,
         )
+        if search_event_id is not None:
+            import dataclasses
+
+            sv = dataclasses.replace(sv, search_event_id=search_event_id)
         return sv
 
     from siftd.storage.sqlite import open_database
@@ -2063,11 +2067,15 @@ def search_view(
         import dataclasses
 
         sv = dataclasses.replace(sv, executed_mode=degraded)
-    _capture_search(
+    search_event_id = _capture_search(
         q, db_path=db_path, sv=sv, mode=mode, executed_mode=degraded or mode,
         recall=recall, rerank=rerank, lambda_=lambda_, embed_backend=embed_backend,
         workspace=workspace, owner=owner, issuer=issuer,
     )
+    if search_event_id is not None:
+        import dataclasses
+
+        sv = dataclasses.replace(sv, search_event_id=search_event_id)
     return sv
 
 
@@ -2085,20 +2093,23 @@ def _capture_search(
     workspace: str | None,
     owner: str | None,
     issuer: str | None,
-) -> None:
+) -> str | None:
     """Best-effort search-log capture (OJ-5): inline, post-response, never
     allowed to fail or slow the search this function is called for.
 
     Skips capture when disabled via config (OJ-4) or empty query (OJ-6,
     already filtered by the caller not reaching this function on that path).
+    Returns the new search_events row's ULID (so the caller can thread it onto
+    the returned SearchView for the web-click open-signal), or None when
+    capture was skipped/disabled/failed.
     """
     if not q.strip():
-        return
+        return None
     try:
         from siftd.config import get_search_log_enabled
 
         if not get_search_log_enabled():
-            return
+            return None
 
         from siftd.api._search_log_capture import resolve_issuer_and_session
         from siftd.storage.search_log import SearchEventFingerprint, record_search
@@ -2128,7 +2139,7 @@ def _capture_search(
 
         conn = open_database(db_path, read_only=False)
         try:
-            record_search(
+            return record_search(
                 conn,
                 query=q,
                 issuer=resolved_issuer,
@@ -2145,3 +2156,4 @@ def _capture_search(
             conn.close()
     except Exception:
         _logger.debug("search-log capture failed", exc_info=True)
+        return None

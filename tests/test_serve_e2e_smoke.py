@@ -896,3 +896,97 @@ class TestSearchModeWireContract:
         assert resp.status_code == 200, (
             f"mode=fts must return 200 without embeddings; got {resp.status_code}: {resp.text}"
         )
+
+
+class TestSearchLogWebClickLinkage:
+    """The Find fragment's rendered result link carries search_event_id through
+    to /folio, which records the precise web-click open-signal (see
+    docs/dev/search-log-design-2026-07-07.md). ``HX-Request: true`` is sent so
+    the fragment routes serve their swap content instead of 303-redirecting to
+    the full shell (see html_routes._is_htmx)."""
+
+    def test_query_fragment_result_link_carries_search_event_id(self, tmp_path):
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/query",
+                params={"search": "unique-marker"},
+                headers={"HX-Request": "true"},
+            )
+        assert resp.status_code == 200, resp.text
+        assert "search_event_id=" in resp.text
+
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db, read_only=True)
+        try:
+            rows = conn.execute("SELECT id, query, issuer FROM search_events").fetchall()
+        finally:
+            conn.close()
+        assert len(rows) == 1
+        assert rows[0]["query"] == "unique-marker"
+        assert rows[0]["issuer"] == "web"
+
+    def test_folio_click_with_search_event_id_records_open(self, tmp_path):
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            conv_id = _resolve_conv_id(client)
+            query_resp = client.get(
+                "/query",
+                params={"search": "unique-marker"},
+                headers={"HX-Request": "true"},
+            )
+            assert query_resp.status_code == 200, query_resp.text
+
+            from siftd.storage.sqlite import open_database
+
+            conn = open_database(db, read_only=True)
+            try:
+                sid = conn.execute("SELECT id FROM search_events").fetchone()["id"]
+            finally:
+                conn.close()
+
+            # Simulate the browser following the rendered hx-get link: /folio
+            # receives the same search_event_id the fragment embedded.
+            folio_resp = client.get(
+                "/folio",
+                params={"id": conv_id, "mode": "trace", "search_event_id": sid},
+                headers={"HX-Request": "true"},
+            )
+            assert folio_resp.status_code == 200, folio_resp.text
+
+        conn = open_database(db, read_only=True)
+        try:
+            opens = conn.execute("SELECT * FROM search_opens").fetchall()
+        finally:
+            conn.close()
+        assert len(opens) == 1
+        assert opens[0]["search_event_id"] == sid
+        assert opens[0]["conversation_id"] == conv_id
+        assert opens[0]["surface"] == "web-click"
+
+    def test_folio_click_without_search_event_id_records_nothing(self, tmp_path):
+        """A direct (non-search-originated) folio open — no prior search and no
+        search_event_id on the request — must not fabricate a link. (A prior
+        search containing this conversation would legitimately bind via the
+        CLI-style heuristic even without an explicit search_event_id — that's
+        covered by the linkage tests above, not this one.)"""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            conv_id = _resolve_conv_id(client)
+            resp = client.get(
+                "/folio", params={"id": conv_id}, headers={"HX-Request": "true"},
+            )
+            assert resp.status_code == 200, resp.text
+
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db, read_only=True)
+        try:
+            opens = conn.execute("SELECT * FROM search_opens").fetchall()
+        finally:
+            conn.close()
+        assert opens == []

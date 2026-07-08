@@ -657,3 +657,41 @@ def test_search_thread_tier2_jump_opens_trace_at_event():
     html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
     assert "search-hit compact" in html
     assert "mode=trace" in html and "event=01EVT2" in html
+
+
+def test_search_chunk_jump_carries_search_event_id():
+    # A captured search's chunks-view hit threads search_event_id onto the
+    # folio jump, so the web-click open-signal (docs/dev/search-log-design-
+    # 2026-07-07.md) can bind precisely rather than falling back to the
+    # session/window heuristic.
+    sv = SearchView(results=[_chunk()], view="chunks", search_event_id="01SEARCHEVT")
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert "search_event_id=01SEARCHEVT" in html
+
+
+def test_search_thread_tier2_jump_carries_search_event_id():
+    sv = SearchView(
+        results=[], view="thread", tier1=[],
+        tier2=[_chunk(conversation_id="01CONV2", event_id="01EVT2")],
+        search_event_id="01SEARCHEVT",
+    )
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert "search_event_id=01SEARCHEVT" in html
+
+
+def test_search_conversations_view_row_carries_search_event_id():
+    sv = SearchView(
+        results=[{"conversation_id": "01CONV", "_started_at": "2026-06-19", "_workspace": "p"}],
+        view="conversations", search_event_id="01SEARCHEVT",
+    )
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert "search_event_id=01SEARCHEVT" in html
+
+
+def test_search_without_capture_omits_search_event_id():
+    # No captured search (search.log disabled, capture failed, or empty query)
+    # → SearchView.search_event_id stays None, so the jump carries no param —
+    # get_conversation then falls back to the CLI-style heuristic, unharmed.
+    sv = SearchView(results=[_chunk()], view="chunks")
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert "search_event_id=" not in html

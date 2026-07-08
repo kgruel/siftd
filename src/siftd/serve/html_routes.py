@@ -559,6 +559,7 @@ def ui_folio(
     id: str | None = Parameter(query="id", default=None),
     mode: str = Parameter(query="mode", default="reading"),
     event: str | None = Parameter(query="event", default=None),
+    search_event_id: str | None = Parameter(query="search_event_id", default=None),
 ) -> Response:
     """Render the Swiss transcript folio for one conversation.
 
@@ -574,6 +575,12 @@ def ui_folio(
     event ``is-target`` and rides out as ``data-scroll-to`` so enhance.js scrolls
     it into view after the swap — the jump lands on the match, not the top.
     Validated to a safe anchor token; a bad value is simply ignored (no scroll).
+
+    ``search_event_id`` (a search hit's ``SearchView.search_event_id``, riding
+    the ``_hx_detail`` jump — see output/html_fmt.py) is the precise web-click
+    open-signal linkage: passed through to ``get_conversation``, which records
+    it best-effort. Validated the same way as ``event``; a bad value is simply
+    dropped (no open-signal, never an error).
     """
     mode = mode if mode in ("reading", "trace") else "reading"
     red = _shell_redirect(
@@ -613,7 +620,10 @@ def ui_folio(
         conv_id = latest[0].id
 
     try:
-        detail = get_conversation(conv_id, fidelity=fidelity, db_path=db_path, owner=owner)
+        detail = get_conversation(
+            conv_id, fidelity=fidelity, db_path=db_path, owner=owner,
+            search_event_id=_safe_event_id(search_event_id),
+        )
     except AmbiguousPrefix as exc:
         return _html_response(
             _stub("transcript", "Transcript", f"ambiguous id — {exc.total} matches")
