@@ -1,0 +1,46 @@
+name "project"
+store "/Users/kaygee/Code/siftd/.loops/data/project.db"
+
+loops {
+  decision   { fold { items "by" "topic" }
+               preview "message" }
+  thread     { fold { items "by" "name" }
+               preview "status" "message" }
+  change     { fold { items "collect" 20 } }
+  task       { fold { items "by" "name" }
+               preview "status" "message" }
+  plan       { fold { items "by" "name" }
+               preview "status" "message" }
+  session    { fold { items "by" "name" }
+               preview "status" }
+  log        { fold { items "collect" 20 } }
+  cite       { fold { items "collect" 0 } }
+  hypothesis { fold { items "by" "name" }
+               preview "status" "message" }
+  friction   { fold { items "by" "name" }
+               preview "status" "message" }
+  // roadmap — release-arc nodes forming an emission graph (mirrors painted's
+  // 2026-07-04 kind; added 2026-07-07 for the 0.11.0 + 1.0 arcs): each node is
+  // a work line ref-linked to its ratifying decision and upstream node.
+  // status: pending → in_progress → done · flagged=needs discussion ·
+  // deferred=trigger-gated · open=root arc
+  roadmap    { fold { items "by" "name" }
+               preview "status" "message" }
+
+  observation { fold { items "by" "topic" } }
+  seal       { fold { items "collect" 10 }
+               preview "message" }
+
+  // The attestation boundary: a seal fact closes the window and mints a
+  // signed tick (painted's pattern).
+  boundary when="seal"
+}
+
+observers {
+  project {
+    key "ZRCvxRrSPE+YQtQcHeZsA0iU23YDXb/WaFA+Ocp2nzk="
+  }
+  "kyle/fable" {
+    key "GlMa67gI+oMg7lyyK2R8JjOYigo7lisqKJuxQaT6nB4="
+  }
+}
