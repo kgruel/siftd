@@ -152,12 +152,21 @@ def recent_searches(
     owner: str = "",
     limit: int = 20,
 ) -> list[dict]:
-    """Return the last `limit` searches for this owner, most recent first."""
+    """Return the last `limit` searches for this owner, most recent first.
+
+    Each row carries an ``opened`` flag — whether any search_opens row links
+    back to the search (the weak opened-signal; see the design doc's
+    epistemics note) — so the history surface can mark linked opens without
+    a second query.
+    """
     if not has_search_log_table(conn):
         return []
     cur = conn.execute(
         """
-        SELECT id, query, issued_at, issuer, executed_mode, result_count
+        SELECT id, query, issued_at, issuer, executed_mode, result_count,
+               EXISTS(
+                   SELECT 1 FROM search_opens o WHERE o.search_event_id = search_events.id
+               ) AS opened
         FROM search_events
         WHERE owner = ?
         ORDER BY issued_at DESC, id DESC
@@ -165,7 +174,7 @@ def recent_searches(
         """,
         (owner, limit),
     )
-    return [dict(row) for row in cur.fetchall()]
+    return [{**dict(row), "opened": bool(row["opened"])} for row in cur.fetchall()]
 
 
 def record_open(

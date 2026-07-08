@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+> The search-coherence release. Element tagging lands as a first-class read
+> path, and search stops being a matter of taste: embedding providers were
+> benchmarked offline against a cached-artifact replica of the live engine,
+> two redesigns (typed chunking, aggregate rollup) were **rejected on
+> CI-backed empirical evidence**, and the one measured win shipped —
+> dedup-on-RRF fusion, selected **per preset**: strong embedding presets
+> (e.g. voyage) use RRF, weaker ones stay on narrow-then-rank. The search
+> log begins accruing (local-only, opt-out), and the `query` command takes
+> a deliberate clean break (see Breaking Changes).
+
+### Breaking Changes (migration)
+
+- **`siftd query` is a list command only — detail-view args and `query sql`
+  removed** — `query` no longer accepts a positional conversation ID, the
+  anchor/window flags (`--around`, `--turns`, `--from-start`, `--from-end`,
+  `--at-turn`), `--summary`, or `--neighbors`; those belong to `siftd show
+  <id>`, which already ran the identical detail handler. The deprecated
+  `query sql <name>` alias is also removed. Both removed forms exit 2 with a
+  redirect hint. Migrate: `query <id> ...` → `show <id> ...`;
+  `query sql <name>` → `report <name>`.
+
+### Added
+
+- **Element tagging read-path** — tags can target conversation elements
+  (prompts, responses, tool calls, blocks) via `TargetRef`, with filter-only
+  retrieval (`siftd search --tag NAME` enumerates tagged elements without a
+  query), `tag list --on KIND`, and web affordances for element tags.
+- **Per-preset hybrid strategy (dedup-on-RRF)** — hybrid search fuses FTS and
+  vector rankings with reciprocal-rank fusion plus conversation dedup on
+  strong embedding presets, and keeps narrow-then-rank (recall 40, λ=0.7
+  revalidated) elsewhere. Promotion was gated per preset by the offline
+  bench: voyage cleared every promote gate; gemini failed the tool-query
+  gate and ships narrow.
+- **Search-log capture** — every executed search records its query, config
+  fingerprint (backend/model/strategy/preset/recall/λ/mode), ranked result
+  IDs, issuer (`cli`/`agent`/`web`), and a later "opened" signal (web-click
+  precise; CLI heuristic, session- or 30-minute-window bound). **Local-only:
+  never syncs, never leaves the machine.** On by default; opt out with
+  `siftd config set search.log false`. Surface: `siftd search --history [N]`.
+- **Bench harness (dev tool)** — the stage-1/2 offline search benchmark
+  (`bench/stage1/`): cached-artifact replicas, ground-truth query classes,
+  and a fidelity gate proving the replica reproduces the live engine's
+  top-10 exactly. Standing policy: no search-behavior change ships without a
+  bench re-gate (see `bench/README.md`).
+
+### Rejected (measured, not shipped)
+
+- **Typed chunking (stage 2)** — S1 ≤ S0 on both provider arms; hypothesis
+  falsified, reverted.
+- **Aggregate rollup** — conversation-dedup matched or beat aggregation
+  everywhere it mattered; dedup shipped instead.
+
 ## [0.10.2] - 2026-06-26
 
 ### Fixed

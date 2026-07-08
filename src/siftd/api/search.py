@@ -2157,3 +2157,29 @@ def _capture_search(
     except Exception:
         _logger.debug("search-log capture failed", exc_info=True)
         return None
+
+
+def recent_search_history(
+    db_path: Path,
+    *,
+    owner: str | None = None,
+    limit: int = 20,
+) -> list[dict]:
+    """Recent captured searches (the `siftd search --history` read path).
+
+    Thin api-boundary wrapper over ``storage.search_log.recent_searches`` so the
+    CLI never touches storage directly. Owner scoping matches capture: a local
+    search is recorded with owner ``''``, so ``owner=None`` reads the same
+    unscoped bucket (`owner or ""` — the convention `_capture_search` writes with).
+    Returns dicts with: id, query, issued_at, issuer, executed_mode,
+    result_count, opened (bool — a linked open exists; a weak signal, see
+    docs/dev/search-log-design-2026-07-07.md).
+    """
+    from siftd.storage.search_log import recent_searches
+    from siftd.storage.sqlite import open_database
+
+    conn = open_database(db_path, read_only=True)
+    try:
+        return recent_searches(conn, owner=owner or "", limit=limit)
+    finally:
+        conn.close()
