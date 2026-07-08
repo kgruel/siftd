@@ -30,8 +30,6 @@ class AdapterSelectionError(ValueError):
 # never-built index) is deferred to an explicit `siftd embed` — the first-run backlog can be
 # tens of thousands of chunks, and a 3-RPM remote free tier would otherwise hang ingest.
 _AUTO_INDEX_BACKLOG_LIMIT = 200
-# index_meta key recording that the remote first-egress notice has been shown once.
-_EGRESS_NOTICE_META_KEY = "auto_index_egress_notified"
 
 
 @dataclass
@@ -219,7 +217,9 @@ def _maybe_auto_index(
     # ``report.notice`` (skipped_reason="notice"), the flag is not burned, and indexing
     # resumes once any surface has shown the notice (interactive ingest, or the first
     # explicit `siftd embed`).
-    notice = _pending_egress_notice(st.backend, embed_db)
+    from siftd.embeddings.egress import mark_egress_notified, pending_egress_notice
+
+    notice = pending_egress_notice(st.backend, embed_db)
     if notice:
         if on_notice is None:
             return AutoIndexReport(
@@ -227,7 +227,7 @@ def _maybe_auto_index(
             )
         report.notice = notice
         on_notice(notice)
-        _mark_egress_notified(embed_db)
+        mark_egress_notified(embed_db)
 
     from siftd.api.search import build_index
 
@@ -244,50 +244,6 @@ def _maybe_auto_index(
     return report
 
 
-def _pending_egress_notice(configured_backend: str | None, embed_db: Path) -> str | None:
-    """Text for the one-time remote first-egress disclosure, or None if N/A or already shown.
-
-    Read-only: it does NOT persist the shown flag — the caller persists via
-    :func:`_mark_egress_notified` only once the notice has actually been surfaced, so a
-    disclosure is never burned unshown. Local backends (fastembed) send nothing off-machine.
-    A missing embeddings DB counts as pending: the explicit first build is often the very
-    first egress.
-    """
-    if not configured_backend or not configured_backend.startswith("remote:"):
-        return None
-
-    if embed_db.exists():
-        from siftd.storage.embeddings import get_meta, open_embeddings_db
-
-        conn = open_embeddings_db(embed_db, read_only=True)
-        try:
-            if get_meta(conn, _EGRESS_NOTICE_META_KEY):
-                return None
-        finally:
-            conn.close()
-
-    from siftd.storage.embeddings import config_backend_name
-
-    provider = config_backend_name(configured_backend)
-    return (
-        f"semantic indexing sends conversation content to {provider}; auto-indexing on "
-        "ingest can be disabled with 'siftd config set embed.auto_index false'"
-    )
-
-
-def _mark_egress_notified(embed_db: Path) -> None:
-    """Persist the remote first-egress shown-once flag (called only after the notice fired)."""
-    if not embed_db.exists():
-        return
-    from siftd.storage.embeddings import open_embeddings_db, set_meta
-
-    conn = open_embeddings_db(embed_db)
-    try:
-        set_meta(conn, _EGRESS_NOTICE_META_KEY, "1")
-    finally:
-        conn.close()
-
-
 def egress_notice_pending(embed_db_path: Path | None = None) -> str | None:
     """The one-time remote first-egress disclosure if it hasn't been shown yet, else None.
 
@@ -295,21 +251,22 @@ def egress_notice_pending(embed_db_path: Path | None = None) -> str | None:
     embedding egress directly — the explicit ``siftd embed`` build is often the FIRST
     egress (initial backlog), so it must disclose too. Read-only; pair with
     :func:`mark_egress_notified` once the notice has actually been surfaced.
-    """
-    from siftd.embeddings.availability import embedding_status
-    from siftd.paths import embeddings_db_path
 
-    st = embedding_status()
-    if not st.usable:
-        return None
-    return _pending_egress_notice(st.backend, embed_db_path or embeddings_db_path())
+    Thin wrapper over :mod:`siftd.embeddings.egress`, kept here so existing callers
+    (``siftd embed``, this module's own auto-index hook) don't need to change import
+    paths — the pure logic lives in ``embeddings`` because ``doctor`` cannot depend on
+    the ``api`` layer but needs to read the same pending-notice state.
+    """
+    from siftd.embeddings.egress import egress_notice_pending as _egress_notice_pending
+
+    return _egress_notice_pending(embed_db_path)
 
 
 def mark_egress_notified(embed_db_path: Path | None = None) -> None:
     """Persist the first-egress shown-once flag (call only after the notice was surfaced)."""
-    from siftd.paths import embeddings_db_path
+    from siftd.embeddings.egress import mark_egress_notified_default
 
-    _mark_egress_notified(embed_db_path or embeddings_db_path())
+    mark_egress_notified_default(embed_db_path)
 
 
 def run_rebuild_fts(*, db_path: Path) -> IngestRunResult:
