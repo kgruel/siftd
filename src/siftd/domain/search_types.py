@@ -107,6 +107,11 @@ class SearchChunk:
     context_window: list[tuple[str, str, str, bool]] | None = None
     turn_index: int | None = None
     event_id: str | None = None
+    # The exact keyword-matched event that bridged this chunk into an RRF
+    # fusion (None outside the RRF path). Preferred over source_ids[0] as the
+    # turn/event anchor: a multi-exchange window's first source can be a
+    # different exchange than the match.
+    match_event_id: str | None = None
     tags: list[str] = field(default_factory=list)
 
     _DISPLAY_LABELS: ClassVar[dict[str, str]] = {
@@ -178,6 +183,7 @@ class SearchChunk:
             context_window=data.get("context_window") or data.get("_context"),
             turn_index=turn_index,
             event_id=data.get("event_id"),
+            match_event_id=data.get("match_event_id"),
             tags=list(data.get("tags") or []),
         )
 
