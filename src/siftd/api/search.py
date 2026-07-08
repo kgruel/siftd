@@ -633,27 +633,22 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
         prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
 
         for chunk in conv_chunks:
-            if chunk.source_ids:
-                # Semantic/hybrid chunk: use first source_id as the event anchor.
-                #
-                # For an RRF chunk bridged by a keyword hit, this anchors on the
-                # chunk's own first source event, NOT the exact keyword-matched
-                # event (eid) that bridged it — the eid isn't preserved onto the
-                # fused result. This is accepted (wont-fix) coarseness, not a
-                # wrong anchor: chunks are exchange-level (source_ids = one
-                # exchange's prompt + response(s), see storage/embeddings.py), so
-                # eid is always a constituent of the SAME exchange as
-                # source_ids[0]. turn_index — the load-bearing position for the
-                # web unfold and the folio jump — is therefore identical; only
-                # the folio jump's sub-event landing is the exchange's prompt
-                # rather than the matched response. Conversation-granularity
-                # ranking (what the fidelity gate compares) is unaffected.
-                first_src = chunk.source_ids[0]
-                chunk.event_id = first_src
-                turn_idx = prompt_id_to_idx.get(first_src)
+            if chunk.source_ids or chunk.match_event_id:
+                # Semantic/hybrid chunk. Anchor preference: the exact
+                # keyword-matched event (match_event_id, preserved by
+                # _fuse_hybrid's bridge) over the chunk's own source_ids[0].
+                # The default exchange-window chunker ACCUMULATES multiple
+                # exchanges into one window (embeddings/chunker.py::
+                # _window_exchanges extends current_ids across exchanges), so
+                # source_ids[0] can be a different exchange than the match —
+                # wrong turn_index and folio jump for a bridged RRF chunk.
+                anchor = chunk.match_event_id or chunk.source_ids[0]
+                chunk.event_id = anchor
+                turn_idx = prompt_id_to_idx.get(anchor)
                 if turn_idx is None:
-                    # Non-prompt source (e.g. tool_summary) — derive from event's surrounding prompt
-                    turn_idx = fts5_event_turn_index(conn, first_src, conv_id)
+                    # Non-prompt anchor (response, tool_summary) — derive from
+                    # the event's surrounding prompt.
+                    turn_idx = fts5_event_turn_index(conn, anchor, conv_id)
                 chunk.turn_index = turn_idx
             elif chunk.event_id:
                 # FTS5 chunk: event_id already set; derive turn index
@@ -1204,11 +1199,20 @@ class _FusionItem:
     result: dict
     vector_rank: int | None
     keyword_rank: int | None
+    # Event id of the best-ranked FTS hit that bridged onto this item — the
+    # exact match address. Preserved so the anchor isn't lost to the chunk's
+    # own source_ids[0], which for a multi-exchange window (the default
+    # exchange-window chunker accumulates exchanges, see
+    # embeddings/chunker.py::_window_exchanges) can be a DIFFERENT exchange
+    # than the match.
+    keyword_event_id: str | None = None
 
-    def note_keyword_rank(self, rank: int) -> None:
+    def note_keyword_rank(self, rank: int, event_id: str | None = None) -> None:
         """Record the best (lowest) keyword rank seen for this item."""
         if self.keyword_rank is None or rank < self.keyword_rank:
             self.keyword_rank = rank
+            if event_id is not None:
+                self.keyword_event_id = event_id
 
     def fused_score(
         self, *, w_kw: float = _RRF_W_KW, k_kw: int = _RRF_K_KW, k_vec: int = _RRF_K_VEC
@@ -1270,7 +1274,7 @@ def _fuse_hybrid(
                 if item is None:
                     item = _FusionItem(result=_keyword_only_result(ch), vector_rank=None, keyword_rank=None)
                     fusion[cid] = item
-                item.note_keyword_rank(kr)
+                item.note_keyword_rank(kr, eid)
         elif eid:
             ekey = f"entrant:{eid}"
             item = fusion.get(ekey)
@@ -1303,6 +1307,10 @@ def _fuse_hybrid(
         breakdown.fts5_matched = item.keyword_rank is not None
         r["breakdown"] = breakdown
         r["score"] = fused
+        if item.keyword_event_id is not None:
+            # Preserve the exact keyword-matched event onto the fused result;
+            # _annotate_turn_positions prefers it over source_ids[0].
+            r["match_event_id"] = item.keyword_event_id
         out.append(r)
         if len(out) >= n:
             break

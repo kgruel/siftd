@@ -52,15 +52,18 @@ class TestWebClickLinkage:
         assert opens[0]["rank"] == 1
         assert opens[0]["surface"] == "web-click"
 
-    def test_cross_owner_search_event_id_records_nothing(self, test_db):
-        # A search owned by someone else must not be bindable by this caller's
-        # click, even if they supply its (guessed/leaked) event id.
-        conv2 = _conv_id(test_db, "conv2")
-        sid = _seed_search(test_db, result_ids=[conv2], owner="someone-else")
+    def test_cross_owner_search_event_id_records_nothing_in_auth_mode(self, test_db):
+        # AUTH MODE (owner is a string — serve always passes the token sub):
+        # a search owned by someone else must not be bindable by this caller's
+        # click, even if they supply its (guessed/leaked) event id. Exercised
+        # via _capture_open directly because get_conversation's owner-scoped
+        # resolution would reject the conversation read first.
+        from siftd.api.conversations import _capture_open
 
-        get_conversation(
-            conv2, fidelity=Fidelity(depth=1), db_path=test_db, search_event_id=sid,
-        )
+        conv2 = _conv_id(test_db, "conv2")
+        sid = _seed_search(test_db, result_ids=[conv2], owner="victim")
+
+        _capture_open(conv2, db=test_db, owner="attacker", search_event_id=sid)
 
         assert _opens(test_db) == []
 
@@ -70,6 +73,38 @@ class TestWebClickLinkage:
         get_conversation(
             conv2, fidelity=Fidelity(depth=1), db_path=test_db,
             search_event_id="01BOGUSNONEXISTENTEVENTID00",
+        )
+
+        assert _opens(test_db) == []
+
+    def test_unauth_owner_facet_search_open_records(self, test_db):
+        # NO-AUTH REGIME (owner=None — serve with auth disabled, single-user):
+        # a search captured with the ADVISORY owner facet (owner='x' rode the
+        # /query capture) must still link when the folio open resolves no
+        # owner. The result-membership gate replaces the owner predicate.
+        conv2 = _conv_id(test_db, "conv2")
+        sid = _seed_search(test_db, result_ids=[conv2], owner="facet-x")
+
+        get_conversation(
+            conv2, fidelity=Fidelity(depth=1), db_path=test_db, search_event_id=sid,
+        )
+
+        opens = _opens(test_db)
+        assert len(opens) == 1
+        assert opens[0]["search_event_id"] == sid
+        assert opens[0]["rank"] == 1
+        assert opens[0]["surface"] == "web-click"
+
+    def test_unauth_open_requires_result_membership(self, test_db):
+        # NO-AUTH REGIME: without the owner predicate, result-membership is the
+        # remaining integrity gate — an event id whose search never surfaced
+        # this conversation records nothing.
+        conv1 = _conv_id(test_db, "conv1")
+        conv2 = _conv_id(test_db, "conv2")
+        sid = _seed_search(test_db, result_ids=[conv2], owner="facet-x")
+
+        get_conversation(
+            conv1, fidelity=Fidelity(depth=1), db_path=test_db, search_event_id=sid,
         )
 
         assert _opens(test_db) == []

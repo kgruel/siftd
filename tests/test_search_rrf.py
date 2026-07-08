@@ -121,6 +121,65 @@ def test_bridged_chunk_absent_from_vector_list_enters_as_keyword_only(monkeypatc
     assert bd.vector_rank is None and bd.keyword_rank == 1
 
 
+def test_bridge_preserves_keyword_event_id_on_fused_result(monkeypatch):
+    """A multi-exchange window (default chunker accumulates exchanges) bridged by
+    a keyword hit in its SECOND exchange must preserve that hit's event id —
+    source_ids[0] is a different exchange, and anchoring there would land the
+    unfold/folio jump on the wrong turn."""
+    vec = [_vec("k1", "c1", vector_rank=1, source_ids=["p1", "r1", "p2", "r2"])]
+    kw = [_hit("c1", "r2", kind="response")]
+    monkeypatch.setattr(s, "chunks_for_events", lambda conn, eids: {
+        "r2": [{"chunk_id": "k1", "conversation_id": "c1", "chunk_type": "exchange",
+                "text": "t", "source_ids": ["p1", "r1", "p2", "r2"]}]
+    })
+    out = s._fuse_hybrid(vec, kw, object(), n=10)
+    assert out[0]["match_event_id"] == "r2"
+
+
+def test_unbridged_vector_chunk_has_no_match_event_id(monkeypatch):
+    """A pure-vector fused result carries no match_event_id — the source_ids[0]
+    anchor remains the only (and correct-enough) signal."""
+    vec = [_vec("k1", "c1", vector_rank=1, source_ids=["p1", "r1"])]
+    monkeypatch.setattr(s, "chunks_for_events", lambda conn, eids: {})
+    out = s._fuse_hybrid(vec, [], object(), n=10)
+    assert "match_event_id" not in out[0]
+
+
+def test_annotate_turn_positions_prefers_match_event_id():
+    """_annotate_turn_positions anchors a bridged chunk on the preserved
+    keyword-matched event: turn_index reflects the MATCHED exchange (the second
+    one in the window), not source_ids[0]'s."""
+    import sqlite3
+
+    from siftd.domain.search_types import SearchChunk
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.execute(
+        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, timestamp TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO events VALUES (?, ?, ?, ?)",
+        [
+            ("p1", "prompt", "c1", "2026-01-01T00:00:00"),
+            ("r1", "response", "c1", "2026-01-01T00:00:01"),
+            ("p2", "prompt", "c1", "2026-01-01T00:01:00"),
+            ("r2", "response", "c1", "2026-01-01T00:01:01"),
+        ],
+    )
+    bridged = SearchChunk(
+        conversation_id="c1", score=1.0, text="t", chunk_type="exchange",
+        chunk_id="k1", source_ids=["p1", "r1", "p2", "r2"], match_event_id="p2",
+    )
+    plain = SearchChunk(
+        conversation_id="c1", score=0.9, text="t", chunk_type="exchange",
+        chunk_id="k2", source_ids=["p1", "r1", "p2", "r2"],
+    )
+    s._annotate_turn_positions(conn, [bridged, plain])
+    assert bridged.event_id == "p2" and bridged.turn_index == 1  # the matched exchange
+    assert plain.event_id == "p1" and plain.turn_index == 0      # unchanged fallback
+
+
 # ---------------------------------------------------------------------------
 # Fused ordering math
 # ---------------------------------------------------------------------------

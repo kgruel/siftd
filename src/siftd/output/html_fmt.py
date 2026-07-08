@@ -779,7 +779,9 @@ def render_search_context(detail: Any, fidelity: Fidelity, **context: Any) -> st
         )
     parts.append(
         _unfold_button(
-            "collapse", _ctx_attrs(conv_id, at, 0, event), classes="hit-unfold--collapse"
+            "collapse",
+            _ctx_attrs(conv_id, at, 0, event, search_event_id),
+            classes="hit-unfold--collapse",
         )
     )
     parts.append("</div>")
