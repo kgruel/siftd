@@ -391,7 +391,7 @@ def list_conversations(*, fidelity: Fidelity, db_path: pathlib.Path | None = ...
 Get full conversation detail by ID.
 
 ```python
-def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ...) -> siftd.api.conversations.ConversationDetail | None
+def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib.Path | None = ..., tool_filter: str | None = ..., owner: str | None = ..., anchor: str | None = ..., anchor_value: int | str | None = ..., window_start: int | None = ..., window_end: int | None = ..., search_event_id: str | None = ...) -> siftd.api.conversations.ConversationDetail | None
 ```
 
 **Parameters:**
@@ -403,6 +403,7 @@ def get_conversation(id: str, *, fidelity: Fidelity, db_path: pathlib.Path | Non
 - `anchor`: Anchor axis — one of 'from_start', 'from_end', 'at_turn', 'around'. None means no anchor (whole conversation returned).
 - `anchor_value`: Value for the anchor: int for 'at_turn', str for 'around'. Ignored for 'from_start' and 'from_end'.
 - `window_start`: Turn offset from anchor (inclusive). None = anchor only.
+- `window_end`: Turn offset from anchor (inclusive). None = anchor only.
 
 **Returns:** ConversationDetail with timeline, or None if not found.
 
