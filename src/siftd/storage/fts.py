@@ -174,20 +174,42 @@ def insert_fts_content(
     )
 
 
+# SQLite caps bound parameters (SQLITE_MAX_VARIABLE_NUMBER). Below this many
+# candidate ids we push the scope into the FTS query (so LIMIT selects the top-N
+# *in-scope* hits); above it we skip the IN clause and leave the caller to
+# post-filter a wider global fetch. Narrow scopes — the case the pushdown exists
+# to protect — are always well under this bound.
+_FTS_INLINE_SCOPE_MAX = 900
+
+
 def search_content(
     conn: sqlite3.Connection,
     query: str,
     limit: int = 20,
     *,
     raw_fts: bool = False,
+    conversation_ids: set[str] | None = None,
 ) -> list[dict]:
     """Search text content using FTS5 MATCH.
 
     Returns list of dicts with: conversation_id, event_id, kind, snippet, rank.
+
+    ``conversation_ids`` optionally constrains the match to a candidate set at
+    query level, so ``limit`` selects the top-N in-scope hits rather than the
+    top-N global hits (which a scoped caller would then post-filter, losing
+    in-scope evidence buried below the global cap). Pushed down only for sets
+    small enough to fit SQLite's bound-parameter limit; larger sets fall back to
+    an unscoped match and rely on the caller's post-filter.
     """
     sanitized = sanitize_fts5_query(query, raw=raw_fts, operator="and")
     if sanitized.fts_query is None:
         return []
+    scope_clause = ""
+    scope_params: tuple = ()
+    if conversation_ids is not None and 0 < len(conversation_ids) <= _FTS_INLINE_SCOPE_MAX:
+        placeholders = ",".join("?" * len(conversation_ids))
+        scope_clause = f" AND content_fts.conversation_id IN ({placeholders})"
+        scope_params = tuple(conversation_ids)
     cur = conn.execute(
         f"""
         SELECT
@@ -198,11 +220,11 @@ def search_content(
             content_fts.rank
         FROM content_fts
         JOIN events e ON e.id = content_fts.event_id
-        WHERE content_fts MATCH ?
+        WHERE content_fts MATCH ?{scope_clause}
         ORDER BY content_fts.rank
         LIMIT ?
         """,
-        (sanitized.fts_query, limit),
+        (sanitized.fts_query, *scope_params, limit),
     )
     return [
         {

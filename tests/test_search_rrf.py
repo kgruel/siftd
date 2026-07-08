@@ -302,6 +302,52 @@ def test_semantic_mode_skips_keyword_list(monkeypatch, tmp_path):
     assert out and out[0].score == pytest.approx(0.9)  # cosine, not fused
 
 
+def test_rrf_pushes_candidate_scope_into_keyword_query(monkeypatch, tmp_path):
+    """A scoped RRF search must constrain the keyword list to the candidate set
+    at query level, so the pool cap selects the top in-scope hits (not the top
+    global hits, which a scoped caller would post-filter down to nothing when
+    its in-scope evidence sits below the global cap)."""
+    scope = {"c1", "c2"}
+    captured = {}
+
+    class _Conn:
+        def close(self):
+            return None
+
+    fake_search = NS(
+        resolve_candidates=lambda *a, **k: set(scope),
+        MAX_MMR_CANDIDATES=1000,
+        annotate_fts5_breakdown=lambda *a, **k: None,
+        mmr_rerank=lambda results, *_a, **_k: results,
+        apply_temporal_weight=lambda results, *_a, **_k: results,
+    )
+    import sys
+    monkeypatch.setitem(sys.modules, "siftd.search", fake_search)
+    monkeypatch.setitem(sys.modules, "siftd.embeddings.indexer", NS(SCHEMA_VERSION=1))
+    monkeypatch.setattr("siftd.storage.sqlite.open_database", lambda *a, **k: _Conn())
+    monkeypatch.setattr(s, "open_embeddings_db", lambda *a, **k: _Conn())
+    monkeypatch.setattr(s, "validate_index_compat", lambda *a, **k: None)
+    monkeypatch.setattr(s, "_hybrid_strategy", lambda *a, **k: "rrf")
+    monkeypatch.setattr(
+        s, "_build_vector_list",
+        lambda *a, **k: [_vec("k1", "c1", vector_rank=1)],
+    )
+
+    def _capture_fts(conn, q, **kw):
+        captured.update(kw)
+        return [_hit("c2", "e2")]
+
+    monkeypatch.setattr(s, "fts5_search_content", _capture_fts)
+    monkeypatch.setattr(s, "_fuse_hybrid", lambda *a, **k: [])
+
+    backend = NS(name="remote:voyage", model="m", dimension=1, embed_query=lambda q: [0.1])
+    s.hybrid_search(
+        "q", db_path=tmp_path / "db", mode="hybrid",
+        embed_backend=backend, embed_db=tmp_path / "e.db", workspace="proj",
+    )
+    assert captured.get("conversation_ids") == scope
+
+
 # ---------------------------------------------------------------------------
 # Runtime degrade truthfulness (Part C)
 # ---------------------------------------------------------------------------

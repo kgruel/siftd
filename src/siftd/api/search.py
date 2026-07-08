@@ -250,6 +250,7 @@ def fts5_search_content(
     *,
     limit: int = 20,
     raw_fts: bool = False,
+    conversation_ids: set[str] | None = None,
 ) -> list[dict]:
     """FTS5 keyword search over content.
 
@@ -258,13 +259,18 @@ def fts5_search_content(
         query: The search query string.
         limit: Maximum results to return.
         raw_fts: If True, pass query directly to FTS5 without sanitization.
+        conversation_ids: Optional candidate scope pushed into the query, so
+            ``limit`` selects the top-N in-scope hits rather than the top-N
+            global hits.
 
     Returns:
         List of dicts with: conversation_id, kind, snippet, rank.
     """
     from siftd.storage.fts import search_content as _search_content
 
-    return _search_content(conn, query, limit=limit, raw_fts=raw_fts)
+    return _search_content(
+        conn, query, limit=limit, raw_fts=raw_fts, conversation_ids=conversation_ids,
+    )
 
 
 def list_conversation_ids(conn: sqlite3.Connection) -> set[str]:
@@ -628,7 +634,20 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
 
         for chunk in conv_chunks:
             if chunk.source_ids:
-                # Semantic/hybrid chunk: use first source_id as the event anchor
+                # Semantic/hybrid chunk: use first source_id as the event anchor.
+                #
+                # For an RRF chunk bridged by a keyword hit, this anchors on the
+                # chunk's own first source event, NOT the exact keyword-matched
+                # event (eid) that bridged it — the eid isn't preserved onto the
+                # fused result. This is accepted (wont-fix) coarseness, not a
+                # wrong anchor: chunks are exchange-level (source_ids = one
+                # exchange's prompt + response(s), see storage/embeddings.py), so
+                # eid is always a constituent of the SAME exchange as
+                # source_ids[0]. turn_index — the load-bearing position for the
+                # web unfold and the folio jump — is therefore identical; only
+                # the folio jump's sub-event landing is the exchange's prompt
+                # rather than the matched response. Conversation-granularity
+                # ranking (what the fidelity gate compares) is unaffected.
                 first_src = chunk.source_ids[0]
                 chunk.event_id = first_src
                 turn_idx = prompt_id_to_idx.get(first_src)
@@ -1449,7 +1468,15 @@ def hybrid_search(
             )
             kw_conn = open_database(db_path, read_only=True)
             try:
-                keyword_hits = fts5_search_content(kw_conn, q, limit=max(pool, n), raw_fts=raw_fts)
+                # Push the candidate scope into the query so the pool cap selects
+                # the top in-scope hits, not the top global hits (a scoped search
+                # would otherwise lose in-scope keyword evidence buried below the
+                # global cap). Large scopes fall back to an unscoped fetch + the
+                # post-filter below; see search_content's _FTS_INLINE_SCOPE_MAX.
+                keyword_hits = fts5_search_content(
+                    kw_conn, q, limit=max(pool, n), raw_fts=raw_fts,
+                    conversation_ids=candidate_ids,
+                )
             finally:
                 kw_conn.close()
             if candidate_ids is not None:

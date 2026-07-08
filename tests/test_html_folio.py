@@ -695,3 +695,58 @@ def test_search_without_capture_omits_search_event_id():
     sv = SearchView(results=[_chunk()], view="chunks")
     html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
     assert "search_event_id=" not in html
+
+
+def test_unfold_trigger_carries_search_event_id():
+    # The initial unfold trigger's ring URL must carry search_event_id so the
+    # context-expansion round trip can preserve it (and the last ring's folio
+    # jump records a precise web-click open, not the heuristic fallback).
+    sv = SearchView(results=[_chunk()], view="chunks", search_event_id="01SEARCHEVT")
+    html = render_search(sv, _FID, query="q", detail_base="/folio", shell_base="/")
+    assert (
+        "/find/context?id=01CONV&at=3&w=2&event=01EVT&search_event_id=01SEARCHEVT"
+        in html
+    )
+
+
+def test_unfold_more_context_ring_threads_search_event_id():
+    # The 'more context' widen button re-fetches the next ring; it must keep the
+    # search_event_id so it survives every step of the expansion.
+    html = render_search_context(
+        _anchored_detail(), _FID_TRACE,
+        conv_id="01CONV", at=0, w=2, anchor_pos=0, event="01EVT",
+        search_event_id="01SEARCHEVT",
+    )
+    assert "more context" in html
+    assert "&event=01EVT&search_event_id=01SEARCHEVT" in html
+
+
+def test_unfold_last_ring_jump_carries_search_event_id():
+    # The last ring's 'open in folio' jump must carry search_event_id, so a
+    # context-expanded open is attributed to its search the same way the initial
+    # hit link is (else it silently falls back to the CLI heuristic).
+    html = render_search_context(
+        _anchored_detail(), _FID_TRACE,
+        conv_id="01CONV", at=0, w=10, anchor_pos=0, event="01EVT",
+        search_event_id="01SEARCHEVT",
+    )
+    assert "open in folio" in html
+    assert "search_event_id=01SEARCHEVT" in html
+
+
+def test_unfold_empty_window_threads_search_event_id():
+    # The collapsed-trigger fallback (window with no renderable turns) must keep
+    # search_event_id too, so a re-unfold from there stays attributed.
+    empty_turn = Turn(
+        timestamp=None, prompt_text=None, narrative=[],
+        total_input_tokens=0, total_output_tokens=0, _tool_call_summaries=[],
+    )
+    detail = ConversationDetail(
+        id="01CONV", workspace_path=None, model=None, started_at=None,
+        total_input_tokens=0, total_output_tokens=0, turns=[empty_turn],
+    )
+    html = render_search_context(
+        detail, _FID_TRACE, conv_id="01CONV", at=2, w=5, anchor_pos=0,
+        event="01EVT", search_event_id="01SEARCHEVT",
+    )
+    assert "search_event_id=01SEARCHEVT" in html

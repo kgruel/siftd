@@ -214,6 +214,40 @@ class TestSearchContent:
         results = search_content(fts_conn, "Go")
         assert len(results) > 0
 
+    def test_conversation_scope_pushed_into_query(self, fts_conn):
+        # Insert enough noise hits that an in-scope hit falls below a tight
+        # global LIMIT. With query-level scoping the LIMIT selects the top
+        # *in-scope* hit, so it survives.
+        noise = [
+            (f"widget report {i}", f"nc{i}", f"ne{i}", f"noise{i}") for i in range(20)
+        ]
+        fts_conn.executemany(
+            "INSERT INTO events (id, kind, conversation_id) VALUES (?, ?, ?)",
+            [(f"ne{i}", "prompt", f"noise{i}") for i in range(20)],
+        )
+        fts_conn.executemany("INSERT INTO content_fts VALUES (?, ?, ?, ?)", noise)
+        fts_conn.executemany(
+            "INSERT INTO events (id, kind, conversation_id) VALUES (?, ?, ?)",
+            [("etarget", "prompt", "target")],
+        )
+        fts_conn.execute(
+            "INSERT INTO content_fts VALUES (?, ?, ?, ?)",
+            ("widget report special", "tc", "etarget", "target"),
+        )
+        fts_conn.commit()
+
+        # Unscoped, tight limit: the in-scope conv can be crowded out by noise.
+        scoped = search_content(
+            fts_conn, "widget", limit=1, conversation_ids={"target"}
+        )
+        assert [r["conversation_id"] for r in scoped] == ["target"]
+
+    def test_empty_scope_matches_nothing_pushed(self, fts_conn):
+        # An empty candidate set is a caller concern (handled upstream); the
+        # storage layer treats empty as "no inline filter" and matches globally.
+        results = search_content(fts_conn, "Python", conversation_ids=set())
+        assert any(r["conversation_id"] == "conv1" for r in results)
+
 
 class TestTryServeH10:
     """H10: unexpected exceptions in try_serve are logged, not silently swallowed."""
