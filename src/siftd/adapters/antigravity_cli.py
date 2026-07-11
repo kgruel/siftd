@@ -50,6 +50,14 @@ NAME = "antigravity_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/antigravity-cli"]
 DEDUP_STRATEGY = "session"  # one conversation per brain/<id>; transcript grows over the session
 
+# Without this, peek falls back to "**/*.jsonl" under DEFAULT_LOCATIONS, which
+# would also match the top-level history.jsonl (not a transcript) and, when a
+# conversation has both transcript.jsonl and transcript_full.jsonl, surface it
+# twice. Full is a strict superset when present (verified against a real
+# session), so peek -- unlike discover(), which needs the compact fallback for
+# completeness -- only looks for it.
+PEEK_GLOB_PATTERNS = ["brain/*/.system_generated/logs/transcript_full.jsonl"]
+
 # Harness metadata
 HARNESS_SOURCE = "google"
 HARNESS_LOG_FORMAT = "jsonl"
@@ -62,6 +70,21 @@ TOOL_ALIASES: dict[str, str] = {
     "run_command": "shell.execute",
     "grep_search": "search.grep",
     "list_dir": "file.glob",
+}
+
+# Result-step type -> the raw tool name it executes, for the rare orphan case
+# (a result step with no preceding declared tool_calls entry to pair with,
+# e.g. a log truncated mid-turn). Keeps orphaned tool calls eligible for
+# TOOL_ALIASES canonicalization instead of falling through as e.g.
+# "list_directory" (from LIST_DIRECTORY.lower()), which TOOL_ALIASES doesn't
+# recognize. GENERIC has no single underlying tool (list_permissions and
+# others all surface as GENERIC) so it's deliberately left unmapped.
+_RESULT_TYPE_TOOL_NAMES = {
+    "VIEW_FILE": "view_file",
+    "RUN_COMMAND": "run_command",
+    "GREP_SEARCH": "grep_search",
+    "LIST_DIRECTORY": "list_dir",
+    "CODE_ACTION": "write_to_file",
 }
 
 # Step types that are scaffolding, not conversation turns: context-truncation
@@ -220,7 +243,9 @@ def parse(source: Source) -> Iterable[Conversation]:
         else:
             # Result step with no declared tool call to pair with (e.g. a
             # truncated log). Keep the content rather than dropping it.
-            tool_name, tool_input = step_type.lower() if step_type else "unknown", {}
+            fallback_name = step_type.lower() if isinstance(step_type, str) else "unknown"
+            tool_name = _RESULT_TYPE_TOOL_NAMES.get(step_type, fallback_name) if isinstance(step_type, str) else fallback_name
+            tool_input = {}
 
         status = "success" if record.get("status") == "DONE" else "pending"
         current_response.tool_calls.append(

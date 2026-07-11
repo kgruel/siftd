@@ -91,6 +91,22 @@ class TestAntigravityCliDiscoverAndWorkspace:
     def test_discover_missing_locations(self, tmp_path):
         assert list(antigravity_cli.discover(locations=[str(tmp_path / "nope")])) == []
 
+    def test_peek_glob_patterns_exclude_history_and_avoid_duplicates(self, tmp_path):
+        """PEEK_GLOB_PATTERNS must not match the top-level history.jsonl, and
+        must not surface both transcript.jsonl and transcript_full.jsonl for
+        the same conversation (peek has no dedup step, unlike discover())."""
+        root = tmp_path / "antigravity-cli"
+        _write_transcript(root, "conv-1", [{"type": "USER_INPUT"}], full=True)
+        (root / "brain" / "conv-1" / ".system_generated" / "logs" / "transcript.jsonl").write_text("{}\n")
+        (root / "history.jsonl").write_text("{}\n")
+
+        matches = {
+            match
+            for pattern in antigravity_cli.PEEK_GLOB_PATTERNS
+            for match in root.glob(pattern)
+        }
+        assert matches == {root / "brain" / "conv-1" / ".system_generated" / "logs" / "transcript_full.jsonl"}
+
     def test_workspace_resolved_via_sibling_history(self, tmp_path):
         root = tmp_path / "antigravity-cli"
         path = _write_transcript(
@@ -222,6 +238,22 @@ class TestAntigravityCliParseEdgeCases:
         assert resp.tool_calls[0].tool_name == "view_file"
         assert resp.tool_calls[0].result == {"output": "file contents"}
         assert resp.tool_calls[0].status == "success"
+
+    def test_orphan_multiword_result_step_maps_to_real_tool_name(self, tmp_path):
+        """LIST_DIRECTORY.lower() would be 'list_directory', which TOOL_ALIASES
+        doesn't recognize -- the orphan fallback must use the real raw name
+        ('list_dir') so canonicalization at ingest still applies."""
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "go"},
+                {"type": "LIST_DIRECTORY", "status": "DONE", "created_at": "T2", "content": "a\nb\n"},
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        assert resp.tool_calls[0].tool_name == "list_dir"
 
     def test_planner_response_before_any_user_input(self, tmp_path):
         """A PLANNER_RESPONSE with no preceding USER_INPUT gets a synthetic prompt."""
