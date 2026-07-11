@@ -69,6 +69,7 @@ siftd ships with adapters for:
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
 | `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
+| `antigravity_cli` | Antigravity CLI | `~/.gemini/antigravity-cli/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
 Each adapter knows where its tool writes logs by default. When you run `siftd ingest`, all adapters scan their default locations.
@@ -78,10 +79,11 @@ siftd adapters    # list discovered adapters
 ```
 
 ```
-claude_code  builtin  ~/.claude/projects, ~/.config/claude/projects
-aider        builtin  ~/.aider
-gemini_cli   builtin  ~/.gemini/tmp
-codex_cli    builtin  ~/.codex/sessions
+claude_code      builtin  ~/.claude/projects, ~/.config/claude/projects
+aider            builtin  ~/.aider
+gemini_cli       builtin  ~/.gemini/tmp
+antigravity_cli  builtin  ~/.gemini/antigravity-cli
+codex_cli        builtin  ~/.codex/sessions
 ```
 
 ## Custom adapters

@@ -2,7 +2,17 @@
 
 from pathlib import Path
 
-from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode
+from siftd.adapters import (
+    aider,
+    antigravity_cli,
+    claude_code,
+    codex_cli,
+    copilot_cli,
+    gemini_cli,
+    opencode,
+    pi_agent,
+    vscode,
+)
 from siftd.adapters.validation import validate_adapter
 from siftd.plugin_discovery import PluginInfo, load_all_extensions, load_dropin_modules, load_entrypoint_modules
 
@@ -12,7 +22,17 @@ _validate_adapter = validate_adapter
 
 def load_builtin_adapters() -> list[PluginInfo]:
     """Return the built-in adapter modules as PluginInfo."""
-    builtins = [aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode]
+    builtins = [
+        aider,
+        antigravity_cli,
+        claude_code,
+        codex_cli,
+        copilot_cli,
+        gemini_cli,
+        opencode,
+        pi_agent,
+        vscode,
+    ]
     return [
         PluginInfo(
             name=getattr(m, "NAME", m.__name__.split(".")[-1]),

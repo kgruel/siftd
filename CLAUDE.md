@@ -12,6 +12,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 - Claude Code (`~/.claude/projects`)
 - Aider (`~/.aider`)
 - Gemini CLI (`~/.gemini/tmp`)
+- Antigravity CLI (`~/.gemini/antigravity-cli`)
 - Codex CLI (`~/.codex/sessions`)
 - VSCode Chat (`~/.config/Code/User/History/chat/`)
 - Pi Coding Agent (`~/.pi/agent/sessions`)
