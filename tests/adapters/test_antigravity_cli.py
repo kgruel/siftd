@@ -8,6 +8,7 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import antigravity_cli
+from siftd.domain import ToolCall
 from siftd.domain.source import Source
 
 
@@ -17,6 +18,36 @@ def clear_history_cache():
     antigravity_cli._load_history_workspaces.cache_clear()
     yield
     antigravity_cli._load_history_workspaces.cache_clear()
+
+
+def _running_step(task_id: str, *, created_at="T2", description="cmd") -> dict:
+    """A RUN_COMMAND step backgrounded mid-flight, matching the real shape."""
+    return {
+        "type": "RUN_COMMAND",
+        "status": "RUNNING",
+        "created_at": created_at,
+        "content": (
+            f"Tool is running as a background task with task id: {task_id}\n"
+            f"Task Description: {description}\n"
+            f"Task logs are available at: file:///nonexistent/{task_id}.log"
+        ),
+    }
+
+
+def _finished_message(task_id: str, inline_output: str, *, created_at="T3", log_path: str | None = None) -> dict:
+    """A SYSTEM_MESSAGE step reporting a background task's completion."""
+    log_line = f"\n\nLog: file://{log_path}" if log_path else ""
+    return {
+        "type": "SYSTEM_MESSAGE",
+        "status": "DONE",
+        "created_at": created_at,
+        "content": (
+            "<SYSTEM_MESSAGE>\n"
+            f'[Message] content=Task id "{task_id}" finished with result:\n\n'
+            f"{inline_output}{log_line}\n"
+            "</SYSTEM_MESSAGE>"
+        ),
+    }
 
 
 def _write_transcript(root: Path, conv_id: str, records: list[dict], *, full=True) -> Path:
@@ -288,6 +319,137 @@ class TestAntigravityCliParseEdgeCases:
             "NotJson": "not valid json {{{",
             "AlreadyNative": 5,
         }
+
+
+class TestAntigravityCliBackgroundTasks:
+    def test_resolves_from_log_file_when_present(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        log_path = root / "brain" / "conv-1" / ".system_generated" / "tasks" / "task-1.log"
+        log_path.parent.mkdir(parents=True)
+        log_path.write_text("full untruncated pytest output\n2547 passed\n")
+
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "run the tests"},
+                {
+                    "type": "PLANNER_RESPONSE", "created_at": "T2", "content": "running tests",
+                    "tool_calls": [{"name": "run_command", "args": {"CommandLine": '"pytest"'}}],
+                },
+                _running_step("conv-1/task-1"),
+                _finished_message(
+                    "conv-1/task-1",
+                    "The command completed successfully.\nOutput:\n<truncated 1 line>\n2547 passed",
+                    log_path=str(log_path),
+                ),
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        assert resp.tool_calls[0].status == "success"
+        assert resp.tool_calls[0].result == {"output": "full untruncated pytest output\n2547 passed\n"}
+
+    def test_falls_back_to_inline_text_when_log_file_missing(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "run the tests"},
+                {
+                    "type": "PLANNER_RESPONSE", "created_at": "T2", "content": "running tests",
+                    "tool_calls": [{"name": "run_command", "args": {"CommandLine": '"pytest"'}}],
+                },
+                _running_step("conv-1/task-1"),
+                _finished_message("conv-1/task-1", "The command completed successfully.\ndone"),
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        assert resp.tool_calls[0].status == "success"
+        assert resp.tool_calls[0].result == {"output": "The command completed successfully.\ndone"}
+
+    def test_unrelated_system_message_is_a_noop(self, tmp_path):
+        """A SYSTEM_MESSAGE that isn't a task-completion notice (e.g. the real
+        'subagents stopped due to server restart' notice) must not touch any
+        open background task, and must not raise."""
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "run the tests"},
+                {
+                    "type": "PLANNER_RESPONSE", "created_at": "T2", "content": "running tests",
+                    "tool_calls": [{"name": "run_command", "args": {"CommandLine": '"pytest"'}}],
+                },
+                _running_step("conv-1/task-1"),
+                {
+                    "type": "SYSTEM_MESSAGE", "status": "DONE", "created_at": "T3",
+                    "content": "<SYSTEM_MESSAGE>\nAll subagents stopped due to server restart.\n</SYSTEM_MESSAGE>",
+                },
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        assert resp.tool_calls[0].status == "pending"
+        assert resp.tool_calls[0].result == {"output": _running_step("conv-1/task-1")["content"]}
+
+    def test_completion_for_unknown_task_id_is_a_noop(self, tmp_path):
+        """A completion notice for a task id we never saw declared (e.g. it
+        started in a part of the log outside this slice) must not crash and
+        must not touch an unrelated pending tool call."""
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "run the tests"},
+                {
+                    "type": "PLANNER_RESPONSE", "created_at": "T2", "content": "running tests",
+                    "tool_calls": [{"name": "run_command", "args": {"CommandLine": '"pytest"'}}],
+                },
+                _running_step("conv-1/task-1"),
+                _finished_message("conv-1/some-other-task", "done"),
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        assert resp.tool_calls[0].status == "pending"
+
+    def test_two_background_tasks_resolve_independently_by_id(self, tmp_path):
+        """Resolution must key off the task id, not just resolve whichever
+        pending background task happens to be most recent."""
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(
+            root,
+            "conv-1",
+            [
+                {"type": "USER_INPUT", "created_at": "T1", "content": "run two things"},
+                {
+                    "type": "PLANNER_RESPONSE", "created_at": "T2", "content": "starting both",
+                    "tool_calls": [
+                        {"name": "run_command", "args": {"CommandLine": '"first"'}},
+                        {"name": "run_command", "args": {"CommandLine": '"second"'}},
+                    ],
+                },
+                _running_step("conv-1/task-1", created_at="T3"),
+                _running_step("conv-1/task-2", created_at="T4"),
+                _finished_message("conv-1/task-2", "second done", created_at="T5"),
+            ],
+        )
+        resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
+        first, second = resp.tool_calls
+        assert first.status == "pending"
+        assert second.status == "success" and second.result == {"output": "second done"}
+
+    def test_resolve_background_task_helper_directly(self):
+        open_tasks = {"t1": ToolCall(tool_name="run_command", input={})}
+        antigravity_cli._resolve_background_task("not a completion message", open_tasks)
+        assert "t1" in open_tasks  # untouched
+
+        antigravity_cli._resolve_background_task(
+            '<SYSTEM_MESSAGE>\ncontent=Task id "t1" finished with result:\n\nok\n</SYSTEM_MESSAGE>',
+            open_tasks,
+        )
+        assert "t1" not in open_tasks
 
 
 class TestAntigravityCliNormalizerAndPeek:

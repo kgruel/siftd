@@ -19,6 +19,17 @@ Known gaps (nothing in the source data to build these from):
       (e.g. a backgrounded run_command the user interrupted) surface as
       status="pending" ToolCalls with no result, same fallback used by
       codex_cli's flush_pending_calls.
+
+Backgrounded tool calls (a RUN_COMMAND step whose status is RUNNING rather
+than DONE) are a further wrinkle: the transcript records them as started,
+then their actual completion arrives later as a free-text SYSTEM_MESSAGE
+step, correlated by a task id embedded in both steps' prose -- not a
+structured field. This is genuinely new ground: no other adapter in this
+codebase does cross-event-type deferred correlation (ToolCallLinker and
+flush_pending_calls in sdk.py both assume a clean structured id shared by a
+declare/resolve pair of the *same* event shape, e.g. codex_cli's call_id).
+Solved locally here (_open_background_tasks / _resolve_background_task)
+rather than generalized into the SDK -- there's exactly one data point.
 """
 
 import functools
@@ -88,12 +99,26 @@ _RESULT_TYPE_TOOL_NAMES = {
 }
 
 # Step types that are scaffolding, not conversation turns: context-truncation
-# summaries, the session-open marker, and out-of-band system notices. Every
-# other step type is either USER_INPUT, PLANNER_RESPONSE, or the executed
-# result of a tool call PLANNER_RESPONSE just declared.
-_SKIP_TYPES = {"CHECKPOINT", "CONVERSATION_HISTORY", "SYSTEM_MESSAGE"}
+# summaries and the session-open marker. Every other step type is either
+# USER_INPUT, PLANNER_RESPONSE, SYSTEM_MESSAGE (handled separately -- it may
+# carry a background task's result), or the executed result of a tool call
+# PLANNER_RESPONSE just declared.
+_SKIP_TYPES = {"CHECKPOINT", "CONVERSATION_HISTORY"}
 
 _USER_REQUEST_RE = re.compile(r"<USER_REQUEST>\n(.*?)\n</USER_REQUEST>", re.DOTALL)
+
+# A RUNNING RUN_COMMAND step's content names its own task id, e.g.:
+#   "Tool is running as a background task with task id: <conv-id>/task-48"
+_TASK_STARTED_RE = re.compile(r"background task with task id:\s*(\S+)")
+
+# The eventual completion arrives as a SYSTEM_MESSAGE step, keyed by the same
+# task id, with the (possibly truncated) output inline and -- when the task
+# produced one -- a pointer to the untruncated log file:
+#   'Task id "<conv-id>/task-48" finished with result:\n...\nLog: file:///path\n</SYSTEM_MESSAGE>'
+_TASK_FINISHED_RE = re.compile(
+    r'Task id "([^"]+)" finished with result:\s*\n*(.*?)(?:\n*Log: file://(\S+)\s*)?</SYSTEM_MESSAGE>',
+    re.DOTALL,
+)
 
 
 def discover(locations=None) -> Iterable[Source]:
@@ -167,6 +192,12 @@ def parse(source: Source) -> Iterable[Conversation]:
     # Tool calls declared by the most recent PLANNER_RESPONSE, matched
     # positionally against the next step -- the raw format has no call id.
     pending_tool_calls: list[tuple[str, dict]] = []
+    # Backgrounded tool calls (RUNNING, not DONE), keyed by the task id
+    # embedded in their content, waiting for a later SYSTEM_MESSAGE step to
+    # report completion under that same id. Unlike pending_tool_calls, these
+    # are already appended to a response (as status="pending") by the time
+    # they're registered here -- resolution mutates them in place.
+    open_background_tasks: dict[str, ToolCall] = {}
 
     def flush_pending() -> None:
         if not pending_tool_calls or current_response is None:
@@ -229,6 +260,10 @@ def parse(source: Source) -> Iterable[Conversation]:
                 pending_tool_calls.append((tool_name, tool_input))
             continue
 
+        if step_type == "SYSTEM_MESSAGE":
+            _resolve_background_task(record.get("content", ""), open_background_tasks)
+            continue
+
         # Any other step type is the executed result of a tool call the
         # preceding PLANNER_RESPONSE declared.
         if current_response is None:
@@ -247,20 +282,55 @@ def parse(source: Source) -> Iterable[Conversation]:
             tool_name = _RESULT_TYPE_TOOL_NAMES.get(step_type, fallback_name) if isinstance(step_type, str) else fallback_name
             tool_input = {}
 
+        content = record.get("content", "")
         status = "success" if record.get("status") == "DONE" else "pending"
-        current_response.tool_calls.append(
-            ToolCall(
-                tool_name=tool_name,
-                input=tool_input,
-                result={"output": record.get("content", "")},
-                status=status,
-                timestamp=timestamp,
-            )
+        tool_call = ToolCall(
+            tool_name=tool_name,
+            input=tool_input,
+            result={"output": content},
+            status=status,
+            timestamp=timestamp,
         )
+        current_response.tool_calls.append(tool_call)
+
+        if record.get("status") == "RUNNING":
+            started = _TASK_STARTED_RE.search(content)
+            if started:
+                open_background_tasks[started.group(1)] = tool_call
 
     flush_pending()
 
     yield from yield_conversation(conversation)
+
+
+def _resolve_background_task(content: str, open_tasks: dict[str, ToolCall]) -> None:
+    """Resolve a backgrounded tool call from its completion SYSTEM_MESSAGE.
+
+    Reads the full untruncated log file when the message points at one and
+    it's still on disk; falls back to the (possibly truncated) inline text
+    otherwise. No-op if the message isn't a task-completion notice, or names
+    a task id we never saw declared (e.g. from a run that predates this
+    transcript slice).
+    """
+    match = _TASK_FINISHED_RE.search(content)
+    if not match:
+        return
+    task_id, inline_output, log_path = match.group(1), match.group(2), match.group(3)
+    tool_call = open_tasks.pop(task_id, None)
+    if tool_call is None:
+        return
+
+    output = inline_output.strip()
+    if log_path:
+        try:
+            log_text = Path(log_path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            log_text = None
+        if log_text is not None:
+            output = log_text
+
+    tool_call.result = {"output": output}
+    tool_call.status = "success"
 
 
 def _session_id(transcript_path: Path) -> str:
