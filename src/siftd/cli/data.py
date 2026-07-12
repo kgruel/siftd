@@ -498,6 +498,13 @@ def cmd_ingest(args) -> int:
                 "path": str(path),
                 "message": f"Drop-in adapter at '{path}' failed to load: {error}",
             })
+        for name in result.disabled_adapters:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "disabled",
+                "adapter": name,
+                "message": f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)",
+            })
     else:
         if not quiet:
             for name in zero_discovery:
@@ -508,6 +515,10 @@ def cmd_ingest(args) -> int:
                 )
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
+        for name in result.disabled_adapters:
+            status.info(
+                f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)"
+            )
 
     _render_auto_index(result.auto_index, json_mode=json_mode, quiet=quiet, renderer=renderer)
     return 0

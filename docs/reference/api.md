@@ -1377,6 +1377,7 @@ Result metadata for an ingest API run.
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
 | `auto_index` | `siftd.api.ingest.AutoIndexReport \| None` |  |
 | `adapter_tiers` | `dict[str, str]` |  |
+| `disabled_adapters` | `list[str]` |  |
 
 ### EmbedIndexStatus
 

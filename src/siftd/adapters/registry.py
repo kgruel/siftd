@@ -118,13 +118,18 @@ def load_all_adapters(
     dropin_path: Path | None = None,
     *,
     failures_out: list[tuple[Path, str]] | None = None,
+    disabled_out: list[str] | None = None,
 ) -> list[PluginInfo]:
     """Load adapters from all sources, deduplicated by NAME.
 
     Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
+    Adapters disabled via config ([adapters.<name>] enabled = false) are
+    filtered out here — the single assembly point all consumers (ingest, peek,
+    doctor) share — and their names are appended to ``disabled_out`` so callers
+    can surface the skip instead of staying silent.
 
     Returns:
-        List of PluginInfo for all discovered adapters, deduplicated by name.
+        List of PluginInfo for all discovered, enabled adapters, deduplicated by name.
     """
     from siftd.paths import adapters_dir
 
@@ -141,12 +146,18 @@ def load_all_adapters(
         failures_out=failures_out,
     )
 
-    # Apply adapter-specific config location overrides
-    from siftd.config import get_adapter_locations
+    # Apply adapter-specific config: disable knob, then location overrides
+    from siftd.config import get_adapter_enabled, get_adapter_locations
 
+    enabled: list[PluginInfo] = []
     for plugin in result:
+        if not get_adapter_enabled(plugin.name):
+            if disabled_out is not None:
+                disabled_out.append(plugin.name)
+            continue
         locations = get_adapter_locations(plugin.name)
         if locations:
             plugin.module = wrap_adapter_paths(plugin.module, locations)
+        enabled.append(plugin)
 
-    return result
+    return enabled

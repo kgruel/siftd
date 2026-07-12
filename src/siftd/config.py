@@ -217,6 +217,8 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     # Adapters
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),
+    _SchemaEntry("adapters.*.enabled", "bool", _is_bool_like,
+                 "Enable/disable an adapter for ingest and peek", "true"),
     # Sync — global defaults
     _SchemaEntry("sync.connect_timeout_s", "int", _is_int_like,
                  "TCP/SSH handshake timeout in seconds", "30"),
@@ -596,6 +598,28 @@ def get_adapter_locations(name: str) -> list[str] | None:
     if isinstance(locations, list):
         return [str(loc) for loc in locations]
     return None
+
+
+def get_adapter_enabled(name: str) -> bool:
+    """Whether an adapter participates in discovery (ingest, peek, doctor).
+
+    Reads [adapters.<name>] enabled. Defaults to True; unknown adapter
+    names are simply never consulted, so stale config entries are harmless.
+    """
+    doc = load_config()
+    adapters_config = doc.get("adapters", {})
+    if not isinstance(adapters_config, dict):
+        return True
+    adapter_config = adapters_config.get(name, {})
+    if not isinstance(adapter_config, dict):
+        return True
+    value = adapter_config.get("enabled")
+    if value is not None:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.lower() not in ("false", "0", "no")
+    return True
 
 
 def get_sync_remotes() -> list[dict]:
