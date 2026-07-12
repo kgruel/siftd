@@ -101,6 +101,27 @@ antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
 codex_cli        builtin  core    ~/.codex/sessions
 ```
 
+### Disabling an adapter
+
+Any adapter can be turned off in config — useful when a frozen-tier adapter's
+parse warnings are noise for a tool you no longer use:
+
+```toml
+# ~/.config/siftd/config.toml
+[adapters.gemini_cli]
+enabled = false
+```
+
+Or via the CLI:
+
+```bash
+siftd config set adapters.gemini_cli.enabled false
+```
+
+A disabled adapter is skipped everywhere the registry is consulted — ingest,
+peek, and doctor checks. `siftd ingest` prints a skip notice so the omission
+stays visible; already-ingested conversations remain in the database.
+
 ## Custom adapters
 
 If you use a tool siftd doesn't support, you can write an adapter. Copy the template or an existing adapter:

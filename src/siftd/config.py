@@ -218,7 +218,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("adapters.*.locations", "list[string]", _is_str_list,
                  "Override discovery paths for a specific adapter", ""),
     _SchemaEntry("adapters.*.enabled", "bool", _is_bool_like,
-                 "Enable/disable an adapter for ingest and peek", "true"),
+                 "Enable/disable an adapter (ingest, peek, doctor)", "true"),
     # Sync — global defaults
     _SchemaEntry("sync.connect_timeout_s", "int", _is_int_like,
                  "TCP/SSH handshake timeout in seconds", "30"),

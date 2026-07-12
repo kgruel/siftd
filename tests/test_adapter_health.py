@@ -125,7 +125,15 @@ class TestIngestRunResultDefaults:
 # ---------------------------------------------------------------------------
 
 
-def _make_result(tmp_path, *, adapters, by_harness=None, dropin_failures=None, adapter_tiers=None):
+def _make_result(
+    tmp_path,
+    *,
+    adapters,
+    by_harness=None,
+    dropin_failures=None,
+    adapter_tiers=None,
+    disabled_adapters=None,
+):
     stats = IngestStats()
     stats.by_harness = by_harness or {}
     return IngestRunResult(
@@ -138,6 +146,7 @@ def _make_result(tmp_path, *, adapters, by_harness=None, dropin_failures=None, a
         elapsed_ms=100,
         dropin_failures=dropin_failures or [],
         adapter_tiers=adapter_tiers or {},
+        disabled_adapters=disabled_adapters or [],
     )
 
 
@@ -330,3 +339,74 @@ class TestNonCoreErrorTagging:
         assert ev["adapter"] == "opencode"
         assert ev["tier"] == "contrib"
         assert ev["errors"] == 2
+
+
+class TestDisabledAdapterNotices:
+    """Config-disabled adapters produce skip notices that ride the quiet gate."""
+
+    def _run(self, tmp_path, monkeypatch, result, argv_tail):
+        monkeypatch.setattr("siftd.api.run_ingest", lambda **kw: result)
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+
+        from siftd.cli import main
+
+        return main(["--db", str(tmp_path / "siftd.db"), "ingest", *argv_tail])
+
+    def test_disabled_notice_printed_verbose(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["claude_code"],
+            by_harness={"claude_code": {}},
+            disabled_adapters=["gemini_cli"],
+        )
+        rc = self._run(tmp_path, monkeypatch, result, ["--verbose"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "gemini_cli" in err
+        assert "disabled via config" in err
+        assert "[adapters.gemini_cli] enabled = false" in err
+
+    def test_disabled_notice_suppressed_in_quiet_mode(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["claude_code"],
+            by_harness={"claude_code": {}},
+            disabled_adapters=["gemini_cli"],
+        )
+        rc = self._run(tmp_path, monkeypatch, result, ["-q"])
+        assert rc == 0
+        captured = capsys.readouterr()
+        assert "disabled via config" not in captured.err
+        assert "disabled via config" not in captured.out
+
+    def test_disabled_notice_scoped_to_requested_adapters(self, tmp_path, capsys, monkeypatch):
+        """An --adapter run doesn't warn about disabled adapters it never asked for."""
+        result = _make_result(
+            tmp_path,
+            adapters=["claude_code"],
+            by_harness={"claude_code": {}},
+            disabled_adapters=["gemini_cli"],
+        )
+        rc = self._run(
+            tmp_path, monkeypatch, result, ["--adapter", "claude_code", "--verbose"]
+        )
+        assert rc == 0
+        assert "disabled via config" not in capsys.readouterr().err
+
+    def test_json_mode_disabled_event(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["claude_code"],
+            by_harness={"claude_code": {}},
+            disabled_adapters=["gemini_cli"],
+        )
+        rc = self._run(tmp_path, monkeypatch, result, ["--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        events = [json.loads(line) for line in out.splitlines() if line.strip()]
+        warning_events = [e for e in events if e.get("type") == "adapter_warning"]
+        assert len(warning_events) == 1
+        ev = warning_events[0]
+        assert ev["kind"] == "disabled"
+        assert ev["adapter"] == "gemini_cli"
+        assert "disabled via config" in ev["message"]

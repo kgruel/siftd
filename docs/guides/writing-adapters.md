@@ -312,6 +312,17 @@ Register in `pyproject.toml`:
 my_harness = "my_package.adapters:my_harness"
 ```
 
+### Disabling
+
+Any installed adapter can be switched off without removing it:
+
+```bash
+siftd config set adapters.my_harness.enabled false
+```
+
+Disabled adapters are skipped by ingest, peek, and doctor. See
+[Adapters — Disabling an adapter](../concepts/adapters.md#disabling-an-adapter).
+
 ## Debugging
 
 Run ingest with verbose output:
