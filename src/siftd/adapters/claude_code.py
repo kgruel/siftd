@@ -4,6 +4,7 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
+import json
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -54,6 +55,8 @@ TOOL_HINT_KEYS: dict[str, list[str]] = {
     "search.web": ["query"],
     "web.fetch": ["url"],
     "task.spawn": ["description"],
+    "tool.search": ["query"],
+    "task.message": ["to"],
     "notebook.edit": ["notebook_path"],
     "skill.invoke": ["skill"],
 }
@@ -68,14 +71,22 @@ TOOL_ALIASES: dict[str, str] = {
     "Grep": "search.grep",
     "WebSearch": "search.web",
     "WebFetch": "web.fetch",
-    "Task": "task.spawn",
+    "Task": "task.spawn",  # historical logs; superseded by "Agent"
+    "Agent": "task.spawn",
     "TaskOutput": "task.output",
     "KillShell": "task.kill",
     "AskUserQuestion": "ui.ask",
-    "TodoWrite": "ui.todo",
+    "TodoWrite": "ui.todo",  # historical logs; superseded by TaskCreate/TaskUpdate
+    "TaskCreate": "ui.todo",
+    "TaskUpdate": "ui.todo",
     "NotebookEdit": "notebook.edit",
     "Skill": "skill.invoke",
     "BashOutput": "shell.output",
+    "ToolSearch": "tool.search",
+    "SendMessage": "task.message",
+    "Workflow": "workflow.run",
+    "EnterPlanMode": "ui.plan",
+    "ExitPlanMode": "ui.plan",
 }
 
 # A backgrounded Bash call's tool_result is plain prose naming its own id,
@@ -536,8 +547,44 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
 
 
 # Peek hooks — derived from normalizer
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+_peek_scan_base, peek_exchanges, peek_tail = make_peek_hooks(
     normalize_record,
     tool_aliases=TOOL_ALIASES,
     subagent_path_marker=SUBAGENT_PATH_MARKER,
 )
+
+# Subagent .meta.json keys → PeekScanResult.attributes keys. Names match
+# the ingest-side conv_attributes vocabulary (agent_name/agent_type/...).
+_SUBAGENT_META_KEYS: dict[str, str] = {
+    "name": "agent_name",
+    "agentType": "agent_type",
+    "spawnDepth": "spawn_depth",
+    "model": "agent_model",
+}
+
+
+def peek_scan(path: Path):
+    """peek_scan with subagent .meta.json enrichment.
+
+    A subagent log at .../subagents/agent-<name>-<hash>.jsonl has a sibling
+    agent-<name>-<hash>.meta.json carrying identity the JSONL itself lacks
+    (name/agentType/spawnDepth/model). Surface it via the scan attributes
+    channel; fill result.model from the meta when the log had none.
+    """
+    result = _peek_scan_base(path)
+    if result is None or SUBAGENT_PATH_MARKER not in str(path):
+        return result
+    meta_path = path.with_name(path.stem + ".meta.json")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return result
+    if not isinstance(meta, dict):
+        return result
+    for src, dst in _SUBAGENT_META_KEYS.items():
+        value = meta.get(src)
+        if value is not None:
+            result.attributes[dst] = str(value)
+    if result.model is None and meta.get("model"):
+        result.model = str(meta["model"])
+    return result

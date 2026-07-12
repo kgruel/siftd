@@ -163,6 +163,7 @@ Session metadata for list display.
 | `adapter_name` | `str \| None` |  |
 | `parent_session_id` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
+| `attributes` | `dict[str, str]` |  |
 
 ### Functions
 

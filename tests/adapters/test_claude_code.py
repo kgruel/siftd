@@ -124,6 +124,20 @@ class TestClaudeCodeAdapter:
         assert output_tc.attributes["background_task_id"] == "buxu4lquj"
         assert claude_code.TOOL_ALIASES["BashOutput"] == "shell.output"
 
+    def test_tool_aliases_cover_current_tool_set(self):
+        """Live spawn tool is Agent (Task kept for historical logs); the
+        current task-tracking, plan-mode, and messaging tools are mapped."""
+        aliases = claude_code.TOOL_ALIASES
+        assert aliases["Agent"] == "task.spawn"
+        assert aliases["Task"] == "task.spawn"  # historical logs still resolve
+        assert aliases["TaskCreate"] == "ui.todo"
+        assert aliases["TaskUpdate"] == "ui.todo"
+        assert aliases["ToolSearch"] == "tool.search"
+        assert aliases["SendMessage"] == "task.message"
+        assert aliases["Workflow"] == "workflow.run"
+        assert aliases["EnterPlanMode"] == "ui.plan"
+        assert aliases["ExitPlanMode"] == "ui.plan"
+
     def test_foreground_bash_gets_no_background_attribute(self, tmp_path):
         records = [
             {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
