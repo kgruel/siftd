@@ -13,8 +13,13 @@ that declared it). Session identity and workspace are not in the transcript
 itself; workspace is recovered from a sibling ``history.jsonl`` at the
 Antigravity CLI root, keyed by conversation id.
 
-Known gaps (nothing in the source data to build these from):
-    - No token usage or model id anywhere in the transcript.
+Known gaps:
+    - No token usage or model id anywhere in the transcript JSONL itself.
+      Model identity IS recoverable from the sibling per-conversation SQLite
+      DB (``conversations/<conversation-id>.db``, table ``gen_metadata``,
+      protobuf blobs) and is extracted here when that DB is readable; token
+      usage extraction from the same blobs is not attempted. When the DB is
+      missing or unreadable, behavior degrades to JSONL-only (model=None).
     - Tool calls declared but never resolved before the transcript ends
       (e.g. a backgrounded run_command the user interrupted) surface as
       status="pending" ToolCalls with no result, same fallback used by
@@ -35,6 +40,7 @@ rather than generalized into the SDK -- there's exactly one data point.
 import functools
 import json
 import re
+import sqlite3
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
@@ -166,6 +172,7 @@ def parse(source: Source) -> Iterable[Conversation]:
 
     session_id = _session_id(path)
     workspace_path = source.metadata.get("workspace_path") or _resolve_workspace(path)
+    model = _resolve_model(path)
 
     started_at: str | None = None
     ended_at: str | None = None
@@ -237,7 +244,7 @@ def parse(source: Source) -> Iterable[Conversation]:
             if current_prompt is None:
                 current_prompt = Prompt(timestamp=timestamp)
                 conversation.prompts.append(current_prompt)
-            current_response = Response(timestamp=timestamp)
+            current_response = Response(timestamp=timestamp, model=model)
             current_prompt.responses.append(current_response)
 
             thinking = record.get("thinking")
@@ -271,7 +278,7 @@ def parse(source: Source) -> Iterable[Conversation]:
             if current_prompt is None:
                 current_prompt = Prompt(timestamp=timestamp)
                 conversation.prompts.append(current_prompt)
-            current_response = Response(timestamp=timestamp)
+            current_response = Response(timestamp=timestamp, model=model)
             current_prompt.responses.append(current_response)
 
         if pending_tool_calls:
@@ -397,6 +404,131 @@ def _resolve_workspace(transcript_path: Path) -> str | None:
     except IndexError:
         return None
     return _load_history_workspaces(root).get(_session_id(transcript_path))
+
+
+# =============================================================================
+# Model identity — recovered from the sibling conversations/<id>.db
+# =============================================================================
+#
+# Antigravity CLI keeps a per-conversation SQLite DB next to the brain/ tree:
+# ``<root>/conversations/<conversation-id>.db``. Its ``gen_metadata`` table
+# holds one protobuf blob per generation; field 1.21 of each blob is the
+# human-readable model display name (e.g. "Gemini 3.5 Flash (Medium)") and
+# field 1.20 is a self-describing string map carrying ``model_enum``. There is
+# no published schema -- the field numbers are reverse-engineered -- so the
+# parse is a plain wire-format field walk (no proto compiler) and any failure
+# degrades to model=None, i.e. the pre-existing JSONL-only behavior.
+
+
+def _iter_proto_fields(buf: bytes) -> Iterator[tuple[int, int, int | bytes]]:
+    """Walk protobuf wire-format fields: yields (field_no, wire_type, value).
+
+    Wire types: 0 varint (int), 1 fixed64 (bytes), 2 len-delimited (bytes),
+    5 fixed32 (bytes). Raises ValueError on malformed input.
+    """
+    i = 0
+    n = len(buf)
+    while i < n:
+        tag, i = _read_varint(buf, i)
+        field_no, wire_type = tag >> 3, tag & 0x07
+        if wire_type == 0:
+            value, i = _read_varint(buf, i)
+        elif wire_type == 1:
+            value, i = buf[i : i + 8], i + 8
+        elif wire_type == 2:
+            length, i = _read_varint(buf, i)
+            if i + length > n:
+                raise ValueError("truncated len-delimited field")
+            value, i = buf[i : i + length], i + length
+        elif wire_type == 5:
+            value, i = buf[i : i + 4], i + 4
+        else:
+            raise ValueError(f"unsupported wire type {wire_type}")
+        yield field_no, wire_type, value
+
+
+def _read_varint(buf: bytes, i: int) -> tuple[int, int]:
+    result = 0
+    shift = 0
+    while True:
+        if i >= len(buf) or shift > 63:
+            raise ValueError("truncated or oversized varint")
+        byte = buf[i]
+        result |= (byte & 0x7F) << shift
+        i += 1
+        if not byte & 0x80:
+            return result, i
+        shift += 7
+
+
+def _model_from_gen_metadata(blob: bytes) -> str | None:
+    """Extract the model display name from one gen_metadata protobuf blob.
+
+    Prefers field 1.21 (display name); falls back to the ``model_enum`` entry
+    of the 1.20 string map. Returns None if neither is present or the blob is
+    malformed.
+    """
+    try:
+        sub = next(
+            (v for f, w, v in _iter_proto_fields(blob) if f == 1 and w == 2),
+            None,
+        )
+        if not isinstance(sub, bytes):
+            return None
+        display_name = None
+        map_model = None
+        for field_no, wire_type, value in _iter_proto_fields(sub):
+            if wire_type != 2 or not isinstance(value, bytes):
+                continue
+            if field_no == 21:
+                display_name = value.decode("utf-8", errors="replace")
+            elif field_no == 20:
+                key = val = None
+                for kf, kw, kv in _iter_proto_fields(value):
+                    if kw == 2 and isinstance(kv, bytes):
+                        if kf == 1:
+                            key = kv.decode("utf-8", errors="replace")
+                        elif kf == 2:
+                            val = kv.decode("utf-8", errors="replace")
+                if key == "model_enum":
+                    map_model = val
+        return display_name or map_model
+    except ValueError:
+        return None
+
+
+def _resolve_model(transcript_path: Path) -> str | None:
+    """Recover the conversation's model from the sibling conversations DB.
+
+    Opens ``<root>/conversations/<conversation-id>.db`` read-only and reads
+    every ``gen_metadata`` row. Returns the model only when all rows that
+    yield one agree -- per-generation attribution to specific transcript
+    steps is unverified, so a mixed-model conversation degrades to None
+    rather than guessing. Any DB or parse failure also returns None.
+    """
+    try:
+        root = transcript_path.parents[4]
+    except IndexError:
+        return None
+    db_path = root / "conversations" / f"{_session_id(transcript_path)}.db"
+    if not db_path.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = conn.execute("SELECT data FROM gen_metadata").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+    models = {
+        m
+        for (blob,) in rows
+        if isinstance(blob, bytes) and (m := _model_from_gen_metadata(blob))
+    }
+    if len(models) == 1:
+        return models.pop()
+    return None
 
 
 # =============================================================================

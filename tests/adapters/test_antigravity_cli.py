@@ -495,3 +495,147 @@ class TestAntigravityCliNormalizerAndPeek:
         empty.write_text("")
         assert antigravity_cli.peek_scan(empty) is None
         assert not list(antigravity_cli.peek_tail(empty, lines=5))
+
+
+# --- Model identity via conversations/<id>.db -------------------------------
+
+
+def _varint(n: int) -> bytes:
+    out = bytearray()
+    while True:
+        b = n & 0x7F
+        n >>= 7
+        if n:
+            out.append(b | 0x80)
+        else:
+            out.append(b)
+            return bytes(out)
+
+
+def _len_field(field_no: int, payload: bytes) -> bytes:
+    return _varint((field_no << 3) | 2) + _varint(len(payload)) + payload
+
+
+def _gen_metadata_blob(
+    display_name: str | None = "Gemini 3.5 Flash (Medium)",
+    map_entries: dict[str, str] | None = None,
+) -> bytes:
+    """Build a protobuf blob shaped like real gen_metadata.data."""
+    sub = b""
+    sub += _len_field(19, b"gemini-default")
+    for key, value in (map_entries or {}).items():
+        entry = _len_field(1, key.encode()) + _len_field(2, value.encode())
+        sub += _len_field(20, entry)
+    if display_name is not None:
+        sub += _len_field(21, display_name.encode())
+    return _len_field(1, sub)
+
+
+def _write_conversations_db(root: Path, conv_id: str, blobs: list[bytes]) -> Path:
+    import sqlite3
+
+    conv_dir = root / "conversations"
+    conv_dir.mkdir(parents=True, exist_ok=True)
+    db_path = conv_dir / f"{conv_id}.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("CREATE TABLE gen_metadata (idx INTEGER, data BLOB)")
+    conn.executemany(
+        "INSERT INTO gen_metadata VALUES (?, ?)", list(enumerate(blobs))
+    )
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+_MODEL_RECORDS = [
+    {"type": "USER_INPUT", "created_at": "T1", "content": "hi"},
+    {"type": "PLANNER_RESPONSE", "created_at": "T2", "content": "hello"},
+]
+
+
+class TestAntigravityCliModelIdentity:
+    def _parse_one(self, path):
+        (conv,) = antigravity_cli.parse(Source(kind="file", location=path))
+        return conv
+
+    def test_model_set_from_sibling_db(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        _write_conversations_db(root, "conv-1", [_gen_metadata_blob()] * 3)
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model == "Gemini 3.5 Flash (Medium)"
+
+    def test_model_none_when_db_missing(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model is None
+
+    def test_model_none_when_db_corrupt(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        conv_dir = root / "conversations"
+        conv_dir.mkdir(parents=True)
+        (conv_dir / "conv-1.db").write_bytes(b"not a sqlite database at all")
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model is None
+
+    def test_model_none_when_table_missing(self, tmp_path):
+        import sqlite3
+
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        conv_dir = root / "conversations"
+        conv_dir.mkdir(parents=True)
+        conn = sqlite3.connect(conv_dir / "conv-1.db")
+        conn.execute("CREATE TABLE other (x)")
+        conn.commit()
+        conn.close()
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model is None
+
+    def test_model_none_when_rows_disagree(self, tmp_path):
+        # Per-generation attribution to transcript steps is unverified, so a
+        # mixed-model conversation degrades to None rather than guessing.
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        _write_conversations_db(
+            root,
+            "conv-1",
+            [_gen_metadata_blob("Model A"), _gen_metadata_blob("Model B")],
+        )
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model is None
+
+    def test_model_falls_back_to_model_enum_map(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        blob = _gen_metadata_blob(
+            display_name=None,
+            map_entries={"used_claude": "false", "model_enum": "MODEL_PLACEHOLDER_M20"},
+        )
+        _write_conversations_db(root, "conv-1", [blob])
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model == "MODEL_PLACEHOLDER_M20"
+
+    def test_malformed_blob_rows_are_skipped(self, tmp_path):
+        root = tmp_path / "antigravity-cli"
+        path = _write_transcript(root, "conv-1", _MODEL_RECORDS)
+        _write_conversations_db(
+            root, "conv-1", [b"\xff\xff\xff", _gen_metadata_blob("Model A")]
+        )
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model == "Model A"
+
+    def test_model_set_on_orphan_response_too(self, tmp_path):
+        # A result step with no PLANNER_RESPONSE synthesizes a Response; it
+        # should carry the model as well.
+        root = tmp_path / "antigravity-cli"
+        records = [
+            {"type": "USER_INPUT", "created_at": "T1", "content": "hi"},
+            {"type": "VIEW_FILE", "created_at": "T2", "content": "out", "status": "DONE"},
+        ]
+        path = _write_transcript(root, "conv-1", records)
+        _write_conversations_db(root, "conv-1", [_gen_metadata_blob()])
+        conv = self._parse_one(path)
+        assert conv.prompts[0].responses[0].model == "Gemini 3.5 Flash (Medium)"
