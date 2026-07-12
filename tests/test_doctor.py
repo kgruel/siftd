@@ -346,9 +346,21 @@ class TestAdapterStaleCheck:
         os.utime(log, (mtime, mtime))
         return Source(kind="file", location=log)
 
+    def _set_ingested_path(self, db_path, path):
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db_path)
+        conn.execute(
+            "UPDATE ingested_files SET path = ? WHERE path = '/logs/session.jsonl'",
+            (str(path),),
+        )
+        conn.commit()
+        conn.close()
+
     def test_stale_adapter_warns(self, tmp_path, stale_db, monkeypatch):
         """Disk file newer than last ingest produces a warning with fix."""
         source = self._log_file(tmp_path, self.INGESTED_MTIME + 3600)
+        self._set_ingested_path(stale_db, source.location)
         self._fake_plugins(monkeypatch, "fake_adapter", lambda: [source])
 
         ctx = self._ctx(stale_db, tmp_path)
@@ -369,6 +381,7 @@ class TestAdapterStaleCheck:
     def test_fresh_adapter_silent(self, tmp_path, stale_db, monkeypatch):
         """Disk mtime equal to ingested mtime produces no findings."""
         source = self._log_file(tmp_path, self.INGESTED_MTIME)
+        self._set_ingested_path(stale_db, source.location)
         self._fake_plugins(monkeypatch, "fake_adapter", lambda: [source])
 
         ctx = self._ctx(stale_db, tmp_path)
@@ -378,6 +391,62 @@ class TestAdapterStaleCheck:
             ctx.close()
 
         assert findings == []
+
+    def test_older_file_change_not_hidden_by_newer_ingested_file(
+        self, tmp_path, stale_db, monkeypatch
+    ):
+        """Each path is compared independently, not through adapter-wide maxima."""
+        import os
+
+        from siftd.domain.source import Source
+        from siftd.storage.sqlite import get_or_create_harness, open_database, record_failed_file
+
+        older = tmp_path / "session.jsonl"
+        older.write_text("changed\n")
+        os.utime(older, (self.INGESTED_MTIME + 100, self.INGESTED_MTIME + 100))
+
+        newer = tmp_path / "newer.jsonl"
+        newer.write_text("{}\n")
+        os.utime(newer, (self.INGESTED_MTIME + 200, self.INGESTED_MTIME + 200))
+
+        conn = open_database(stale_db)
+        harness_id = get_or_create_harness(conn, "fake_adapter")
+        record_failed_file(
+            conn,
+            str(older),
+            "hash-older",
+            harness_id,
+            "fixture",
+            file_mtime=self.INGESTED_MTIME,
+        )
+        record_failed_file(
+            conn,
+            str(newer),
+            "hash2",
+            harness_id,
+            "fixture",
+            file_mtime=self.INGESTED_MTIME + 200,
+        )
+        conn.commit()
+        conn.close()
+
+        self._fake_plugins(
+            monkeypatch,
+            "fake_adapter",
+            lambda: [
+                Source(kind="file", location=older),
+                Source(kind="file", location=newer),
+            ],
+        )
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].context["path"] == str(older)
+        assert findings[0].context["stale_file_count"] == 1
 
     def test_adapter_without_db_presence_skipped(self, tmp_path, stale_db, monkeypatch):
         """Adapters with no ingested rows are skipped — discover() never runs."""

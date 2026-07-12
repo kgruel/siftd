@@ -50,6 +50,7 @@ from siftd.adapters.sdk import (
     build_harness,
     iter_jsonl,
     make_peek_hooks,
+    open_external_db,
     yield_conversation,
 )
 from siftd.domain import (
@@ -514,7 +515,7 @@ def _resolve_model(transcript_path: Path) -> str | None:
     if not db_path.is_file():
         return None
     try:
-        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn = open_external_db(db_path)
         try:
             rows = conn.execute("SELECT data FROM gen_metadata").fetchall()
         finally:

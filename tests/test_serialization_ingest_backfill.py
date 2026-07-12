@@ -58,6 +58,8 @@ def test_ingest_payload_serializer_shapes():
         ),
         elapsed_ms=42,
         auto_index=AutoIndexReport(ran=True, chunks_added=5, conversations_indexed=2),
+        adapter_tiers={"claude_code": "core"},
+        disabled_adapters=["aider"],
     )
 
     payload = to_ingest_run_payload(result)
@@ -67,6 +69,8 @@ def test_ingest_payload_serializer_shapes():
     assert set(out["stats"].keys()) == {f.name for f in fields(IngestStatsPayload)}
     assert set(out["auto_index"].keys()) == {f.name for f in fields(AutoIndexPayload)}
     assert out["auto_index"]["chunks_added"] == 5 and out["auto_index"]["conversations_indexed"] == 2
+    assert out["adapter_tiers"] == {"claude_code": "core"}
+    assert out["disabled_adapters"] == ["aider"]
 
 
 def test_backfill_payload_serializer_key_drift_guard():

@@ -40,18 +40,21 @@ class AdapterStaleCheck:
             return []
 
         cur = conn.execute(
-            """SELECT h.name AS harness_name, MAX(f.file_mtime) AS newest_mtime
+            """SELECT h.name AS harness_name, f.path, f.file_mtime
                FROM ingested_files f
                JOIN harnesses h ON h.id = f.harness_id
-               WHERE f.file_mtime IS NOT NULL
-               GROUP BY h.name"""
+               WHERE f.file_mtime IS NOT NULL"""
         )
-        ingested_newest = {row["harness_name"]: row["newest_mtime"] for row in cur.fetchall()}
+        ingested_mtimes: dict[str, dict[str, float]] = {}
+        for row in cur.fetchall():
+            ingested_mtimes.setdefault(row["harness_name"], {})[row["path"]] = row[
+                "file_mtime"
+            ]
 
         findings = []
         for plugin in load_all_adapters():
-            newest_ingested = ingested_newest.get(plugin.name)
-            if newest_ingested is None:
+            adapter_mtimes = ingested_mtimes.get(plugin.name)
+            if not adapter_mtimes:
                 continue  # No DB presence for this adapter — nothing to compare.
 
             try:
@@ -61,20 +64,25 @@ class AdapterStaleCheck:
                 # double-report from here.
                 continue
 
-            newest_disk: float | None = None
+            stale_paths: list[tuple[str, float, float]] = []
             for source in discovered:
+                path = str(source.location)
+                ingested_mtime = adapter_mtimes.get(path)
+                if ingested_mtime is None:
+                    continue  # New paths are reported by ingest-pending.
                 try:
-                    mtime = source.as_path.stat().st_mtime
+                    disk_mtime = source.as_path.stat().st_mtime
                 except OSError:
                     continue
-                if newest_disk is None or mtime > newest_disk:
-                    newest_disk = mtime
+                gap = disk_mtime - ingested_mtime
+                if gap > _MTIME_TOLERANCE_SECONDS:
+                    stale_paths.append((path, disk_mtime, ingested_mtime))
 
-            if newest_disk is None:
-                continue
-
-            gap = newest_disk - newest_ingested
-            if gap > _MTIME_TOLERANCE_SECONDS:
+            if stale_paths:
+                path, disk_mtime, ingested_mtime = max(
+                    stale_paths, key=lambda item: item[1] - item[2]
+                )
+                gap = disk_mtime - ingested_mtime
                 findings.append(
                     Finding(
                         check=self.name,
@@ -87,8 +95,10 @@ class AdapterStaleCheck:
                         fix_command="siftd ingest",
                         context={
                             "adapter": plugin.name,
-                            "newest_file_mtime": newest_disk,
-                            "newest_ingested_mtime": newest_ingested,
+                            "path": path,
+                            "stale_file_count": len(stale_paths),
+                            "newest_file_mtime": disk_mtime,
+                            "newest_ingested_mtime": ingested_mtime,
                             "gap_seconds": gap,
                         },
                     )
