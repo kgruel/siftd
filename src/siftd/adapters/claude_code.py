@@ -89,6 +89,51 @@ _BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
 _USER_PROMPT_SOURCES = frozenset({"typed", "queued"})
 
 
+def _tool_use_result_attributes(tool_use_result) -> dict[str, str]:
+    """Distill a record-level structured `toolUseResult` into attributes.
+
+    Claude Code duplicates tool results in two channels: the in-message
+    tool_result block (prose, already stored as the ToolCall result) and a
+    top-level structured `toolUseResult` object. The structured form carries
+    data the prose lacks — real parent->child agent-spawn linkage
+    (agentId/agent_type/model/name/spawnDepth) and the stdout/stderr split
+    for Bash. Capture-only: linkage joins are left to downstream consumers.
+    String-form toolUseResult (error prose) carries nothing structured.
+    """
+    attrs: dict[str, str] = {}
+    if not isinstance(tool_use_result, dict):
+        return attrs
+
+    # Agent/teammate spawn — both shapes carry an agent id:
+    #   async Task spawn: {agentId, resolvedModel, status: "async_launched", ...}
+    #   teammate spawn:   {agent_id, agent_type, model, name, spawnDepth,
+    #                      status: "teammate_spawned", ...} (snake_case)
+    agent_id = tool_use_result.get("agentId") or tool_use_result.get("agent_id")
+    if agent_id is not None:
+        attrs["agent_id"] = str(agent_id)
+        if agent_type := tool_use_result.get("agent_type"):
+            attrs["agent_type"] = str(agent_type)
+        if name := tool_use_result.get("name"):
+            attrs["agent_name"] = str(name)
+        if model := (tool_use_result.get("model") or tool_use_result.get("resolvedModel")):
+            attrs["agent_model"] = str(model)
+        if (depth := tool_use_result.get("spawnDepth")) is not None:
+            attrs["spawn_depth"] = str(depth)
+        if status := tool_use_result.get("status"):
+            attrs["spawn_status"] = str(status)
+
+    # Bash — structured stdout/stderr split (the prose result mixes them)
+    if "stdout" in tool_use_result or "stderr" in tool_use_result:
+        if stdout := tool_use_result.get("stdout"):
+            attrs["stdout"] = str(stdout)
+        if stderr := tool_use_result.get("stderr"):
+            attrs["stderr"] = str(stderr)
+        if tool_use_result.get("interrupted"):
+            attrs["interrupted"] = "true"
+
+    return attrs
+
+
 def _is_injected_user_record(record: dict) -> bool:
     """True when a user-role record carries injected (non-human) content.
 
@@ -147,9 +192,13 @@ def parse(source: Source) -> Iterable[Conversation]:
     started_at = None
     ended_at = None
     branch = None
+    ai_title = None
 
     for record in records:
-        if record.get("type") in ("user", "assistant"):
+        if record.get("type") == "ai-title":
+            # Emitted per turn; the last occurrence is the current title.
+            ai_title = record.get("aiTitle") or ai_title
+        elif record.get("type") in ("user", "assistant"):
             session_id = session_id or record.get("sessionId")
             agent_id = agent_id or record.get("agentId")
             session_cwd = session_cwd or record.get("cwd")
@@ -179,6 +228,8 @@ def parse(source: Source) -> Iterable[Conversation]:
     # top-level sessions and for historical sub-agents whose sidecar rotated off
     # disk before ingest — both degrade silently to no attribute.
     conv_attributes: dict[str, str] = {}
+    if ai_title:
+        conv_attributes["title"] = str(ai_title)
     if agent_id:
         meta_path = path.parent / f"{path.stem}.meta.json"
         try:
@@ -219,9 +270,18 @@ def parse(source: Source) -> Iterable[Conversation]:
     # key: tool_use_id, value: (response object, tool_name, input_dict)
     pending_tool_uses: dict[str, tuple[Response, str, dict]] = {}
     current_prompt: Prompt | None = None
+    last_response: Response | None = None
 
     for record in records:
         record_type = record.get("type")
+        if record_type == "system" and record.get("subtype") == "turn_duration":
+            # Emitted after a turn's last assistant message; attach the
+            # wall-clock duration to that response (attributes, not a domain
+            # slot — the domain has no latency home).
+            duration_ms = record.get("durationMs")
+            if duration_ms is not None and last_response is not None:
+                last_response.attributes["turn_duration_ms"] = str(duration_ms)
+            continue
         if record_type not in ("user", "assistant"):
             continue
 
@@ -239,6 +299,17 @@ def parse(source: Source) -> Iterable[Conversation]:
             )
 
             if has_tool_result:
+                # The top-level structured toolUseResult belongs to the
+                # record's single tool_result block; skip it in the rare
+                # multi-block case where the pairing would be ambiguous.
+                tool_result_blocks = [
+                    b for b in content_blocks
+                    if isinstance(b, dict) and b.get("type") == "tool_result"
+                ]
+                structured_attrs: dict[str, str] = {}
+                if len(tool_result_blocks) == 1:
+                    structured_attrs = _tool_use_result_attributes(record.get("toolUseResult"))
+
                 # Process tool results - attach to pending tool uses
                 for block in content_blocks:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -249,7 +320,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                             result_content = block.get("content")
                             status = "error" if is_error else "success"
 
-                            attributes: dict[str, str] = {}
+                            attributes: dict[str, str] = dict(structured_attrs)
                             if (
                                 tool_name == "Bash"
                                 and input_dict.get("run_in_background")
@@ -317,6 +388,28 @@ def parse(source: Source) -> Iterable[Conversation]:
             if usage_data.get("cache_read_input_tokens"):
                 attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
 
+            # 5m vs 1h cache writes are priced at different multipliers, so
+            # the TTL split is captured under distinct keys (capture-only —
+            # the cost model still prices the combined cache_creation total).
+            cache_creation = usage_data.get("cache_creation") or {}
+            if cache_creation.get("ephemeral_5m_input_tokens"):
+                attributes["cache_creation_ephemeral_5m_input_tokens"] = str(
+                    cache_creation["ephemeral_5m_input_tokens"]
+                )
+            if cache_creation.get("ephemeral_1h_input_tokens"):
+                attributes["cache_creation_ephemeral_1h_input_tokens"] = str(
+                    cache_creation["ephemeral_1h_input_tokens"]
+                )
+            server_tool_use = usage_data.get("server_tool_use") or {}
+            if server_tool_use.get("web_search_requests"):
+                attributes["server_tool_use_web_search_requests"] = str(
+                    server_tool_use["web_search_requests"]
+                )
+            if server_tool_use.get("web_fetch_requests"):
+                attributes["server_tool_use_web_fetch_requests"] = str(
+                    server_tool_use["web_fetch_requests"]
+                )
+
             response = Response(
                 timestamp=timestamp,
                 usage=usage,
@@ -324,6 +417,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
                 attributes=attributes,
             )
+            last_response = response
 
             # Parse content blocks and track tool uses
             for block in content_blocks:
