@@ -18,6 +18,7 @@ from siftd.adapters.sdk import (
     yield_conversation,
 )
 from siftd.domain import (
+    ContentBlock,
     Conversation,
     Prompt,
     Response,
@@ -30,7 +31,9 @@ from siftd.domain import (
 ADAPTER_INTERFACE_VERSION = 1
 SUPPORT_TIER = "core"
 NAME = "claude_code"
-DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
+# ~/.config/claude/projects is where modern installs write live logs;
+# ~/.claude/projects remains as the legacy/fallback location.
+DEFAULT_LOCATIONS = ["~/.config/claude/projects", "~/.claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 SUPPORTS_LIVE_REGISTRATION = True  # supports tagging during active sessions
 SUBAGENT_PATH_MARKER = "/subagents/"  # path marker for subagent detection
@@ -81,6 +84,23 @@ TOOL_ALIASES: dict[str, str] = {
 # in input["bash_id"] -- no parsing needed on that side.
 _BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
 
+# promptSource values that mean a human authored the prompt. Anything else
+# (e.g. "system") is harness-injected content riding a user-role record.
+_USER_PROMPT_SOURCES = frozenset({"typed", "queued"})
+
+
+def _is_injected_user_record(record: dict) -> bool:
+    """True when a user-role record carries injected (non-human) content.
+
+    Claude Code marks injected content two ways: `isMeta: true` (caveats,
+    skill injections) and `promptSource` values other than typed/queued
+    (e.g. "system"). Absent both fields, the record is a real user prompt.
+    """
+    if record.get("isMeta"):
+        return True
+    prompt_source = record.get("promptSource")
+    return prompt_source is not None and prompt_source not in _USER_PROMPT_SOURCES
+
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
@@ -126,12 +146,14 @@ def parse(source: Source) -> Iterable[Conversation]:
     session_cwd = None
     started_at = None
     ended_at = None
+    branch = None
 
     for record in records:
         if record.get("type") in ("user", "assistant"):
             session_id = session_id or record.get("sessionId")
             agent_id = agent_id or record.get("agentId")
             session_cwd = session_cwd or record.get("cwd")
+            branch = branch or record.get("gitBranch")
             ts = record.get("timestamp")
             if ts:
                 if started_at is None or ts < started_at:
@@ -171,8 +193,12 @@ def parse(source: Source) -> Iterable[Conversation]:
             if desc := meta.get("description"):
                 conv_attributes["agent_description"] = str(desc)
 
-    branch = None
-    if session_cwd:
+    # Records carry the branch that was live when each message was written
+    # (`gitBranch`, captured above). Recomputing from the cwd's *current* git
+    # state at ingest time mislabels any session ingested after a branch
+    # switch, so the live lookup is only a fallback for old logs that predate
+    # the per-record field.
+    if branch is None and session_cwd:
         from siftd.git import get_worktree_branch
 
         branch = get_worktree_branch(session_cwd)
@@ -255,9 +281,21 @@ def parse(source: Source) -> Iterable[Conversation]:
                     external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
                 )
 
+                # Injected content (isMeta / non-user promptSource) keeps its
+                # place in the conversation but is reclassified so it never
+                # pollutes user-prompt FTS search: the text moves off the
+                # "text" key (which is what gets indexed) onto "meta_text",
+                # and the block type records the injection source.
+                injected = _is_injected_user_record(record)
+
                 # Parse content blocks
                 for block in content_blocks:
                     content_block = parse_block(block)
+                    if injected and "text" in content_block.content:
+                        content = dict(content_block.content)
+                        content["meta_text"] = content.pop("text")
+                        content["meta_source"] = record.get("promptSource") or "isMeta"
+                        content_block = ContentBlock(block_type="meta_text", content=content)
                     current_prompt.content.append(content_block)
 
                 conversation.prompts.append(current_prompt)
@@ -365,6 +403,17 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
         )
         if has_tool_result:
             return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+        # Injected content (isMeta / non-user promptSource) is not a real
+        # user prompt — surface it as metadata so peek exchange counts and
+        # prompt previews only reflect what the human actually typed.
+        if _is_injected_user_record(raw):
+            return NormalizedRecord(
+                kind="metadata",
+                timestamp=ts,
+                session_id=raw.get("sessionId"),
+                workspace_path=raw.get("cwd"),
+            )
 
         extra: dict = {}
         agent_id = raw.get("agentId")

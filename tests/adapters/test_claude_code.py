@@ -141,6 +141,92 @@ class TestClaudeCodeAdapter:
         tc = conv.prompts[0].responses[0].tool_calls[0]
         assert tc.attributes == {}
 
+    def test_default_locations_prefer_config_dir(self):
+        # ~/.config/claude/projects is where modern installs write live logs;
+        # ordering matters because discovery iterates in list order.
+        assert claude_code.DEFAULT_LOCATIONS == [
+            "~/.config/claude/projects",
+            "~/.claude/projects",
+        ]
+
+    def test_branch_from_per_record_git_branch(self, tmp_path, monkeypatch):
+        # Records carry gitBranch; the ingest-time live lookup must not run
+        # (it reflects the branch checked out NOW, not during the session).
+        import siftd.git
+
+        def boom(cwd):
+            raise AssertionError("live branch lookup must not run when gitBranch present")
+
+        monkeypatch.setattr(siftd.git, "get_worktree_branch", boom)
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "gitBranch": "feat/session-branch",
+             "message": {"role": "user", "content": "hi"}},
+            {"type": "assistant", "sessionId": "s", "timestamp": "T2", "uuid": "a1",
+             "gitBranch": "feat/other-branch",
+             "message": {"role": "assistant", "model": "m", "content": "ok"}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        assert conv.branch == "feat/session-branch"
+
+    def test_branch_falls_back_to_live_lookup_when_field_absent(self, tmp_path, monkeypatch):
+        import siftd.git
+
+        monkeypatch.setattr(siftd.git, "get_worktree_branch", lambda cwd: "live-branch")
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "hi"}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        assert conv.branch == "live-branch"
+
+    def test_injected_user_records_reclassified(self, tmp_path):
+        # isMeta / non-user promptSource records keep their place in the
+        # conversation but their text moves off the "text" key so user-prompt
+        # FTS indexing (keyed on $.text) never sees injected content.
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "isMeta": True,
+             "message": {"role": "user", "content": "<local-command-caveat>injected caveat</local-command-caveat>"}},
+            {"type": "user", "sessionId": "s", "timestamp": "T2", "uuid": "u2",
+             "promptSource": "system",
+             "message": {"role": "user", "content": [{"type": "text", "text": "skill injection"}]}},
+            {"type": "user", "sessionId": "s", "timestamp": "T3", "uuid": "u3",
+             "promptSource": "typed",
+             "message": {"role": "user", "content": "real human prompt"}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        meta1, meta2, real = conv.prompts
+
+        b = meta1.content[0]
+        assert b.block_type == "meta_text"
+        assert "text" not in b.content
+        assert "injected caveat" in b.content["meta_text"]
+        assert b.content["meta_source"] == "isMeta"
+
+        b = meta2.content[0]
+        assert b.block_type == "meta_text"
+        assert "text" not in b.content
+        assert b.content["meta_text"] == "skill injection"
+        assert b.content["meta_source"] == "system"
+
+        b = real.content[0]
+        assert b.block_type == "text"
+        assert b.content["text"] == "real human prompt"
+
+    def test_normalizer_injected_records_are_metadata(self):
+        # Peek exchange counts / prompt previews only reflect typed prompts.
+        n = claude_code.normalize_record
+        meta = n({"type": "user", "timestamp": "T", "isMeta": True, "sessionId": "s", "cwd": "/w",
+                  "message": {"role": "user", "content": "caveat"}})
+        assert meta.kind == "metadata" and meta.session_id == "s"
+        sysm = n({"type": "user", "timestamp": "T", "promptSource": "system",
+                  "message": {"role": "user", "content": "inject"}})
+        assert sysm.kind == "metadata"
+        queued = n({"type": "user", "timestamp": "T", "promptSource": "queued",
+                    "message": {"role": "user", "content": "queued prompt"}})
+        assert queued.kind == "user"
+
     def test_discover_and_parse_edges(self, tmp_path):
         assert list(claude_code.discover(locations=[str(FIXTURES_DIR)]))
         (tmp_path / "empty.jsonl").write_text("")
