@@ -30,6 +30,16 @@ class ToolCall:
     status: str = "pending"
     external_id: str | None = None
     timestamp: str | None = None
+    # Key/value attributes, persisted to the polymorphic `attributes` table
+    # (mirrors Conversation.attributes / Response.attributes). Convention:
+    # adapters whose tools have background/async semantics (a call starts,
+    # and its real result/relationship arrives later via a separately
+    # correlated event or poll) set attributes["background_task_id"] to the
+    # same value on every ToolCall belonging to that operation — e.g. Claude
+    # Code's Bash(run_in_background) + its later BashOutput polls, or
+    # Antigravity's backgrounded RUN_COMMAND. See claude_code.py/
+    # antigravity_cli.py for the two current examples.
+    attributes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

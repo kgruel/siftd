@@ -348,6 +348,7 @@ class TestAntigravityCliBackgroundTasks:
         resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
         assert resp.tool_calls[0].status == "success"
         assert resp.tool_calls[0].result == {"output": "full untruncated pytest output\n2547 passed\n"}
+        assert resp.tool_calls[0].attributes["background_task_id"] == "conv-1/task-1"
 
     def test_falls_back_to_inline_text_when_log_file_missing(self, tmp_path):
         root = tmp_path / "antigravity-cli"
@@ -392,6 +393,9 @@ class TestAntigravityCliBackgroundTasks:
         resp = list(antigravity_cli.parse(Source(kind="file", location=path)))[0].prompts[0].responses[0]
         assert resp.tool_calls[0].status == "pending"
         assert resp.tool_calls[0].result == {"output": _running_step("conv-1/task-1")["content"]}
+        # background_task_id is set at RUNNING-registration time, independent
+        # of whether resolution ever arrives.
+        assert resp.tool_calls[0].attributes["background_task_id"] == "conv-1/task-1"
 
     def test_completion_for_unknown_task_id_is_a_noop(self, tmp_path):
         """A completion notice for a task id we never saw declared (e.g. it

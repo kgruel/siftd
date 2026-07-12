@@ -4,6 +4,7 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -70,7 +71,14 @@ TOOL_ALIASES: dict[str, str] = {
     "TodoWrite": "ui.todo",
     "NotebookEdit": "notebook.edit",
     "Skill": "skill.invoke",
+    "BashOutput": "shell.output",
 }
+
+# A backgrounded Bash call's tool_result is plain prose naming its own id,
+# e.g. "Command running in background with ID: buxu4lquj. Output is being
+# written to: ...". BashOutput's later polls carry the same id structurally
+# in input["bash_id"] -- no parsing needed on that side.
+_BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
 
 
 def discover(locations=None) -> Iterable[Source]:
@@ -214,6 +222,20 @@ def parse(source: Source) -> Iterable[Conversation]:
                             result_content = block.get("content")
                             status = "error" if is_error else "success"
 
+                            attributes: dict[str, str] = {}
+                            if (
+                                tool_name == "Bash"
+                                and input_dict.get("run_in_background")
+                                and isinstance(result_content, str)
+                            ):
+                                bg_match = _BASH_BG_ID_RE.search(result_content)
+                                if bg_match:
+                                    attributes["background_task_id"] = bg_match.group(1)
+                            elif tool_name == "BashOutput":
+                                bash_id = input_dict.get("bash_id")
+                                if bash_id:
+                                    attributes["background_task_id"] = bash_id
+
                             # Create completed tool call
                             tool_call = ToolCall(
                                 tool_name=tool_name,
@@ -222,6 +244,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                                 status=status,
                                 external_id=tool_use_id,
                                 timestamp=timestamp,
+                                attributes=attributes,
                             )
                             response.tool_calls.append(tool_call)
             else:

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from siftd.paths import db_path as default_db_path
+from siftd.storage.attributes import get_attributes
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
@@ -199,11 +200,13 @@ def _fetch_tool_call_kind_specific(
     ).fetchone()
     if row is None:
         return {}
+    attributes = {a["key"]: a["value"] for a in get_attributes(conn, "tool_call", event_id)}
     return {
         "tool_name": row["tool_name"],
         "status": row["status"],
         "input": row["input"],
         "result": row["result"],
+        "attributes": attributes,
     }
 
 

@@ -296,6 +296,7 @@ def parse(source: Source) -> Iterable[Conversation]:
         if record.get("status") == "RUNNING":
             started = _TASK_STARTED_RE.search(content)
             if started:
+                tool_call.attributes["background_task_id"] = started.group(1)
                 open_background_tasks[started.group(1)] = tool_call
 
     flush_pending()

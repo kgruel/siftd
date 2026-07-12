@@ -89,6 +89,58 @@ class TestClaudeCodeAdapter:
         u = n({"type": "user", "timestamp": "T", "agentId": "sub-1", "message": {"role": "user", "content": "hi"}})
         assert u.extra.get("agent_id") == "sub-1"
 
+    def test_backgrounded_bash_and_bash_output_correlate(self, tmp_path):
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "run the tests in the background"}},
+            {"type": "assistant", "sessionId": "s", "timestamp": "T2", "uuid": "a1",
+             "message": {"role": "assistant", "model": "m", "content": [
+                 {"type": "tool_use", "id": "tu-1", "name": "Bash",
+                  "input": {"command": "go test ./...", "run_in_background": True}},
+             ]}},
+            {"type": "user", "sessionId": "s", "timestamp": "T3", "uuid": "u2",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "tu-1",
+                  "content": "Command running in background with ID: buxu4lquj. Output is being "
+                             "written to: /tmp/x/tasks/buxu4lquj.output. You will be notified "
+                             "when it completes. To check interim output, use Read on that file path."},
+             ]}},
+            {"type": "assistant", "sessionId": "s", "timestamp": "T4", "uuid": "a2",
+             "message": {"role": "assistant", "model": "m", "content": [
+                 {"type": "tool_use", "id": "tu-2", "name": "BashOutput", "input": {"bash_id": "buxu4lquj"}},
+             ]}},
+            {"type": "user", "sessionId": "s", "timestamp": "T5", "uuid": "u3",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "tu-2",
+                  "content": {"content": "<status>killed</status>\n\n<stdout>done</stdout>"}},
+             ]}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        bash_tc = conv.prompts[0].responses[0].tool_calls[0]
+        output_tc = conv.prompts[0].responses[1].tool_calls[0]
+        assert bash_tc.tool_name == "Bash"
+        assert bash_tc.attributes["background_task_id"] == "buxu4lquj"
+        assert output_tc.tool_name == "BashOutput"
+        assert output_tc.attributes["background_task_id"] == "buxu4lquj"
+        assert claude_code.TOOL_ALIASES["BashOutput"] == "shell.output"
+
+    def test_foreground_bash_gets_no_background_attribute(self, tmp_path):
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "list files"}},
+            {"type": "assistant", "sessionId": "s", "timestamp": "T2", "uuid": "a1",
+             "message": {"role": "assistant", "model": "m", "content": [
+                 {"type": "tool_use", "id": "tu-1", "name": "Bash", "input": {"command": "ls"}},
+             ]}},
+            {"type": "user", "sessionId": "s", "timestamp": "T3", "uuid": "u2",
+             "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": "tu-1", "content": "README.md"},
+             ]}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        tc = conv.prompts[0].responses[0].tool_calls[0]
+        assert tc.attributes == {}
+
     def test_discover_and_parse_edges(self, tmp_path):
         assert list(claude_code.discover(locations=[str(FIXTURES_DIR)]))
         (tmp_path / "empty.jsonl").write_text("")

@@ -112,6 +112,139 @@ class TestWriterRoundtrip:
         assert row["result_hash"] is None
 
 
+class TestToolCallAttributes:
+    """ToolCall.attributes round-trips through store_conversation via the
+    generic polymorphic `attributes` table (target_kind='tool_call') -- the
+    same mechanism Response.attributes already uses, no schema change."""
+
+    def test_round_trips_through_store_conversation(self, tmp_path):
+        from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
+        from siftd.storage.attributes import get_attributes
+
+        path = tmp_path / "attrs.db"
+        conn = create_database(path)
+        get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        get_or_create_workspace(conn, "/ws", "2024-01-01T00:00:00Z")
+
+        conv = Conversation(
+            external_id="attrs-conv",
+            workspace_path="/ws",
+            started_at="2024-01-01T10:00:00Z",
+            harness=Harness(name="test", source="test", log_format="jsonl"),
+            prompts=[
+                Prompt(
+                    timestamp="2024-01-01T10:00:00Z",
+                    content=[ContentBlock(block_type="text", content={"text": "run tests"})],
+                    responses=[
+                        Response(
+                            timestamp="2024-01-01T10:00:01Z",
+                            tool_calls=[
+                                ToolCall(
+                                    tool_name="Bash",
+                                    input={"command": "go test ./...", "run_in_background": True},
+                                    status="success",
+                                    attributes={"background_task_id": "buxu4lquj"},
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        store_conversation(conn, conv, commit=True)
+
+        tool_call_id = conn.execute(
+            "SELECT id FROM events WHERE kind = 'tool_call'"
+        ).fetchone()["id"]
+        attrs = {row["key"]: row["value"] for row in get_attributes(conn, "tool_call", tool_call_id)}
+        assert attrs == {"background_task_id": "buxu4lquj"}
+        conn.close()
+
+    def test_no_attributes_writes_no_rows(self, tmp_path):
+        """A ToolCall with the default empty attributes dict writes nothing --
+        the attributes table stays empty, same as before this field existed."""
+        from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
+
+        path = tmp_path / "no_attrs.db"
+        conn = create_database(path)
+        get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        get_or_create_workspace(conn, "/ws", "2024-01-01T00:00:00Z")
+
+        conv = Conversation(
+            external_id="no-attrs-conv",
+            workspace_path="/ws",
+            started_at="2024-01-01T10:00:00Z",
+            harness=Harness(name="test", source="test", log_format="jsonl"),
+            prompts=[
+                Prompt(
+                    timestamp="2024-01-01T10:00:00Z",
+                    content=[ContentBlock(block_type="text", content={"text": "list files"})],
+                    responses=[
+                        Response(
+                            timestamp="2024-01-01T10:00:01Z",
+                            tool_calls=[ToolCall(tool_name="Bash", input={"command": "ls"}, status="success")],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+        store_conversation(conn, conv, commit=True)
+
+        count = conn.execute(
+            "SELECT COUNT(*) FROM attributes WHERE target_kind = 'tool_call'"
+        ).fetchone()[0]
+        assert count == 0
+        conn.close()
+
+    def test_exposed_via_events_api(self, tmp_path):
+        """attributes surface through api.events.get_event's kind_specific dict
+        without any allowlist/dataclass changes (it's dict[str, Any])."""
+        from siftd.api.events import get_event
+        from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
+
+        path = tmp_path / "api_attrs.db"
+        conn = create_database(path)
+        get_or_create_harness(conn, "test", source="test", log_format="jsonl")
+        get_or_create_workspace(conn, "/ws", "2024-01-01T00:00:00Z")
+
+        conv = Conversation(
+            external_id="api-attrs-conv",
+            workspace_path="/ws",
+            started_at="2024-01-01T10:00:00Z",
+            harness=Harness(name="test", source="test", log_format="jsonl"),
+            prompts=[
+                Prompt(
+                    timestamp="2024-01-01T10:00:00Z",
+                    content=[ContentBlock(block_type="text", content={"text": "run tests"})],
+                    responses=[
+                        Response(
+                            timestamp="2024-01-01T10:00:01Z",
+                            tool_calls=[
+                                ToolCall(
+                                    tool_name="Bash",
+                                    input={"command": "go test ./..."},
+                                    status="success",
+                                    attributes={"background_task_id": "buxu4lquj"},
+                                ),
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+        store_conversation(conn, conv, commit=True)
+
+        tool_call_id = conn.execute(
+            "SELECT id FROM events WHERE kind = 'tool_call'"
+        ).fetchone()["id"]
+        detail = get_event(tool_call_id, conn=conn)
+        assert detail is not None
+        assert detail.kind_specific["attributes"] == {"background_task_id": "buxu4lquj"}
+        conn.close()
+
+
 class TestTreeShape:
     def test_event_tree_prompt_response_tool_call(self, db, conv_id):
         model_id = get_or_create_model(db, "claude-test")
