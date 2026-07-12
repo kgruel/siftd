@@ -42,6 +42,8 @@ HARNESS_DISPLAY_NAME = "Codex CLI"
 TOOL_ALIASES: dict[str, str] = {
     "shell_command": "shell.execute",
     "exec_command": "shell.execute",
+    "exec": "shell.execute",
+    "wait": "shell.wait",
     "apply_patch": "file.edit",
     "update_plan": "ui.todo",
     "view_image": "file.read",
@@ -132,6 +134,9 @@ def parse(source: Source) -> Iterable[Conversation]:
     pending_calls: dict[str, tuple[Response, str, dict | str]] = {}
     current_prompt: Prompt | None = None
     pending_usage_response: Response | None = None
+    # Last response seen, independent of pending_usage_response (which is
+    # cleared by token_count). task_complete arrives after that clearing.
+    last_response: Response | None = None
 
     for record in records:
         record_type = record.get("type")
@@ -162,6 +167,11 @@ def parse(source: Source) -> Iterable[Conversation]:
                             "reasoning_output_tokens", str(reasoning_output)
                         )
                     pending_usage_response = None
+            elif payload.get("type") == "task_complete" and last_response is not None:
+                for key in ("duration_ms", "time_to_first_token_ms"):
+                    value = payload.get(key)
+                    if value is not None:
+                        last_response.attributes.setdefault(key, str(value))
             continue
 
         if record_type != "response_item":
@@ -191,6 +201,20 @@ def parse(source: Source) -> Iterable[Conversation]:
                 if current_prompt is not None:
                     current_prompt.responses.append(response)
                 pending_usage_response = response
+                last_response = response
+
+        elif item_type == "reasoning":
+            # Encrypted reasoning carries no renderable content; only the
+            # summary (when present) is worth keeping, as thinking blocks.
+            for text in _reasoning_summary_texts(payload):
+                response, current_prompt = _get_or_create_response(
+                    current_prompt, conversation, timestamp, model
+                )
+                response.content.append(
+                    ContentBlock(block_type="thinking", content={"thinking": text})
+                )
+                pending_usage_response = response
+                last_response = response
 
         elif item_type == "function_call":
             tool_name = payload.get("name", "unknown")
@@ -211,6 +235,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
             pending_usage_response = response
+            last_response = response
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -245,6 +270,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
             pending_usage_response = response
+            last_response = response
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -285,6 +311,27 @@ def _parse_block(block) -> ContentBlock:
 
 
 
+def _reasoning_summary_texts(payload: dict) -> list[str]:
+    """Extract non-empty summary texts from a reasoning response_item.
+
+    Codex reasoning items carry encrypted_content (opaque) plus a summary
+    list of {"type": "summary_text", "text": ...}. Summaries are empty in
+    current logs; this makes future summaries a data-only change instead
+    of a silent drop.
+    """
+    texts = []
+    for entry in payload.get("summary") or []:
+        if isinstance(entry, dict):
+            text = entry.get("text", "")
+        elif isinstance(entry, str):
+            text = entry
+        else:
+            continue
+        if text:
+            texts.append(text)
+    return texts
+
+
 def _get_or_create_response(
     current_prompt: Prompt | None,
     conversation: Conversation,
@@ -320,7 +367,9 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
         "turn_context"  → metadata (model)
         "response_item" with payload.type "message" → user or assistant
         "response_item" with payload.type "function_call"/"custom_tool_call" → tool_use
+        "response_item" with payload.type "reasoning" → assistant (thinking, summary only)
         "event_msg" with payload.type "token_count" → usage
+        "event_msg" with payload.type "task_complete" → metadata (latency attrs in extra)
     """
     record_type = raw.get("type")
     ts = raw.get("timestamp")
@@ -353,6 +402,13 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
                 input_tokens=last_usage.get("input_tokens", 0) or 0,
                 output_tokens=last_usage.get("output_tokens", 0) or 0,
             )
+        if payload.get("type") == "task_complete":
+            extra = {
+                key: str(payload[key])
+                for key in ("duration_ms", "time_to_first_token_ms")
+                if payload.get(key) is not None
+            }
+            return NormalizedRecord(kind="metadata", timestamp=ts, extra=extra)
         return None
 
     if record_type == "response_item":
@@ -388,6 +444,18 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
                     timestamp=ts,
                     content_blocks=normalized_blocks,
                 )
+
+        elif item_type == "reasoning":
+            # Only summaries are renderable (encrypted_content is opaque);
+            # empty in current logs, captured so future summaries surface.
+            texts = _reasoning_summary_texts(payload)
+            if not texts:
+                return None
+            return NormalizedRecord(
+                kind="assistant",
+                timestamp=ts,
+                content_blocks=[{"type": "thinking", "thinking": t} for t in texts],
+            )
 
         elif item_type in ("function_call", "custom_tool_call"):
             return NormalizedRecord(
