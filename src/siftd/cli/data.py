@@ -463,8 +463,17 @@ def cmd_ingest(args) -> int:
     else:
         renderer.print_summary(stats)
 
-    # Adapter health: zero-discovery and drop-in import failures.
+    # Adapter health: zero-discovery, non-core file errors, drop-in import failures.
     zero_discovery = sorted(set(result.adapters) - set(stats.by_harness))
+    # File errors from non-core adapters are tagged with their tier so expectations
+    # are set: core adapters are expected to parse cleanly; contrib is best-effort
+    # and frozen may lag upstream format changes.
+    tiers = result.adapter_tiers
+    noncore_errors = sorted(
+        (name, counts.get("errors", 0), tiers.get(name, "contrib"))
+        for name, counts in stats.by_harness.items()
+        if counts.get("errors", 0) and tiers.get(name, "contrib") != "core"
+    )
     if json_mode:
         for name in zero_discovery:
             renderer._emit({
@@ -472,6 +481,15 @@ def cmd_ingest(args) -> int:
                 "kind": "zero_discovery",
                 "adapter": name,
                 "message": f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config",
+            })
+        for name, errors, tier in noncore_errors:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "noncore_errors",
+                "adapter": name,
+                "tier": tier,
+                "errors": errors,
+                "message": f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort",
             })
         for path, error in result.dropin_failures:
             renderer._emit({
@@ -484,6 +502,10 @@ def cmd_ingest(args) -> int:
         if not quiet:
             for name in zero_discovery:
                 status.info(f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+            for name, errors, tier in noncore_errors:
+                status.warning(
+                    f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort"
+                )
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 

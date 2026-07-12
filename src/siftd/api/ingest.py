@@ -63,6 +63,7 @@ class IngestRunResult:
     elapsed_ms: int
     dropin_failures: list[tuple[Path, str]] = field(default_factory=list)
     auto_index: AutoIndexReport | None = None
+    adapter_tiers: dict[str, str] = field(default_factory=dict)  # name -> SUPPORT_TIER
 
 
 __all__ = [
@@ -79,8 +80,10 @@ def _resolve_adapters(
     adapter_names: list[str] | None,
     scan_paths: list[str] | None,
     failures_out: list[tuple[Path, str]] | None = None,
-) -> tuple[list, list[str]]:
+) -> tuple[list, list[str], dict[str, str]]:
     """Resolve discovered adapter modules with optional filtering/overrides."""
+    from siftd.adapters.validation import DEFAULT_SUPPORT_TIER
+
     plugins = load_all_adapters(failures_out=failures_out)
 
     if adapter_names:
@@ -94,7 +97,10 @@ def _resolve_adapters(
     else:
         adapters = [p.module for p in plugins]
 
-    return adapters, [p.name for p in plugins]
+    tiers = {
+        p.name: getattr(p.module, "SUPPORT_TIER", DEFAULT_SUPPORT_TIER) for p in plugins
+    }
+    return adapters, [p.name for p in plugins], tiers
 
 
 def run_ingest(
@@ -122,7 +128,7 @@ def run_ingest(
     dropin_failures: list[tuple[Path, str]] = []
     conn = create_database(path)
     try:
-        adapters, selected_names = _resolve_adapters(
+        adapters, selected_names, adapter_tiers = _resolve_adapters(
             adapter_names=adapter_names,
             scan_paths=scan_paths,
             failures_out=dropin_failures,
@@ -164,6 +170,7 @@ def run_ingest(
         elapsed_ms=elapsed_ms,
         dropin_failures=dropin_failures,
         auto_index=auto_index,
+        adapter_tiers=adapter_tiers,
     )
 
 

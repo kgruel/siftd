@@ -125,7 +125,7 @@ class TestIngestRunResultDefaults:
 # ---------------------------------------------------------------------------
 
 
-def _make_result(tmp_path, *, adapters, by_harness=None, dropin_failures=None):
+def _make_result(tmp_path, *, adapters, by_harness=None, dropin_failures=None, adapter_tiers=None):
     stats = IngestStats()
     stats.by_harness = by_harness or {}
     return IngestRunResult(
@@ -137,6 +137,7 @@ def _make_result(tmp_path, *, adapters, by_harness=None, dropin_failures=None):
         stats=stats,
         elapsed_ms=100,
         dropin_failures=dropin_failures or [],
+        adapter_tiers=adapter_tiers or {},
     )
 
 
@@ -250,3 +251,82 @@ class TestAdapterHealthRendering:
         assert warning_events[0]["kind"] == "failed_import"
         assert "/cfg/bad.py" in warning_events[0]["path"]
         assert "failed to load" in warning_events[0]["message"]
+
+
+class TestNonCoreErrorTagging:
+    """File errors from non-core adapters are tagged with their support tier."""
+
+    def test_noncore_errors_tagged_in_terminal_output(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["gemini_cli"],
+            by_harness={"gemini_cli": {"errors": 3}},
+            adapter_tiers={"gemini_cli": "frozen"},
+        )
+        monkeypatch.setattr("siftd.api.run_ingest", lambda **kw: result)
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+
+        from siftd.cli import main
+
+        rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "--verbose"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "gemini_cli" in err
+        assert "frozen-tier" in err
+        assert "3 file error(s)" in err
+
+    def test_core_errors_not_tagged(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["claude_code"],
+            by_harness={"claude_code": {"errors": 2}},
+            adapter_tiers={"claude_code": "core"},
+        )
+        monkeypatch.setattr("siftd.api.run_ingest", lambda **kw: result)
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+
+        from siftd.cli import main
+
+        rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "--verbose"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "-tier" not in err
+
+    def test_unknown_tier_defaults_to_contrib(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["mystery"],
+            by_harness={"mystery": {"errors": 1}},
+        )
+        monkeypatch.setattr("siftd.api.run_ingest", lambda **kw: result)
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+
+        from siftd.cli import main
+
+        rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "--verbose"])
+        assert rc == 0
+        assert "contrib-tier" in capsys.readouterr().err
+
+    def test_json_mode_noncore_errors_event(self, tmp_path, capsys, monkeypatch):
+        result = _make_result(
+            tmp_path,
+            adapters=["opencode"],
+            by_harness={"opencode": {"errors": 2}},
+            adapter_tiers={"opencode": "contrib"},
+        )
+        monkeypatch.setattr("siftd.api.run_ingest", lambda **kw: result)
+        monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+
+        from siftd.cli import main
+
+        rc = main(["--db", str(tmp_path / "siftd.db"), "ingest", "--json"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        events = [json.loads(line) for line in out.splitlines() if line.strip()]
+        warning_events = [e for e in events if e.get("type") == "adapter_warning"]
+        assert len(warning_events) == 1
+        ev = warning_events[0]
+        assert ev["kind"] == "noncore_errors"
+        assert ev["adapter"] == "opencode"
+        assert ev["tier"] == "contrib"
+        assert ev["errors"] == 2

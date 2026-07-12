@@ -28,6 +28,7 @@ from siftd.safecall import parse_json_args
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "core"
 NAME = "codex_cli"
 DEFAULT_LOCATIONS = ["~/.codex/sessions"]
 DEDUP_STRATEGY = "file"  # one conversation per file

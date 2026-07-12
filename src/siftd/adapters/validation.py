@@ -26,6 +26,12 @@ REQUIRED_CALLABLES = ["discover", "can_handle", "parse"]
 # Valid dedup strategies
 VALID_DEDUP_STRATEGIES = {"file", "session"}
 
+# Valid support tiers (optional SUPPORT_TIER attribute; defaults to "contrib")
+VALID_SUPPORT_TIERS = {"core", "contrib", "frozen"}
+
+# Default tier when an adapter doesn't declare SUPPORT_TIER (drop-ins, old adapters)
+DEFAULT_SUPPORT_TIER = "contrib"
+
 
 def validate_adapter(module: ModuleType, origin: str = "adapter") -> str | None:
     """Validate an adapter module has the required interface.
@@ -59,6 +65,11 @@ def validate_adapter(module: ModuleType, origin: str = "adapter") -> str | None:
 
     if module.DEDUP_STRATEGY not in VALID_DEDUP_STRATEGIES:
         return f"{origin}: DEDUP_STRATEGY must be 'file' or 'session', got '{module.DEDUP_STRATEGY}'"
+
+    # SUPPORT_TIER is optional (defaults to "contrib") but must be valid when present
+    tier = getattr(module, "SUPPORT_TIER", None)
+    if tier is not None and tier not in VALID_SUPPORT_TIERS:
+        return f"{origin}: SUPPORT_TIER must be 'core', 'contrib', or 'frozen', got '{tier}'"
 
     for func_name in REQUIRED_CALLABLES:
         if not hasattr(module, func_name) or not callable(getattr(module, func_name)):

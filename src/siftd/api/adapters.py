@@ -33,6 +33,7 @@ class AdapterInfo:
     locations: list[str]
     source_path: str | None = None  # For drop-in, the .py file path
     entrypoint: str | None = None  # For entry points, the entry point name
+    tier: str = "contrib"  # SUPPORT_TIER: "core", "contrib", or "frozen"
 
 
 def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
@@ -44,6 +45,8 @@ def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
     Returns:
         AdapterInfo with locations extracted from the adapter module.
     """
+    from siftd.adapters.validation import DEFAULT_SUPPORT_TIER
+
     locations = getattr(plugin.module, "DEFAULT_LOCATIONS", [])
     return AdapterInfo(
         name=plugin.name,
@@ -51,6 +54,7 @@ def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
         locations=locations,
         source_path=str(plugin.source_path) if plugin.source_path else None,
         entrypoint=plugin.entrypoint,
+        tier=getattr(plugin.module, "SUPPORT_TIER", DEFAULT_SUPPORT_TIER),
     )
 
 

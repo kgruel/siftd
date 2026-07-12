@@ -28,6 +28,7 @@ from siftd.domain import (
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "core"
 NAME = "claude_code"
 DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file

@@ -74,16 +74,31 @@ siftd ships with adapters for:
 
 Each adapter knows where its tool writes logs by default. When you run `siftd ingest`, all adapters scan their default locations.
 
+### Support tiers
+
+Every adapter carries a support tier that sets expectations for how actively its
+log format is tracked:
+
+- **core** — maintained by siftd; ingest is expected to work and upstream format
+  changes are tracked (`claude_code`, `codex_cli`, `antigravity_cli`).
+- **contrib** — best-effort; parse errors are possible when the tool's format
+  drifts. This is the default for drop-in adapters.
+- **frozen** — kept working as-is; upstream format changes may not be tracked
+  (`gemini_cli`, `aider`).
+
+Tiers show up in the `siftd adapters` listing, and ingest tags file-error
+warnings from non-core adapters with their tier.
+
 ```bash
 siftd adapters    # list discovered adapters
 ```
 
 ```
-claude_code      builtin  ~/.claude/projects, ~/.config/claude/projects
-aider            builtin  ~/.aider
-gemini_cli       builtin  ~/.gemini/tmp
-antigravity_cli  builtin  ~/.gemini/antigravity-cli
-codex_cli        builtin  ~/.codex/sessions
+claude_code      builtin  core    ~/.claude/projects, ~/.config/claude/projects
+aider            builtin  frozen  ~/.aider
+gemini_cli       builtin  frozen  ~/.gemini/tmp
+antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
+codex_cli        builtin  core    ~/.codex/sessions
 ```
 
 ## Custom adapters

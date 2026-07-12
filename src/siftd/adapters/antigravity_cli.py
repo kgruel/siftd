@@ -57,6 +57,7 @@ from siftd.domain import (
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "core"
 NAME = "antigravity_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/antigravity-cli"]
 DEDUP_STRATEGY = "session"  # one conversation per brain/<id>; transcript grows over the session

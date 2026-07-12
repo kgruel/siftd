@@ -58,6 +58,27 @@ class TestValidateAdapterSignatures:
         assert "parse()" in error
 
 
+class TestSupportTier:
+    def test_absent_tier_is_valid(self):
+        assert validate_adapter(_valid_ns()) is None
+
+    def test_valid_tiers_pass(self):
+        for tier in ("core", "contrib", "frozen"):
+            assert validate_adapter(_valid_ns(SUPPORT_TIER=tier)) is None
+
+    def test_invalid_tier_rejected(self):
+        error = validate_adapter(_valid_ns(SUPPORT_TIER="experimental"))
+        assert error and "SUPPORT_TIER" in error and "experimental" in error
+
+    def test_all_builtins_declare_valid_tier(self):
+        from siftd.adapters.registry import load_builtin_adapters
+        from siftd.adapters.validation import VALID_SUPPORT_TIERS
+
+        for plugin in load_builtin_adapters():
+            tier = getattr(plugin.module, "SUPPORT_TIER", None)
+            assert tier in VALID_SUPPORT_TIERS, f"{plugin.name}: SUPPORT_TIER={tier!r}"
+
+
 class TestDropInsValidSignatures:
     """Doctor check reports signature errors in drop-in adapter files."""
 
