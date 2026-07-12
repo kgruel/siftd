@@ -125,6 +125,7 @@ class Check(Protocol):
 
 
 # Import all built-in check classes — must come after type definitions above
+from siftd.doctor.checks.adapter_stale import AdapterStaleCheck  # noqa: E402
 from siftd.doctor.checks.config_valid import ConfigValidCheck  # noqa: E402
 from siftd.doctor.checks.cost_coverage import CostCoverageCheck  # noqa: E402
 from siftd.doctor.checks.db_blob_orphans import DbBlobOrphansCheck  # noqa: E402
@@ -151,6 +152,7 @@ from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noq
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
     IngestErrorsCheck(),
+    AdapterStaleCheck(),
     EmbedConfigCheck(),
     EmbeddingsAvailableCheck(),
     EmbeddingsCompatCheck(),
