@@ -39,7 +39,9 @@ Design: `docs/dev/design/dev-docs-system-2026-07-14.md`.
 ## Gate topology
 
 1. Tracked pre-commit hook (`.githooks/pre-commit`, wired by `./dev setup`):
-   lint, then regenerate + stage generated docs — local drift self-heals.
+   lint, then regenerate; only `docs/reference/` (fully generated) is
+   auto-staged. Managed READMEs mix authored prose with generated spans, so
+   they are never auto-staged — stage their regenerated spans yourself.
 2. `./dev check` runs `./dev docs --check` as its **last** step.
 3. CI has a dedicated `docs` job (all extras installed so nothing skips).
 

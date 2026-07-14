@@ -7,10 +7,13 @@ cd "$(git rev-parse --show-toplevel)"
 
 ./dev lint
 
-# Regenerate docs/reference/ and the managed README spans, then stage the
-# results (no-op when nothing changed). Skipped before ./dev setup has run.
+# Regenerate docs/reference/ and the managed README spans. Only docs/reference/
+# is auto-staged: it is fully generated, so a whole-file add can never sweep in
+# unrelated edits. Managed READMEs mix authored prose with generated spans —
+# auto-adding them would override a developer's staged-hunk selection — so their
+# staleness is left to `./dev docs --check` (last step of ./dev check, and CI).
+# Skipped before ./dev setup has run.
 if [ -d .venv ]; then
     ./dev docs
     git add docs/reference/
-    uv run python scripts/gen_docs.py readmes --list | xargs git add
 fi

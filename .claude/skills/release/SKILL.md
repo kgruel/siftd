@@ -24,8 +24,8 @@ what belongs in the release — don't invent changelog content.
    (version string is embedded in `cli.md`'s `--help` capture) and the
    generated spans of the managed per-folder READMEs. Note: the tracked
    pre-commit hook (`.githooks/pre-commit`, wired by `./dev setup`) lints
-   and re-runs this on commit, staging the regenerated files — so don't be
-   surprised if `git commit` amends generated docs again.
+   and re-runs this on commit, auto-staging `docs/reference/` (READMEs are
+   not auto-staged; stage those yourself if their spans changed).
 
 5. **Full check**: `./dev check` (lint + test). Must be green before
    proceeding — do not tag on red.
