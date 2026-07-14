@@ -4,7 +4,7 @@
 Version-controlled reference data (pricing.toml).
 
 <!-- gen:begin files -->
-<sub>generated from the data directory — run <code>./dev docs</code></sub>
+<sub>generated from the `src/siftd/data` directory — run <code>./dev docs</code></sub>
 
 | File | Description |
 |------|-------------|

@@ -205,11 +205,6 @@ def format_function(name: str, func: Any) -> str:
         params = []
         for pname, param in sig.parameters.items():
             ptype = hints.get(pname)
-            if param.kind == param.KEYWORD_ONLY:
-                prefix = ""
-            else:
-                prefix = ""
-
             if ptype:
                 type_str = format_type(ptype)
                 if param.default is not param.empty:
@@ -647,7 +642,8 @@ def generate_schema_docs() -> str:
 def run_help(args: list[str]) -> str:
     """Run siftd CLI with given args and capture help output."""
     import io
-    from contextlib import redirect_stdout, redirect_stderr
+    from contextlib import redirect_stderr, redirect_stdout
+
     from siftd.cli import main as cli_main
 
     # Capture stdout/stderr from argparse --help
@@ -853,6 +849,11 @@ MANIFEST: list[ManagedReadme] = [
         [Section("modules", "modules", "src/siftd/api")],
     ),
     ManagedReadme(
+        "src/siftd/builtin_queries/README.md",
+        "Built-in SQL query templates shipped with siftd (siftd copy query <name>).",
+        [Section("files", "files", "src/siftd/builtin_queries")],
+    ),
+    ManagedReadme(
         "src/siftd/cli/README.md",
         "CLI package — thin dispatcher plus per-command modules.",
         [Section("modules", "modules", "src/siftd/cli")],
@@ -959,17 +960,30 @@ def _count_test_functions(source: str) -> int:
 
 
 def _first_comment_line(path: Path) -> str:
-    """First `#`-comment line of a text file (e.g. a TOML header)."""
+    """First single-line-comment header of a text file (`#` TOML, `--` SQL)."""
     try:
         for line in path.read_text().splitlines():
             stripped = line.strip()
             if stripped.startswith("#"):
                 return stripped.lstrip("#").strip()
+            if stripped.startswith("--"):
+                return stripped.lstrip("-").strip()
             if stripped:
                 break
     except OSError:
         pass
     return ""
+
+
+def _first_line_summary(path: Path) -> str:
+    """First-line summary for a file in a `files`-kind section.
+
+    Python modules (e.g. a subpackage's `__init__.py`) are summarized from
+    their docstring; everything else from its comment header.
+    """
+    if path.suffix == ".py":
+        return _first_docstring_line(path.read_text())
+    return _first_comment_line(path)
 
 
 def _desc_line(path: Path) -> str:
@@ -1006,13 +1020,13 @@ def _render_files(section: Section) -> str:
     )
     rows = []
     for p in files:
-        desc = escape_pipe(_first_comment_line(p)) or "—"
+        desc = escape_pipe(_first_line_summary(p)) or "—"
         rows.append(f"| [{p.name}]({p.name}) | {desc} |")
     if not rows:
         table = "_No files._"
     else:
         table = "| File | Description |\n|------|-------------|\n" + "\n".join(rows)
-    return _provenance("the data directory") + "\n\n" + table
+    return _provenance(f"the `{section.package}` directory") + "\n\n" + table
 
 
 def _render_scripts(_section: Section) -> str:
