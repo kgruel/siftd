@@ -2,14 +2,28 @@
 """Generate reference documentation from code.
 
 Usage:
-    python scripts/gen_docs.py          # Generate all docs
-    python scripts/gen_docs.py api      # Generate API reference only
-    python scripts/gen_docs.py schema   # Generate schema reference only
-    python scripts/gen_docs.py cli      # Generate CLI reference only
+    python scripts/gen_docs.py                 # Generate all docs
+    python scripts/gen_docs.py api             # Generate API reference only
+    python scripts/gen_docs.py schema          # Generate schema reference only
+    python scripts/gen_docs.py cli             # Generate CLI reference only
+    python scripts/gen_docs.py config          # Generate config reference only
+    python scripts/gen_docs.py readmes         # Fill generated spans in per-folder READMEs
+    python scripts/gen_docs.py readmes --list  # List managed README paths (one per line)
+    python scripts/gen_docs.py readmes --bootstrap  # Create missing managed READMEs
+
+Flags:
+    --strict     Fail (nonzero exit) if any target skips instead of degrading
+                 gracefully. Used by `./dev docs --check` so a skipped target
+                 (e.g. api.md when optional deps are missing) is never a false
+                 green.
+    --bootstrap  For the readmes target: create any missing managed README from
+                 a placeholder shell before filling its generated spans.
+    --list       For the readmes target: print managed README paths and exit.
 """
 
 from __future__ import annotations
 
+import ast
 import dataclasses
 import inspect
 import re
@@ -17,10 +31,12 @@ import sys
 from pathlib import Path
 from typing import Any, get_type_hints
 
-# Ensure src is importable when running from repo root
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+REPO_ROOT = Path(__file__).parent.parent
 
-DOCS_DIR = Path(__file__).parent.parent / "docs" / "reference"
+# Ensure src is importable when running from repo root
+sys.path.insert(0, str(REPO_ROOT / "src"))
+
+DOCS_DIR = REPO_ROOT / "docs" / "reference"
 
 
 def escape_pipe(s: str) -> str:
@@ -769,46 +785,538 @@ def generate_config_docs() -> str:
 
 
 # =============================================================================
+# README Generation (per-folder navigable docs)
+# =============================================================================
+#
+# Managed READMEs carry hand-authored prose plus machine-generated spans bounded
+# by `<!-- gen:begin <id> -->` / `<!-- gen:end -->`. Only content between markers
+# is rewritten; authored prose is never touched. The manifest below declares
+# which files are managed and which section each generated span renders. Every
+# generated fact is derived from an authoritative source (module docstrings, the
+# adapter registry, the doctor check registry) so the output is byte-stable
+# across runs and Python versions.
+
+
+@dataclasses.dataclass
+class Section:
+    """One generated span inside a managed README.
+
+    Attributes:
+        id: Marker id (`<!-- gen:begin <id> -->`); unique within its file.
+        kind: Generator to run (modules, files, scripts, adapters,
+            doctor-checks, tests).
+        package: For `modules`/`files`: directory (relative to repo root) whose
+            contents are enumerated. Ignored by other kinds.
+    """
+
+    id: str
+    kind: str
+    package: str | None = None
+
+
+@dataclasses.dataclass
+class ManagedReadme:
+    """A README whose generated spans this tool owns.
+
+    Attributes:
+        path: File path relative to the repo root.
+        summary: One-line description used only for the bootstrap placeholder
+            preamble (real prose is authored in a later slice).
+        sections: Generated spans, in declaration order.
+    """
+
+    path: str
+    summary: str
+    sections: list[Section]
+
+
+# Checked-in manifest: explicit ownership only, no recursive README discovery.
+# Summaries are lifted from the CLAUDE.md structure tree; they seed the
+# bootstrap placeholder and are replaced by authored prose in a later slice.
+MANIFEST: list[ManagedReadme] = [
+    ManagedReadme(
+        "src/siftd/README.md",
+        "Core modules (config, search, pricing, ids, paths, safecall, …).",
+        [Section("modules", "modules", "src/siftd")],
+    ),
+    ManagedReadme(
+        "src/siftd/adapters/README.md",
+        "Log parsing per tool (authoring SDK in adapters/sdk.py).",
+        [Section("adapters", "adapters")],
+    ),
+    ManagedReadme(
+        "src/siftd/api/README.md",
+        "Public API layer — CLI and serve consume this, neither touches storage directly.",
+        [Section("modules", "modules", "src/siftd/api")],
+    ),
+    ManagedReadme(
+        "src/siftd/cli/README.md",
+        "CLI package — thin dispatcher plus per-command modules.",
+        [Section("modules", "modules", "src/siftd/cli")],
+    ),
+    ManagedReadme(
+        "src/siftd/content/README.md",
+        "Content-block helpers (binary filtering).",
+        [Section("modules", "modules", "src/siftd/content")],
+    ),
+    ManagedReadme(
+        "src/siftd/data/README.md",
+        "Version-controlled reference data (pricing.toml).",
+        [Section("files", "files", "src/siftd/data")],
+    ),
+    ManagedReadme(
+        "src/siftd/doctor/README.md",
+        "Health check system (per-check modules under doctor/checks/).",
+        [Section("checks", "doctor-checks")],
+    ),
+    ManagedReadme(
+        "src/siftd/domain/README.md",
+        "Domain models (Conversation, Usage, events).",
+        [Section("modules", "modules", "src/siftd/domain")],
+    ),
+    ManagedReadme(
+        "src/siftd/embeddings/README.md",
+        "Semantic search (optional [embed] extra).",
+        [Section("modules", "modules", "src/siftd/embeddings")],
+    ),
+    ManagedReadme(
+        "src/siftd/ingestion/README.md",
+        "Ingest orchestration over adapters.",
+        [Section("modules", "modules", "src/siftd/ingestion")],
+    ),
+    ManagedReadme(
+        "src/siftd/output/README.md",
+        "Format registry — terminal/markdown/json/html renderers.",
+        [Section("modules", "modules", "src/siftd/output")],
+    ),
+    ManagedReadme(
+        "src/siftd/peek/README.md",
+        "Live session introspection (bypasses the DB).",
+        [Section("modules", "modules", "src/siftd/peek")],
+    ),
+    ManagedReadme(
+        "src/siftd/serialization/README.md",
+        "Serve-layer JSON formatting (architecture boundary).",
+        [Section("modules", "modules", "src/siftd/serialization")],
+    ),
+    ManagedReadme(
+        "src/siftd/serve/README.md",
+        "HTTP server (optional [serve] extra) — routes, auth, htmx UI.",
+        [Section("modules", "modules", "src/siftd/serve")],
+    ),
+    ManagedReadme(
+        "src/siftd/storage/README.md",
+        "SQLite ops, schema, content blobs.",
+        [Section("modules", "modules", "src/siftd/storage")],
+    ),
+    ManagedReadme(
+        "tests/README.md",
+        "Pytest suite — mirrors the src structure.",
+        [Section("tests", "tests")],
+    ),
+    ManagedReadme(
+        "scripts/README.md",
+        "Dev harness commands, discovered as `./dev <name>`.",
+        [Section("scripts", "scripts")],
+    ),
+]
+
+
+# --- provenance + small extractors --------------------------------------------
+
+
+def _provenance(source_desc: str) -> str:
+    """One-line caption noting the generated span's source and regen command."""
+    return f"<sub>generated from {source_desc} — run <code>./dev docs</code></sub>"
+
+
+def _first_docstring_line(source: str) -> str:
+    """First line of a Python module's docstring, via AST (no import)."""
+    try:
+        doc = ast.get_docstring(ast.parse(source))
+    except SyntaxError:
+        return ""
+    if not doc:
+        return ""
+    return doc.strip().splitlines()[0].strip()
+
+
+def _count_test_functions(source: str) -> int:
+    """Count `test_*` functions/methods via AST (not grep)."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return 0
+    return sum(
+        1
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    )
+
+
+def _first_comment_line(path: Path) -> str:
+    """First `#`-comment line of a text file (e.g. a TOML header)."""
+    try:
+        for line in path.read_text().splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip()
+            if stripped:
+                break
+    except OSError:
+        pass
+    return ""
+
+
+def _desc_line(path: Path) -> str:
+    """The `# DESC:` header of a dev script."""
+    for line in path.read_text().splitlines():
+        if line.startswith("# DESC:"):
+            return line[len("# DESC:") :].strip()
+    return ""
+
+
+# --- section renderers (each returns the span body: provenance + table) -------
+
+
+def _render_modules(section: Section) -> str:
+    assert section.package is not None
+    pkg = REPO_ROOT / section.package
+    py_files = sorted(p for p in pkg.glob("*.py") if p.name != "__init__.py")
+    rows = []
+    for p in py_files:
+        summary = escape_pipe(_first_docstring_line(p.read_text())) or "—"
+        rows.append(f"| [{p.name}]({p.name}) | {summary} |")
+    if not rows:
+        table = "_No modules._"
+    else:
+        table = "| Module | Summary |\n|--------|---------|\n" + "\n".join(rows)
+    return _provenance("module docstrings") + "\n\n" + table
+
+
+def _render_files(section: Section) -> str:
+    assert section.package is not None
+    directory = REPO_ROOT / section.package
+    files = sorted(
+        p for p in directory.iterdir() if p.is_file() and p.name != "README.md"
+    )
+    rows = []
+    for p in files:
+        desc = escape_pipe(_first_comment_line(p)) or "—"
+        rows.append(f"| [{p.name}]({p.name}) | {desc} |")
+    if not rows:
+        table = "_No files._"
+    else:
+        table = "| File | Description |\n|------|-------------|\n" + "\n".join(rows)
+    return _provenance("the data directory") + "\n\n" + table
+
+
+def _render_scripts(_section: Section) -> str:
+    # Mirror the ./dev discovery rules: scripts/*.sh, skip _*.sh (and, implicitly,
+    # the lib/ examples/ prompts/ __pycache__ subdirs the glob never reaches).
+    scripts = sorted(
+        p for p in (REPO_ROOT / "scripts").glob("*.sh") if not p.name.startswith("_")
+    )
+    rows = []
+    for p in scripts:
+        desc = escape_pipe(_desc_line(p)) or "—"
+        rows.append(f"| [{p.stem}]({p.name}) | {desc} |")
+    table = "| Command | Description |\n|---------|-------------|\n" + "\n".join(rows)
+    return _provenance("script DESC headers") + "\n\n" + table
+
+
+def _render_adapters(_section: Section) -> str:
+    from siftd.adapters.registry import load_builtin_adapters
+    from siftd.adapters.validation import support_tier
+
+    plugins = sorted(load_builtin_adapters(), key=lambda pl: pl.name)
+    rows = []
+    for pl in plugins:
+        module = pl.module
+        fname = Path(module.__file__).name
+        tier = support_tier(module)
+        doc = (module.__doc__ or "").strip()
+        desc = escape_pipe(doc.splitlines()[0].strip()) if doc else "—"
+        rows.append(f"| `{pl.name}` | [{fname}]({fname}) | {tier} | {desc} |")
+    table = (
+        "| Adapter | Module | Tier | Description |\n"
+        "|---------|--------|------|-------------|\n" + "\n".join(rows)
+    )
+    return _provenance("the adapter registry") + "\n\n" + table
+
+
+def _render_doctor_checks(_section: Section) -> str:
+    from siftd.doctor.checks import BUILTIN_CHECKS
+
+    checks = sorted(BUILTIN_CHECKS, key=lambda c: c.name)
+    rows = []
+    for check in checks:
+        module = type(check).__module__  # e.g. siftd.doctor.checks.ingest_pending
+        rel = module.split("siftd.doctor.", 1)[-1].replace(".", "/") + ".py"
+        desc = escape_pipe(check.description) or "—"
+        rows.append(f"| `{check.name}` | [{rel}]({rel}) | {check.cost} | {desc} |")
+    table = (
+        "| Check | Module | Cost | Description |\n"
+        "|-------|--------|------|-------------|\n" + "\n".join(rows)
+    )
+    return _provenance("the doctor check registry") + "\n\n" + table
+
+
+def _test_groups() -> list[tuple[str, list[tuple[str, int, str]]]]:
+    """Group test files by directory: (label, [(relpath, count, summary), …])."""
+    tests_dir = REPO_ROOT / "tests"
+
+    def entries(paths: list[Path]) -> list[tuple[str, int, str]]:
+        out = []
+        for p in paths:
+            source = p.read_text()
+            rel = p.relative_to(tests_dir).as_posix()
+            out.append((rel, _count_test_functions(source), _first_docstring_line(source)))
+        return out
+
+    groups: list[tuple[str, list[tuple[str, int, str]]]] = []
+    root = sorted(tests_dir.glob("test_*.py"))
+    if root:
+        groups.append(("tests/", entries(root)))
+    for sub in sorted(
+        p for p in tests_dir.iterdir() if p.is_dir() and not p.name.startswith("__")
+    ):
+        files = sorted(sub.rglob("test_*.py"))
+        if files:
+            groups.append((f"tests/{sub.name}/", entries(files)))
+    return groups
+
+
+def _render_tests(_section: Section) -> str:
+    groups = _test_groups()
+    lines = [_provenance("test file docstrings"), "", "### Rollup", ""]
+    lines.append("| Directory | Test files | Test functions |")
+    lines.append("|-----------|------------|----------------|")
+    for label, files in groups:
+        n_funcs = sum(count for _, count, _ in files)
+        lines.append(f"| `{label}` | {len(files)} | {n_funcs} |")
+    for label, files in groups:
+        lines.extend(["", f"### `{label}`", ""])
+        lines.append("| File | Tests | Summary |")
+        lines.append("|------|-------|---------|")
+        for rel, count, summary in files:
+            lines.append(f"| [{rel}]({rel}) | {count} | {escape_pipe(summary) or '—'} |")
+    return "\n".join(lines)
+
+
+_RENDERERS = {
+    "modules": _render_modules,
+    "files": _render_files,
+    "scripts": _render_scripts,
+    "adapters": _render_adapters,
+    "doctor-checks": _render_doctor_checks,
+    "tests": _render_tests,
+}
+
+
+def render_block(section: Section) -> str:
+    """Render one section's span body (provenance caption + generated table)."""
+    try:
+        renderer = _RENDERERS[section.kind]
+    except KeyError:
+        raise ValueError(f"unknown section kind: {section.kind}") from None
+    return renderer(section)
+
+
+# --- marker engine ------------------------------------------------------------
+
+_MARKER_RE = re.compile(r"<!-- gen:(begin|end)(?: (\S+))? -->")
+
+
+def splice_markers(text: str, bodies: dict[str, str], *, source: str) -> str:
+    """Rewrite the content between gen markers, leaving authored prose untouched.
+
+    Idempotent: re-running with the same bodies yields identical text. Errors
+    (via ValueError) on malformed, unclosed, nested, unknown, duplicate, or
+    missing markers so drift and typos fail the build rather than degrading.
+
+    Args:
+        text: The full README text.
+        bodies: Section id -> generated span body. Ids in the text must match
+            this set exactly.
+        source: Path label for error messages.
+
+    Returns:
+        The text with each marked span's interior replaced by its body.
+    """
+    blocks: list[tuple[int, int, str]] = []  # (inner_start, inner_end, id)
+    open_id: str | None = None
+    inner_start = 0
+    seen: set[str] = set()
+
+    for match in _MARKER_RE.finditer(text):
+        kind, ident = match.group(1), match.group(2)
+        if kind == "begin":
+            if open_id is not None:
+                raise ValueError(f"{source}: nested gen:begin ({ident!r} inside {open_id!r})")
+            if ident is None:
+                raise ValueError(f"{source}: gen:begin marker is missing an id")
+            if ident in seen:
+                raise ValueError(f"{source}: duplicate gen:begin id {ident!r}")
+            if ident not in bodies:
+                raise ValueError(f"{source}: unknown gen section id {ident!r}")
+            seen.add(ident)
+            open_id = ident
+            inner_start = match.end()
+        else:  # end
+            if open_id is None:
+                raise ValueError(f"{source}: gen:end without a matching gen:begin")
+            blocks.append((inner_start, match.start(), open_id))
+            open_id = None
+
+    if open_id is not None:
+        raise ValueError(f"{source}: unclosed gen:begin id {open_id!r}")
+    missing = set(bodies) - seen
+    if missing:
+        raise ValueError(f"{source}: missing gen markers for {sorted(missing)}")
+
+    out: list[str] = []
+    pos = 0
+    for start, end, ident in blocks:
+        out.append(text[pos:start])
+        out.append("\n" + bodies[ident] + "\n")
+        pos = end
+    out.append(text[pos:])
+    return "".join(out)
+
+
+def fill_readme(entry: ManagedReadme, text: str) -> str:
+    """Fill every generated span in one managed README's text."""
+    bodies = {section.id: render_block(section) for section in entry.sections}
+    return splice_markers(text, bodies, source=entry.path)
+
+
+def _readme_title(entry: ManagedReadme) -> str:
+    """H1 title for a managed README (e.g. `siftd.adapters`, `tests`)."""
+    parent = Path(entry.path).parent
+    if parent.name == "siftd":
+        return "siftd"
+    if parent.parts and parent.parts[0] == "src":
+        return f"siftd.{parent.name}"
+    return parent.name
+
+
+def _bootstrap_shell(entry: ManagedReadme) -> str:
+    """A minimal placeholder README: title, TODO preamble, empty gen spans."""
+    lines = [
+        f"# {_readme_title(entry)}",
+        "",
+        "<!-- TODO(preamble): authored in slice 3 -->",
+        entry.summary,
+        "",
+    ]
+    for section in entry.sections:
+        lines.append(f"<!-- gen:begin {section.id} -->")
+        lines.append("<!-- gen:end -->")
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def generate_readmes(*, bootstrap: bool = False) -> None:
+    """Fill generated spans in every managed README.
+
+    Missing files are a hard error unless ``bootstrap`` is set, in which case a
+    placeholder shell is created first. Malformed markers raise ValueError.
+    """
+    for entry in MANIFEST:
+        path = REPO_ROOT / entry.path
+        if not path.exists():
+            if not bootstrap:
+                raise FileNotFoundError(
+                    f"managed README missing: {entry.path} "
+                    "(create it with: gen_docs.py readmes --bootstrap)"
+                )
+            path.write_text(_bootstrap_shell(entry))
+        text = path.read_text()
+        new_text = fill_readme(entry, text)
+        if new_text != text:
+            path.write_text(new_text)
+            print(f"Generated: {path}")
+
+
+# =============================================================================
 # Main
 # =============================================================================
 
+DEFAULT_TARGETS = ["cli", "api", "schema", "config", "readmes"]
 
-def main() -> None:
-    targets = sys.argv[1:] if len(sys.argv) > 1 else ["cli", "api", "schema", "config"]
 
+def run(targets: list[str], *, strict: bool = False, bootstrap: bool = False) -> int:
+    """Generate the requested targets; return a process exit code.
+
+    In strict mode a skipped target (api.md when optional deps are missing) is a
+    hard failure so `./dev docs --check` cannot pass on an unverified doc.
+    """
     DOCS_DIR.mkdir(parents=True, exist_ok=True)
+    skipped: list[str] = []
 
     for target in targets:
         if target == "cli":
-            content = generate_cli_docs()
             out_path = DOCS_DIR / "cli.md"
-            out_path.write_text(content)
+            out_path.write_text(generate_cli_docs())
             print(f"Generated: {out_path}")
 
         elif target == "api":
             content = generate_api_docs()
             out_path = DOCS_DIR / "api.md"
             if content is None:
+                skipped.append("api")
                 print(f"Skipped: {out_path} (keeping existing version)")
             else:
                 out_path.write_text(content)
                 print(f"Generated: {out_path}")
 
         elif target == "schema":
-            content = generate_schema_docs()
             out_path = DOCS_DIR / "schema.md"
-            out_path.write_text(content)
+            out_path.write_text(generate_schema_docs())
             print(f"Generated: {out_path}")
 
         elif target == "config":
-            content = generate_config_docs()
             out_path = DOCS_DIR / "config.md"
-            out_path.write_text(content)
+            out_path.write_text(generate_config_docs())
             print(f"Generated: {out_path}")
+
+        elif target == "readmes":
+            try:
+                generate_readmes(bootstrap=bootstrap)
+            except (FileNotFoundError, ValueError) as exc:
+                print(f"error: {exc}", file=sys.stderr)
+                return 1
 
         else:
             print(f"Unknown target: {target}", file=sys.stderr)
-            sys.exit(1)
+            return 1
+
+    if strict and skipped:
+        print(
+            f"error: strict mode — target(s) skipped, cannot verify: {', '.join(skipped)}",
+            file=sys.stderr,
+        )
+        return 1
+    return 0
+
+
+def main() -> None:
+    args = sys.argv[1:]
+    strict = "--strict" in args
+    bootstrap = "--bootstrap" in args
+    list_only = "--list" in args
+    targets = [a for a in args if not a.startswith("-")]
+
+    if list_only:
+        for entry in MANIFEST:
+            print(entry.path)
+        return
+
+    if not targets:
+        targets = DEFAULT_TARGETS
+    sys.exit(run(targets, strict=strict, bootstrap=bootstrap))
 
 
 if __name__ == "__main__":
