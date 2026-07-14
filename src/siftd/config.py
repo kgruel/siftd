@@ -581,45 +581,64 @@ def get_query_defaults() -> dict:
 
 
 
-def get_adapter_locations(name: str) -> list[str] | None:
-    """Get configured discovery locations for an adapter.
+def _coerce_bool(value, default: bool) -> bool:
+    """Interpret a bool-or-string config value ("false"/"0"/"no" are false).
 
-    Reads [adapters.<name>].locations as a TOML array.
-    Returns None if unconfigured.
+    Anything that isn't a bool or a string (including None/absent) falls
+    back to the default.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.lower() not in ("false", "0", "no")
+    return default
+
+
+def get_adapter_settings() -> dict[str, dict]:
+    """Per-adapter config tables from [adapters], keyed by adapter name.
+
+    One config read covering every adapter — loops over many adapters (the
+    registry assembly point) consult this instead of the per-name accessors,
+    which re-read the config file on every call. Non-table entries are
+    dropped, so malformed sections degrade to defaults.
     """
     doc = load_config()
     adapters_config = doc.get("adapters", {})
     if not isinstance(adapters_config, dict):
-        return None
-    adapter_config = adapters_config.get(name, {})
-    if not isinstance(adapter_config, dict):
-        return None
-    locations = adapter_config.get("locations")
+        return {}
+    return {
+        name: table for name, table in adapters_config.items() if isinstance(table, dict)
+    }
+
+
+def adapter_locations(settings: dict) -> list[str] | None:
+    """Configured discovery locations from an adapter's [adapters.<name>] table.
+
+    Returns None if unconfigured.
+    """
+    locations = settings.get("locations")
     if isinstance(locations, list):
         return [str(loc) for loc in locations]
     return None
 
 
-def get_adapter_enabled(name: str) -> bool:
-    """Whether an adapter participates in discovery (ingest, peek, doctor).
+def adapter_enabled(settings: dict) -> bool:
+    """Whether an adapter's [adapters.<name>] table leaves it enabled.
 
-    Reads [adapters.<name>] enabled. Defaults to True; unknown adapter
-    names are simply never consulted, so stale config entries are harmless.
+    Defaults to True; unknown adapter names are simply never consulted,
+    so stale config entries are harmless.
     """
-    doc = load_config()
-    adapters_config = doc.get("adapters", {})
-    if not isinstance(adapters_config, dict):
-        return True
-    adapter_config = adapters_config.get(name, {})
-    if not isinstance(adapter_config, dict):
-        return True
-    value = adapter_config.get("enabled")
-    if value is not None:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.lower() not in ("false", "0", "no")
-    return True
+    return _coerce_bool(settings.get("enabled"), default=True)
+
+
+def get_adapter_locations(name: str) -> list[str] | None:
+    """Get configured discovery locations for a single adapter."""
+    return adapter_locations(get_adapter_settings().get(name, {}))
+
+
+def get_adapter_enabled(name: str) -> bool:
+    """Whether a single adapter participates in discovery (ingest, peek, doctor)."""
+    return adapter_enabled(get_adapter_settings().get(name, {}))
 
 
 def get_sync_remotes() -> list[dict]:
@@ -713,13 +732,7 @@ def get_ingestion_filter_binary() -> bool:
     doc = load_config()
     ingestion_config = doc.get("ingestion", {})
     if isinstance(ingestion_config, dict):
-        value = ingestion_config.get("filter_binary")
-        if value is not None:
-            # Handle boolean or string "true"/"false"
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.lower() not in ("false", "0", "no")
+        return _coerce_bool(ingestion_config.get("filter_binary"), default=True)
     # Default: filtering is enabled
     return True
 
@@ -733,12 +746,7 @@ def get_search_log_enabled() -> bool:
     doc = load_config()
     search_config = doc.get("search", {})
     if isinstance(search_config, dict):
-        value = search_config.get("log")
-        if value is not None:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.lower() not in ("false", "0", "no")
+        return _coerce_bool(search_config.get("log"), default=True)
     return True
 
 
@@ -751,10 +759,5 @@ def get_embed_auto_index() -> bool:
     doc = load_config()
     embed_config = doc.get("embed", {})
     if isinstance(embed_config, dict):
-        value = embed_config.get("auto_index")
-        if value is not None:
-            if isinstance(value, bool):
-                return value
-            if isinstance(value, str):
-                return value.lower() not in ("false", "0", "no")
+        return _coerce_bool(embed_config.get("auto_index"), default=True)
     return True

@@ -9,8 +9,9 @@ def test_load_all_adapters_applies_config_path_override(monkeypatch):
     plugin = SimpleNamespace(name="aider", module=object())
     wrapped = object()
     monkeypatch.setattr("siftd.adapters.registry.load_all_extensions", lambda **kwargs: [plugin])
-    monkeypatch.setattr("siftd.config.get_adapter_locations", lambda name: ["/tmp/custom"])
-    monkeypatch.setattr("siftd.config.get_adapter_enabled", lambda name: True)
+    monkeypatch.setattr(
+        "siftd.config.get_adapter_settings", lambda: {"aider": {"locations": ["/tmp/custom"]}}
+    )
     monkeypatch.setattr("siftd.adapters.registry.wrap_adapter_paths", lambda module, paths: wrapped)
     assert registry.load_all_adapters(dropin_path=Path("/tmp/dropins"))[0].module is wrapped
 
@@ -21,8 +22,9 @@ def test_load_all_adapters_filters_disabled(monkeypatch):
         SimpleNamespace(name="claude_code", module=object()),
     ]
     monkeypatch.setattr("siftd.adapters.registry.load_all_extensions", lambda **kwargs: plugins)
-    monkeypatch.setattr("siftd.config.get_adapter_locations", lambda name: None)
-    monkeypatch.setattr("siftd.config.get_adapter_enabled", lambda name: name != "aider")
+    monkeypatch.setattr(
+        "siftd.config.get_adapter_settings", lambda: {"aider": {"enabled": False}}
+    )
 
     disabled = []
     result = registry.load_all_adapters(dropin_path=Path("/tmp/dropins"), disabled_out=disabled)
@@ -34,8 +36,9 @@ def test_load_all_adapters_filters_disabled(monkeypatch):
 def test_load_all_adapters_disabled_out_optional(monkeypatch):
     plugins = [SimpleNamespace(name="aider", module=object())]
     monkeypatch.setattr("siftd.adapters.registry.load_all_extensions", lambda **kwargs: plugins)
-    monkeypatch.setattr("siftd.config.get_adapter_locations", lambda name: None)
-    monkeypatch.setattr("siftd.config.get_adapter_enabled", lambda name: False)
+    monkeypatch.setattr(
+        "siftd.config.get_adapter_settings", lambda: {"aider": {"enabled": False}}
+    )
 
     assert registry.load_all_adapters(dropin_path=Path("/tmp/dropins")) == []
 

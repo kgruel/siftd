@@ -287,8 +287,10 @@ def parse(source: Source) -> Iterable[Conversation]:
         else:
             # Result step with no declared tool call to pair with (e.g. a
             # truncated log). Keep the content rather than dropping it.
-            fallback_name = step_type.lower() if isinstance(step_type, str) else "unknown"
-            tool_name = _RESULT_TYPE_TOOL_NAMES.get(step_type, fallback_name) if isinstance(step_type, str) else fallback_name
+            if isinstance(step_type, str):
+                tool_name = _RESULT_TYPE_TOOL_NAMES.get(step_type, step_type.lower())
+            else:
+                tool_name = "unknown"
             tool_input = {}
 
         content = record.get("content", "")

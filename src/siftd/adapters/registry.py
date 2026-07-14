@@ -146,16 +146,20 @@ def load_all_adapters(
         failures_out=failures_out,
     )
 
-    # Apply adapter-specific config: disable knob, then location overrides
-    from siftd.config import get_adapter_enabled, get_adapter_locations
+    # Apply adapter-specific config: disable knob, then location overrides.
+    # One config read for the whole loop — the per-name accessors would
+    # re-read and re-parse config.toml once per adapter.
+    from siftd.config import adapter_enabled, adapter_locations, get_adapter_settings
 
+    settings = get_adapter_settings()
     enabled: list[PluginInfo] = []
     for plugin in result:
-        if not get_adapter_enabled(plugin.name):
+        plugin_settings = settings.get(plugin.name, {})
+        if not adapter_enabled(plugin_settings):
             if disabled_out is not None:
                 disabled_out.append(plugin.name)
             continue
-        locations = get_adapter_locations(plugin.name)
+        locations = adapter_locations(plugin_settings)
         if locations:
             plugin.module = wrap_adapter_paths(plugin.module, locations)
         enabled.append(plugin)

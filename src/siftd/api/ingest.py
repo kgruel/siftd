@@ -93,7 +93,7 @@ def _resolve_adapters(
     disabled_out: list[str] | None = None,
 ) -> tuple[list, list[str], dict[str, str]]:
     """Resolve discovered adapter modules with optional filtering/overrides."""
-    from siftd.adapters.validation import DEFAULT_SUPPORT_TIER
+    from siftd.adapters.validation import support_tier
 
     disabled: list[str] = []
     plugins = load_all_adapters(failures_out=failures_out, disabled_out=disabled)
@@ -115,9 +115,7 @@ def _resolve_adapters(
     else:
         adapters = [p.module for p in plugins]
 
-    tiers = {
-        p.name: getattr(p.module, "SUPPORT_TIER", DEFAULT_SUPPORT_TIER) for p in plugins
-    }
+    tiers = {p.name: support_tier(p.module) for p in plugins}
     return adapters, [p.name for p in plugins], tiers
 
 

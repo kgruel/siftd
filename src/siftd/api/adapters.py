@@ -9,7 +9,7 @@ from siftd.adapters.registry import (
     load_dropin_adapters,
     load_entrypoint_adapters,
 )
-from siftd.adapters.validation import DEFAULT_SUPPORT_TIER
+from siftd.adapters.validation import DEFAULT_SUPPORT_TIER, support_tier
 from siftd.paths import adapters_dir
 from siftd.plugin_discovery import PluginInfo
 
@@ -53,7 +53,7 @@ def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
         locations=locations,
         source_path=str(plugin.source_path) if plugin.source_path else None,
         entrypoint=plugin.entrypoint,
-        tier=getattr(plugin.module, "SUPPORT_TIER", DEFAULT_SUPPORT_TIER),
+        tier=support_tier(plugin.module),
     )
 
 

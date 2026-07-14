@@ -100,6 +100,22 @@ _BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
 _USER_PROMPT_SOURCES = frozenset({"typed", "queued"})
 
 
+def _read_subagent_meta(path: Path) -> dict | None:
+    """Load the sidecar agent-<name>-<hash>.meta.json beside a subagent JSONL.
+
+    The sidecar carries identity the child transcript itself lacks
+    (name/agentType/description/spawnDepth/model). Returns None when it's
+    absent (top-level sessions, rotated-off history) or unparseable — the
+    single decode point for both the ingest parse and peek paths.
+    """
+    meta_path = path.with_name(path.stem + ".meta.json")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
 def _tool_use_result_attributes(tool_use_result) -> dict[str, str]:
     """Distill a record-level structured `toolUseResult` into attributes.
 
@@ -242,14 +258,8 @@ def parse(source: Source) -> Iterable[Conversation]:
     if ai_title:
         conv_attributes["title"] = str(ai_title)
     if agent_id:
-        meta_path = path.parent / f"{path.stem}.meta.json"
-        try:
-            import json as _json
-
-            meta = _json.loads(meta_path.read_text())
-        except (OSError, ValueError):
-            meta = None
-        if isinstance(meta, dict):
+        meta = _read_subagent_meta(path)
+        if meta is not None:
             if atype := meta.get("agentType"):
                 conv_attributes["subagent_type"] = str(atype)
             if desc := meta.get("description"):
@@ -553,8 +563,11 @@ _peek_scan_base, peek_exchanges, peek_tail = make_peek_hooks(
     subagent_path_marker=SUBAGENT_PATH_MARKER,
 )
 
-# Subagent .meta.json keys → PeekScanResult.attributes keys. Names match
-# the ingest-side conv_attributes vocabulary (agent_name/agent_type/...).
+# Subagent .meta.json keys → PeekScanResult.attributes keys. Names match the
+# parent-side tool_call attributes vocabulary (_tool_use_result_attributes:
+# agent_name/agent_type/agent_model/spawn_depth). Note the ingest-side
+# conversation attribute is `subagent_type` — a stored DB contract queried by
+# api/conversations.py — so the two surfaces intentionally differ.
 _SUBAGENT_META_KEYS: dict[str, str] = {
     "name": "agent_name",
     "agentType": "agent_type",
@@ -574,12 +587,8 @@ def peek_scan(path: Path):
     result = _peek_scan_base(path)
     if result is None or SUBAGENT_PATH_MARKER not in str(path):
         return result
-    meta_path = path.with_name(path.stem + ".meta.json")
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return result
-    if not isinstance(meta, dict):
+    meta = _read_subagent_meta(path)
+    if meta is None:
         return result
     for src, dst in _SUBAGENT_META_KEYS.items():
         value = meta.get(src)

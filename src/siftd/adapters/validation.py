@@ -33,6 +33,11 @@ VALID_SUPPORT_TIERS = {"core", "contrib", "frozen"}
 DEFAULT_SUPPORT_TIER = "contrib"
 
 
+def support_tier(module: ModuleType) -> str:
+    """An adapter module's declared SUPPORT_TIER, defaulted for legacy/drop-ins."""
+    return getattr(module, "SUPPORT_TIER", DEFAULT_SUPPORT_TIER)
+
+
 def validate_adapter(module: ModuleType, origin: str = "adapter") -> str | None:
     """Validate an adapter module has the required interface.
 

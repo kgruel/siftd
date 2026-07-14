@@ -464,15 +464,17 @@ def cmd_ingest(args) -> int:
         renderer.print_summary(stats)
 
     # Adapter health: zero-discovery, non-core file errors, drop-in import failures.
+    from siftd.api.adapters import DEFAULT_SUPPORT_TIER
+
     zero_discovery = sorted(set(result.adapters) - set(stats.by_harness))
     # File errors from non-core adapters are tagged with their tier so expectations
     # are set: core adapters are expected to parse cleanly; contrib is best-effort
     # and frozen may lag upstream format changes.
     tiers = result.adapter_tiers
     noncore_errors = sorted(
-        (name, counts.get("errors", 0), tiers.get(name, "contrib"))
+        (name, counts.get("errors", 0), tiers.get(name, DEFAULT_SUPPORT_TIER))
         for name, counts in stats.by_harness.items()
-        if counts.get("errors", 0) and tiers.get(name, "contrib") != "core"
+        if counts.get("errors", 0) and tiers.get(name, DEFAULT_SUPPORT_TIER) != "core"
     )
     # Disabled-adapter notices are scoped to the run: on an --adapter run, a
     # globally disabled adapter that was never requested is not news.
