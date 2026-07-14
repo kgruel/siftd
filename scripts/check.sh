@@ -76,6 +76,9 @@ main() {
             echo -e "${BOLD}=== Slow Tests ===${NC}"
             ./dev test-slow -v
         fi
+        echo ""
+        echo -e "${BOLD}=== Docs ===${NC}"
+        ./dev docs --check
         # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
         # echo ""
         # echo -e "${BOLD}=== Diff coverage ===${NC}"
@@ -106,6 +109,9 @@ main() {
             printf "Slow tests... "
             ./dev test-slow > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev test-slow; exit 1; }
         fi
+        # Docs last: cheapest blast radius, so it never masks a real test failure.
+        printf "Docs... "
+        ./dev docs --check > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev docs --check; exit 1; }
         # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
         # printf "Diff coverage... "
         # if has_python_changes; then
