@@ -1,7 +1,27 @@
 # siftd.api
 
-<!-- TODO(preamble): authored in slice 3 -->
-Public API layer — CLI and serve consume this, neither touches storage directly.
+This package is the boundary every read and write surface passes through. The
+CLI, the serve routes, the HTML routes, and any programmatic caller reach the
+database only by calling functions here; none of them import `storage/`,
+`search`, `peek`, `embeddings`, or `adapters` directly. That rule is enforced by
+[`tests/architecture/test_hard_rules.py`](../../../tests/architecture/test_hard_rules.py)
+(`test_cli_no_direct_storage_import`, `test_serve_no_direct_storage_import`,
+`test_cli_and_serve_no_direct_search_import`) — a direct import fails the build
+unless suppressed with an explicit `# arch: allow-storage` comment. Working
+inside this folder means you sit on the storage side of that line and may import
+freely; adding a new capability means giving the outer layers a function to call
+rather than letting them descend.
+
+The spine is the Operation IR in [`dispatch.py`](dispatch.py): each input context
+(CLI args, an HTTP request, a direct call) normalizes into an `Operation`, which
+the dispatch loop executes and renders — `normalize(input) → Operation → execute
+→ render(format, fidelity)`. [`op_spec.py`](op_spec.py) holds the per-operation
+rules that let the same `Operation` run locally or be forwarded over HTTP to a
+running server with matching wire and local parameter shapes; see the
+[delegation contract](../../../docs/guides/delegation-contract.md) for how that
+parity is specified. `caveats.py` and `target_ref.py` are the shared grammars
+threaded through many operations (editorial annotations, and "which thing gets
+the tag" respectively).
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>

@@ -1,7 +1,21 @@
 # siftd.cli
 
-<!-- TODO(preamble): authored in slice 3 -->
-CLI package — thin dispatcher plus per-command modules.
+The CLI is a thin dispatcher. [`__init__.py`](__init__.py) assembles the argparse
+parser by calling one `build_<command>_parser()` per command, each of which
+attaches its handler with `set_defaults(func=...)`; `main()` parses `argv` and
+invokes `args.func(args)`. All command logic lives in the per-command modules
+(`search.py`, `show.py`, `query.py`, …), not here — a new subcommand is a new
+`build_*_parser` plus its handler module, wired into `__init__.py`. The
+`_LANES` tuple defines the grouped ("six-lane") layout of the root `--help`.
+
+Command handlers do not touch the database. They normalize flags into a call on
+the [`api/`](../api/) layer and hand the result to a formatter from
+[`output/`](../output/); importing `siftd.storage` or `siftd.search` directly is
+rejected by the architecture tests
+([`test_cli_no_direct_storage_import`, `test_cli_and_serve_no_direct_search_import`](../../../tests/architecture/test_hard_rules.py)).
+Note that this argparse layer is where parse-time behavior (defaults, mutually
+exclusive groups, type coercion) actually lives, so CLI tests should drive
+`main()`/the parser rather than calling handlers with hand-built args.
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>

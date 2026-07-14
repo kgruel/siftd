@@ -1,7 +1,29 @@
 # siftd
 
-<!-- TODO(preamble): authored in slice 3 -->
-Core modules (config, search, pricing, ids, paths, safecall, …).
+This file indexes the loose top-level modules that sit directly under
+`src/siftd/` — the cross-cutting "core" that no subpackage owns. These are
+leaf utilities and shared primitives with a single, well-scoped concern:
+configuration (`config.py`, `config_sync.py`), search primitives (`search.py`),
+pricing reference (`pricing.py`), ID generation (`ids.py`), XDG paths
+(`paths.py`), unified error handling (`safecall.py`), and small shared helpers
+(`dateparse.py`, `git.py`, `math.py`, `model_names.py`, `plugin_discovery.py`,
+`credentials.py`, `backfill.py`, `skill_gen.py`). The generated table below maps
+each to its first docstring line.
+
+Navigation: every subpackage under `src/siftd/` (`adapters/`, `api/`, `cli/`,
+`doctor/`, `output/`, `serve/`, `storage/`, …) has its own `README.md` with the
+local conventions for that layer; the root `CLAUDE.md` is the entry ladder that
+names them. Start there, not here, when you are looking for a *layer*; this file
+is only for the modules that have no layer.
+
+Adding code here vs. in a subpackage: a new top-level module earns its place
+only when it is a genuinely cross-cutting primitive several layers depend on and
+it belongs to none of them — the same test the existing entries pass. If the
+code is the behavior of a layer (an adapter, a CLI command, a storage
+operation, an output renderer), it goes in that subpackage instead. When a
+loose module grows past a single concern into a cluster of related files,
+promote it to a subpackage with its own `README.md` rather than letting the root
+accumulate. After adding a module, run `./dev docs` to refresh the table below.
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>

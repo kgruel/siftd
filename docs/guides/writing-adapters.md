@@ -210,25 +210,28 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
 
 ```python
 from siftd.adapters.sdk import (
-    seek_last_lines,        # Efficient tail read
-    peek_jsonl_scan,        # Generic JSONL scanner
-    peek_jsonl_exchanges,   # Generic JSONL exchange extractor
-    peek_jsonl_tail,        # Generic JSONL tail
-    canonicalize_tool_name, # Apply TOOL_ALIASES
+    make_peek_hooks,             # peek_scan/peek_exchanges/peek_tail from a normalizer
+    peek_scan_from_records,      # Lower-level: scan normalized records
+    peek_exchanges_from_records, # Lower-level: extract exchanges
+    peek_jsonl_tail,             # Generic JSONL tail
+    canonicalize_tool_name,      # Apply TOOL_ALIASES
     extract_text_with_placeholders,  # Text + [image]/[tool] markers
 )
 
-# Example: Claude Code-compatible JSONL
-def peek_scan(path: Path) -> PeekScanResult | None:
-    return peek_jsonl_scan(
-        path,
-        user_type="user",
-        assistant_type="assistant",
-        cwd_key="cwd",
-        session_id_key="sessionId",
-        is_tool_result=lambda r: _has_tool_result(r),
-    )
+# Most adapters: write one record normalizer, derive all three hooks.
+def _normalize(record: dict) -> NormalizedRecord | None:
+    ...  # map your log's record shape to a NormalizedRecord
+
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    _normalize,
+    tool_aliases=TOOL_ALIASES,
+    subagent_path_marker="/subagents/",  # optional
+)
 ```
+
+The `*_from_records` functions are there when a hook needs behavior
+`make_peek_hooks` doesn't cover (custom session ids, non-JSONL iteration via
+`record_iterator`).
 
 ### Graceful Degradation
 

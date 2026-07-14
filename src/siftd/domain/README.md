@@ -1,7 +1,10 @@
 # siftd.domain
 
-<!-- TODO(preamble): authored in slice 3 -->
-Domain models (Conversation, Usage, events).
+These are siftd's pure data objects: the nested `Conversation → Prompt → Response → ToolCall` model in [models.py](models.py), plus the shared types other layers exchange (peek, progress, search, source, sync). They are plain dataclasses, decoupled from persistence — adapters produce them, storage consumes them, and renderers read them, but the objects themselves know nothing about any of those layers.
+
+The boundary to hold when editing here: no storage, database, network, or CLI imports. Domain stays dependency-free so it can be the common vocabulary every layer depends on without a cycle. A couple of details are load-bearing rather than obvious — `ToolCall.attributes` and `Response.attributes` are the local form of rows that persist into storage's polymorphic `attributes` table (used, for example, to correlate background/async tool calls), and `Usage` token fields are `int | None` where `None` means "not reported," distinct from a real zero. Adding a field here ripples outward to adapters, storage serialization, and renderers, so prefer extending an existing model over introducing a parallel one.
+
+See [Data Model](../../../docs/concepts/data-model.md) for how this hierarchy maps to what tools actually record.
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>

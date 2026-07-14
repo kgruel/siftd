@@ -1,7 +1,91 @@
 # tests
 
-<!-- TODO(preamble): authored in slice 3 -->
-Pytest suite — mirrors the src structure.
+The suite mirrors `src/siftd/`: a test file lives beside the layer it exercises
+(`test_storage.py`, `tests/adapters/`, `tests/cli/`) and most tests are unit or
+behavioral tests that run in the default lane. Optional-dependency and
+long-running tests are gated by pytest markers so the base lane stays fast and
+dependency-light. The generated per-directory rollup and file tables are below
+the markers; this preamble is the map of *lanes* — which tests run where, and
+under which command.
+
+## Responsibility map
+
+Lanes are defined by three markers (declared in `pyproject.toml`): `embeddings`,
+`serve`, and `slow`. "Base" means unmarked — the default run. A marked test is
+usually tagged at module scope with `pytestmark = pytest.mark.<lane>` and guards
+its optional import with `pytest.importorskip(...)`. **A lane no CI job runs is a
+test that doesn't exist**, so the CI column below is load-bearing: it is the
+truth from `.github/workflows/ci.yml`, not an aspiration.
+
+| Area | Covers | Lane / marker | Local command | CI job |
+|------|--------|---------------|---------------|--------|
+| `tests/` root (`test_*.py`) | Unit + behavioral tests for api, storage, output, domain, search, sync, peek, ingestion, serialization, config, cost/rollup | base (unmarked) | `./dev test` | `test` (3.12/3.13/3.14) |
+| `tests/adapters/` | Per-adapter `can_handle` / `parse` / `discover` contracts + golden-fixture parity | base | `./dev test` | `test` |
+| `tests/cli/` | Argparse-layer parsing and command behavior (exercise the parser, not `_command(_args(...))`) | base | `./dev test` | `test` |
+| `tests/architecture/` | Boundary + fitness rules: import layering, hard-rule static analysis, CLI contracts, CSP fitness (T1/T2) | base | `./dev test` | `test` |
+| `tests/snapshots/` | syrupy snapshots of `--help` output, stored per Python version | base | `./dev test` | `test` |
+| `tests/acceptance/` (`*.t`) | End-to-end CLI transcripts via pytest-prysk (cram-style) | base | `./dev test` | `test` |
+| Embeddings tests (across `tests/`, `mark.embeddings`) | Semantic search against a real fastembed/remote backend; the local ONNX stack | `embeddings` | `./dev test-embed`, `./dev test-all` | `test-with-embeddings` (3.12) |
+| Serve tests (across `tests/`, `mark.serve`) | HTTP routes, auth, delegation wire parity, Swiss UI renderers, e2e TestClient smoke | `serve` | `./dev test-serve`, `./dev test-all` | `test-with-serve` (3.12) |
+| Slow tests (`mark.slow`) | Tests >10s: real-subprocess sync e2e and similar | `slow` | `./dev test-slow` | `test-slow` — **release only** (`workflow_call`), not PR CI |
+| `tests/browser_smoke/` (`smoke.py`) | T3 real-browser CSP smoke: headless Chromium over CDP | none — standalone script | `./dev browser-smoke` | **none** — no CI job runs it |
+
+Two caveats worth internalizing. First, the `slow` lane runs only when the
+publish workflow calls CI (`if: github.event_name == 'workflow_call'`), so a
+regression it would catch will not surface on a pull request — run `./dev
+test-slow` yourself before tagging a release. Second, the browser smoke is a
+standalone Python script, not a pytest marker, and nothing in `ci.yml` invokes
+it; it is a manual pre-merge check for serve UI / CSP work
+(`docs/guides/serve-browser-testing.md`). `tests/architecture/test_csp_fitness.py`
+holds the T1/T2 CSP fitness functions that *do* run in CI (they `importorskip`
+litestar, so they execute in the serve/embed installs and skip in the base
+lane).
+
+`./dev check` (the CI equivalent) runs lint plus the base lane and, as its last
+step, `./dev docs --check`. It does **not** run the embeddings, serve, slow, or
+browser lanes — run those explicitly (or `./dev test-all` for embeddings +
+serve) when your change touches them.
+
+## Where a new test goes
+
+Mirror the source. A change to `src/siftd/storage/` gets a case in
+`test_storage.py`; a new adapter gets `tests/adapters/test_<adapter>.py` plus a
+golden fixture; a CLI flag gets a test in `tests/cli/` that goes through the
+argparse layer. Cross-cutting rules that must hold regardless of feature —
+import direction, layer boundaries, "no direct storage import from the CLI" —
+belong in `tests/architecture/` as a fitness function, not scattered across unit
+tests. Genuinely end-to-end flows that drive the built binary or a real
+subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
+`e2e`-flavored module. If your test needs an optional dependency
+(fastembed, litestar) tag the module with the matching marker and
+`importorskip` the import, so the base lane stays green without it.
+
+## Load-bearing conventions
+
+- **Fakes over mocks.** Shared test doubles live in `tests/fakes/` (e.g.
+  `FakeSSH` for the sync transport); fixtures — golden adapter payloads, schema
+  snapshots, minimal per-adapter logs — live in `tests/fixtures/`. Prefer a fake
+  and a behavioral assertion over patching internals; the architecture lane
+  guards the direction of dependencies, not the shape of your mocks.
+- **Snapshot policy.** Help-output snapshots are stored per Python version
+  (`__snapshots__/pyXY/`) because argparse wraps text differently across
+  versions, and CI runs the full 3.12/3.13/3.14 matrix — so every version's
+  snapshot must be present. Update them deliberately after intentional help
+  changes; see [docs/guides/snapshot-policy.md](../docs/guides/snapshot-policy.md).
+- **xdist safety.** The suite runs under `pytest-xdist` (`-n auto`). Never
+  `monkeypatch` `sys.stdout` / `sys.stderr` — workers share process stdio and it
+  races capture. Use `capsys`/`capfd` or a callback/`file=` parameter instead
+  (see the note at the top of `conftest.py`). Every test is hard-isolated from
+  the real database by the autouse `_sandbox_db_home` fixture.
+- **Exercise the real edge.** CLI tests should go through argparse, not call the
+  command function directly; route tests that must catch wire-contract drift use
+  Litestar's `TestClient` end-to-end rather than calling handlers via `.fn()` —
+  the pattern in `test_serve_e2e_smoke.py`. Unit tests catch logic bugs; these
+  catch contract bugs.
+
+The tables below are generated by `./dev docs` from test file docstrings and
+counts — do not edit them by hand, and give each test module a one-line
+docstring so its row is meaningful.
 
 <!-- gen:begin tests -->
 <sub>generated from test file docstrings — run <code>./dev docs</code></sub>

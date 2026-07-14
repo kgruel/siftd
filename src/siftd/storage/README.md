@@ -1,7 +1,10 @@
 # siftd.storage
 
-<!-- TODO(preamble): authored in slice 3 -->
-SQLite ops, schema, content blobs.
+This is the only layer that talks to SQLite directly. Everything above it — `api/`, `cli/`, `serve/` — reaches data through the API layer and must not import `storage`; that boundary is what keeps the schema swappable. The modules here own connection management and migrations ([sqlite.py](sqlite.py)), the polymorphic events and attributes tables, FTS5 full-text search, the content-addressable blob store, and the derived rollup/stats tables.
+
+Three invariants govern any change in this folder. First, write functions take `commit=False` by default: the caller controls the transaction, so batch operations stay atomic — don't sprinkle `conn.commit()` inside store helpers. Second, primary keys are ULIDs everywhere except `content_blobs`, which is keyed by the SHA256 hash of its content (that is what makes deduplication content-addressable). Third, schema changes follow a fixed process: bump `SCHEMA_VERSION` in [sqlite.py](sqlite.py) (currently 12), update [schema.sql](schema.sql), and register a function in the `MIGRATIONS` dict where version *N* migrates a database from *N-1* to *N*; migrations run automatically and idempotently on open. Note that derived-tier tables ([usage_rollup.py](usage_rollup.py), [conversation_stats.py](conversation_stats.py)) are rebuildable projections of the event facts, not sources of truth — treat them accordingly.
+
+See [Storage](../../../docs/concepts/storage.md) for where data lives, deduplication, and backup/restore, and [Data Model](../../../docs/concepts/data-model.md) for the conversation hierarchy these tables persist.
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>

@@ -1,7 +1,21 @@
 # siftd.output
 
-<!-- TODO(preamble): authored in slice 3 -->
-Format registry — terminal/markdown/json/html renderers.
+This package turns already-fetched domain data into rendered output; it does not
+query. [`format_registry.py`](format_registry.py) discovers formatters — built-in
+(terminal, markdown, JSON, HTML), user drop-ins, and entry-point plugins — each
+implementing the `OutputFormat` protocol (`render_detail` / `render_list` /
+`render_search`, dispatched on the returned type). The terminal formatter renders
+through [painted](painted_bridge.py) primitives; `theme.py`, `gutter.py`,
+`row.py`, and `table.py` are its visual vocabulary.
+
+Formatters are route- and transport-agnostic on purpose: they must not hardcode
+serve URLs (enforced by `test_output_formatters_no_hardcoded_routes` in
+[`tests/architecture/test_hard_rules.py`](../../../tests/architecture/test_hard_rules.py)),
+and link bases arrive as render-context kwargs from the caller. One boundary to
+keep in mind: the serve layer cannot import this package (importing the terminal
+formatter would pull painted into the server), so serve's JSON emission lives in
+its twin, [`serialization/`](../serialization/) — keep the two `--json` shapes in
+agreement when you touch `json_fmt.py`.
 
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>
