@@ -30,6 +30,7 @@ from siftd.domain import (
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "frozen"
 NAME = "gemini_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/tmp"]
 DEDUP_STRATEGY = "session"  # one conversation per session, latest wins

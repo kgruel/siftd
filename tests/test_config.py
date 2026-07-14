@@ -324,6 +324,38 @@ class TestDefaultsAndLookups:
         _w(config_dir, toml)
         assert get_adapter_locations("claude_code") is None
 
+    def test_adapter_enabled_schema_match(self):
+        entry = _match_schema("adapters.claude_code.enabled")
+        assert entry is not None
+        assert entry.expected == "bool"
+        assert entry.default == "true"
+
+    @pytest.mark.parametrize("toml,expected", [
+        (None, True),  # default: enabled
+        ("[adapters.claude_code]\nenabled = false\n", False),
+        ("[adapters.claude_code]\nenabled = true\n", True),
+        ('[adapters.claude_code]\nenabled = "false"\n', False),
+        ('[adapters.claude_code]\nenabled = "no"\n', False),
+        ('[adapters.claude_code]\nenabled = "0"\n', False),
+        ('[adapters.claude_code]\nenabled = "yes"\n', True),
+        ('adapters = "x"\n', True),          # malformed section: fail open
+        ('[adapters]\nclaude_code = "x"\n', True),
+    ])
+    def test_adapter_enabled(self, config_dir, toml, expected):
+        if toml is not None:
+            _w(config_dir, toml)
+        assert cfg.get_adapter_enabled("claude_code") is expected
+
+    def test_adapter_enabled_unknown_name_defaults_true(self, config_dir):
+        _w(config_dir, "[adapters.claude_code]\nenabled = false\n")
+        assert cfg.get_adapter_enabled("no_such_adapter") is True
+
+    def test_adapter_enabled_set_config_roundtrip(self, config_dir):
+        set_config("adapters.aider.enabled", "false")
+        assert cfg.get_adapter_enabled("aider") is False
+        set_config("adapters.aider.enabled", "true")
+        assert cfg.get_adapter_enabled("aider") is True
+
     @pytest.mark.parametrize("toml,expected", [
         (None, True),  # default
         ("[ingestion]\nfilter_binary = false\n", False),

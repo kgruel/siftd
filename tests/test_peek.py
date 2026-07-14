@@ -225,6 +225,75 @@ class TestPeekScan:
         result = peek_scan(sample_session)
         assert result is not None
         assert result.parent_session_id is None
+        assert result.attributes == {}
+
+    def test_peek_scan_reads_subagent_meta_json(self, session_dir):
+        """A sibling .meta.json enriches a subagent scan with identity attributes."""
+        from siftd.adapters.claude_code import peek_scan
+
+        sub_dir = session_dir / "parent-session-123" / "subagents"
+        path = sub_dir / "agent-reviewer-abc123.jsonl"
+        records = [
+            _make_user_record("Hello", session_id="parent-session-123", agent_id="agent-abc"),
+            _make_assistant_record("Hi there!"),
+        ]
+        _write_session(path, records)
+        meta = {
+            "agentType": "reviewer",
+            "name": "reviewer",
+            "spawnDepth": 1,
+            "model": "claude-opus-4-8",
+            "teamName": "session-parent",
+        }
+        (sub_dir / "agent-reviewer-abc123.meta.json").write_text(json.dumps(meta))
+
+        result = peek_scan(path)
+        assert result is not None
+        assert result.attributes["agent_name"] == "reviewer"
+        assert result.attributes["agent_type"] == "reviewer"
+        assert result.attributes["spawn_depth"] == "1"
+        assert result.attributes["agent_model"] == "claude-opus-4-8"
+
+    def test_peek_scan_meta_model_fills_missing_model_only(self, session_dir):
+        """meta.json model never overrides an in-log model."""
+        from siftd.adapters.claude_code import peek_scan
+
+        sub_dir = session_dir / "parent-session-123" / "subagents"
+        path = sub_dir / "agent-x-1.jsonl"
+        records = [
+            _make_user_record("Hello", session_id="parent-session-123", agent_id="a1"),
+            _make_assistant_record("Hi!", model="claude-sonnet-4-5"),
+        ]
+        _write_session(path, records)
+        (sub_dir / "agent-x-1.meta.json").write_text(json.dumps({"model": "claude-opus-4-8"}))
+
+        result = peek_scan(path)
+        assert result is not None
+        assert result.model == "claude-sonnet-4-5"
+        assert result.attributes["agent_model"] == "claude-opus-4-8"
+
+    def test_peek_scan_subagent_without_meta_json(self, session_dir):
+        """Missing or malformed .meta.json degrades to a plain subagent scan."""
+        from siftd.adapters.claude_code import peek_scan
+
+        sub_dir = session_dir / "parent-session-123" / "subagents"
+        path = sub_dir / "agent-y-2.jsonl"
+        records = [
+            _make_user_record("Hello", session_id="parent-session-123", agent_id="a2"),
+            _make_assistant_record("Hi!"),
+        ]
+        _write_session(path, records)
+
+        result = peek_scan(path)
+        assert result is not None
+        assert result.parent_session_id == "parent-session-123"
+        assert result.attributes == {}
+
+        # Malformed meta: same outcome
+        (sub_dir / "agent-y-2.meta.json").write_text("{not json")
+        result = peek_scan(path)
+        assert result is not None
+        assert result.attributes == {}
 
 
 class TestReadSessionDetail:

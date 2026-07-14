@@ -98,6 +98,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `locations` | list[string] | — | Override discovery paths for a specific adapter |
+| `enabled` | bool | `true` | Enable/disable an adapter (ingest, peek, doctor) |
 
 ## [sync]
 

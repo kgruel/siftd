@@ -69,20 +69,58 @@ siftd ships with adapters for:
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
 | `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
+| `antigravity_cli` | Antigravity CLI | `~/.gemini/antigravity-cli/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
 Each adapter knows where its tool writes logs by default. When you run `siftd ingest`, all adapters scan their default locations.
+
+### Support tiers
+
+Every adapter carries a support tier that sets expectations for how actively its
+log format is tracked:
+
+- **core** — maintained by siftd; ingest is expected to work and upstream format
+  changes are tracked (`claude_code`, `codex_cli`, `antigravity_cli`).
+- **contrib** — best-effort; parse errors are possible when the tool's format
+  drifts. This is the default for drop-in adapters.
+- **frozen** — kept working as-is; upstream format changes may not be tracked
+  (`gemini_cli`, `aider`).
+
+Tiers show up in the `siftd adapters` listing, and ingest tags file-error
+warnings from non-core adapters with their tier.
 
 ```bash
 siftd adapters    # list discovered adapters
 ```
 
 ```
-claude_code  builtin  ~/.claude/projects, ~/.config/claude/projects
-aider        builtin  ~/.aider
-gemini_cli   builtin  ~/.gemini/tmp
-codex_cli    builtin  ~/.codex/sessions
+claude_code      builtin  core    ~/.claude/projects, ~/.config/claude/projects
+aider            builtin  frozen  ~/.aider
+gemini_cli       builtin  frozen  ~/.gemini/tmp
+antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
+codex_cli        builtin  core    ~/.codex/sessions
 ```
+
+### Disabling an adapter
+
+Any adapter can be turned off in config — useful when a frozen-tier adapter's
+parse warnings are noise for a tool you no longer use:
+
+```toml
+# ~/.config/siftd/config.toml
+[adapters.gemini_cli]
+enabled = false
+```
+
+Or via the CLI:
+
+```bash
+siftd config set adapters.gemini_cli.enabled false
+```
+
+A disabled adapter is skipped everywhere the registry is consulted — ingest,
+peek, and doctor checks. `siftd ingest` prints a skip notice so the omission
+stays visible; already-ingested conversations remain in the database.
 
 ## Custom adapters
 

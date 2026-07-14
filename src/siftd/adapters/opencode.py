@@ -25,6 +25,7 @@ from siftd.safecall import epoch_ms_to_iso
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "contrib"
 NAME = "opencode"
 DEFAULT_LOCATIONS = ["~/.local/share/opencode"]
 DEDUP_STRATEGY = "session"  # multiple conversations from one DB

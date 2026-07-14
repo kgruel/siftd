@@ -354,7 +354,7 @@ def ingest_all(
             stats.by_harness[harness_name] = {
                 "conversations": 0,
                 "prompts": 0, "responses": 0, "tool_calls": 0,
-                "replaced": 0,
+                "replaced": 0, "errors": 0,
             }
 
         try:
@@ -638,6 +638,9 @@ def _record_file_error(
     except Exception:
         pass  # Don't fail the whole ingest because we couldn't record the error
     stats.files_errored += 1
+    if adapter.NAME in stats.by_harness:
+        harness_counts = stats.by_harness[adapter.NAME]
+        harness_counts["errors"] = harness_counts.get("errors", 0) + 1
     if on_file:
         on_file(source, f"error: {error}")
     if emit_event:

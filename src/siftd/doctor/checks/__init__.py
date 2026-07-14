@@ -68,6 +68,16 @@ class CheckContext:
     _embed_conn: sqlite3.Connection | None = field(default=None, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
+    # Lazy adapter discovery shared across checks (populated on first access).
+    # _discovered caches each adapter's materialized discover() output — or the
+    # exception it raised — keyed by adapter name. Separate lock so a slow
+    # directory walk doesn't block checks that only need a DB connection.
+    _plugins: list | None = field(default=None, repr=False)
+    _discovered: dict = field(default_factory=dict, repr=False)
+    _discovery_lock: threading.Lock = field(
+        default_factory=threading.Lock, repr=False, compare=False
+    )
+
     def get_db_conn(self):
         """Get main database connection (lazy-loaded, thread-safe for reads)."""
         with self._lock:
@@ -86,6 +96,38 @@ class CheckContext:
                 self._embed_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
                 self._embed_conn.row_factory = sqlite3.Row
             return self._embed_conn
+
+    def get_adapters(self) -> list:
+        """Enabled adapter plugins, loaded once per run and shared across checks."""
+        with self._discovery_lock:
+            if self._plugins is None:
+                from siftd.adapters.registry import load_all_adapters
+
+                self._plugins = load_all_adapters(dropin_path=self.adapters_dir)
+            return self._plugins
+
+    def discover_sources(self, plugin) -> list:
+        """One adapter's discover() results, materialized and memoized for the run.
+
+        Discovery walks the adapter's log directories — the expensive part of
+        the slow-lane checks — so checks that reconcile discovered files
+        against the DB (ingest-pending, adapter-stale) share one pass per
+        adapter instead of each running their own. Memoized per adapter rather
+        than as one eager sweep so a check that needs only a subset
+        (adapter-stale skips adapters without DB presence) doesn't force
+        discovery of the rest. A discover() failure is cached and re-raised to
+        every caller, letting each check keep its own failure policy.
+        """
+        with self._discovery_lock:
+            if plugin.name not in self._discovered:
+                try:
+                    self._discovered[plugin.name] = list(plugin.module.discover())
+                except Exception as e:
+                    self._discovered[plugin.name] = e
+            outcome = self._discovered[plugin.name]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
     def close(self):
         """Close any open connections."""
@@ -125,6 +167,7 @@ class Check(Protocol):
 
 
 # Import all built-in check classes — must come after type definitions above
+from siftd.doctor.checks.adapter_stale import AdapterStaleCheck  # noqa: E402
 from siftd.doctor.checks.config_valid import ConfigValidCheck  # noqa: E402
 from siftd.doctor.checks.cost_coverage import CostCoverageCheck  # noqa: E402
 from siftd.doctor.checks.db_blob_orphans import DbBlobOrphansCheck  # noqa: E402
@@ -151,6 +194,7 @@ from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noq
 BUILTIN_CHECKS: list[Check] = [
     IngestPendingCheck(),
     IngestErrorsCheck(),
+    AdapterStaleCheck(),
     EmbedConfigCheck(),
     EmbeddingsAvailableCheck(),
     EmbeddingsCompatCheck(),

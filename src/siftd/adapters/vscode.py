@@ -36,6 +36,7 @@ from siftd.safecall import epoch_ms_to_iso
 log = logging.getLogger(__name__)
 
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "contrib"
 NAME = "vscode"
 DEDUP_STRATEGY = "file"
 HARNESS_SOURCE = "multi"

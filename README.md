@@ -271,7 +271,7 @@ siftd export -w myproject --since 7d      # recent work in a project
 
 ## You use a tool siftd doesn't support
 
-siftd ships adapters for Claude Code, Aider, Gemini CLI, and Codex. If you use something else, write an adapter.
+siftd ships adapters for Claude Code, Aider, Gemini CLI, and Codex. Each adapter carries a support tier (`core`, `contrib`, or `frozen`) that sets expectations for how actively its log format is tracked — `siftd adapters` shows it. If you use something else, write an adapter.
 
 Start from the template or copy an existing adapter to modify:
 

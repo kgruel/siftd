@@ -18,6 +18,7 @@ Required exports:
     parse(source: Source) -> Iterable[Conversation]: Parse source into conversations.
 
 Optional exports:
+    SUPPORT_TIER (str): "core", "contrib", or "frozen" (defaults to "contrib").
     HARNESS_LOG_FORMAT (str): Log format (e.g., "jsonl", "json").
     HARNESS_DISPLAY_NAME (str): Human-readable name.
     TOOL_ALIASES (dict[str, str]): Map raw tool names to canonical names.
@@ -58,6 +59,11 @@ from siftd.domain import (
 # ============================================================================
 
 ADAPTER_INTERFACE_VERSION = 1
+
+# Support tier (optional): "core" (maintained by siftd, ingest expected to work),
+# "contrib" (best-effort — the default for drop-ins), or "frozen" (kept working
+# as-is; upstream format changes may not be tracked).
+SUPPORT_TIER = "contrib"
 
 # Unique identifier for this adapter
 NAME = "my_harness"

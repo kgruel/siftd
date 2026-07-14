@@ -25,6 +25,7 @@ from siftd.domain import (
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "frozen"
 NAME = "aider"
 DEFAULT_LOCATIONS = ["~/.aider"]
 DEDUP_STRATEGY = "file"  # each history file is a distinct source

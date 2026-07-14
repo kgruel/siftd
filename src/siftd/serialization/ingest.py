@@ -40,6 +40,8 @@ class IngestRunPayload:
     scan_paths: list[str]
     stats: IngestStatsPayload | None
     elapsed_ms: int
+    adapter_tiers: dict[str, str]
+    disabled_adapters: list[str]
     auto_index: AutoIndexPayload | None = None
 
 
@@ -83,6 +85,8 @@ def to_ingest_run_payload(result: Any) -> IngestRunPayload:
         stats=payload_stats,
         elapsed_ms=result.elapsed_ms,
         auto_index=_to_auto_index_payload(auto_index) if auto_index is not None else None,
+        adapter_tiers=dict(getattr(result, "adapter_tiers", {})),
+        disabled_adapters=list(getattr(result, "disabled_adapters", [])),
     )
 
 

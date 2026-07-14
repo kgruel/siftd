@@ -117,6 +117,11 @@ Log format identifier:
 ### `HARNESS_DISPLAY_NAME` (optional)
 Human-readable name shown in UI. Defaults to `NAME.replace("_", " ").title()`.
 
+### `SUPPORT_TIER` (optional)
+Support tier: `"core"`, `"contrib"`, or `"frozen"`. Defaults to `"contrib"`,
+which is the right value for drop-in adapters — see
+[Support tiers](../concepts/adapters.md#support-tiers) for what each tier means.
+
 ## Tool Aliases
 
 Map raw tool names from logs to canonical names:
@@ -306,6 +311,17 @@ Register in `pyproject.toml`:
 [project.entry-points."siftd.adapters"]
 my_harness = "my_package.adapters:my_harness"
 ```
+
+### Disabling
+
+Any installed adapter can be switched off without removing it:
+
+```bash
+siftd config set adapters.my_harness.enabled false
+```
+
+Disabled adapters are skipped by ingest, peek, and doctor. See
+[Adapters — Disabling an adapter](../concepts/adapters.md#disabling-an-adapter).
 
 ## Debugging
 

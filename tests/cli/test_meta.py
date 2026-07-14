@@ -1,5 +1,6 @@
 """Tests for siftd.cli.meta command handlers."""
 
+import json
 from types import SimpleNamespace
 
 from siftd.cli.meta import cmd_adapters, cmd_config, cmd_path, cmd_status, cmd_workspaces
@@ -135,7 +136,7 @@ def test_cmd_adapters_json_and_table(monkeypatch, capsys):
     monkeypatch.setattr("siftd.api.list_adapters", lambda: [])
     assert cmd_adapters(_args(json=True)) == 0
 
-    rows = [SimpleNamespace(name="claude", origin="builtin", locations=["~/.claude"], source_path="x", entrypoint="y")]
+    rows = [SimpleNamespace(name="claude", origin="builtin", tier="core", locations=["~/.claude"], source_path="x", entrypoint="y")]
     monkeypatch.setattr("siftd.api.list_adapters", lambda: rows)
     assert cmd_adapters(_args(json=True)) == 0
 
@@ -143,6 +144,29 @@ def test_cmd_adapters_json_and_table(monkeypatch, capsys):
     monkeypatch.setattr("siftd.output.print_table", lambda h, r: printed.append((h, r)))
     assert cmd_adapters(_args(json=False)) == 0
     assert printed
+    headers, table_rows = printed[0]
+    assert "TIER" in headers
+    assert table_rows[0][headers.index("TIER")] == "core"
+
+
+def test_cmd_adapters_json_includes_tier(monkeypatch, capsys):
+    rows = [SimpleNamespace(name="my_dropin", origin="dropin", tier="contrib", locations=[], source_path=None, entrypoint=None)]
+    monkeypatch.setattr("siftd.api.list_adapters", lambda: rows)
+    assert cmd_adapters(_args(json=True)) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["tier"] == "contrib"
+
+
+def test_adapters_argparse_parse_through(monkeypatch, capsys):
+    """Exercise the full argparse path for `siftd adapters --json`."""
+    rows = [SimpleNamespace(name="claude", origin="builtin", tier="core", locations=[], source_path=None, entrypoint=None)]
+    monkeypatch.setattr("siftd.api.list_adapters", lambda: rows)
+
+    from siftd.cli import main
+
+    assert main(["adapters", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload[0]["tier"] == "core"
 
 
 def test_cmd_workspaces_and_status(monkeypatch, tmp_path, capsys):

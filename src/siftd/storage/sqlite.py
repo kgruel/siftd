@@ -2837,6 +2837,9 @@ def store_conversation(
                     filter_binary=filter_binary,
                 )
 
+                for attr_key, attr_value in tool_call.attributes.items():
+                    set_attribute(conn, "tool_call", tool_call_id, attr_key, attr_value)
+
                 tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
                 tag_derivative_conversation(
                     conn, conversation_id, canonical_name, tool_call.input

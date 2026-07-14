@@ -1,0 +1,80 @@
+[
+  {
+    "ended_at": "2026-07-06T15:01:02Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "What files are in the repo root?"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "The user wants a directory listing, I should call list_dir on the workspace root."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I will list the repo root to see what is there."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "input": {
+                    "DirectoryPath": "/repo",
+                    "Recursive": false
+                  },
+                  "name": "list_dir"
+                }
+              }
+            ],
+            "timestamp": "2026-07-06T15:01:00Z",
+            "tool_calls": [
+              {
+                "input": {
+                  "DirectoryPath": "/repo",
+                  "Recursive": false
+                },
+                "result": {
+                  "output": "README.md\nsrc/\n"
+                },
+                "status": "success",
+                "timestamp": "2026-07-06T15:01:01Z",
+                "tool_name": "list_dir"
+              }
+            ]
+          },
+          {
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "The repo root contains README.md and src/."
+                }
+              }
+            ],
+            "timestamp": "2026-07-06T15:01:02Z"
+          }
+        ],
+        "timestamp": "2026-07-06T15:00:59Z"
+      }
+    ],
+    "started_at": "2026-07-06T15:00:58Z"
+  }
+]

@@ -4,6 +4,8 @@ Pure parser: reads JSONL files and yields Conversation domain objects.
 No storage coupling.
 """
 
+import json
+import re
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -17,6 +19,7 @@ from siftd.adapters.sdk import (
     yield_conversation,
 )
 from siftd.domain import (
+    ContentBlock,
     Conversation,
     Prompt,
     Response,
@@ -27,8 +30,11 @@ from siftd.domain import (
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "core"
 NAME = "claude_code"
-DEFAULT_LOCATIONS = ["~/.claude/projects", "~/.config/claude/projects"]
+# ~/.config/claude/projects is where modern installs write live logs;
+# ~/.claude/projects remains as the legacy/fallback location.
+DEFAULT_LOCATIONS = ["~/.config/claude/projects", "~/.claude/projects"]
 DEDUP_STRATEGY = "file"  # one conversation per file
 SUPPORTS_LIVE_REGISTRATION = True  # supports tagging during active sessions
 SUBAGENT_PATH_MARKER = "/subagents/"  # path marker for subagent detection
@@ -49,6 +55,8 @@ TOOL_HINT_KEYS: dict[str, list[str]] = {
     "search.web": ["query"],
     "web.fetch": ["url"],
     "task.spawn": ["description"],
+    "tool.search": ["query"],
+    "task.message": ["to"],
     "notebook.edit": ["notebook_path"],
     "skill.invoke": ["skill"],
 }
@@ -63,14 +71,107 @@ TOOL_ALIASES: dict[str, str] = {
     "Grep": "search.grep",
     "WebSearch": "search.web",
     "WebFetch": "web.fetch",
-    "Task": "task.spawn",
+    "Task": "task.spawn",  # historical logs; superseded by "Agent"
+    "Agent": "task.spawn",
     "TaskOutput": "task.output",
     "KillShell": "task.kill",
     "AskUserQuestion": "ui.ask",
-    "TodoWrite": "ui.todo",
+    "TodoWrite": "ui.todo",  # historical logs; superseded by TaskCreate/TaskUpdate
+    "TaskCreate": "ui.todo",
+    "TaskUpdate": "ui.todo",
     "NotebookEdit": "notebook.edit",
     "Skill": "skill.invoke",
+    "BashOutput": "shell.output",
+    "ToolSearch": "tool.search",
+    "SendMessage": "task.message",
+    "Workflow": "workflow.run",
+    "EnterPlanMode": "ui.plan",
+    "ExitPlanMode": "ui.plan",
 }
+
+# A backgrounded Bash call's tool_result is plain prose naming its own id,
+# e.g. "Command running in background with ID: buxu4lquj. Output is being
+# written to: ...". BashOutput's later polls carry the same id structurally
+# in input["bash_id"] -- no parsing needed on that side.
+_BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
+
+# promptSource values that mean a human authored the prompt. Anything else
+# (e.g. "system") is harness-injected content riding a user-role record.
+_USER_PROMPT_SOURCES = frozenset({"typed", "queued"})
+
+
+def _read_subagent_meta(path: Path) -> dict | None:
+    """Load the sidecar agent-<name>-<hash>.meta.json beside a subagent JSONL.
+
+    The sidecar carries identity the child transcript itself lacks
+    (name/agentType/description/spawnDepth/model). Returns None when it's
+    absent (top-level sessions, rotated-off history) or unparseable — the
+    single decode point for both the ingest parse and peek paths.
+    """
+    meta_path = path.with_name(path.stem + ".meta.json")
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _tool_use_result_attributes(tool_use_result) -> dict[str, str]:
+    """Distill a record-level structured `toolUseResult` into attributes.
+
+    Claude Code duplicates tool results in two channels: the in-message
+    tool_result block (prose, already stored as the ToolCall result) and a
+    top-level structured `toolUseResult` object. The structured form carries
+    data the prose lacks — real parent->child agent-spawn linkage
+    (agentId/agent_type/model/name/spawnDepth) and the stdout/stderr split
+    for Bash. Capture-only: linkage joins are left to downstream consumers.
+    String-form toolUseResult (error prose) carries nothing structured.
+    """
+    attrs: dict[str, str] = {}
+    if not isinstance(tool_use_result, dict):
+        return attrs
+
+    # Agent/teammate spawn — both shapes carry an agent id:
+    #   async Task spawn: {agentId, resolvedModel, status: "async_launched", ...}
+    #   teammate spawn:   {agent_id, agent_type, model, name, spawnDepth,
+    #                      status: "teammate_spawned", ...} (snake_case)
+    agent_id = tool_use_result.get("agentId") or tool_use_result.get("agent_id")
+    if agent_id is not None:
+        attrs["agent_id"] = str(agent_id)
+        if agent_type := tool_use_result.get("agent_type"):
+            attrs["agent_type"] = str(agent_type)
+        if name := tool_use_result.get("name"):
+            attrs["agent_name"] = str(name)
+        if model := (tool_use_result.get("model") or tool_use_result.get("resolvedModel")):
+            attrs["agent_model"] = str(model)
+        if (depth := tool_use_result.get("spawnDepth")) is not None:
+            attrs["spawn_depth"] = str(depth)
+        if status := tool_use_result.get("status"):
+            attrs["spawn_status"] = str(status)
+
+    # Bash — structured stdout/stderr split (the prose result mixes them)
+    if "stdout" in tool_use_result or "stderr" in tool_use_result:
+        if stdout := tool_use_result.get("stdout"):
+            attrs["stdout"] = str(stdout)
+        if stderr := tool_use_result.get("stderr"):
+            attrs["stderr"] = str(stderr)
+        if tool_use_result.get("interrupted"):
+            attrs["interrupted"] = "true"
+
+    return attrs
+
+
+def _is_injected_user_record(record: dict) -> bool:
+    """True when a user-role record carries injected (non-human) content.
+
+    Claude Code marks injected content two ways: `isMeta: true` (caveats,
+    skill injections) and `promptSource` values other than typed/queued
+    (e.g. "system"). Absent both fields, the record is a real user prompt.
+    """
+    if record.get("isMeta"):
+        return True
+    prompt_source = record.get("promptSource")
+    return prompt_source is not None and prompt_source not in _USER_PROMPT_SOURCES
 
 
 def discover(locations=None) -> Iterable[Source]:
@@ -117,12 +218,18 @@ def parse(source: Source) -> Iterable[Conversation]:
     session_cwd = None
     started_at = None
     ended_at = None
+    branch = None
+    ai_title = None
 
     for record in records:
-        if record.get("type") in ("user", "assistant"):
+        if record.get("type") == "ai-title":
+            # Emitted per turn; the last occurrence is the current title.
+            ai_title = record.get("aiTitle") or ai_title
+        elif record.get("type") in ("user", "assistant"):
             session_id = session_id or record.get("sessionId")
             agent_id = agent_id or record.get("agentId")
             session_cwd = session_cwd or record.get("cwd")
+            branch = branch or record.get("gitBranch")
             ts = record.get("timestamp")
             if ts:
                 if started_at is None or ts < started_at:
@@ -148,22 +255,22 @@ def parse(source: Source) -> Iterable[Conversation]:
     # top-level sessions and for historical sub-agents whose sidecar rotated off
     # disk before ingest — both degrade silently to no attribute.
     conv_attributes: dict[str, str] = {}
+    if ai_title:
+        conv_attributes["title"] = str(ai_title)
     if agent_id:
-        meta_path = path.parent / f"{path.stem}.meta.json"
-        try:
-            import json as _json
-
-            meta = _json.loads(meta_path.read_text())
-        except (OSError, ValueError):
-            meta = None
-        if isinstance(meta, dict):
+        meta = _read_subagent_meta(path)
+        if meta is not None:
             if atype := meta.get("agentType"):
                 conv_attributes["subagent_type"] = str(atype)
             if desc := meta.get("description"):
                 conv_attributes["agent_description"] = str(desc)
 
-    branch = None
-    if session_cwd:
+    # Records carry the branch that was live when each message was written
+    # (`gitBranch`, captured above). Recomputing from the cwd's *current* git
+    # state at ingest time mislabels any session ingested after a branch
+    # switch, so the live lookup is only a fallback for old logs that predate
+    # the per-record field.
+    if branch is None and session_cwd:
         from siftd.git import get_worktree_branch
 
         branch = get_worktree_branch(session_cwd)
@@ -184,9 +291,18 @@ def parse(source: Source) -> Iterable[Conversation]:
     # key: tool_use_id, value: (response object, tool_name, input_dict)
     pending_tool_uses: dict[str, tuple[Response, str, dict]] = {}
     current_prompt: Prompt | None = None
+    last_response: Response | None = None
 
     for record in records:
         record_type = record.get("type")
+        if record_type == "system" and record.get("subtype") == "turn_duration":
+            # Emitted after a turn's last assistant message; attach the
+            # wall-clock duration to that response (attributes, not a domain
+            # slot — the domain has no latency home).
+            duration_ms = record.get("durationMs")
+            if duration_ms is not None and last_response is not None:
+                last_response.attributes["turn_duration_ms"] = str(duration_ms)
+            continue
         if record_type not in ("user", "assistant"):
             continue
 
@@ -204,6 +320,17 @@ def parse(source: Source) -> Iterable[Conversation]:
             )
 
             if has_tool_result:
+                # The top-level structured toolUseResult belongs to the
+                # record's single tool_result block; skip it in the rare
+                # multi-block case where the pairing would be ambiguous.
+                tool_result_blocks = [
+                    b for b in content_blocks
+                    if isinstance(b, dict) and b.get("type") == "tool_result"
+                ]
+                structured_attrs: dict[str, str] = {}
+                if len(tool_result_blocks) == 1:
+                    structured_attrs = _tool_use_result_attributes(record.get("toolUseResult"))
+
                 # Process tool results - attach to pending tool uses
                 for block in content_blocks:
                     if isinstance(block, dict) and block.get("type") == "tool_result":
@@ -214,6 +341,20 @@ def parse(source: Source) -> Iterable[Conversation]:
                             result_content = block.get("content")
                             status = "error" if is_error else "success"
 
+                            attributes: dict[str, str] = dict(structured_attrs)
+                            if (
+                                tool_name == "Bash"
+                                and input_dict.get("run_in_background")
+                                and isinstance(result_content, str)
+                            ):
+                                bg_match = _BASH_BG_ID_RE.search(result_content)
+                                if bg_match:
+                                    attributes["background_task_id"] = bg_match.group(1)
+                            elif tool_name == "BashOutput":
+                                bash_id = input_dict.get("bash_id")
+                                if bash_id:
+                                    attributes["background_task_id"] = bash_id
+
                             # Create completed tool call
                             tool_call = ToolCall(
                                 tool_name=tool_name,
@@ -222,6 +363,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                                 status=status,
                                 external_id=tool_use_id,
                                 timestamp=timestamp,
+                                attributes=attributes,
                             )
                             response.tool_calls.append(tool_call)
             else:
@@ -231,9 +373,21 @@ def parse(source: Source) -> Iterable[Conversation]:
                     external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
                 )
 
+                # Injected content (isMeta / non-user promptSource) keeps its
+                # place in the conversation but is reclassified so it never
+                # pollutes user-prompt FTS search: the text moves off the
+                # "text" key (which is what gets indexed) onto "meta_text",
+                # and the block type records the injection source.
+                injected = _is_injected_user_record(record)
+
                 # Parse content blocks
                 for block in content_blocks:
                     content_block = parse_block(block)
+                    if injected and "text" in content_block.content:
+                        content = dict(content_block.content)
+                        content["meta_text"] = content.pop("text")
+                        content["meta_source"] = record.get("promptSource") or "isMeta"
+                        content_block = ContentBlock(block_type="meta_text", content=content)
                     current_prompt.content.append(content_block)
 
                 conversation.prompts.append(current_prompt)
@@ -255,6 +409,28 @@ def parse(source: Source) -> Iterable[Conversation]:
             if usage_data.get("cache_read_input_tokens"):
                 attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
 
+            # 5m vs 1h cache writes are priced at different multipliers, so
+            # the TTL split is captured under distinct keys (capture-only —
+            # the cost model still prices the combined cache_creation total).
+            cache_creation = usage_data.get("cache_creation") or {}
+            if cache_creation.get("ephemeral_5m_input_tokens"):
+                attributes["cache_creation_ephemeral_5m_input_tokens"] = str(
+                    cache_creation["ephemeral_5m_input_tokens"]
+                )
+            if cache_creation.get("ephemeral_1h_input_tokens"):
+                attributes["cache_creation_ephemeral_1h_input_tokens"] = str(
+                    cache_creation["ephemeral_1h_input_tokens"]
+                )
+            server_tool_use = usage_data.get("server_tool_use") or {}
+            if server_tool_use.get("web_search_requests"):
+                attributes["server_tool_use_web_search_requests"] = str(
+                    server_tool_use["web_search_requests"]
+                )
+            if server_tool_use.get("web_fetch_requests"):
+                attributes["server_tool_use_web_fetch_requests"] = str(
+                    server_tool_use["web_fetch_requests"]
+                )
+
             response = Response(
                 timestamp=timestamp,
                 usage=usage,
@@ -262,6 +438,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
                 attributes=attributes,
             )
+            last_response = response
 
             # Parse content blocks and track tool uses
             for block in content_blocks:
@@ -342,6 +519,17 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
         if has_tool_result:
             return NormalizedRecord(kind="tool_result", timestamp=ts)
 
+        # Injected content (isMeta / non-user promptSource) is not a real
+        # user prompt — surface it as metadata so peek exchange counts and
+        # prompt previews only reflect what the human actually typed.
+        if _is_injected_user_record(raw):
+            return NormalizedRecord(
+                kind="metadata",
+                timestamp=ts,
+                session_id=raw.get("sessionId"),
+                workspace_path=raw.get("cwd"),
+            )
+
         extra: dict = {}
         agent_id = raw.get("agentId")
         if agent_id is not None:
@@ -369,8 +557,43 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
 
 
 # Peek hooks — derived from normalizer
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+_peek_scan_base, peek_exchanges, peek_tail = make_peek_hooks(
     normalize_record,
     tool_aliases=TOOL_ALIASES,
     subagent_path_marker=SUBAGENT_PATH_MARKER,
 )
+
+# Subagent .meta.json keys → PeekScanResult.attributes keys. Names match the
+# parent-side tool_call attributes vocabulary (_tool_use_result_attributes:
+# agent_name/agent_type/agent_model/spawn_depth). Note the ingest-side
+# conversation attribute is `subagent_type` — a stored DB contract queried by
+# api/conversations.py — so the two surfaces intentionally differ.
+_SUBAGENT_META_KEYS: dict[str, str] = {
+    "name": "agent_name",
+    "agentType": "agent_type",
+    "spawnDepth": "spawn_depth",
+    "model": "agent_model",
+}
+
+
+def peek_scan(path: Path):
+    """peek_scan with subagent .meta.json enrichment.
+
+    A subagent log at .../subagents/agent-<name>-<hash>.jsonl has a sibling
+    agent-<name>-<hash>.meta.json carrying identity the JSONL itself lacks
+    (name/agentType/spawnDepth/model). Surface it via the scan attributes
+    channel; fill result.model from the meta when the log had none.
+    """
+    result = _peek_scan_base(path)
+    if result is None or SUBAGENT_PATH_MARKER not in str(path):
+        return result
+    meta = _read_subagent_meta(path)
+    if meta is None:
+        return result
+    for src, dst in _SUBAGENT_META_KEYS.items():
+        value = meta.get(src)
+        if value is not None:
+            result.attributes[dst] = str(value)
+    if result.model is None and meta.get("model"):
+        result.model = str(meta["model"])
+    return result

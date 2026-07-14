@@ -109,6 +109,67 @@ def test_run_ingest_unknown_adapter_raises_and_closes_connection(tmp_path, monke
     assert conn.closed is True
 
 
+def _fake_load_with_disabled(disabled_names, enabled_plugins):
+    def _load(**kw):
+        out = kw.get("disabled_out")
+        if out is not None:
+            out.extend(disabled_names)
+        return enabled_plugins
+
+    return _load
+
+
+def test_run_ingest_skips_disabled_adapter_and_reports_it(tmp_path, monkeypatch):
+    db = tmp_path / "ingest.db"
+    conn = _FakeConn()
+    stats = IngestStats(files_found=0)
+
+    monkeypatch.setattr(ingest_api, "create_database", lambda path: conn)
+    monkeypatch.setattr(
+        ingest_api,
+        "load_all_adapters",
+        _fake_load_with_disabled(
+            ["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]
+        ),
+    )
+    seen = {}
+
+    def _fake_ingest(_conn, adapters, on_event=None, filter_binary=None):
+        seen["adapters"] = adapters
+        return stats
+
+    monkeypatch.setattr(ingest_api, "ingest_all", _fake_ingest)
+    monkeypatch.setattr("siftd.api.stats.get_stats", lambda db_path: {})
+    monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda payload, **_kw: None)
+
+    result = ingest_api.run_ingest(db_path=db)
+
+    assert seen["adapters"] == ["mod:claude"]
+    assert result.adapters == ["claude_code"]
+    assert result.disabled_adapters == ["aider"]
+
+
+def test_run_ingest_explicit_disabled_adapter_raises_with_hint(tmp_path, monkeypatch):
+    db = tmp_path / "ingest.db"
+    conn = _FakeConn()
+
+    monkeypatch.setattr(ingest_api, "create_database", lambda path: conn)
+    monkeypatch.setattr(
+        ingest_api,
+        "load_all_adapters",
+        _fake_load_with_disabled(
+            ["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]
+        ),
+    )
+
+    with pytest.raises(ingest_api.AdapterSelectionError) as exc:
+        ingest_api.run_ingest(db_path=db, adapter_names=["aider"])
+
+    assert exc.value.disabled == ["aider"]
+    assert "disabled via config" in str(exc.value)
+    assert conn.closed is True
+
+
 def test_run_rebuild_fts_returns_result(tmp_path, monkeypatch):
     db = tmp_path / "ingest.db"
     conn = _FakeConn()

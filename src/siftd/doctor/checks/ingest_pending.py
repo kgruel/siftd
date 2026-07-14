@@ -9,23 +9,19 @@ class IngestPendingCheck:
     has_fix = True
     requires_db = True
     requires_embed_db = False
-    cost: CheckCost = "slow"  # Runs discover() on all adapters
+    cost: CheckCost = "slow"  # Runs discover() on all adapters (shared via ctx)
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.adapters.registry import load_all_adapters
-
         findings = []
-        plugins = load_all_adapters()
         conn = ctx.get_db_conn()
 
         # Get all ingested file paths
         cur = conn.execute("SELECT path FROM ingested_files")
         ingested_paths = {row[0] for row in cur.fetchall()}
 
-        for plugin in plugins:
-            adapter = plugin.module
+        for plugin in ctx.get_adapters():
             try:
-                discovered = list(adapter.discover())
+                discovered = ctx.discover_sources(plugin)
             except Exception as e:
                 findings.append(
                     Finding(

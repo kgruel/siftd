@@ -32,7 +32,13 @@ class PeekNarrativeBlock:
 
 @dataclass
 class PeekScanResult:
-    """Lightweight metadata from scanning a session file."""
+    """Lightweight metadata from scanning a session file.
+
+    attributes is the polymorphic enrichment channel (mirrors the domain
+    attributes convention): adapter-specific metadata such as subagent
+    identity (agent_name/agent_type/spawn_depth) rides here rather than
+    growing dedicated fields.
+    """
 
     session_id: str
     workspace_path: str | None = None
@@ -41,6 +47,7 @@ class PeekScanResult:
     started_at: str | None = None
     last_activity_at: str | None = None
     parent_session_id: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -86,6 +93,7 @@ class SessionInfo:
     adapter_name: str | None = None
     parent_session_id: str | None = None
     started_at: str | None = None
+    attributes: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass

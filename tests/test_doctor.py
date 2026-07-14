@@ -10,6 +10,7 @@ from siftd.api import (
     run_checks,
 )
 from siftd.doctor.checks import (
+    AdapterStaleCheck,
     CheckContext,
     ConfigValidCheck,
     CostCoverageCheck,
@@ -84,6 +85,7 @@ class TestListChecks:
         # embeddings-compat is from main (replaces embeddings-dimension-mismatch)
         assert "embeddings-compat" in names
         assert "workspace-identity" in names
+        assert "adapter-stale" in names
         # Deep checks
         assert "db-fk-integrity" in names
         assert "db-blob-refcount-drift" in names
@@ -96,6 +98,7 @@ class TestListChecks:
         by_name = {c.name: c.has_fix for c in checks}
         assert by_name["ingest-pending"] is True
         assert by_name["ingest-errors"] is False
+        assert by_name["adapter-stale"] is True
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
         assert by_name["drop-ins-valid"] is False
@@ -151,8 +154,9 @@ class TestListChecks:
         """cost in CheckInfo matches expected values."""
         checks = list_checks()
         by_name = {c.name: c.cost for c in checks}
-        # Only ingest-pending is slow (runs discover())
+        # ingest-pending and adapter-stale are slow (run discover())
         assert by_name["ingest-pending"] == "slow"
+        assert by_name["adapter-stale"] == "slow"
         # Everything else is fast
         assert by_name["ingest-errors"] == "fast"
         assert by_name["embeddings-stale"] == "fast"
@@ -276,6 +280,257 @@ class TestIngestPendingCheck:
         for f in findings:
             assert f.check == "ingest-pending"
             assert f.severity in ("info", "warning", "error")
+
+
+class TestAdapterStaleCheck:
+    """Tests for the adapter-stale check."""
+
+    INGESTED_MTIME = 1_700_000_000.0
+
+    @pytest.fixture
+    def stale_db(self, tmp_path):
+        """DB with one harness whose newest ingested mtime is INGESTED_MTIME."""
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_workspace,
+            insert_conversation,
+            record_ingested_file,
+        )
+
+        db_path = tmp_path / "stale.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "fake_adapter", source="test", log_format="jsonl")
+        workspace_id = get_or_create_workspace(conn, "/test/project", "2024-01-01T10:00:00Z")
+        conv_id = insert_conversation(
+            conn,
+            external_id="c1",
+            harness_id=harness_id,
+            workspace_id=workspace_id,
+            started_at="2024-01-15T10:00:00Z",
+        )
+        record_ingested_file(
+            conn, "/logs/session.jsonl", "hash1", conv_id, file_mtime=self.INGESTED_MTIME
+        )
+        conn.commit()
+        conn.close()
+        return db_path
+
+    def _ctx(self, db_path, tmp_path):
+        return CheckContext(
+            db_path=db_path,
+            embed_db_path=tmp_path / "embeddings.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+    def _fake_plugins(self, monkeypatch, name, discover_fn):
+        import types
+
+        from siftd.plugin_discovery import PluginInfo
+
+        module = types.SimpleNamespace(discover=discover_fn)
+        plugins = [PluginInfo(name=name, origin="builtin", module=module)]
+        import siftd.adapters.registry as registry
+
+        monkeypatch.setattr(registry, "load_all_adapters", lambda **kw: plugins)
+
+    def _log_file(self, tmp_path, mtime):
+        import os
+
+        from siftd.domain.source import Source
+
+        log = tmp_path / "session.jsonl"
+        log.write_text("{}\n")
+        os.utime(log, (mtime, mtime))
+        return Source(kind="file", location=log)
+
+    def _set_ingested_path(self, db_path, path):
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db_path)
+        conn.execute(
+            "UPDATE ingested_files SET path = ? WHERE path = '/logs/session.jsonl'",
+            (str(path),),
+        )
+        conn.commit()
+        conn.close()
+
+    def test_stale_adapter_warns(self, tmp_path, stale_db, monkeypatch):
+        """Disk file newer than last ingest produces a warning with fix."""
+        source = self._log_file(tmp_path, self.INGESTED_MTIME + 3600)
+        self._set_ingested_path(stale_db, source.location)
+        self._fake_plugins(monkeypatch, "fake_adapter", lambda: [source])
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.check == "adapter-stale"
+        assert f.severity == "warning"
+        assert f.fix_available is True
+        assert f.fix_command == "siftd ingest"
+        assert f.context["adapter"] == "fake_adapter"
+        assert f.context["gap_seconds"] == pytest.approx(3600, abs=2)
+
+    def test_fresh_adapter_silent(self, tmp_path, stale_db, monkeypatch):
+        """Disk mtime equal to ingested mtime produces no findings."""
+        source = self._log_file(tmp_path, self.INGESTED_MTIME)
+        self._set_ingested_path(stale_db, source.location)
+        self._fake_plugins(monkeypatch, "fake_adapter", lambda: [source])
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert findings == []
+
+    def test_older_file_change_not_hidden_by_newer_ingested_file(
+        self, tmp_path, stale_db, monkeypatch
+    ):
+        """Each path is compared independently, not through adapter-wide maxima."""
+        import os
+
+        from siftd.domain.source import Source
+        from siftd.storage.sqlite import get_or_create_harness, open_database, record_failed_file
+
+        older = tmp_path / "session.jsonl"
+        older.write_text("changed\n")
+        os.utime(older, (self.INGESTED_MTIME + 100, self.INGESTED_MTIME + 100))
+
+        newer = tmp_path / "newer.jsonl"
+        newer.write_text("{}\n")
+        os.utime(newer, (self.INGESTED_MTIME + 200, self.INGESTED_MTIME + 200))
+
+        conn = open_database(stale_db)
+        harness_id = get_or_create_harness(conn, "fake_adapter")
+        record_failed_file(
+            conn,
+            str(older),
+            "hash-older",
+            harness_id,
+            "fixture",
+            file_mtime=self.INGESTED_MTIME,
+        )
+        record_failed_file(
+            conn,
+            str(newer),
+            "hash2",
+            harness_id,
+            "fixture",
+            file_mtime=self.INGESTED_MTIME + 200,
+        )
+        conn.commit()
+        conn.close()
+
+        self._fake_plugins(
+            monkeypatch,
+            "fake_adapter",
+            lambda: [
+                Source(kind="file", location=older),
+                Source(kind="file", location=newer),
+            ],
+        )
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(findings) == 1
+        assert findings[0].context["path"] == str(older)
+        assert findings[0].context["stale_file_count"] == 1
+
+    def test_adapter_without_db_presence_skipped(self, tmp_path, stale_db, monkeypatch):
+        """Adapters with no ingested rows are skipped — discover() never runs."""
+        def _boom():
+            raise AssertionError("discover() must not be called")
+
+        self._fake_plugins(monkeypatch, "other_adapter", _boom)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert findings == []
+
+    def test_discover_failure_silent(self, tmp_path, stale_db, monkeypatch):
+        """discover() failures are skipped (ingest-pending reports them)."""
+        def _boom():
+            raise RuntimeError("no home dir")
+
+        self._fake_plugins(monkeypatch, "fake_adapter", _boom)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert findings == []
+
+    def test_missing_paths_tolerated(self, tmp_path, stale_db, monkeypatch):
+        """Sources whose path no longer exists are ignored."""
+        from siftd.domain.source import Source
+
+        missing = Source(kind="file", location=tmp_path / "gone.jsonl")
+        self._fake_plugins(monkeypatch, "fake_adapter", lambda: [missing])
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            findings = AdapterStaleCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert findings == []
+
+    def test_discovery_shared_across_checks(self, tmp_path, stale_db, monkeypatch):
+        """Both slow-lane checks reuse one discover() pass via the context."""
+        source = self._log_file(tmp_path, self.INGESTED_MTIME)
+        self._set_ingested_path(stale_db, source.location)
+        calls = []
+
+        def _discover():
+            calls.append(1)
+            return [source]
+
+        self._fake_plugins(monkeypatch, "fake_adapter", _discover)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            AdapterStaleCheck().run(ctx)
+            IngestPendingCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(calls) == 1
+
+    def test_discovery_failure_shared_across_checks(self, tmp_path, stale_db, monkeypatch):
+        """A cached discover() failure reaches both checks with their own policies."""
+        def _boom():
+            raise RuntimeError("no home dir")
+
+        self._fake_plugins(monkeypatch, "fake_adapter", _boom)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            stale_findings = AdapterStaleCheck().run(ctx)
+            pending_findings = IngestPendingCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert stale_findings == []  # adapter-stale stays silent on failures
+        assert len(pending_findings) == 1  # ingest-pending reports them
+        assert "discover() failed" in pending_findings[0].message
 
 
 @pytest.mark.embeddings

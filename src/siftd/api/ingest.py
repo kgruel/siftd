@@ -20,10 +20,19 @@ from siftd.ingestion import IngestEvent, IngestStats, ingest_all
 class AdapterSelectionError(ValueError):
     """Raised when requested adapter names match no discovered adapters."""
 
-    def __init__(self, requested: list[str], available: list[str]) -> None:
+    def __init__(
+        self, requested: list[str], available: list[str], disabled: list[str] | None = None
+    ) -> None:
         self.requested = requested
         self.available = available
-        super().__init__(f"No adapters matched: {', '.join(requested)}")
+        self.disabled = disabled or []
+        message = f"No adapters matched: {', '.join(requested)}"
+        if self.disabled:
+            message += (
+                f" (disabled via config: {', '.join(self.disabled)} —"
+                " set [adapters.<name>] enabled = true to re-enable)"
+            )
+        super().__init__(message)
 
 
 # Cap on the stale+new set the post-ingest hook will embed inline. A larger backlog (or a
@@ -63,6 +72,8 @@ class IngestRunResult:
     elapsed_ms: int
     dropin_failures: list[tuple[Path, str]] = field(default_factory=list)
     auto_index: AutoIndexReport | None = None
+    adapter_tiers: dict[str, str] = field(default_factory=dict)  # name -> SUPPORT_TIER
+    disabled_adapters: list[str] = field(default_factory=list)  # skipped via config knob
 
 
 __all__ = [
@@ -79,22 +90,33 @@ def _resolve_adapters(
     adapter_names: list[str] | None,
     scan_paths: list[str] | None,
     failures_out: list[tuple[Path, str]] | None = None,
-) -> tuple[list, list[str]]:
+    disabled_out: list[str] | None = None,
+) -> tuple[list, list[str], dict[str, str]]:
     """Resolve discovered adapter modules with optional filtering/overrides."""
-    plugins = load_all_adapters(failures_out=failures_out)
+    from siftd.adapters.validation import support_tier
+
+    disabled: list[str] = []
+    plugins = load_all_adapters(failures_out=failures_out, disabled_out=disabled)
+    if disabled_out is not None:
+        disabled_out.extend(disabled)
 
     if adapter_names:
         requested = set(adapter_names)
         plugins = [p for p in plugins if p.name in requested]
         if not plugins:
-            raise AdapterSelectionError(requested=adapter_names, available=[])
+            raise AdapterSelectionError(
+                requested=adapter_names,
+                available=[],
+                disabled=[n for n in adapter_names if n in disabled],
+            )
 
     if scan_paths:
         adapters = [wrap_adapter_paths(p.module, scan_paths) for p in plugins]
     else:
         adapters = [p.module for p in plugins]
 
-    return adapters, [p.name for p in plugins]
+    tiers = {p.name: support_tier(p.module) for p in plugins}
+    return adapters, [p.name for p in plugins], tiers
 
 
 def run_ingest(
@@ -120,12 +142,14 @@ def run_ingest(
     started = perf_counter()
 
     dropin_failures: list[tuple[Path, str]] = []
+    disabled_adapters: list[str] = []
     conn = create_database(path)
     try:
-        adapters, selected_names = _resolve_adapters(
+        adapters, selected_names, adapter_tiers = _resolve_adapters(
             adapter_names=adapter_names,
             scan_paths=scan_paths,
             failures_out=dropin_failures,
+            disabled_out=disabled_adapters,
         )
         stats = ingest_all(
             conn,
@@ -164,6 +188,8 @@ def run_ingest(
         elapsed_ms=elapsed_ms,
         dropin_failures=dropin_failures,
         auto_index=auto_index,
+        adapter_tiers=adapter_tiers,
+        disabled_adapters=disabled_adapters,
     )
 
 

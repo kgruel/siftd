@@ -466,6 +466,7 @@ def cmd_adapters(args) -> int:
             {
                 "name": a.name,
                 "origin": a.origin,
+                "tier": a.tier,
                 "locations": a.locations,
                 "source_path": a.source_path,
                 "entrypoint": a.entrypoint,
@@ -478,10 +479,10 @@ def cmd_adapters(args) -> int:
     from siftd.output import print_table
 
     str_rows = [
-        [a.name, a.origin, ", ".join(a.locations) if a.locations else "-"]
+        [a.name, a.origin, a.tier, ", ".join(a.locations) if a.locations else "-"]
         for a in adapters
     ]
-    print_table(["NAME", "ORIGIN", "LOCATIONS"], str_rows)
+    print_table(["NAME", "ORIGIN", "TIER", "LOCATIONS"], str_rows)
 
     return 0
 

@@ -2,7 +2,17 @@
 
 from pathlib import Path
 
-from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode
+from siftd.adapters import (
+    aider,
+    antigravity_cli,
+    claude_code,
+    codex_cli,
+    copilot_cli,
+    gemini_cli,
+    opencode,
+    pi_agent,
+    vscode,
+)
 from siftd.adapters.validation import validate_adapter
 from siftd.plugin_discovery import PluginInfo, load_all_extensions, load_dropin_modules, load_entrypoint_modules
 
@@ -12,7 +22,17 @@ _validate_adapter = validate_adapter
 
 def load_builtin_adapters() -> list[PluginInfo]:
     """Return the built-in adapter modules as PluginInfo."""
-    builtins = [aider, claude_code, codex_cli, copilot_cli, gemini_cli, opencode, pi_agent, vscode]
+    builtins = [
+        aider,
+        antigravity_cli,
+        claude_code,
+        codex_cli,
+        copilot_cli,
+        gemini_cli,
+        opencode,
+        pi_agent,
+        vscode,
+    ]
     return [
         PluginInfo(
             name=getattr(m, "NAME", m.__name__.split(".")[-1]),
@@ -98,13 +118,18 @@ def load_all_adapters(
     dropin_path: Path | None = None,
     *,
     failures_out: list[tuple[Path, str]] | None = None,
+    disabled_out: list[str] | None = None,
 ) -> list[PluginInfo]:
     """Load adapters from all sources, deduplicated by NAME.
 
     Priority: drop-in > entry point > built-in (drop-ins can override built-ins).
+    Adapters disabled via config ([adapters.<name>] enabled = false) are
+    filtered out here — the single assembly point all consumers (ingest, peek,
+    doctor) share — and their names are appended to ``disabled_out`` so callers
+    can surface the skip instead of staying silent.
 
     Returns:
-        List of PluginInfo for all discovered adapters, deduplicated by name.
+        List of PluginInfo for all discovered, enabled adapters, deduplicated by name.
     """
     from siftd.paths import adapters_dir
 
@@ -121,12 +146,22 @@ def load_all_adapters(
         failures_out=failures_out,
     )
 
-    # Apply adapter-specific config location overrides
-    from siftd.config import get_adapter_locations
+    # Apply adapter-specific config: disable knob, then location overrides.
+    # One config read for the whole loop — the per-name accessors would
+    # re-read and re-parse config.toml once per adapter.
+    from siftd.config import adapter_enabled, adapter_locations, get_adapter_settings
 
+    settings = get_adapter_settings()
+    enabled: list[PluginInfo] = []
     for plugin in result:
-        locations = get_adapter_locations(plugin.name)
+        plugin_settings = settings.get(plugin.name, {})
+        if not adapter_enabled(plugin_settings):
+            if disabled_out is not None:
+                disabled_out.append(plugin.name)
+            continue
+        locations = adapter_locations(plugin_settings)
         if locations:
             plugin.module = wrap_adapter_paths(plugin.module, locations)
+        enabled.append(plugin)
 
-    return result
+    return enabled

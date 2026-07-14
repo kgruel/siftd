@@ -463,8 +463,26 @@ def cmd_ingest(args) -> int:
     else:
         renderer.print_summary(stats)
 
-    # Adapter health: zero-discovery and drop-in import failures.
+    # Adapter health: zero-discovery, non-core file errors, drop-in import failures.
+    from siftd.api.adapters import DEFAULT_SUPPORT_TIER
+
     zero_discovery = sorted(set(result.adapters) - set(stats.by_harness))
+    # File errors from non-core adapters are tagged with their tier so expectations
+    # are set: core adapters are expected to parse cleanly; contrib is best-effort
+    # and frozen may lag upstream format changes.
+    tiers = result.adapter_tiers
+    noncore_errors = sorted(
+        (name, counts.get("errors", 0), tiers.get(name, DEFAULT_SUPPORT_TIER))
+        for name, counts in stats.by_harness.items()
+        if counts.get("errors", 0) and tiers.get(name, DEFAULT_SUPPORT_TIER) != "core"
+    )
+    # Disabled-adapter notices are scoped to the run: on an --adapter run, a
+    # globally disabled adapter that was never requested is not news.
+    disabled_notices = [
+        name
+        for name in result.disabled_adapters
+        if not args.adapter or name in args.adapter
+    ]
     if json_mode:
         for name in zero_discovery:
             renderer._emit({
@@ -473,6 +491,15 @@ def cmd_ingest(args) -> int:
                 "adapter": name,
                 "message": f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config",
             })
+        for name, errors, tier in noncore_errors:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "noncore_errors",
+                "adapter": name,
+                "tier": tier,
+                "errors": errors,
+                "message": f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort",
+            })
         for path, error in result.dropin_failures:
             renderer._emit({
                 "type": "adapter_warning",
@@ -480,10 +507,27 @@ def cmd_ingest(args) -> int:
                 "path": str(path),
                 "message": f"Drop-in adapter at '{path}' failed to load: {error}",
             })
+        for name in disabled_notices:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "disabled",
+                "adapter": name,
+                "message": f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)",
+            })
     else:
         if not quiet:
             for name in zero_discovery:
                 status.info(f"Adapter '{name}' found nothing to ingest — check scan paths or adapter config")
+            for name, errors, tier in noncore_errors:
+                status.warning(
+                    f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort"
+                )
+            for name in disabled_notices:
+                status.info(
+                    f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)"
+                )
+        # Drop-in import failures are hard errors and stay visible even in quiet
+        # mode; the info-level notices above ride the quiet gate.
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 

@@ -9,6 +9,7 @@ from siftd.adapters.registry import (
     load_dropin_adapters,
     load_entrypoint_adapters,
 )
+from siftd.adapters.validation import DEFAULT_SUPPORT_TIER, support_tier
 from siftd.paths import adapters_dir
 from siftd.plugin_discovery import PluginInfo
 
@@ -33,6 +34,7 @@ class AdapterInfo:
     locations: list[str]
     source_path: str | None = None  # For drop-in, the .py file path
     entrypoint: str | None = None  # For entry points, the entry point name
+    tier: str = DEFAULT_SUPPORT_TIER  # SUPPORT_TIER: "core", "contrib", or "frozen"
 
 
 def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
@@ -51,6 +53,7 @@ def plugin_to_adapter_info(plugin: PluginInfo) -> AdapterInfo:
         locations=locations,
         source_path=str(plugin.source_path) if plugin.source_path else None,
         entrypoint=plugin.entrypoint,
+        tier=support_tier(plugin.module),
     )
 
 

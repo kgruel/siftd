@@ -22,6 +22,7 @@ from siftd.safecall import parse_json_args
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
+SUPPORT_TIER = "contrib"
 NAME = "pi_agent"
 DEFAULT_LOCATIONS = ["~/.pi/agent/sessions"]
 DEDUP_STRATEGY = "file"  # one conversation per file

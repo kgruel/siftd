@@ -101,6 +101,61 @@ class TestCodexCliParseEdgeCases:
         conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "ts.jsonl"))))[0]
         assert "00:01" in conv.started_at and conv.prompts[0].content[0].content["text"] == "plain text"
 
+    def test_tool_aliases_cover_exec_and_wait(self):
+        assert codex_cli.TOOL_ALIASES["exec"] == "shell.execute"
+        assert codex_cli.TOOL_ALIASES["wait"] == "shell.wait"
+
+    def test_reasoning_summary_parse(self, tmp_path):
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "reasoning", "id": "r1", "encrypted_content": "xxx", "summary": [{"type": "summary_text", "text": "I will run ls"}]}},
+            {"type": "response_item", "timestamp": "T3", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "ok"}]}},
+        ]
+        conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "reason.jsonl"))))[0]
+        blocks = [b for p in conv.prompts for r in p.responses for b in r.content]
+        thinking = [b for b in blocks if b.block_type == "thinking"]
+        assert thinking and thinking[0].content["thinking"] == "I will run ls"
+
+    def test_reasoning_empty_summary_parse_is_noop(self, tmp_path):
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "reasoning", "id": "r1", "encrypted_content": "xxx", "summary": []}},
+        ]
+        conv = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "reason2.jsonl"))))[0]
+        # Empty summary must not synthesize a response
+        assert conv.prompts[0].responses == []
+
+    def test_reasoning_normalizer(self):
+        n = codex_cli.normalize_record
+        r = n({"type": "response_item", "timestamp": "T", "payload": {"type": "reasoning", "summary": [{"type": "summary_text", "text": "plan"}]}})
+        assert r.kind == "assistant" and r.content_blocks == [{"type": "thinking", "thinking": "plan"}]
+        assert n({"type": "response_item", "timestamp": "T", "payload": {"type": "reasoning", "summary": []}}) is None
+        assert n({"type": "response_item", "timestamp": "T", "payload": {"type": "reasoning", "summary": None}}) is None
+
+    def test_task_complete_parse_attributes(self, tmp_path):
+        records = [
+            {"type": "session_meta", "timestamp": "T0", "payload": {"id": "s1", "cwd": "/p"}},
+            {"type": "response_item", "timestamp": "T1", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "go"}]}},
+            {"type": "response_item", "timestamp": "T2", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "done"}]}},
+            {"type": "event_msg", "timestamp": "T3", "payload": {"type": "token_count", "info": {"last_token_usage": {"input_tokens": 10, "output_tokens": 5}}}},
+            {"type": "event_msg", "timestamp": "T4", "payload": {"type": "task_complete", "turn_id": "t1", "last_agent_message": "done", "duration_ms": 4321, "time_to_first_token_ms": 250}},
+        ]
+        resp = list(codex_cli.parse(Source(kind="file", location=write_jsonl(tmp_path, records, "tc.jsonl"))))[0].prompts[0].responses[0]
+        # token_count cleared pending_usage_response; task_complete still lands
+        assert resp.usage.input_tokens == 10
+        assert resp.attributes.get("duration_ms") == "4321"
+        assert resp.attributes.get("time_to_first_token_ms") == "250"
+
+    def test_task_complete_normalizer(self):
+        n = codex_cli.normalize_record
+        r = n({"type": "event_msg", "timestamp": "T", "payload": {"type": "task_complete", "duration_ms": 4321, "time_to_first_token_ms": 250}})
+        assert r.kind == "metadata"
+        assert r.extra == {"duration_ms": "4321", "time_to_first_token_ms": "250"}
+        r2 = n({"type": "event_msg", "timestamp": "T", "payload": {"type": "task_complete"}})
+        assert r2.kind == "metadata" and r2.extra == {}
+
     def test_orphan_tool_call_before_user_message(self, tmp_path):
         """Tool calls before any user message create a synthetic prompt."""
         records = [

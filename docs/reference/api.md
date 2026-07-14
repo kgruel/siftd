@@ -26,6 +26,7 @@ Extended adapter information for display/reporting.
 | `locations` | `list[str]` |  |
 | `source_path` | `str \| None` |  |
 | `entrypoint` | `str \| None` |  |
+| `tier` | `str` |  |
 
 ### Functions
 
@@ -162,6 +163,7 @@ Session metadata for list display.
 | `adapter_name` | `str \| None` |  |
 | `parent_session_id` | `str \| None` |  |
 | `started_at` | `str \| None` |  |
+| `attributes` | `dict[str, str]` |  |
 
 ### Functions
 
@@ -1375,6 +1377,8 @@ Result metadata for an ingest API run.
 | `elapsed_ms` | `int` |  |
 | `dropin_failures` | `list[tuple[Path, str]]` |  |
 | `auto_index` | `siftd.api.ingest.AutoIndexReport \| None` |  |
+| `adapter_tiers` | `dict[str, str]` |  |
+| `disabled_adapters` | `list[str]` |  |
 
 ### EmbedIndexStatus
 
