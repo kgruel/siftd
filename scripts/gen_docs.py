@@ -663,13 +663,20 @@ def run_help(args: list[str]) -> str:
     return stdout.getvalue() or stderr.getvalue()
 
 
-def extract_subcommands(help_text: str) -> list[str]:
-    """Extract subcommand names from main help output."""
-    # Look for the {cmd1,cmd2,...} pattern in usage line
-    match = re.search(r"\{([^}]+)\}", help_text)
-    if match:
-        return [cmd.strip() for cmd in match.group(1).split(",")]
-    return []
+def public_commands() -> list[str]:
+    """Enumerate public (non-plumbing) top-level commands via parser introspection.
+
+    Never regex the rendered `--help` text: it moved from argparse's classic
+    `{a,b,c}` brace to a custom lanes format once (silently truncating this
+    generator to zero subcommands), and could again. `_LANES` is the CLI's own
+    lane registry — the same source `siftd --help` renders from — and
+    `test_every_command_is_laned_or_plumbing` (tests/cli/test_lane_grouping.py)
+    already pins that every registered sub-command is either laned or in
+    `_PLUMBING`, so this ordering is authoritative and exhaustive.
+    """
+    from siftd.cli import _LANES
+
+    return [cmd for _lane, cmds in _LANES for cmd in cmds.split()]
 
 
 def generate_cli_docs() -> str:
@@ -681,10 +688,7 @@ def generate_cli_docs() -> str:
         "",
     ]
 
-    # Get main help
     main_help = run_help(["--help"])
-    subcommands = extract_subcommands(main_help)
-
     lines.append("## siftd")
     lines.append("")
     lines.append("```")
@@ -692,8 +696,7 @@ def generate_cli_docs() -> str:
     lines.append("```")
     lines.append("")
 
-    # Get help for each subcommand
-    for cmd in subcommands:
+    for cmd in public_commands():
         cmd_help = run_help([cmd, "--help"])
         lines.append(f"## siftd {cmd}")
         lines.append("")

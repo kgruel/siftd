@@ -10,7 +10,7 @@ Pytest suite — mirrors the src structure.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 183 | 3164 |
+| `tests/` | 184 | 3168 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 4 | 46 |
 | `tests/cli/` | 27 | 600 |
@@ -81,6 +81,7 @@ Pytest suite — mirrors the src structure.
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 3 | AC test for ST-3b: FTS rebuild on push. |
+| [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
 | [test_git.py](test_git.py) | 35 | Tests for git utilities and workspace identity. |
 | [test_gutter.py](test_gutter.py) | 10 | Tests for siftd.output.gutter — the grain-gutter taxonomy + the rail it draws. |
