@@ -493,6 +493,45 @@ class TestAdapterStaleCheck:
 
         assert findings == []
 
+    def test_discovery_shared_across_checks(self, tmp_path, stale_db, monkeypatch):
+        """Both slow-lane checks reuse one discover() pass via the context."""
+        source = self._log_file(tmp_path, self.INGESTED_MTIME)
+        self._set_ingested_path(stale_db, source.location)
+        calls = []
+
+        def _discover():
+            calls.append(1)
+            return [source]
+
+        self._fake_plugins(monkeypatch, "fake_adapter", _discover)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            AdapterStaleCheck().run(ctx)
+            IngestPendingCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert len(calls) == 1
+
+    def test_discovery_failure_shared_across_checks(self, tmp_path, stale_db, monkeypatch):
+        """A cached discover() failure reaches both checks with their own policies."""
+        def _boom():
+            raise RuntimeError("no home dir")
+
+        self._fake_plugins(monkeypatch, "fake_adapter", _boom)
+
+        ctx = self._ctx(stale_db, tmp_path)
+        try:
+            stale_findings = AdapterStaleCheck().run(ctx)
+            pending_findings = IngestPendingCheck().run(ctx)
+        finally:
+            ctx.close()
+
+        assert stale_findings == []  # adapter-stale stays silent on failures
+        assert len(pending_findings) == 1  # ingest-pending reports them
+        assert "discover() failed" in pending_findings[0].message
+
 
 @pytest.mark.embeddings
 class TestEmbeddingsStaleCheck:

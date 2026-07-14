@@ -26,11 +26,9 @@ class AdapterStaleCheck:
     has_fix = True
     requires_db = True
     requires_embed_db = False
-    cost: CheckCost = "slow"  # Runs discover() on all adapters
+    cost: CheckCost = "slow"  # Runs discover() on ingested adapters (shared via ctx)
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.adapters.registry import load_all_adapters
-
         conn = ctx.get_db_conn()
 
         # file_mtime arrived by migration; older DBs can't compare.
@@ -52,13 +50,13 @@ class AdapterStaleCheck:
             ]
 
         findings = []
-        for plugin in load_all_adapters():
+        for plugin in ctx.get_adapters():
             adapter_mtimes = ingested_mtimes.get(plugin.name)
             if not adapter_mtimes:
                 continue  # No DB presence for this adapter — nothing to compare.
 
             try:
-                discovered = list(plugin.module.discover())
+                discovered = ctx.discover_sources(plugin)
             except Exception:
                 # ingest-pending already surfaces discover() failures; don't
                 # double-report from here.
