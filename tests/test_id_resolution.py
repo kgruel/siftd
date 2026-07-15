@@ -363,6 +363,38 @@ class TestShowAmbiguousPrefix:
         out = capsys.readouterr().out
         assert short_id(id_a) in out
 
+    def test_ambiguous_prefix_caught_when_probe_precheck_fails(self, tmp_path, capsys, monkeypatch):
+        """`_dispatch_detail`'s probe-based pre-classification (the path exercised
+        above) is a UX nicety, not the only path to `AmbiguousPrefix` — when the
+        probe's own `open_database` fails, `_dispatch_detail` falls through to
+        `_query_detail` directly (cli/query.py), whose `execute(op)` call reaches
+        `get_conversation` -> `resolve_entity_id` and can raise `AmbiguousPrefix`
+        there too. Before taxonomy slice 3 this fallback had no local catch for
+        it, so it escaped as a raw traceback (exit 1) instead of exit 2 —
+        `AmbiguousPrefix` joining `UserInputError` doesn't change this path
+        (a local catch was added alongside the join), but this pins the exit
+        code and message through the real argparse boundary either way."""
+        db_path, id_a, id_b = _make_collision_db(tmp_path)
+
+        import siftd.api as api_mod
+
+        real_open_database = api_mod.open_database
+        calls = {"n": 0}
+
+        def _flaky_open_database(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.OperationalError("simulated probe failure")
+            return real_open_database(*args, **kwargs)
+
+        monkeypatch.setattr(api_mod, "open_database", _flaky_open_database)
+
+        code = _invoke(["--db", str(db_path), "show", "01TESTCOLL"])
+        assert code == 2
+        err = capsys.readouterr().err
+        assert "01TESTCOLL" in err
+        assert "Disambiguate" in err
+
 
 # ---------------------------------------------------------------------------
 # Argparse-layer: siftd tag <id> <tag>

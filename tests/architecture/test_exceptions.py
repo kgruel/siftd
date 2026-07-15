@@ -54,16 +54,6 @@ PERMANENT_CARVEOUTS = {
 # Pre-taxonomy stragglers, keyed the same way, valued by the slice that
 # migrates them. Shrink-only: entries are deleted as slices land, never added.
 TRANSITIONAL = {
-    # Slice 3 — user-input family
-    ("api/search.py", "EmbeddingsRequiredError"): "slice 3",
-    ("api/conversations.py", "AnchorError"): "slice 3",
-    ("api/conversations.py", "AnchorOutOfRange"): "slice 3",
-    ("api/conversations.py", "AnchorNotFound"): "slice 3",
-    ("api/conversations.py", "AnchorPhraseInvalid"): "slice 3",
-    ("api/conversations.py", "AmbiguousPrefix"): "slice 3",
-    ("api/conversations.py", "QueryError"): "slice 3",
-    ("api/ingest.py", "AdapterSelectionError"): "slice 3",
-    ("peek/reader.py", "AmbiguousSessionError"): "slice 3",
     # Slice 4 — operation family
     ("credentials.py", "AuthLoginError"): "slice 4",
     ("credentials.py", "TokenRefError"): "slice 4",

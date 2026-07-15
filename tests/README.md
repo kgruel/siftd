@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 184 | 3169 |
+| `tests/` | 184 | 3170 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 49 |
 | `tests/cli/` | 28 | 608 |
@@ -174,7 +174,7 @@ docstring so its row is meaningful.
 | [test_html_sessions.py](test_html_sessions.py) | 7 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
 | [test_html_tags.py](test_html_tags.py) | 3 | Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags). |
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
-| [test_id_resolution.py](test_id_resolution.py) | 25 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
+| [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 4 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |

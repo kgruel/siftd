@@ -98,7 +98,7 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
+    from siftd.api.conversations import AmbiguousPrefix
     from siftd.api.dispatch import Operation, execute, render
     from siftd.api.op_spec import spec_for_path
     from siftd.errors import SiftdError
@@ -155,12 +155,6 @@ def _dispatch(
             "dispatch file-not-found on %s %s", method, path,
         )
         return Response(content={"error": "resource not found"}, status_code=404)
-    except AnchorError as e:
-        # AnchorOutOfRange / AnchorNotFound / AnchorPhraseInvalid are all
-        # user-input errors (bad --at-turn N, --around PHRASE). The local CLI
-        # treats them as exit 2 with a friendly message; the wire equivalent
-        # is 400, not 500.
-        return Response(content={"error": str(e)}, status_code=400)
     except AmbiguousPrefix as e:
         # Preserve the structured shape so an HTTP agent can programmatically
         # pick a longer prefix — mirrors `siftd id --json`. Must precede the
@@ -175,10 +169,13 @@ def _dispatch(
             },
             status_code=400,
         )
-    except (ValueError, KeyError, QueryError) as e:
+    except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except SiftdError as e:
-        # Embeddings/state-drift errors (EmbeddingsNotAvailable → 501,
+        # Taxonomy backstop: user-input errors (AnchorError family, QueryError —
+        # AmbiguousPrefix and the ValueError-dual-based members are caught above
+        # for a richer body or because they predate the taxonomy) and
+        # embeddings/state-drift errors (EmbeddingsNotAvailable → 501,
         # EmbeddingConfigError/IncrementalCompatError/IndexCompatError → 503)
         # carry their wire status on the class, so serve maps them without
         # importing siftd.embeddings (tests/architecture/test_imports.py).

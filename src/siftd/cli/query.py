@@ -321,6 +321,13 @@ def _query_detail(args) -> int:
         except AnchorPhraseInvalid as e:
             print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)
             sys.exit(2)
+        except _AmbiguousPrefix as exc:
+            # Reached when _dispatch_detail's probe-based pre-classification
+            # was skipped (no local db yet) or its own open_database failed —
+            # this execute(op) call is the one that actually resolves the
+            # prefix. Same rendering as _dispatch_detail's own catch.
+            print_ambiguous_error(exc)
+            return 2
 
     if not detail:
         status.error(f"Conversation not found: {args.conversation_id}")
