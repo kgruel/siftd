@@ -141,7 +141,8 @@ the worktree copies, which carry their own trees):
   `tests/test_cli_query.py`, help snapshots (`test_help.ambr` ×3 Python versions).
 - **Config:** `get_query_defaults()` key names (`query.limit`, `query.chars`,
   `query.tool_chars`) — a full rename of the *namespace* would touch `config.py` and
-  `config.toml.example`; a verb-only rename can leave the `[query]` config section as-is.
+  `config.toml.example` (since removed — see `docs/reference/config.md`); a
+  verb-only rename can leave the `[query]` config section as-is.
 
 ### Alias mechanism (if we rename)
 

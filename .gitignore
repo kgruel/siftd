@@ -7,6 +7,8 @@ debug/
 .pytest_cache/
 .ruff_cache/
 .obsidian/
+# docs/dev/ is ignored by default (scratch plans/designs); ratified plans are
+# force-added (`git add -f`) — see .claude/skills/dev-docs/SKILL.md
 docs/dev/
 .venv/
 dist/

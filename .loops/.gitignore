@@ -1,1 +1,3 @@
 keys/
+data/*.db-shm
+data/*.db-wal
