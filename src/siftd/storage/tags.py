@@ -317,6 +317,89 @@ def unpin_tag(
     return cur.rowcount > 0
 
 
+# Join-chain shapes for list_tags' per-kind COUNT subqueries: how ta.target_id
+# reaches conversations.started_at (for time filtering) / conversation_owners
+# (for owner scoping). tool_call/exchange/prompt/response share the events
+# anchor (an exchange's target_id is its prompt event's id); block descends
+# one hop further via event_content. Kept private to this module — a global
+# kind->join-chain map was judged DEFER, no next kind is coming.
+_CHAIN_NONE = "none"  # target_id IS the conversation id (conversation kind)
+_CHAIN_WORKSPACE = "workspace_reverse"  # target_id is a workspace id
+_CHAIN_EVENT = "event"  # target_id is an events.id
+_CHAIN_BLOCK = "block"  # target_id is an event_content.id
+
+_CHAIN_JOINS: dict[str, tuple[list[str], str]] = {
+    _CHAIN_NONE: (["JOIN conversations c ON c.id = ta.target_id"], "c.id"),
+    _CHAIN_WORKSPACE: (["JOIN conversations c ON c.workspace_id = ta.target_id"], "c.id"),
+    _CHAIN_EVENT: (
+        ["JOIN events e ON e.id = ta.target_id", "JOIN conversations c ON c.id = e.conversation_id"],
+        "e.conversation_id",
+    ),
+    _CHAIN_BLOCK: (
+        [
+            "JOIN event_content ec ON ec.id = ta.target_id",
+            "JOIN events e ON e.id = ec.event_id",
+            "JOIN conversations c ON c.id = e.conversation_id",
+        ],
+        "e.conversation_id",
+    ),
+}
+# Whether since/before filtering means anything for this chain (a workspace
+# assignment has no conversation anchor — time-invariant by design), and
+# whether an owner predicate alone justifies the join (vs. `conversation`,
+# where target_id is already usable directly with no join at all).
+_CHAIN_TIME_CAPABLE = {_CHAIN_NONE: True, _CHAIN_WORKSPACE: False, _CHAIN_EVENT: True, _CHAIN_BLOCK: True}
+_CHAIN_OWNER_NEEDS_JOIN = {_CHAIN_NONE: False, _CHAIN_WORKSPACE: True, _CHAIN_EVENT: True, _CHAIN_BLOCK: True}
+
+# kind -> join-chain shape. Order determines column order in list_tags' SELECT.
+_COUNT_KINDS: dict[str, str] = {
+    "conversation": _CHAIN_NONE,
+    "workspace": _CHAIN_WORKSPACE,
+    "tool_call": _CHAIN_EVENT,
+    "exchange": _CHAIN_EVENT,
+    "prompt": _CHAIN_EVENT,
+    "response": _CHAIN_EVENT,
+    "block": _CHAIN_BLOCK,
+}
+
+
+def _tag_count_subquery(
+    kind: str,
+    chain: str,
+    *,
+    since: str | None,
+    before: str | None,
+    owner: str | None,
+) -> tuple[str, list[object]]:
+    """Build one ``(SELECT COUNT... )`` subquery for a list_tags count column."""
+    time_capable = _CHAIN_TIME_CAPABLE[chain]
+    needs_join = (bool(since or before) and time_capable) or (owner and _CHAIN_OWNER_NEEDS_JOIN[chain])
+
+    joins: list[str] = []
+    owner_col = "ta.target_id"
+    select = "COUNT(*)"
+    if needs_join:
+        joins, owner_col = _CHAIN_JOINS[chain]
+        if chain == _CHAIN_WORKSPACE:
+            select = "COUNT(DISTINCT ta.target_id)"
+
+    where = ["ta.tag_id = t.id", f"ta.target_kind = '{kind}'"]
+    params: list[object] = []
+    if owner:
+        where.append(owner_predicate(owner_col))
+        params.append(owner)
+    if time_capable:
+        if since:
+            where.append("c.started_at >= ?")
+            params.append(since)
+        if before:
+            where.append("c.started_at < ?")
+            params.append(before)
+
+    sql = f"SELECT {select} FROM tag_assignments ta {' '.join(joins)} WHERE {' AND '.join(where)}"
+    return sql, params
+
+
 def list_tags(
     conn: sqlite3.Connection,
     *,
@@ -331,156 +414,20 @@ def list_tags(
         since: Only count associations where the conversation started after this ISO date.
         before: Only count associations where the conversation started before this ISO date.
         owner: Only count associations owned by this user_id.
+
+    ``workspace_count`` ignores since/before: a workspace assignment has no
+    conversation anchor, so a time-filtered workspace count has no coherent
+    meaning. Every other count column is time-filtered.
     """
     if owner and not has_conversation_owners_table(conn):
         return []
 
-    has_time_filter = bool(since or before)
-
-    # conversation count
-    conv_joins: list[str] = []
-    conv_where = ["ta.tag_id = t.id", "ta.target_kind = 'conversation'"]
-    conv_params: list[object] = []
-    if has_time_filter:
-        conv_joins.append("JOIN conversations c ON c.id = ta.target_id")
-    if owner:
-        conv_where.append(owner_predicate("c.id" if has_time_filter else "ta.target_id"))
-        conv_params.append(owner)
-    if since:
-        conv_where.append("c.started_at >= ?")
-        conv_params.append(since)
-    if before:
-        conv_where.append("c.started_at < ?")
-        conv_params.append(before)
-    conversation_count_sql = (
-        "SELECT COUNT(*) FROM tag_assignments ta "
-        f"{' '.join(conv_joins)} "
-        f"WHERE {' AND '.join(conv_where)}"
-    )
-
-    # workspace count
-    ws_where = ["ta.tag_id = t.id", "ta.target_kind = 'workspace'"]
-    ws_params: list[object] = []
-    if owner:
-        ws_where.append(owner_predicate("c.id"))
-        ws_params.append(owner)
-        workspace_count_sql = (
-            "SELECT COUNT(DISTINCT ta.target_id) FROM tag_assignments ta "
-            "JOIN conversations c ON c.workspace_id = ta.target_id "
-            f"WHERE {' AND '.join(ws_where)}"
-        )
-    else:
-        workspace_count_sql = (
-            "SELECT COUNT(*) FROM tag_assignments ta "
-            f"WHERE {' AND '.join(ws_where)}"
-        )
-
-    # tool_call count — join to events/conversations when owner or time filter needed
-    tc_where = ["ta.tag_id = t.id", "ta.target_kind = 'tool_call'"]
-    tc_params: list[object] = []
-    tc_joins: list[str] = []
-    if has_time_filter or owner:
-        tc_joins.append("JOIN events e ON e.id = ta.target_id")
-        tc_joins.append("JOIN conversations c ON c.id = e.conversation_id")
-    if owner:
-        tc_where.append(owner_predicate("e.conversation_id"))
-        tc_params.append(owner)
-    if since:
-        tc_where.append("c.started_at >= ?")
-        tc_params.append(since)
-    if before:
-        tc_where.append("c.started_at < ?")
-        tc_params.append(before)
-    tool_call_count_sql = (
-        "SELECT COUNT(*) FROM tag_assignments ta "
-        f"{' '.join(tc_joins)} "
-        f"WHERE {' AND '.join(tc_where)}"
-    )
-
-    # exchange count: assignments where target_kind='exchange' (prompt anchor for an exchange)
-    exchange_where = ["ta.tag_id = t.id", "ta.target_kind = 'exchange'"]
-    exchange_params: list[object] = []
-    if owner:
-        exchange_where.append(owner_predicate("p.conversation_id"))
-        exchange_params.append(owner)
-        exchange_count_sql = (
-            "SELECT COUNT(*) FROM tag_assignments ta "
-            "JOIN events p ON p.id = ta.target_id "
-            f"WHERE {' AND '.join(exchange_where)}"
-        )
-    else:
-        exchange_count_sql = (
-            "SELECT COUNT(*) FROM tag_assignments ta "
-            f"WHERE {' AND '.join(exchange_where)}"
-        )
-
-    # prompt count — same pattern as tool_call_count
-    prompt_where = ["ta.tag_id = t.id", "ta.target_kind = 'prompt'"]
-    prompt_params: list[object] = []
-    prompt_joins: list[str] = []
-    if has_time_filter or owner:
-        prompt_joins.append("JOIN events e ON e.id = ta.target_id")
-        prompt_joins.append("JOIN conversations c ON c.id = e.conversation_id")
-    if owner:
-        prompt_where.append(owner_predicate("e.conversation_id"))
-        prompt_params.append(owner)
-    if since:
-        prompt_where.append("c.started_at >= ?")
-        prompt_params.append(since)
-    if before:
-        prompt_where.append("c.started_at < ?")
-        prompt_params.append(before)
-    prompt_count_sql = (
-        "SELECT COUNT(*) FROM tag_assignments ta "
-        f"{' '.join(prompt_joins)} "
-        f"WHERE {' AND '.join(prompt_where)}"
-    )
-
-    # response count — same pattern as tool_call_count
-    response_where = ["ta.tag_id = t.id", "ta.target_kind = 'response'"]
-    response_params: list[object] = []
-    response_joins: list[str] = []
-    if has_time_filter or owner:
-        response_joins.append("JOIN events e ON e.id = ta.target_id")
-        response_joins.append("JOIN conversations c ON c.id = e.conversation_id")
-    if owner:
-        response_where.append(owner_predicate("e.conversation_id"))
-        response_params.append(owner)
-    if since:
-        response_where.append("c.started_at >= ?")
-        response_params.append(since)
-    if before:
-        response_where.append("c.started_at < ?")
-        response_params.append(before)
-    response_count_sql = (
-        "SELECT COUNT(*) FROM tag_assignments ta "
-        f"{' '.join(response_joins)} "
-        f"WHERE {' AND '.join(response_where)}"
-    )
-
-    # block count — target_id is an event_content.id, so time/owner joins descend
-    # event_content → events → conversations (distinct from the event arms).
-    block_where = ["ta.tag_id = t.id", "ta.target_kind = 'block'"]
-    block_params: list[object] = []
-    block_joins: list[str] = []
-    if has_time_filter or owner:
-        block_joins.append("JOIN event_content ec ON ec.id = ta.target_id")
-        block_joins.append("JOIN events e ON e.id = ec.event_id")
-        block_joins.append("JOIN conversations c ON c.id = e.conversation_id")
-    if owner:
-        block_where.append(owner_predicate("e.conversation_id"))
-        block_params.append(owner)
-    if since:
-        block_where.append("c.started_at >= ?")
-        block_params.append(since)
-    if before:
-        block_where.append("c.started_at < ?")
-        block_params.append(before)
-    block_count_sql = (
-        "SELECT COUNT(*) FROM tag_assignments ta "
-        f"{' '.join(block_joins)} "
-        f"WHERE {' AND '.join(block_where)}"
-    )
+    count_sqls: dict[str, str] = {}
+    all_params: list[object] = []
+    for kind, chain in _COUNT_KINDS.items():
+        sql, params = _tag_count_subquery(kind, chain, since=since, before=before, owner=owner)
+        count_sqls[kind] = sql
+        all_params.extend(params)
 
     # pinned flag (owner-scoped). tag_pins is created lazily on a write-open and
     # may be absent on a read-only open of a DB unwritten since this shipped —
@@ -494,41 +441,30 @@ def list_tags(
         pin_join = ""
         pin_params = []
 
+    count_columns = ",\n            ".join(
+        f"({count_sqls[kind]}) as {kind}_count" for kind in _COUNT_KINDS
+    )
     sql = f"""
         SELECT
             t.name,
             t.description,
             t.created_at,
-            ({conversation_count_sql}) as conversation_count,
-            ({workspace_count_sql}) as workspace_count,
-            ({tool_call_count_sql}) as tool_call_count,
-            ({exchange_count_sql}) as exchange_count,
-            ({prompt_count_sql}) as prompt_count,
-            ({response_count_sql}) as response_count,
-            ({block_count_sql}) as block_count,
+            {count_columns},
             {pin_select} as pinned
         FROM tags t
         {pin_join}
         ORDER BY t.name
     """
-    all_params = [
-        *conv_params, *ws_params, *tc_params, *exchange_params,
-        *prompt_params, *response_params, *block_params, *pin_params,
-    ]
+    all_params.extend(pin_params)
 
     cur = conn.execute(sql, all_params)
+    count_columns_out = [f"{kind}_count" for kind in _COUNT_KINDS]
     rows = [
         {
             "name": row["name"],
             "description": row["description"],
             "created_at": row["created_at"],
-            "conversation_count": row["conversation_count"],
-            "workspace_count": row["workspace_count"],
-            "tool_call_count": row["tool_call_count"],
-            "exchange_count": row["exchange_count"],
-            "prompt_count": row["prompt_count"],
-            "response_count": row["response_count"],
-            "block_count": row["block_count"],
+            **{col: row[col] for col in count_columns_out},
             "pinned": bool(row["pinned"]),
         }
         for row in cur.fetchall()
@@ -538,12 +474,7 @@ def list_tags(
         # would orphan: the tag vanishes from the owner's view yet the tag_pins
         # row persists (untagging doesn't cascade), leaving it impossible to
         # unpin. A pinned-but-unused tag stays, shown with a zero dominant count.
-        rows = [r for r in rows if (
-            r["pinned"]
-            or r["conversation_count"] or r["workspace_count"] or r["tool_call_count"]
-            or r["exchange_count"] or r["prompt_count"] or r["response_count"]
-            or r["block_count"]
-        )]
+        rows = [r for r in rows if r["pinned"] or any(r[col] for col in count_columns_out)]
     return rows
 
 

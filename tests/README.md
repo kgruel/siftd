@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3174 |
+| `tests/` | 185 | 3175 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 608 |
@@ -272,7 +272,7 @@ docstring so its row is meaningful.
 | [test_tag_activity_enrichment.py](test_tag_activity_enrichment.py) | 3 | Fidelity-gated tag activity enrichment (api.tags.list_tags + 'activity' tag). |
 | [test_tag_pins.py](test_tag_pins.py) | 8 | Tag pins: owner-scoped pin state, idempotent writes, the pinned flag surfaced |
 | [test_tags_index_kinds.py](test_tags_index_kinds.py) | 7 | WS5: web tags index surfaces element-kind breakdown, quiet for conv-only tags. |
-| [test_tags_temporal.py](test_tags_temporal.py) | 4 | Tests for list_tags temporal filtering. |
+| [test_tags_temporal.py](test_tags_temporal.py) | 5 | Tests for list_tags temporal filtering. |
 | [test_target_ref.py](test_target_ref.py) | 27 | Tests for TargetRef — the unified parse → resolve → alias tag-target layer. |
 | [test_temporal_weighting.py](test_temporal_weighting.py) | 17 | Tests for temporal weighting in search.py. |
 | [test_theme.py](test_theme.py) | 15 | Tests for siftd.output.theme — the bespoke "warm obsidian" palette + domain styles. |

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import ClassVar
@@ -1484,6 +1485,58 @@ def get_recent_conversation_ids(
     return [row["id"] for row in rows]
 
 
+def prefix_candidates(
+    conn: sqlite3.Connection,
+    *,
+    from_sql: str,
+    id_expr: str,
+    where: list[str],
+    params: list[object],
+    extra_columns: list[str] | None = None,
+) -> tuple[list[sqlite3.Row], Callable[[], int]]:
+    """Fetch ``id``-prefix candidates plus a lazy exact-count thunk.
+
+    Shared by every ``(id = ? OR id LIKE ?)`` prefix-resolution site: fetches at
+    most 6 rows ordered by id (5 to display + 1 sentinel beyond the cap, so a
+    collision with hundreds of matches doesn't load them all), ordered/aliased
+    on ``id_expr`` as ``id``. ``extra_columns`` adds columns beyond ``id`` (e.g.
+    ``events.kind``, needed when one arm resolves across heterogeneous kinds).
+
+    This is a fetch, not a resolver — it does not decide ambiguity. Callers
+    compose resolve-or-raise per arm (:func:`resolve_entity_id`) or
+    union-then-raise across arms (``TargetRef._resolve_cross_kind``) on top.
+    The exact count only runs a query when the returned thunk is called, so a
+    non-ambiguous resolution never pays for the COUNT(*).
+    """
+    where_sql = " AND ".join(where)
+    select = ", ".join([f"{id_expr} AS id", *(extra_columns or [])])
+    rows = conn.execute(
+        f"SELECT {select} FROM {from_sql} WHERE {where_sql} ORDER BY {id_expr} LIMIT 6",
+        params,
+    ).fetchall()
+
+    def exact_count() -> int:
+        return conn.execute(
+            f"SELECT COUNT(*) AS n FROM {from_sql} WHERE {where_sql}",
+            params,
+        ).fetchone()["n"]
+
+    return rows, exact_count
+
+
+def _resolve_unique(
+    entity_id: str,
+    rows: list[sqlite3.Row],
+    exact_count: Callable[[], int],
+) -> str | None:
+    """Resolve-or-raise on top of :func:`prefix_candidates` for a single arm."""
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]["id"]
+    raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], exact_count())
+
+
 def resolve_entity_id(
     conn: sqlite3.Connection,
     entity_type: str,
@@ -1520,22 +1573,10 @@ def resolve_entity_id(
             where.append(owner_predicate("c.id"))
             params.append(owner)
 
-        # Fetch at most 6 rows ordered by ID — 1 sentinel beyond the display cap.
-        # Avoids loading all N rows for a collision with hundreds of matches.
-        rows = conn.execute(
-            f"SELECT c.id FROM conversations c WHERE {' AND '.join(where)} ORDER BY c.id LIMIT 6",
-            params,
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) == 1:
-            return rows[0]["id"]
-        # Ambiguous: COUNT separately to get the exact total without fetching all rows.
-        count_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM conversations c WHERE {' AND '.join(where)}",
-            params,
-        ).fetchone()
-        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
+        rows, exact_count = prefix_candidates(
+            conn, from_sql="conversations c", id_expr="c.id", where=where, params=params
+        )
+        return _resolve_unique(entity_id, rows, exact_count)
     elif entity_type == "workspace":
         # Owner scope is participation (any owned conversation in the workspace),
         # matching the workspace-pin guard's semantics. A non-participant gets
@@ -1574,46 +1615,26 @@ def resolve_entity_id(
         if owner:
             where.append(owner_predicate("e.conversation_id"))
             evt_params.append(owner)
-        where_sql = " AND ".join(where)
-        rows = conn.execute(
-            f"SELECT e.id FROM events e WHERE {where_sql} ORDER BY e.id LIMIT 6",
-            evt_params,
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) == 1:
-            return rows[0]["id"]
-        count_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM events e WHERE {where_sql}",
-            evt_params,
-        ).fetchone()
-        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
+        rows, exact_count = prefix_candidates(
+            conn, from_sql="events e", id_expr="e.id", where=where, params=evt_params
+        )
+        return _resolve_unique(entity_id, rows, exact_count)
     elif entity_type == "block":
         # Content-block ids (event_content.id), owner-scoped through the owning
         # event's conversation — mirrors the events branch (WS8).
         if owner and not has_conversation_owners_table(conn):
             return None
+        from_sql = "event_content ec"
         where = ["(ec.id = ? OR ec.id LIKE ?)"]
         blk_params: list[object] = [entity_id, f"{entity_id}%"]
-        join = ""
         if owner:
-            join = " JOIN events e ON e.id = ec.event_id"
+            from_sql = "event_content ec JOIN events e ON e.id = ec.event_id"
             where.append(owner_predicate("e.conversation_id"))
             blk_params.append(owner)
-        where_sql = " AND ".join(where)
-        rows = conn.execute(
-            f"SELECT ec.id FROM event_content ec{join} WHERE {where_sql} ORDER BY ec.id LIMIT 6",
-            blk_params,
-        ).fetchall()
-        if not rows:
-            return None
-        if len(rows) == 1:
-            return rows[0]["id"]
-        count_row = conn.execute(
-            f"SELECT COUNT(*) AS n FROM event_content ec{join} WHERE {where_sql}",
-            blk_params,
-        ).fetchone()
-        raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], count_row["n"])
+        rows, exact_count = prefix_candidates(
+            conn, from_sql=from_sql, id_expr="ec.id", where=where, params=blk_params
+        )
+        return _resolve_unique(entity_id, rows, exact_count)
     else:
         return None
 

@@ -113,3 +113,40 @@ def test_list_tags_since_and_before(tmp_path):
     assert by_name["new-work"]["conversation_count"] == 0
     assert by_name["shell:test"]["tool_call_count"] == 0
     conn.close()
+
+
+def test_list_tags_exchange_since_and_before(tmp_path):
+    """exchange counts honor since/before, same as prompt/response/tool_call.
+
+    Regression for a bug where the exchange arm honored `owner` but silently
+    ignored the time filter — its count came back unfiltered under --since.
+    """
+    conn = _build_db(tmp_path)
+    tag_exchange = get_or_create_tag(conn, "exchange:test")
+
+    # p1/p2 (and their prompt events) come from _build_db: conv1 on Jan 10,
+    # conv2 on Jan 20. An exchange anchors on its prompt event's id.
+    p1_event_id = conn.execute(
+        "SELECT id FROM events WHERE conversation_id = (SELECT id FROM conversations WHERE external_id = 'c1')"
+        " AND kind = 'prompt'"
+    ).fetchone()[0]
+    p2_event_id = conn.execute(
+        "SELECT id FROM events WHERE conversation_id = (SELECT id FROM conversations WHERE external_id = 'c2')"
+        " AND kind = 'prompt'"
+    ).fetchone()[0]
+    apply_tag(conn, "exchange", p1_event_id, tag_exchange)
+    apply_tag(conn, "exchange", p2_event_id, tag_exchange)
+    conn.commit()
+
+    tags = list_tags(conn, since="2024-01-15T00:00:00Z")
+    by_name = {t["name"]: t for t in tags}
+    assert by_name["exchange:test"]["exchange_count"] == 1
+
+    tags = list_tags(conn, before="2024-01-15T00:00:00Z")
+    by_name = {t["name"]: t for t in tags}
+    assert by_name["exchange:test"]["exchange_count"] == 1
+
+    tags = list_tags(conn)
+    by_name = {t["name"]: t for t in tags}
+    assert by_name["exchange:test"]["exchange_count"] == 2
+    conn.close()

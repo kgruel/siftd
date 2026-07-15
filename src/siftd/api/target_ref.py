@@ -14,9 +14,10 @@ storage/wire formats always carry the ULID.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 
-from siftd.api.conversations import AmbiguousPrefix, resolve_entity_id
+from siftd.api.conversations import AmbiguousPrefix, prefix_candidates, resolve_entity_id
 from siftd.storage.filters import ALL_TAG_KINDS, EVENT_TAG_KINDS
 
 # Colon-path *anchor* kinds — the 2nd segment always names an event kind.
@@ -251,6 +252,7 @@ def _resolve_cross_kind(
     from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
 
     candidates: list[tuple[str, str]] = []  # (kind, id)
+    exact_counts: list[Callable[[], int]] = []
 
     conv_where = ["(c.id = ? OR c.id LIKE ?)"]
     conv_params: list[object] = [raw, f"{raw}%"]
@@ -262,11 +264,11 @@ def _resolve_cross_kind(
         else:
             include_conversations = False
     if include_conversations:
-        for row in conn.execute(
-            f"SELECT c.id FROM conversations c WHERE {' AND '.join(conv_where)} ORDER BY c.id LIMIT 6",
-            conv_params,
-        ):
-            candidates.append(("conversation", row["id"]))
+        rows, exact_count = prefix_candidates(
+            conn, from_sql="conversations c", id_expr="c.id", where=conv_where, params=conv_params
+        )
+        candidates.extend(("conversation", row["id"]) for row in rows)
+        exact_counts.append(exact_count)
 
     # Events arm — scoped through the owning conversation with the SAME owner
     # predicate, so an owner-scoped caller can't resolve (and then tag) another
@@ -279,12 +281,16 @@ def _resolve_cross_kind(
         if owner:
             evt_where.append(owner_predicate("e.conversation_id"))
             evt_params.append(owner)
-        for row in conn.execute(
-            "SELECT e.id, e.kind FROM events e "
-            f"WHERE {' AND '.join(evt_where)} ORDER BY e.id LIMIT 6",
-            evt_params,
-        ):
-            candidates.append((row["kind"], row["id"]))
+        rows, exact_count = prefix_candidates(
+            conn,
+            from_sql="events e",
+            id_expr="e.id",
+            where=evt_where,
+            params=evt_params,
+            extra_columns=["e.kind AS kind"],
+        )
+        candidates.extend((row["kind"], row["id"]) for row in rows)
+        exact_counts.append(exact_count)
 
     # Blocks arm (event_content) — scoped through the owning event's conversation
     # with the SAME owner predicate, mirroring the events arm's stance.
@@ -292,17 +298,16 @@ def _resolve_cross_kind(
     if include_blocks:
         blk_where = ["(ec.id = ? OR ec.id LIKE ?)"]
         blk_params: list[object] = [raw, f"{raw}%"]
-        blk_join = ""
+        blk_from = "event_content ec"
         if owner:
-            blk_join = " JOIN events e2 ON e2.id = ec.event_id"
+            blk_from = "event_content ec JOIN events e2 ON e2.id = ec.event_id"
             blk_where.append(owner_predicate("e2.conversation_id"))
             blk_params.append(owner)
-        for row in conn.execute(
-            f"SELECT ec.id FROM event_content ec{blk_join} "
-            f"WHERE {' AND '.join(blk_where)} ORDER BY ec.id LIMIT 6",
-            blk_params,
-        ):
-            candidates.append(("block", row["id"]))
+        rows, exact_count = prefix_candidates(
+            conn, from_sql=blk_from, id_expr="ec.id", where=blk_where, params=blk_params
+        )
+        candidates.extend(("block", row["id"]) for row in rows)
+        exact_counts.append(exact_count)
 
     if not candidates:
         raise LookupError(f"not found: {raw}")
@@ -311,33 +316,13 @@ def _resolve_cross_kind(
         return ResolvedTarget(kind, target_id)
 
     # Exact total across both tables (each arm above is capped at 6, so
-    # len(candidates) would undercount "and N more"). Owner scoping mirrors the
-    # candidate queries.
-    conv_count = 0
-    if include_conversations:
-        conv_count = conn.execute(
-            f"SELECT COUNT(*) AS n FROM conversations c WHERE {' AND '.join(conv_where)}",
-            conv_params,
-        ).fetchone()["n"]
-    evt_count = 0
-    if include_events:
-        evt_count = conn.execute(
-            f"SELECT COUNT(*) AS n FROM events e WHERE {' AND '.join(evt_where)}",
-            evt_params,
-        ).fetchone()["n"]
-    blk_count = 0
-    if include_blocks:
-        blk_join_c = " JOIN events e2 ON e2.id = ec.event_id" if owner else ""
-        blk_count = conn.execute(
-            f"SELECT COUNT(*) AS n FROM event_content ec{blk_join_c} "
-            f"WHERE {' AND '.join(blk_where)}",
-            blk_params,
-        ).fetchone()["n"]
+    # len(candidates) would undercount "and N more"). Each thunk only runs its
+    # COUNT(*) here, on the ambiguous path — a unique resolution never pays for it.
     shown = candidates[:5]
     raise AmbiguousPrefix(
         raw,
         [i for _, i in shown],
-        conv_count + evt_count + blk_count,
+        sum(exact_count() for exact_count in exact_counts),
         candidate_kinds=[k for k, _ in shown],
         noun="targets",
     )
