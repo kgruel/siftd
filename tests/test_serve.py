@@ -286,6 +286,74 @@ class TestSearch:
         assert resp.status_code == 503
         assert "authentication failed" in resp.json()["error"]
 
+    @pytest.mark.parametrize(
+        "make_exc,expected_status",
+        [
+            ("EmbeddingsNotAvailable", 501),
+            ("EmbeddingConfigError", 503),
+            ("IncrementalCompatError", 503),
+            ("IndexCompatError", 503),
+            ("SchemaUpgradeRequiredError", 503),
+            ("UserInputError", 400),
+            ("DirectSiftdError", 500),
+        ],
+    )
+    def test_dispatch_maps_taxonomy_exceptions_to_http_status(
+        self, tmp_path, monkeypatch, make_exc, expected_status
+    ):
+        """`_dispatch`'s `except SiftdError: ... e.http_status` mapping, exercised per
+        branch/override — not just the two class-name-string cases the old code special
+        cased. UserInputError and a bare-SiftdError subclass pin the 400/500 defaults
+        (the latter is what keeps a slice-4 direct-root joiner at today's generic-500
+        wire behavior instead of AttributeError-ing)."""
+        team_db = _make_team_db(tmp_path / "team.db", conversations=[{"external_id": "c1"}])
+
+        def _build_exc():
+            if make_exc == "EmbeddingsNotAvailable":
+                from siftd.embeddings.availability import EmbeddingsNotAvailable
+
+                return EmbeddingsNotAvailable("Search")
+            if make_exc == "EmbeddingConfigError":
+                from siftd.embeddings.base import EmbeddingConfigError
+
+                return EmbeddingConfigError("bad config")
+            if make_exc == "IncrementalCompatError":
+                from siftd.embeddings.indexer import IncrementalCompatError
+
+                return IncrementalCompatError("stale index")
+            if make_exc == "IndexCompatError":
+                from siftd.storage.embeddings import IndexCompatError
+
+                return IndexCompatError("index drift")
+            if make_exc == "SchemaUpgradeRequiredError":
+                from siftd.storage.sqlite import SchemaUpgradeRequiredError
+
+                return SchemaUpgradeRequiredError("schema stale")
+            if make_exc == "UserInputError":
+                from siftd.errors import UserInputError
+
+                return UserInputError("bad input")
+            if make_exc == "DirectSiftdError":
+                from siftd.errors import SiftdError
+
+                class _DirectJoiner(SiftdError):
+                    """Pins the root's http_status default for a direct joiner."""
+
+                return _DirectJoiner("boom")
+            raise AssertionError(make_exc)
+
+        exc = _build_exc()
+
+        def _boom(*a, **k):
+            raise exc
+
+        monkeypatch.setattr("siftd.api.search.search_view", _boom)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/v1/search", params={"q": "hello"})
+        assert resp.status_code == expected_status
+        assert str(exc) in resp.json()["error"]
+
 
 class TestAuthNoAuth:
     def test_no_auth_allows_all(self, tmp_path):

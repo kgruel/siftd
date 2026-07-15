@@ -42,6 +42,9 @@ PERMANENT_CARVEOUTS = {
     # Control-flow signals: handled (degrade / fall back / surface structurally),
     # never presented as terminal errors.
     ("embeddings/base.py", "EmbeddingTransientError"): "degradable blip; search falls back to FTS",
+    ("embeddings/base.py", "EmbeddingError"): "domain grouping base, not a taxonomy member — "
+    "EmbeddingTransientError subclasses it and must not transitively reach SiftdError "
+    "(would break degrade-to-fts); EmbeddingConfigError joins DriftError directly instead",
     ("api/op_spec.py", "MissingOpSpec"): "invariant violation (op registered without wire spec); "
     "also caught as delegation control flow",
     ("serve/client.py", "ServeUnavailable"): "delegation control flow (fall back to local)",
@@ -51,11 +54,6 @@ PERMANENT_CARVEOUTS = {
 # Pre-taxonomy stragglers, keyed the same way, valued by the slice that
 # migrates them. Shrink-only: entries are deleted as slices land, never added.
 TRANSITIONAL = {
-    # Slice 2 — embeddings/state family
-    ("embeddings/base.py", "EmbeddingError"): "slice 2",
-    ("embeddings/base.py", "EmbeddingConfigError"): "slice 2",
-    ("embeddings/availability.py", "EmbeddingsNotAvailable"): "slice 2",
-    ("embeddings/indexer.py", "IncrementalCompatError"): "slice 2",
     # Slice 3 — user-input family
     ("api/search.py", "EmbeddingsRequiredError"): "slice 3",
     ("api/conversations.py", "AnchorError"): "slice 3",

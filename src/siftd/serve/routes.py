@@ -101,6 +101,7 @@ def _dispatch(
     from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
     from siftd.api.dispatch import Operation, execute, render
     from siftd.api.op_spec import spec_for_path
+    from siftd.errors import SiftdError
     from siftd.serialization import serve_fmt
 
     try:
@@ -176,16 +177,13 @@ def _dispatch(
         )
     except (ValueError, KeyError, QueryError) as e:
         return Response(content={"error": str(e)}, status_code=400)
-    except Exception as e:
-        if e.__class__.__name__ == "EmbeddingsNotAvailable":
-            return Response(content={"error": str(e)}, status_code=501)
-        if e.__class__.__name__ == "EmbeddingConfigError":
-            # A configured remote backend is present but unusable (e.g. a revoked key).
-            # Not degradable (config errors never fall back to FTS) and not a generic 500 —
-            # report it honestly as an unavailable dependency. Matched by name so serve
-            # doesn't import siftd.embeddings (tests/architecture/test_imports.py).
-            return Response(content={"error": str(e)}, status_code=503)
-
+    except SiftdError as e:
+        # Embeddings/state-drift errors (EmbeddingsNotAvailable → 501,
+        # EmbeddingConfigError/IncrementalCompatError/IndexCompatError → 503)
+        # carry their wire status on the class, so serve maps them without
+        # importing siftd.embeddings (tests/architecture/test_imports.py).
+        return Response(content={"error": str(e)}, status_code=e.http_status)
+    except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
             content={"error": f"{path} failed"},

@@ -42,6 +42,12 @@ class SiftdError(Exception):
     in one clause.
     """
 
+    # Root default: generic server failure; branches refine (400/503). A direct
+    # root joiner (e.g. a future slice's operation-family exception) keeps
+    # today's generic-500 wire behavior instead of AttributeError-ing serve's
+    # `except SiftdError: ... e.http_status` dispatch.
+    http_status: int = 500
+
 
 class UserInputError(SiftdError):
     """The request itself is malformed or unresolvable — bad flag values,
@@ -50,6 +56,8 @@ class UserInputError(SiftdError):
     Presentation: CLI exit 2 (argparse convention for usage errors, matching
     the anchor-error precedent), serve HTTP 400.
     """
+
+    http_status = 400
 
 
 class DriftError(SiftdError):
@@ -60,3 +68,5 @@ class DriftError(SiftdError):
 
     Presentation: CLI exit 1, serve HTTP 503.
     """
+
+    http_status = 503
