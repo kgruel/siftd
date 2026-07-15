@@ -17,6 +17,7 @@ set must only ever shrink.
 """
 
 import ast
+import builtins
 from pathlib import Path
 
 SRC_ROOT = Path(__file__).parent.parent.parent / "src" / "siftd"
@@ -25,18 +26,12 @@ TAXONOMY_BASES = {"SiftdError", "UserInputError", "DriftError"}
 
 # Builtin exception names that mark a class as exception-like when used as a
 # base (directly or transitively through other classes defined in src/).
+# Derived, not hand-listed: a hand-written set silently misses bases like
+# PermissionError or AssertionError and the ratchet stops ratcheting.
 BUILTIN_EXCEPTION_BASES = {
-    "Exception",
-    "BaseException",
-    "ValueError",
-    "RuntimeError",
-    "TypeError",
-    "KeyError",
-    "OSError",
-    "IOError",
-    "LookupError",
-    "ArithmeticError",
-    "StopIteration",
+    name
+    for name, obj in vars(builtins).items()
+    if isinstance(obj, type) and issubclass(obj, BaseException)
 }
 
 # (relative_path_from_src_siftd, class_name): why it stays out — permanently.
@@ -112,11 +107,11 @@ def _exception_classes(
 ) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
     """Split defined classes into (exception-like, taxonomy-member) sets.
 
-    Membership is computed by name over a transitive closure: a class is
-    exception-like if any base chain reaches a builtin exception name or a
-    taxonomy base; it is a taxonomy member if a chain reaches a taxonomy base.
-    Bases are matched by bare name — class names are unique across src/, and
-    a false merge would only make the test stricter, not let drift through.
+    Membership is computed over a transitive closure. The first hop always
+    uses the definition's OWN base list — a same-named class in another
+    module must not vouch for this one. Deeper hops fall back to matching
+    bases by bare name (the AST can't resolve imports); the duplicate-name
+    guard below keeps that fallback sound for exception classes.
     """
     by_name: dict[str, list[str]] = {}
     for (_, name), bases in classes.items():
@@ -133,14 +128,17 @@ def _exception_classes(
 
     exception_like = set()
     taxonomy_members = set()
-    for key, _ in classes.items():
-        _, name = key
+    for (rel, name), own_bases in classes.items():
         if name in TAXONOMY_BASES:
             continue  # the taxonomy itself
-        if reaches(name, BUILTIN_EXCEPTION_BASES | TAXONOMY_BASES):
-            exception_like.add(key)
-        if reaches(name, TAXONOMY_BASES):
-            taxonomy_members.add(key)
+        seen = frozenset({name})
+        if any(
+            reaches(base, BUILTIN_EXCEPTION_BASES | TAXONOMY_BASES, seen)
+            for base in own_bases
+        ):
+            exception_like.add((rel, name))
+        if any(reaches(base, TAXONOMY_BASES, seen) for base in own_bases):
+            taxonomy_members.add((rel, name))
     return exception_like, taxonomy_members
 
 
@@ -157,6 +155,20 @@ def test_exceptions_join_taxonomy_or_allowlist():
         f"PERMANENT_CARVEOUTS entry in {__file__} with the reason it must "
         f"stay out (invariant violation / control-flow signal)."
     )
+
+
+def test_exception_class_names_unique():
+    """Deep hops of the closure resolve bases by bare name; two exception
+    classes sharing a name across modules would let one definition's ancestry
+    vouch for the other's. Keep exception class names unique so the by-name
+    fallback stays sound."""
+    classes = _collect_classes()
+    exception_like, _ = _exception_classes(classes)
+    names: dict[str, list[str]] = {}
+    for rel, name in exception_like:
+        names.setdefault(name, []).append(rel)
+    dupes = {name: paths for name, paths in names.items() if len(paths) > 1}
+    assert not dupes, f"duplicate exception class names across modules: {dupes}"
 
 
 def test_allowlist_entries_still_exist():
