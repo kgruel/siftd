@@ -1009,6 +1009,57 @@ def _fetch_conversation_block_tags(
     return out
 
 
+def get_block_text(
+    block_id: str,
+    *,
+    db_path: Path | None = None,
+    owner: str | None = None,
+) -> str | None:
+    """Verbatim text of one content block (event_content ULID), full fidelity.
+
+    The copy source for the trace block surface: the rendered trace is not a
+    faithful copy source (markdown re-rendering, presenter line caps), so copy
+    reads the store. Extraction matches ``_build_narrative``'s per-type
+    extractors — what copies is what the trace shows, unabridged; a block type
+    without an extractor returns its stored content string as-is.
+
+    Owner-scoped through the owning event's conversation (the resolver's
+    block arm): an unresolvable or foreign block is ``None`` — 404-shaped,
+    existence not leaked.
+
+    Raises:
+        AmbiguousPrefix: If ``block_id`` is a prefix matching several blocks.
+            The web affordance always sends full ULIDs; this surfaces only to
+            programmatic callers.
+    """
+    db = db_path or default_db_path()
+    if not db.exists():
+        return None
+
+    conn = open_database(db, read_only=True)
+    try:
+        resolved = resolve_entity_id(conn, "block", block_id, owner=owner)
+        if not resolved:
+            return None
+        row = conn.execute(
+            "SELECT block_type, content FROM event_content WHERE id = ?",
+            (resolved,),
+        ).fetchone()
+        if row is None:
+            return None
+        block_type = row["block_type"]
+        raw = row["content"] or ""
+        if block_type == "text":
+            return _extract_text(raw)
+        if block_type == "thinking":
+            return _extract_thinking(raw)
+        if block_type in ("tool_result", "tool_output"):
+            return _extract_tool_result(raw)
+        return raw
+    finally:
+        conn.close()
+
+
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
     """Check if a tool call matches the given filter."""
     if tool_filter is None:

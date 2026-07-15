@@ -637,6 +637,7 @@ def ui_folio(
         interactive_tags=True,
         tag_action_url="/tag",
         tag_suggest_url="/tags/suggest",
+        block_copy_url_base="/block",
         export_base_url="/export",
     ))
 
@@ -1766,6 +1767,31 @@ async def ui_tag(request: Request, db_path: Path) -> Response:
         tag_action_url="/tag", tag_suggest_url="/tags/suggest",
         entity_type=section_type, section_class=section_class,
     ))
+
+
+@get("/block/{block_id:str}/raw", sync_to_thread=True)
+def ui_block_raw(request: Request, db_path: Path, block_id: str) -> Response:
+    """Verbatim text of one content block, for the trace copy affordance.
+
+    The rendered trace is not a faithful copy source — prose is re-rendered
+    markdown and tool output rides presenter line caps — so the Copy button
+    fetches the stored block text here and writes it to the clipboard
+    (enhance.js). Owner-scoped through the owning event's conversation; an
+    unresolvable or foreign block is a 404, never a 403 that would confirm
+    existence. Read-only: no write scope, no audit — copy is a read.
+    """
+    from siftd.api.conversations import AmbiguousPrefix, get_block_text
+
+    owner = _effective_owner(request, None)
+    try:
+        text = get_block_text(block_id, db_path=db_path, owner=owner)
+    except AmbiguousPrefix:
+        # The affordance always sends a full ULID; a colliding prefix is not a
+        # copyable address. Same 404 shape as not-found (no existence leak).
+        text = None
+    if text is None:
+        return Response(content="not found", media_type="text/plain", status_code=404)
+    return Response(content=text, media_type="text/plain; charset=utf-8")
 
 
 @post("/tag/pin")

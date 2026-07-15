@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3182 |
+| `tests/` | 185 | 3185 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 608 |
@@ -251,7 +251,7 @@ docstring so its row is meaningful.
 | [test_serve_html_routes_stepup.py](test_serve_html_routes_stepup.py) | 9 | — |
 | [test_serve_routes_edges.py](test_serve_routes_edges.py) | 25 | — |
 | [test_serve_routes_stepup.py](test_serve_routes_stepup.py) | 8 | — |
-| [test_serve_swiss_shell.py](test_serve_swiss_shell.py) | 80 | Serve-lane tests for the Swiss shell + folio/stub routes (Phase B slice 1). |
+| [test_serve_swiss_shell.py](test_serve_swiss_shell.py) | 83 | Serve-lane tests for the Swiss shell + folio/stub routes (Phase B slice 1). |
 | [test_serve_tags_visible.py](test_serve_tags_visible.py) | 2 | Route test: GET /api/v1/tags?visible=activity enriches with the activity spark. |
 | [test_serve_workspace_detail_route.py](test_serve_workspace_detail_route.py) | 3 | Route test for GET /api/v1/workspaces/{id} (workspace-detail Operation). |
 | [test_serve_workspaces_view.py](test_serve_workspaces_view.py) | 7 | Serve-lane smoke for the Swiss Workspaces view (master ledger + detail). |

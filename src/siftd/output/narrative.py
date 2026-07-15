@@ -118,6 +118,7 @@ class HtmlEmitter:
         interactive_tags: bool = False,
         tag_action_url: str = "",
         tag_suggest_url: str = "",
+        block_copy_url_base: str = "",
     ) -> None:
         from html import escape
 
@@ -140,6 +141,10 @@ class HtmlEmitter:
         self._interactive_tags = interactive_tags
         self._tag_action_url = tag_action_url
         self._tag_suggest_url = tag_suggest_url
+        # Mount point of the raw-block route (serve knowledge, threaded like
+        # tag_action_url). Empty → no Copy button (CLI html export has no
+        # server to fetch from).
+        self._block_copy_url_base = block_copy_url_base
         # Optional Activity registry (the folio's chronological tool ledger).
         # When passed, each tool-call gets a folio-unique ``id="evt-N"`` anchor
         # and one record {id, name, target, status, turn} is appended — the
@@ -225,11 +230,22 @@ class HtmlEmitter:
             entity_type=entity_type,
             section_class="tag-section tag-section--elem",
         )
+        # Block panels also carry the copy control: fetch the stored block text
+        # verbatim (the raw-block route) and write it to the clipboard — the
+        # rendered DOM is not a faithful copy source (markdown re-rendering,
+        # presenter line caps). enhance.js owns the click via data-copy-src.
+        copy_btn = ""
+        if entity_type == "block" and self._block_copy_url_base:
+            copy_btn = (
+                f'<button type="button" class="tag-menu__copy"'
+                f' data-copy-src="{self._block_copy_url_base}/{self._escape(target_id)}/raw"'
+                '>Copy text</button>'
+            )
         return (
             '<details class="tag-menu">'
             f'<summary class="tag-menu__toggle" title="Tag this {self._escape(entity_type)}"'
             ' aria-label="Tag">+</summary>'
-            f'<div class="tag-menu__panel">{section}</div>'
+            f'<div class="tag-menu__panel">{copy_btn}{section}</div>'
             "</details>"
         )
 

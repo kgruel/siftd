@@ -577,6 +577,93 @@ def test_element_tag_post_is_owner_scoped_404_not_403(tmp_path):
     assert r.status_code == 404
 
 
+def test_trace_block_panel_carries_copy_button(ctx):
+    """Slice 2: a block panel offers the copy control, pointing at the raw-block
+    route via data-copy-src (enhance.js fetches + clipboards it). Only block
+    panels get it — tool/run menus tag events, which have no single raw text."""
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    assert 'class="tag-menu__copy"' in trace
+    m = re.search(r'data-copy-src="(/block/[^"]+/raw)"', trace)
+    assert m, "copy button should target the raw-block route"
+
+    # The advertised URL actually serves the stored text.
+    r = client.get(m.group(1))
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_block_raw_returns_verbatim_extracted_text(tmp_path):
+    """The raw-block route returns the block's extracted text — the stored
+    content, not the rendered form and not the JSON envelope. Unknown ids 404."""
+    import json
+
+    from siftd.storage.sqlite import open_database
+
+    db, _cid = _make_db(tmp_path / "team.db")
+    long_text = "line one\n" * 40 + "the last verbatim line"
+    conn = open_database(db)
+    try:
+        rid = conn.execute("SELECT id FROM events WHERE kind='response' LIMIT 1").fetchone()["id"]
+        insert_response_content(conn, rid, 7, "text", json.dumps({"text": long_text}))
+        conn.commit()
+        block_id = conn.execute(
+            "SELECT id FROM event_content WHERE block_index = 7"
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        r = client.get(f"/block/{block_id}/raw")
+        assert r.status_code == 200
+        assert r.text == long_text                      # verbatim, unabridged
+        assert client.get("/block/01UNKNOWNBLOCKID/raw").status_code == 404
+
+
+def test_block_raw_is_owner_scoped_404_not_403(tmp_path):
+    """An owner-scoped caller fetching another tenant's block gets 404 — the
+    resolver scopes blocks through the owning event's conversation, and a 403
+    would confirm the block exists."""
+    conn = create_database(tmp_path / "owned.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/bob-proj", "2026-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "claude-opus")
+    p = get_or_create_provider(conn, "anthropic")
+    bob_cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    bob_pid = insert_prompt(conn, bob_cid, "cBp", "2026-01-15T10:00:00Z")
+    bob_rid = insert_response(
+        conn, bob_cid, bob_pid, m, p, "cBr", "2026-01-15T10:00:00Z",
+        input_tokens=1, output_tokens=1,
+    )
+    insert_response_content(conn, bob_rid, 0, "text", '{"text": "bobs secret"}')
+    bob_block = conn.execute(
+        "SELECT id FROM event_content WHERE event_id = ?", (bob_rid,)
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (bob_cid, "bob", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with _hx_client(create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
+        r = client.get(
+            f"/block/{bob_block}/raw", headers={"Authorization": "Bearer s3cret"},
+        )
+    assert r.status_code == 404
+    assert "bobs secret" not in r.text
+
+
 def test_stub_view_carries_head_metadata(ctx):
     # Every nav view is live now; the /view/{name} stub still answers unknown
     # names (defensive) and must carry the head metadata enhance.js needs.
