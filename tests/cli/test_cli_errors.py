@@ -89,13 +89,14 @@ class TestTaxonomyShape:
         # taxonomy membership is now the only routing. A builtin base
         # reappearing here means a catch tuple somewhere is depending on it
         # again — the disease the taxonomy exists to cure.
+        from siftd.adapters.sdk import AdapterParseError
         from siftd.api.database import PreflightError
         from siftd.api.ingest import AdapterSelectionError
         from siftd.api.search import EmbeddingsRequiredError
         from siftd.credentials import TokenRefError
         from siftd.storage.sqlite import SchemaUpgradeRequiredError
 
-        for exc in (SchemaUpgradeRequiredError, PreflightError):
+        for exc in (SchemaUpgradeRequiredError, PreflightError, AdapterParseError):
             assert issubclass(exc, SiftdError)
             assert not issubclass(exc, RuntimeError)
         for exc in (EmbeddingsRequiredError, AdapterSelectionError, TokenRefError):

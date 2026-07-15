@@ -10,6 +10,13 @@ This test is a ratchet, same shape as test_known_violations_ratchet in
 test_imports.py: new exceptions must either subclass a taxonomy base or be
 added to an allowlist below — a diff a reviewer sees and questions.
 
+It is a tripwire, not a proof: static analysis can't see dynamically created
+classes (``type(...)``) and resolves bases by bare name, so an aliased builtin
+(``from builtins import ValueError as V``) or a third-party exception base
+evades the closure. The naming-convention check below is the second wire —
+anything named ``*Error``/``*Exception``/``*NotAvailable`` must classify as
+exception-like or be allowlisted, which catches those shapes in practice.
+
 PERMANENT entries are carve-outs by design (a traceback IS the right rendering,
 or the exception is control flow, never presentation). TRANSITIONAL entries are
 pre-taxonomy stragglers, removed as the family migration slices land; this
@@ -32,6 +39,14 @@ BUILTIN_EXCEPTION_BASES = {
     name
     for name, obj in vars(builtins).items()
     if isinstance(obj, type) and issubclass(obj, BaseException)
+}
+
+# Classes NAMED like exceptions that aren't exceptions at all — value types
+# whose rename would break a public contract. Exempt from the naming-convention
+# tripwire only; if one ever grows an exception base, the closure test takes over.
+NON_EXCEPTION_NAMED = {
+    ("adapters/sdk.py", "ParseError"): "dataclass record of a collected parse failure "
+    "(line_number/error/raw_line), never raised; drop-in adapter SDK public surface",
 }
 
 # (relative_path_from_src_siftd, class_name): why it stays out — permanently.
@@ -133,6 +148,31 @@ def test_exceptions_join_taxonomy_or_allowlist():
         f"so the CLI backstop and serve mapping cover it, or add a "
         f"PERMANENT_CARVEOUTS entry in {__file__} with the reason it must "
         f"stay out (invariant violation / control-flow signal)."
+    )
+
+
+def test_exception_named_classes_are_classified():
+    """The closure can't resolve aliased-builtin or third-party bases (bare-name
+    AST matching), so a class like ``NewError(V)`` where ``V`` aliases
+    ValueError would silently skip the taxonomy check. Convention is the
+    backstop: a class whose name says it's an exception must either classify
+    as exception-like (and thus face the taxonomy test) or be allowlisted."""
+    classes = _collect_classes()
+    exception_like, _ = _exception_classes(classes)
+    allowlisted = set(PERMANENT_CARVEOUTS) | set(TRANSITIONAL)
+    suspects = {
+        key
+        for key in classes
+        if key[1].endswith(("Error", "Exception", "NotAvailable"))
+        and key not in exception_like
+        and key not in allowlisted
+        and key not in NON_EXCEPTION_NAMED
+        and key[1] not in TAXONOMY_BASES
+    }
+    assert not suspects, (
+        f"Classes named like exceptions but not classified as exception-like "
+        f"(aliased/third-party base?): {sorted(suspects)} — give them a "
+        f"resolvable exception base or allowlist them with a reason."
     )
 
 

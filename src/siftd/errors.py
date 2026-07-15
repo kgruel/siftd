@@ -37,9 +37,9 @@ class SiftdError(Exception):
     """Base for errors whose message is complete and user-actionable.
 
     Anything that escapes to the CLI backstop renders as a clean error line,
-    never a traceback. Subclass one of the two branches below rather than
-    this root; the root exists so boundaries can catch the whole taxonomy
-    in one clause.
+    never a traceback. Prefer a branch below when one fits (input vs drift);
+    operation failures that are neither — a sync push that failed, a resource
+    copy that didn't — join this root directly (exit 1, wire 500).
     """
 
     # Root default: generic server failure; branches refine (400/503). A direct

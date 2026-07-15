@@ -98,6 +98,7 @@ def _dispatch(
 
     from painted import Fidelity
 
+    from siftd.api import SchemaUpgradeRequiredError
     from siftd.api.conversations import AmbiguousPrefix
     from siftd.api.dispatch import Operation, execute, render
     from siftd.api.op_spec import spec_for_path
@@ -171,14 +172,26 @@ def _dispatch(
         )
     except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
+    except SchemaUpgradeRequiredError:
+        # Its message embeds the server's absolute database path (correct for
+        # the CLI, whose operator owns the filesystem) — never disclose that on
+        # the wire. Mirrors the FileNotFoundError handler above; the full
+        # message goes to the server log.
+        logging.getLogger("siftd.serve").exception(
+            "dispatch schema-upgrade-required on %s %s", method, path,
+        )
+        return Response(
+            content={"error": "server database schema requires upgrade"},
+            status_code=503,
+        )
     except SiftdError as e:
-        # Taxonomy backstop: user-input errors (AnchorError family, QueryError —
-        # AmbiguousPrefix and the ValueError-dual-based members are caught above
-        # for a richer body or because they predate the taxonomy) and
-        # embeddings/state-drift errors (EmbeddingsNotAvailable → 501,
-        # EmbeddingConfigError/IncrementalCompatError/IndexCompatError → 503)
-        # carry their wire status on the class, so serve maps them without
-        # importing siftd.embeddings (tests/architecture/test_imports.py).
+        # Taxonomy backstop: user-input errors (the AnchorError family,
+        # QueryError — AmbiguousPrefix is caught above for its richer
+        # structured body) and embeddings/state-drift errors
+        # (EmbeddingsNotAvailable → 501, EmbeddingConfigError/
+        # IncrementalCompatError/IndexCompatError → 503) carry their wire
+        # status on the class, so serve maps them without importing
+        # siftd.embeddings (tests/architecture/test_imports.py).
         return Response(content={"error": str(e)}, status_code=e.http_status)
     except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)

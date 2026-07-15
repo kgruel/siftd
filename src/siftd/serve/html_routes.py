@@ -1367,7 +1367,11 @@ def _find_search_fragment(
             engine = "fts"
             try:
                 sv = _run("fts")
-            except (sqlite3.DatabaseError, ValueError, RuntimeError):
+            except engine_errors:
+                # Same net as the first attempt: schema drift
+                # (SchemaUpgradeRequiredError is DriftError, no longer a
+                # RuntimeError) hits the keyword retry identically, and the
+                # pane's never-500 contract holds on both legs.
                 sv = SearchView(results=[], view=view)
         else:
             sv = SearchView(results=[], view=view)

@@ -352,7 +352,13 @@ class TestSearch:
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.get("/api/v1/search", params={"q": "hello"})
         assert resp.status_code == expected_status
-        assert str(exc) in resp.json()["error"]
+        if make_exc == "SchemaUpgradeRequiredError":
+            # Privacy: its message embeds the server's absolute DB path, so
+            # _dispatch returns a generic body and logs the real message.
+            assert resp.json()["error"] == "server database schema requires upgrade"
+            assert str(exc) not in resp.json()["error"]
+        else:
+            assert str(exc) in resp.json()["error"]
 
 
 class TestAuthNoAuth:
