@@ -332,6 +332,10 @@ class TestResolveAnchor:
         with pytest.raises(AnchorOutOfRange) as exc:
             _resolve_anchor(turns, "at_turn", 5, None, "c")
         assert exc.value.turn_count == 3
+        # The raise site must forward the requested turn — it's what puts
+        # '--at-turn 5' (not bare '--at-turn') in the backstop's message.
+        assert exc.value.requested == 5
+        assert "--at-turn 5" in str(exc.value)
 
     def test_at_turn_negative_raises(self):
         from siftd.api.conversations import AnchorOutOfRange, _resolve_anchor
