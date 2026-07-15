@@ -354,7 +354,7 @@ def main(argv=None) -> int:
         # Commands still catch locally when they do something smarter than
         # print-and-exit (degrade, continue a loop) — this net only sees what
         # escapes them.
-        status.error(str(e))
+        status.error(str(e), hint=e.hint)
         return 2 if isinstance(e, UserInputError) else 1
 
     # Post-command: passive update check (non-blocking)

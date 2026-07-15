@@ -14,6 +14,7 @@ from painted import Fidelity
 
 from siftd.cli.query import _parse_turns_range, _query_detail
 from siftd.cli.show import build_show_parser
+from siftd.errors import UserInputError
 from siftd.storage.fts import fts5_first_event_in_conversation
 
 
@@ -76,25 +77,23 @@ class TestParseTurnsRange:
     def test_negative_start_and_end(self):
         assert _parse_turns_range("-5:-1") == (-5, -1)
 
-    def test_end_less_than_start_exits_2(self):
-        with pytest.raises(SystemExit) as exc:
+    # Invalid inputs raise UserInputError; the main() backstop owns the
+    # exit-2 rendering (boundary coverage lives in TestForceExplicit below).
+
+    def test_end_less_than_start_raises(self):
+        with pytest.raises(UserInputError, match="must be >= start"):
             _parse_turns_range("3:1")
-        assert exc.value.code == 2
 
     def test_equal_start_end_ok(self):
         assert _parse_turns_range("2:2") == (2, 2)
 
-    def test_bad_format_no_colon_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
+    def test_bad_format_no_colon_raises(self):
+        with pytest.raises(UserInputError, match="A:B format"):
             _parse_turns_range("bad")
-        assert exc.value.code == 2
-        assert "A:B format" in capsys.readouterr().err
 
-    def test_non_integer_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
+    def test_non_integer_raises(self):
+        with pytest.raises(UserInputError, match="integers"):
             _parse_turns_range("a:b")
-        assert exc.value.code == 2
-        assert "integers" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------
@@ -179,10 +178,19 @@ class TestAnchorParamThreading:
 
 
 class TestForceExplicit:
-    def test_exchanges_without_anchor_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(exchanges=3))
-        assert exc.value.code == 2
+    """Window-without-anchor validation raises UserInputError; the main()
+    backstop renders it and returns 2 — asserted through the argparse
+    boundary (show routes to _query_detail before any DB access, so a
+    nonexistent --db path never masks the validation)."""
+
+    def _run(self, tmp_path, argv_tail):
+        from siftd.cli import main
+
+        return main(["--db", str(tmp_path / "nope.db"), "show", "conv1", *argv_tail])
+
+    def test_exchanges_without_anchor_exits_2(self, tmp_path, capsys):
+        rc = self._run(tmp_path, ["--exchanges", "3"])
+        assert rc == 2
         err = capsys.readouterr().err
         assert "--exchanges" in err
         assert "--from-start" in err
@@ -190,18 +198,16 @@ class TestForceExplicit:
         assert "--at-turn" in err
         assert "--around" in err
 
-    def test_turns_without_anchor_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(turns_range="0:2"))
-        assert exc.value.code == 2
+    def test_turns_without_anchor_exits_2(self, tmp_path, capsys):
+        rc = self._run(tmp_path, ["--turns", "0:2"])
+        assert rc == 2
         err = capsys.readouterr().err
         assert "--turns" in err
         assert "--from-start" in err
 
-    def test_exchanges_zero_with_anchor_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(from_end=True, exchanges=0))
-        assert exc.value.code == 2
+    def test_exchanges_zero_with_anchor_exits_2(self, tmp_path, capsys):
+        rc = self._run(tmp_path, ["--from-end", "--exchanges", "0"])
+        assert rc == 2
         assert "--exchanges must be at least 1" in capsys.readouterr().err
 
 
@@ -229,43 +235,55 @@ class TestParserWindowMutualExclusion:
 
 
 class TestAnchorErrorPropagation:
-    def _setup_execute_raises(self, monkeypatch, exc_factory):
+    """Anchor errors are UserInputError: they escape _query_detail (no local
+    catch since the usage-error dissolution) and the main() backstop renders
+    the class-owned message — flag vocabulary and AnchorNotFound's search hint
+    included — and returns 2. Asserted through the argparse boundary."""
+
+    def _run_show(self, monkeypatch, tmp_path, exc_factory, argv_tail):
+        from siftd.cli import main
+
         monkeypatch.setattr("siftd.serve.delegation.try_serve", lambda op: None)
         monkeypatch.setattr(
             "siftd.api.dispatch.execute",
             lambda op: (_ for _ in ()).throw(exc_factory()),
         )
+        return main(["--db", str(tmp_path / "nope.db"), "show", "conv1", *argv_tail])
 
-    def test_at_turn_out_of_range_exits_2(self, monkeypatch, capsys):
+    def test_at_turn_out_of_range_exits_2(self, monkeypatch, tmp_path, capsys):
         from siftd.api.conversations import AnchorOutOfRange
 
-        self._setup_execute_raises(monkeypatch, lambda: AnchorOutOfRange(3))
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(at_turn=99))
-        assert exc.value.code == 2
+        rc = self._run_show(
+            monkeypatch, tmp_path, lambda: AnchorOutOfRange(3, requested=99), ["--at-turn", "99"]
+        )
+        assert rc == 2
         err = capsys.readouterr().err
+        assert "--at-turn 99" in err
         assert "out of range" in err
         assert "3 turns" in err
 
-    def test_around_not_found_exits_2(self, monkeypatch, capsys):
+    def test_around_not_found_exits_2(self, monkeypatch, tmp_path, capsys):
         from siftd.api.conversations import AnchorNotFound
 
-        self._setup_execute_raises(monkeypatch, lambda: AnchorNotFound("missing phrase"))
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(around="missing phrase"))
-        assert exc.value.code == 2
+        rc = self._run_show(
+            monkeypatch, tmp_path, lambda: AnchorNotFound("missing phrase"),
+            ["--around", "missing phrase"],
+        )
+        assert rc == 2
         err = capsys.readouterr().err
         assert "not found" in err
         assert "missing phrase" in err
+        # The remediation rides the exception's hint attr through the backstop.
         assert "siftd search" in err
 
-    def test_around_invalid_phrase_exits_2(self, monkeypatch, capsys):
+    def test_around_invalid_phrase_exits_2(self, monkeypatch, tmp_path, capsys):
         from siftd.api.conversations import AnchorPhraseInvalid
 
-        self._setup_execute_raises(monkeypatch, lambda: AnchorPhraseInvalid('bad " phrase'))
-        with pytest.raises(SystemExit) as exc:
-            _query_detail(_args(around='bad " phrase'))
-        assert exc.value.code == 2
+        rc = self._run_show(
+            monkeypatch, tmp_path, lambda: AnchorPhraseInvalid('bad " phrase'),
+            ["--around", 'bad " phrase'],
+        )
+        assert rc == 2
         err = capsys.readouterr().err
         assert "not a valid FTS5 phrase" in err
 

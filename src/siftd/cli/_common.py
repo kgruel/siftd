@@ -6,6 +6,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from siftd.errors import UserInputError
+
 
 def print_ambiguous_error(exc) -> None:
     """Print a user-facing error for AmbiguousPrefix to stderr.
@@ -212,21 +214,20 @@ def _parse_turns_range(s: str) -> tuple[int, int]:
     """Parse a turns range string like '-2:+2' or '5:10' into (start, end) offsets.
 
     Returns (window_start, window_end) as signed integers.
-    Raises SystemExit(2) on invalid format or if end < start.
+    Raises UserInputError (backstop renders it, exit 2) on invalid format or
+    if end < start — call sites run inside command functions, so the raise
+    always lands inside main()'s try.
     """
     parts = s.split(":")
     if len(parts) != 2:
-        print(f"error: --turns must be in A:B format (e.g. -2:+2, 5:10), got: {s!r}", file=sys.stderr)
-        sys.exit(2)
+        raise UserInputError(f"--turns must be in A:B format (e.g. -2:+2, 5:10), got: {s!r}")
     try:
         start = int(parts[0].lstrip("+"))
         end = int(parts[1].lstrip("+"))
     except ValueError:
-        print(f"error: --turns values must be integers, got: {s!r}", file=sys.stderr)
-        sys.exit(2)
+        raise UserInputError(f"--turns values must be integers, got: {s!r}") from None
     if end < start:
-        print(f"error: --turns end ({end}) must be >= start ({start})", file=sys.stderr)
-        sys.exit(2)
+        raise UserInputError(f"--turns end ({end}) must be >= start ({start})")
     return start, end
 
 

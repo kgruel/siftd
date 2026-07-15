@@ -13,6 +13,7 @@ from siftd.cli._common import (
     print_ambiguous_error,
     resolve_db,
 )
+from siftd.errors import UserInputError
 from siftd.output import fmt_count, fmt_tokens, status
 from siftd.output.painted_bridge import emit_output
 
@@ -162,7 +163,6 @@ def _query_event_detail(args, *, conn=None) -> int:
 def _query_detail(args) -> int:
     """Show conversation detail timeline."""
     from siftd.api import get_conversation
-    from siftd.api.conversations import AnchorNotFound, AnchorOutOfRange, AnchorPhraseInvalid
     from siftd.api.dispatch import Operation, execute
     from siftd.cli._common import fidelity_from_args, tool_chars_from_args
     from siftd.serve.client import ServeRequest4xx
@@ -179,19 +179,15 @@ def _query_detail(args) -> int:
     has_anchor = from_start or from_end or (at_turn is not None) or (around is not None)
     has_window = (exchanges_n is not None) or (turns_range is not None)
 
-    # Window without anchor is a hard error (exit 2, argparse convention).
+    # Window without anchor is a hard error — UserInputError rides the main()
+    # backstop (exit 2, the argparse convention).
     _ANCHOR_HINT = "use one of: --from-start, --from-end, --at-turn N, --around PHRASE"
     if has_window and not has_anchor:
         flag = "--exchanges" if exchanges_n is not None else "--turns"
-        print(
-            f"error: {flag} requires an anchor; {_ANCHOR_HINT}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
+        raise UserInputError(f"{flag} requires an anchor; {_ANCHOR_HINT}")
 
     if exchanges_n is not None and exchanges_n < 1:
-        print("error: --exchanges must be at least 1", file=sys.stderr)
-        sys.exit(2)
+        raise UserInputError("--exchanges must be at least 1")
 
     # Resolve anchor type and value.
     anchor: str | None = None
@@ -307,20 +303,11 @@ def _query_detail(args) -> int:
         except FileNotFoundError as e:
             status.error(str(e), hint="Run 'siftd ingest' to create it.")
             return 1
-        except AnchorOutOfRange as e:
-            print(f"error: --at-turn {at_turn} is out of range (conversation has {e.turn_count} turns)", file=sys.stderr)
-            sys.exit(2)
-        except AnchorNotFound as e:
-            print(
-                f"error: --around {e.phrase!r} not found in conversation\n"
-                f"Try 'siftd search \"{e.phrase}\"' to locate conversations containing this phrase, "
-                f"or shorten the phrase.",
-                file=sys.stderr,
-            )
-            sys.exit(2)
-        except AnchorPhraseInvalid as e:
-            print(f"error: --around {e.phrase!r} is not a valid FTS5 phrase", file=sys.stderr)
-            sys.exit(2)
+        # Anchor errors (AnchorOutOfRange/NotFound/PhraseInvalid) are
+        # UserInputError: they escape to the main() backstop, which renders
+        # the class-owned message (flag vocabulary + AnchorNotFound's search
+        # hint live on the classes now) and exits 2 — this used to hand-roll
+        # the same rendering here with print+sys.exit(2).
         except _AmbiguousPrefix as exc:
             # Reached when _dispatch_detail's probe-based pre-classification
             # was skipped (no local db yet) or its own open_database failed —

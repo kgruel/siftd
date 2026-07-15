@@ -13,6 +13,7 @@ from pathlib import Path
 
 from siftd.cli._common import _parse_turns_range, add_anchor_window_args, resolve_db
 from siftd.cli._filters import extract_filter_args
+from siftd.errors import UserInputError
 from siftd.output import status
 from siftd.paths import embeddings_db_path
 
@@ -98,11 +99,11 @@ def cmd_search(args) -> int:
         )
         return 1
 
-    # Validate axis combinations before any execution
+    # Validate axis combinations before any execution. UserInputError rides
+    # the main() backstop (exit 2) — this used to hand-roll print+sys.exit(2).
     axis_err = _validate_search_axes(args)
     if axis_err:
-        print(f"siftd: error: {axis_err}", file=sys.stderr)
-        sys.exit(2)
+        raise UserInputError(axis_err)
 
     # Validate the --turns window format early for a friendly exit(2); search_view
     # re-parses the raw string when it runs the recipe (on the wire or locally).
