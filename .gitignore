@@ -12,7 +12,13 @@ debug/
 docs/dev/
 .venv/
 dist/
-.claude/
+# .claude/ is machine-local (settings, plans, worktrees) EXCEPT skills and
+# commands, which are shared developer assets. `.claude/*` (not `.claude/`)
+# so the negations below can re-include — git won't descend into a fully
+# ignored directory.
+.claude/*
+!.claude/skills/
+!.claude/commands/
 .DS_Store
 .worktrees/
 HANDOFF.md

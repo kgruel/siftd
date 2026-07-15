@@ -34,6 +34,12 @@ main() {
 
     cd "$DEV_ROOT"
 
+    # Wire the tracked git hooks (idempotent). Relative path: each worktree
+    # resolves .githooks against its own top level, so worktrees share the
+    # tracked hooks without absolute paths.
+    log_info "Wiring tracked git hooks (.githooks)..."
+    git config core.hooksPath .githooks
+
     # Create venv if missing
     if [ ! -d ".venv" ]; then
         log_info "Creating venv..."

@@ -10,10 +10,12 @@ usage() {
     cli_usage <<EOF
 Usage: ./dev docs [--check]
 
-Generate reference documentation.
+Generate reference docs (docs/reference/) and the generated spans of the
+managed per-folder READMEs (see scripts/gen_docs.py MANIFEST).
 
 Options:
-  --check  Fail if docs are stale (for CI)
+  --check  Regenerate strictly (a skipped target is a hard failure) and fail
+           if any generated doc or README span is stale (for CI)
   --help   Show this message
 EOF
 }
@@ -33,13 +35,22 @@ main() {
     cd "$DEV_ROOT"
 
     log_info "Generating docs..."
-    uv run python scripts/gen_docs.py
+    if [ $check_mode -eq 1 ]; then
+        # Strict: a skipped target (e.g. api.md without optional deps) is a false
+        # green under --check, so fail instead of degrading gracefully.
+        uv run python scripts/gen_docs.py --strict
+    else
+        uv run python scripts/gen_docs.py
+    fi
 
     if [ $check_mode -eq 1 ]; then
-        # Check if any docs changed
-        if ! git diff --quiet docs/reference/; then
+        # Diff the generated reference docs and the managed READMEs explicitly —
+        # the README paths come from the manifest, no repo-wide diff.
+        local readme_paths
+        readme_paths=$(uv run python scripts/gen_docs.py readmes --list)
+        if ! git diff --quiet docs/reference/ $readme_paths; then
             log_error "Docs are stale. Run './dev docs' to regenerate."
-            git diff --stat docs/reference/
+            git diff --stat docs/reference/ $readme_paths
             exit 1
         fi
         log_success "Docs are up to date"
