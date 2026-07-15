@@ -14,8 +14,6 @@
 *.pyc
 .pytest_cache
 .ruff_cache
-.coverage
-coverage.xml
 
 # Build outputs
 dist

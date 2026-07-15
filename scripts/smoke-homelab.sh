@@ -147,7 +147,7 @@ else:
 # Build probe DBs
 # ---------------------------------------------------------------------------
 log_info "Building probe databases..."
-uv run python "$SCRIPT_DIR/_smoke_homelab_fixture.py" "$ARTIFACT_DIR/fixtures" 2>&1 | sed 's/^/  /'
+uv run python "$STACK_DIR/homelab_fixture.py" "$ARTIFACT_DIR/fixtures" 2>&1 | sed 's/^/  /'
 
 # ---------------------------------------------------------------------------
 # Probe helper
@@ -257,7 +257,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # P5 — query --around (anchor phrase) — FAIL pre-#9 (FTS not rebuilt on push)
-# Anchor phrase lives in c001 turn 3 per _smoke_homelab_fixture.py. The
+# Anchor phrase lives in c001 turn 3 per homelab_fixture.py. The
 # fixture builder writes 20 conversations; we use the first ULID resolved
 # from P4 and search for the anchor phrase, which should land in ONE of the
 # server's conversations if FTS is built correctly.

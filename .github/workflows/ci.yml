@@ -8,7 +8,7 @@ on:
   workflow_call:
 
 jobs:
-  # Local equivalent: ./dev check
+  # Local near-equivalent: ./dev check (includes docs; local lint auto-fixes while CI only checks)
   test:
     runs-on: ubuntu-latest
     strategy:

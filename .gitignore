@@ -1,7 +1,5 @@
 __pycache__/
 *.pyc
-.coverage*
-coverage.xml
 .subtask/
 .agents/
 bench/runs/

@@ -63,9 +63,7 @@ serve = [
 ]
 dev = [
     "pytest>=8.0",
-    "pytest-cov",
     "pytest-xdist",
-    "diff-cover",
     "prysk",
     "pytest-prysk",
     "syrupy",

@@ -27,8 +27,7 @@ main "$@"
 | dev.sh | **Entry point** - sources all libs, adds project helpers | none |
 | log.sh | Colored logging helpers | none |
 | cli.sh | Argument parsing + usage helpers | none |
-| paths.sh | Script + XDG path helpers | none |
-| templates.sh | Template loading + placeholder injection | python3 (for template_inject_env) |
+| templates.sh | Environment-based template placeholder injection | python3 |
 
 ## Function Reference
 
@@ -37,8 +36,8 @@ main "$@"
 | Function | Usage | Description |
 |----------|-------|-------------|
 | `ensure_venv` | `ensure_venv [--embed]` | Auto-setup venv if missing |
-| `run_uv` | `run_uv sync` | Run uv in project root |
 | `require_command` | `require_command jq "brew install jq"` | Check command exists |
+| `pytest_lane` | `pytest_lane "dev embed" "embeddings" 0 embedding` | Run a pytest lane with optional extras |
 
 Also sets `DEV_ROOT` to the project root directory.
 
@@ -61,24 +60,11 @@ Color variables: `RED`, `GREEN`, `YELLOW`, `BLUE`, `BOLD`, `NC`.
 | `cli_unknown_flag` | `cli_unknown_flag "--flag"` | Standard unknown flag error |
 | `cli_require_value` | `cli_require_value "--flag" "$val"` | Enforce required flag value |
 | `cli_usage` | `cli_usage <<EOF ... EOF` | Print usage block to stdout |
-| `cli_usage_error` | `cli_usage_error "msg" <<EOF ... EOF` | Error + usage to stderr |
-
-### paths.sh
-
-| Function | Usage | Description |
-|----------|-------|-------------|
-| `paths_init` | `paths_init "${BASH_SOURCE[0]}"` | Set SCRIPT_PATH, SCRIPT_DIR, SCRIPT_NAME |
-| `xdg_config_home` | `xdg_config_home` | Resolve XDG config dir (~/.config) |
-| `xdg_cache_home` | `xdg_cache_home` | Resolve XDG cache dir (~/.cache) |
-| `xdg_data_home` | `xdg_data_home` | Resolve XDG data dir (~/.local/share) |
-| `xdg_state_home` | `xdg_state_home` | Resolve XDG state dir (~/.local/state) |
 
 ### templates.sh
 
 | Function | Usage | Description |
 |----------|-------|-------------|
-| `template_read` | `template_read /path/to/file` | Load template content |
-| `template_inject` | `template_inject "$tmpl" KEY val` | Replace {{KEY}} placeholders |
 | `template_inject_env` | `TPL_KEY=val template_inject_env file` | Replace via env vars (multi-line safe) |
 
 ## Script Header Convention

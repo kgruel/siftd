@@ -2,7 +2,7 @@
 # check.sh
 # DESC: Run lint + test + optional lanes (CI equivalent, quiet by default)
 # Usage: ./dev check [-v] [--serve] [--embed] [--slow] [--all]
-# Dependencies: uv, ty, ruff, pytest, diff-cover
+# Dependencies: uv, ty, ruff, pytest
 # Idempotent: Yes
 source "$(dirname "$0")/lib/dev.sh"
 
@@ -10,7 +10,7 @@ usage() {
     cli_usage <<EOF
 Usage: ./dev check [-v] [--serve] [--embed] [--slow] [--all]
 
-Run lint, test, optional test lanes, and diff-coverage (CI equivalent).
+Run lint, test, and optional test lanes (CI equivalent).
 
 Options:
   -v, --verbose  Show verbose output
@@ -20,15 +20,6 @@ Options:
   --all          Also run serve, embeddings, and slow test lanes
   --help         Show this message
 EOF
-}
-
-# Check if there are Python source changes vs main
-has_python_changes() {
-    local diff_base="${1:-main}"
-    # Compare working tree + staged against the merge base with main
-    local merge_base
-    merge_base=$(git merge-base "$diff_base" HEAD 2>/dev/null) || return 1
-    git diff --name-only "$merge_base" -- '*.py' | grep -q .
 }
 
 main() {
@@ -59,8 +50,7 @@ main() {
         uv run pytest tests/architecture/ -v --tb=short
         echo ""
         echo -e "${BOLD}=== Test ===${NC}"
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
-            --cov=siftd --cov-report=xml:coverage.xml --cov-report=
+        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/
         if [ $run_serve -eq 1 ]; then
             echo ""
             echo -e "${BOLD}=== Serve Tests ===${NC}"
@@ -79,14 +69,6 @@ main() {
         echo ""
         echo -e "${BOLD}=== Docs ===${NC}"
         ./dev docs --check
-        # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
-        # echo ""
-        # echo -e "${BOLD}=== Diff coverage ===${NC}"
-        # if has_python_changes; then
-        #     uv run diff-cover coverage.xml --compare-branch=main --fail-under=80
-        # else
-        #     echo "No Python changes vs main — skipping"
-        # fi
     else
         # Quiet mode: single line per step, fail-fast
         printf "Lint... "
@@ -94,8 +76,7 @@ main() {
         printf "Spec... "
         uv run pytest tests/architecture/ -q --tb=line > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/architecture/ -v --tb=short; exit 1; }
         printf "Test... "
-        uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ \
-            --cov=siftd --cov-report=xml:coverage.xml --cov-report= > /dev/null 2>&1 \
+        uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" --ignore=tests/architecture/ > /dev/null 2>&1 \
             && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run pytest tests/ -q --tb=short -m "not embeddings and not serve and not slow" --ignore=tests/architecture/; exit 1; }
         if [ $run_serve -eq 1 ]; then
             printf "Serve tests... "
@@ -112,14 +93,6 @@ main() {
         # Docs last: cheapest blast radius, so it never masks a real test failure.
         printf "Docs... "
         ./dev docs --check > /dev/null 2>&1 && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; ./dev docs --check; exit 1; }
-        # NOTE: diff-coverage disabled during autoresearch loop — re-enable after 0.6.0 coverage push
-        # printf "Diff coverage... "
-        # if has_python_changes; then
-        #     uv run diff-cover coverage.xml --compare-branch=main --fail-under=80 --quiet > /dev/null 2>&1 \
-        #         && echo -e "${GREEN}ok${NC}" || { echo -e "${RED}failed${NC}"; uv run diff-cover coverage.xml --compare-branch=main --fail-under=80; exit 1; }
-        # else
-        #     echo -e "${GREEN}ok (no changes)${NC}"
-        # fi
     fi
 
     log_success "All checks passed"

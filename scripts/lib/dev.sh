@@ -12,7 +12,6 @@ set -euo pipefail
 _LIB_DIR="$(dirname "${BASH_SOURCE[0]}")"
 source "$_LIB_DIR/log.sh"
 source "$_LIB_DIR/cli.sh"
-source "$_LIB_DIR/paths.sh"
 
 # Project root (two levels up from scripts/lib/)
 DEV_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,12 +25,6 @@ ensure_venv() {
     fi
 }
 
-# Run uv command in project root
-# Usage: run_uv <command> [args...]
-run_uv() {
-    (cd "$DEV_ROOT" && uv "$@")
-}
-
 # Check that a command exists, with install hint
 # Usage: require_command <name> <install_hint>
 require_command() {
@@ -41,4 +34,51 @@ require_command() {
         log_error "$name not found${hint:+. Install with: $hint}"
         exit 1
     fi
+}
+
+# Run a pytest lane with optional dependency extras.
+# Usage: pytest_lane <extras> <marker-expression> <verbose> <label> [pytest args...]
+# extras is a space-separated list and may be empty; marker-expression may be empty.
+pytest_lane() {
+    local extras="$1"
+    local marker="$2"
+    local verbose="$3"
+    local label="$4"
+    shift 4
+    local -a sync_args=()
+    local -a pytest_args=(tests/)
+
+    ensure_venv
+    cd "$DEV_ROOT"
+
+    if [ -n "$extras" ]; then
+        local extra
+        for extra in $extras; do
+            sync_args+=(--extra "$extra")
+        done
+        log_info "Installing $label dependencies..."
+        uv sync "${sync_args[@]}" --quiet
+    fi
+
+    if [ -n "$marker" ]; then
+        pytest_args+=(-m "$marker")
+    fi
+    pytest_args+=("$@")
+
+    if [ "$verbose" -eq 1 ]; then
+        uv run pytest "${pytest_args[@]}" -v --tb=short
+        return
+    fi
+
+    log_info "Running $label tests..."
+    local output status
+    set +e
+    output=$(uv run pytest "${pytest_args[@]}" -q --tb=line 2>&1)
+    status=$?
+    set -e
+    if [ "$status" -ne 0 ]; then
+        echo "$output"
+        return "$status"
+    fi
+    echo "$output" | tail -1
 }

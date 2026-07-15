@@ -29,25 +29,9 @@ main() {
         esac
     done
 
-    ensure_venv
-    cd "$DEV_ROOT"
-
-    if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m "not embeddings and not serve and not slow"
-    else
-        # Quiet mode: minimal output, details only on failure
-        log_info "Running base tests..."
-        set +e
-        output=$(uv run pytest tests/ -q --tb=line -m "not embeddings and not serve and not slow" 2>&1)
-        status=$?
-        set -e
-        if [ $status -ne 0 ]; then
-            echo "$output"
-            exit 1
-        fi
-        # Show just the summary line
-        echo "$output" | tail -1
-    fi
+    local extras=""
+    local marker="not embeddings and not serve and not slow"
+    pytest_lane "$extras" "$marker" "$verbose" "base"
 }
 
 main "$@"

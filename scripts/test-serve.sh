@@ -29,26 +29,9 @@ main() {
         esac
     done
 
-    ensure_venv
-    cd "$DEV_ROOT"
-
-    log_info "Installing serve dependencies..."
-    uv sync --extra dev --extra serve --quiet
-
-    if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short -m "serve and not embeddings"
-    else
-        log_info "Running serve tests..."
-        set +e
-        output=$(uv run pytest tests/ -q --tb=line -m "serve and not embeddings" 2>&1)
-        status=$?
-        set -e
-        if [ $status -ne 0 ]; then
-            echo "$output"
-            exit 1
-        fi
-        echo "$output" | tail -1
-    fi
+    local extras="dev serve"
+    local marker="serve and not embeddings"
+    pytest_lane "$extras" "$marker" "$verbose" "serve"
 }
 
 main "$@"

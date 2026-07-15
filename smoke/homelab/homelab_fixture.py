@@ -2,7 +2,7 @@
 """Build probe databases for the smoke-homelab harness.
 
 Usage:
-    _smoke_homelab_fixture.py <output-dir>
+    homelab_fixture.py <output-dir>
 
 Creates three SQLite databases under <output-dir>:
   small.db    — 1 conversation (P2 baseline push test)

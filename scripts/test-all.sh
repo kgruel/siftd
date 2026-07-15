@@ -29,26 +29,9 @@ main() {
         esac
     done
 
-    ensure_venv
-    cd "$DEV_ROOT"
-
-    log_info "Installing optional test dependencies..."
-    uv sync --extra dev --extra embed --extra serve --quiet
-
-    if [ $verbose -eq 1 ]; then
-        uv run pytest tests/ -v --tb=short
-    else
-        log_info "Running all tests..."
-        set +e
-        output=$(uv run pytest tests/ -q --tb=line 2>&1)
-        status=$?
-        set -e
-        if [ $status -ne 0 ]; then
-            echo "$output"
-            exit 1
-        fi
-        echo "$output" | tail -1
-    fi
+    local extras="dev embed serve"
+    local marker=""
+    pytest_lane "$extras" "$marker" "$verbose" "all"
 }
 
 main "$@"

@@ -5,14 +5,13 @@ command from `scripts/*.sh` and forwards `./dev <name> [args]` to
 `scripts/<name>.sh`. There is no central registry — the filename *is* the
 command name, and the one-line `# DESC:` header near the top of each script is
 its help text. Files whose names begin with `_` are excluded from discovery, so
-helpers and fixtures that are not commands (for example
-`_smoke_homelab_fixture.py`) can live here without cluttering `./dev help`.
+helpers and fixtures that are not commands can live here without cluttering
+`./dev help`.
 
 Shared shell helpers live in `lib/` and are pulled in with
 `source "$(dirname "$0")/lib/dev.sh"` at the top of each command; `dev.sh` in
-turn wires up logging (`log.sh`), the CLI-usage helpers (`cli.sh`), path
-resolution (`paths.sh`), and `ensure_venv`. See `lib/README.md` for the helper
-surface.
+turn wires up logging (`log.sh`), the CLI-usage helpers (`cli.sh`), and
+`ensure_venv`. See `lib/README.md` for the helper surface.
 
 To add a command, create `scripts/<name>.sh` with a `# DESC: <one line>` header,
 source `lib/dev.sh`, and implement a `main()` that parses `--help` and does the

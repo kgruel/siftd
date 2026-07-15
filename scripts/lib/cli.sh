@@ -32,13 +32,3 @@ cli_require_value() {
 cli_usage() {
     cat
 }
-
-# Print an error message (optional) and usage text to stderr
-# Usage: cli_usage_error "Error message" <<EOF ... EOF
-cli_usage_error() {
-    local message="${1:-}"
-    if [[ -n "$message" ]]; then
-        echo "$message" >&2
-    fi
-    cat >&2
-}
