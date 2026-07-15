@@ -28,11 +28,8 @@ _PREFLIGHT_CHECKS = ["db-fk-integrity", "db-trigger-presence"]
 _MAX_FINDINGS_IN_MSG = 3
 
 
-class PreflightError(RuntimeError, SiftdError):
-    """Raised when a source database fails integrity pre-flight checks.
-
-    transitional: shed RuntimeError in slice 5.
-    """
+class PreflightError(SiftdError):
+    """Raised when a source database fails integrity pre-flight checks."""
 
 
 def audit_db_integrity(path: Path) -> list:

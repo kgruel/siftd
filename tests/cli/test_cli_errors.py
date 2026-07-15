@@ -84,10 +84,20 @@ class TestTaxonomyShape:
 
         assert issubclass(IndexCompatError, DriftError)
 
-    def test_schema_upgrade_error_keeps_runtime_error_base(self):
-        # Transitional contract (through slice 5): existing RuntimeError catch
-        # tuples must keep catching it.
+    def test_migrated_exceptions_shed_builtin_bases(self):
+        # Slice 5 shed the transitional RuntimeError/ValueError dual bases:
+        # taxonomy membership is now the only routing. A builtin base
+        # reappearing here means a catch tuple somewhere is depending on it
+        # again — the disease the taxonomy exists to cure.
+        from siftd.api.database import PreflightError
+        from siftd.api.ingest import AdapterSelectionError
+        from siftd.api.search import EmbeddingsRequiredError
+        from siftd.credentials import TokenRefError
         from siftd.storage.sqlite import SchemaUpgradeRequiredError
 
-        assert issubclass(SchemaUpgradeRequiredError, RuntimeError)
-        assert issubclass(SchemaUpgradeRequiredError, DriftError)
+        for exc in (SchemaUpgradeRequiredError, PreflightError):
+            assert issubclass(exc, SiftdError)
+            assert not issubclass(exc, RuntimeError)
+        for exc in (EmbeddingsRequiredError, AdapterSelectionError, TokenRefError):
+            assert issubclass(exc, SiftdError)
+            assert not issubclass(exc, ValueError)

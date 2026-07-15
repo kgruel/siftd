@@ -961,14 +961,10 @@ SEARCH_MODES = ("auto", "fts", "semantic", "hybrid")
 request time; ``fts``/``semantic``/``hybrid`` name the engine directly."""
 
 
-class EmbeddingsRequiredError(UserInputError, ValueError):
+class EmbeddingsRequiredError(UserInputError):
     """Raised when an explicit ``semantic``/``hybrid`` mode is requested but
-    embeddings are unavailable. Distinct from a plain ``ValueError`` so callers
-    can map it to an install/index hint (CLI) or a 4xx (route) rather than a
-    generic invalid-argument message.
-
-    ``ValueError`` is a transitional dual base for existing catch tuples that
-    net it as a ``ValueError``; transitional: shed in slice 5."""
+    embeddings are unavailable. Distinct from a generic invalid-argument error
+    so callers can map it to an install/index hint (CLI) or a 4xx (route)."""
 
     def __init__(self, mode: str) -> None:
         self.mode = mode

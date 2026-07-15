@@ -44,7 +44,6 @@ def cmd_embed(args) -> int:
         egress_notice_pending,
         mark_egress_notified,
     )
-    from siftd.errors import DriftError
 
     # One-time remote first-egress disclosure: the explicit build is often the FIRST
     # egress (initial backlog), so it discloses too — before any content leaves. The
@@ -62,10 +61,10 @@ def cmd_embed(args) -> int:
     except FileNotFoundError as e:
         status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
-    except (RuntimeError, ValueError, DriftError) as e:
-        # IncrementalCompatError (stale/partial index) and EmbeddingConfigError
-        # (e.g. a revoked key mid-embed) are DriftError, not RuntimeError; catch
-        # them for a clean error line rather than a traceback.
+    except (RuntimeError, ValueError) as e:
+        # Builtin raises from the build (backend/network wrappers). Taxonomy
+        # errors (IncrementalCompatError, EmbeddingConfigError) escape to the
+        # main() backstop, which renders them identically.
         status.error(str(e))
         return 1
 

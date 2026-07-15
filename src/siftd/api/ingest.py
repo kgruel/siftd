@@ -18,11 +18,8 @@ from siftd.errors import UserInputError
 from siftd.ingestion import IngestEvent, IngestStats, ingest_all
 
 
-class AdapterSelectionError(UserInputError, ValueError):
-    """Raised when requested adapter names match no discovered adapters.
-
-    ``ValueError`` is a transitional dual base for existing catch tuples that
-    net it as a ``ValueError``; transitional: shed in slice 5."""
+class AdapterSelectionError(UserInputError):
+    """Raised when requested adapter names match no discovered adapters."""
 
     def __init__(
         self, requested: list[str], available: list[str], disabled: list[str] | None = None

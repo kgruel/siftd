@@ -1341,22 +1341,19 @@ def _find_search_fragment(
     # sqlite3.DatabaseError (not OperationalError) is the family root — it also
     # covers the corrupt-image errors a malformed main DB / FTS index raises at
     # query time, which a bare OperationalError catch would let escape and 500
-    # the pane. The embed-path drift error (IndexCompatError) lives in the embed
-    # module (numpy) and is only importable/raisable when this server has
-    # embeddings. ValueError covers search_view's axis validation: ui_query
+    # the pane. ValueError covers search_view's axis validation: ui_query
     # clamps view to SEARCH_VIEWS, so the only residual bad combo is a
     # hand-crafted query string, which then degrades to an empty pane (not a 500).
-    engine_errors: tuple[type[Exception], ...] = (
-        sqlite3.DatabaseError, ValueError, RuntimeError, OSError,
-    )
-    if has_embed:
-        from siftd.api.search import EmbeddingConfigError, IndexCompatError
+    # DriftError covers the embed-path drift errors (IndexCompatError,
+    # EmbeddingConfigError) without importing the embed module (numpy): this
+    # best-effort pane never 500s — unlike the CLI/REST surfaces (which surface
+    # config/index drift), the pane degrades any non-transient semantic failure
+    # to keyword search with a truthful [fts] header.
+    from siftd.errors import DriftError
 
-        # This best-effort pane never 500s — it degrades any non-transient semantic failure
-        # to keyword search with a truthful [fts] header. A config error (e.g. a revoked
-        # key) joins index-drift here: unlike the CLI/REST surfaces (which surface it), the
-        # pane keeps the user on working keyword results.
-        engine_errors = (*engine_errors, IndexCompatError, EmbeddingConfigError)
+    engine_errors: tuple[type[Exception], ...] = (
+        sqlite3.DatabaseError, ValueError, RuntimeError, OSError, DriftError,
+    )
 
     try:
         sv = _run(engine)

@@ -54,14 +54,14 @@ class AuthLoginError(SiftdError):
     """
 
 
-class TokenRefError(SiftdError, ValueError):
+class TokenRefError(SiftdError):
     """Raised when an ``env:``/``file:`` token reference cannot be resolved.
 
     Callers adapt this to their own contract: the sync path wraps it in
     ``AuthError``; the delegation client swallows it and falls through to None.
 
-    transitional: shed ValueError in slice 5. Joins SiftdError directly
-    rather than AuthError — see AuthLoginError's docstring for why.
+    Joins SiftdError directly rather than AuthError — see AuthLoginError's
+    docstring for why.
     """
 
 

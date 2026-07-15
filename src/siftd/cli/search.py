@@ -263,14 +263,14 @@ def cmd_search(args) -> int:
             view_result = from_wire(op, body)
 
     # Local execution (or a wire body that failed to deserialize → fall back).
-    # EmbeddingConfigError (e.g. a revoked API key) is a config failure, not degradable —
-    # it doesn't subclass RuntimeError, so it's caught explicitly for a clean error line.
-    from siftd.api import EmbeddingConfigError
-
+    # RuntimeError/ValueError cover builtin raises from the engine (a transient
+    # embed failure that already degraded upstream never reaches here); taxonomy
+    # errors (e.g. EmbeddingConfigError, IndexCompatError) escape to the main()
+    # backstop, which renders them identically.
     if view_result is None:
         try:
             view_result, caveats = execute_for_render(op)
-        except (RuntimeError, ValueError, EmbeddingConfigError) as e:
+        except (RuntimeError, ValueError) as e:
             status.error(str(e))
             return 1
 
