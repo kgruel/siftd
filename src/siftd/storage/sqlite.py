@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from siftd.domain import Conversation
+from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
 from siftd.storage.attributes import set_attribute
@@ -52,7 +53,7 @@ MIGRATION_BUSY_TIMEOUT_MS = int(os.environ.get("SIFTD_MIGRATION_BUSY_TIMEOUT_MS"
 _logger = logging.getLogger(__name__)
 
 
-class SchemaUpgradeRequiredError(RuntimeError):
+class SchemaUpgradeRequiredError(DriftError):
     """Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
 
     The fix is to make the database file (and parent directory) writable so a

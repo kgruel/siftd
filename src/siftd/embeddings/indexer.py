@@ -28,6 +28,7 @@ from siftd.embeddings.chunker import (
     extract_exchange_window_chunks,
     extract_tool_summary_chunks,
 )
+from siftd.errors import DriftError
 from siftd.paths import db_path as default_db_path
 from siftd.paths import embeddings_db_path as default_embed_path
 from siftd.storage.embeddings import (
@@ -54,7 +55,7 @@ SCHEMA_VERSION = 2
 _BATCH_SIZE = 64
 
 
-class IncrementalCompatError(Exception):
+class IncrementalCompatError(DriftError):
     """Raised when an incremental build cannot proceed against the existing index.
 
     Covers a stale schema (v1), a partial/undescribed index (chunks with no identity

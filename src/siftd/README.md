@@ -35,6 +35,7 @@ accumulate. After adding a module, run `./dev docs` to refresh the table below.
 | [config_sync.py](config_sync.py) | Sync-specific configuration accessors. |
 | [credentials.py](credentials.py) | Client-side OAuth token acquisition and storage for siftd. |
 | [dateparse.py](dateparse.py) | Shared date parsing utilities for CLI filters and inline query fields. |
+| [errors.py](errors.py) | Exception taxonomy: the presentation contract for user-facing errors. |
 | [git.py](git.py) | Git repository utilities for workspace identity. |
 | [ids.py](ids.py) | ULID generation (inline, no dependency). |
 | [math.py](math.py) | Shared math utilities. |

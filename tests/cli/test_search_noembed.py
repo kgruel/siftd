@@ -257,20 +257,27 @@ def test_cmd_search_execute_error_paths(test_db, tmp_path, monkeypatch, capsys):
 
 def test_cmd_search_config_error_is_clean(test_db, tmp_path, monkeypatch, capsys):
     """A remote config failure (e.g. a revoked key) exits 1 with a clean error line, not a
-    traceback — EmbeddingConfigError isn't a RuntimeError, so it needs its own catch (F5')."""
+    traceback. Slice 5 removed cmd_search's local EmbeddingConfigError catch — the taxonomy
+    backstop in main() owns the rendering now, so this goes through the argparse boundary
+    (calling cmd_search directly would let the exception propagate, by design)."""
     from siftd.api import EmbeddingConfigError
+    from siftd.cli import main
 
     embed = tmp_path / "embed.db"
     embed.write_text("x")
     monkeypatch.setattr("siftd.embeddings.embeddings_available", lambda: True)
+    monkeypatch.setattr("siftd.cli.search.embeddings_db_path", lambda: embed)
     monkeypatch.setattr(
         "siftd.api.dispatch.execute",
         lambda op: (_ for _ in ()).throw(
             EmbeddingConfigError("remote:openai: authentication failed (HTTP 401); check embed.api_key")
         ),
     )
-    assert cmd_search(make_args(query=["x"], db=str(test_db), embed_db=str(embed))) == 1
-    assert "authentication failed" in capsys.readouterr().err
+    rc = main(["--db", str(test_db), "search", "x"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "authentication failed" in err
+    assert "Traceback" not in err
 
 
 def test_cmd_search_threshold_and_first_json_empty(test_db, tmp_path, monkeypatch):

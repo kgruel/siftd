@@ -29,6 +29,8 @@ from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from urllib.parse import urlencode, urlparse
 
+from siftd.errors import SiftdError
+
 logger = logging.getLogger(__name__)
 
 # Refresh proactively this many seconds before the token's true expiry, to
@@ -38,19 +40,28 @@ _EXPIRY_SKEW_S = 120
 _DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 
 
-class AuthLoginError(Exception):
+class AuthLoginError(SiftdError):
     """Raised when interactive token acquisition (`siftd auth login`) fails.
 
     Only raised on the interactive paths (device_login / explicit refresh).
     resolve_live_bearer never raises — it returns None instead.
+
+    Joins SiftdError directly rather than sharing a family base with
+    api/auth.py's AuthError: credentials.py sits in the "utilities" layer
+    (tests/architecture/test_imports.py) and cannot import the "api" layer,
+    so ``AuthLoginError(AuthError)`` would be a layering violation. Each
+    member of the auth trio joins the root independently instead.
     """
 
 
-class TokenRefError(ValueError):
+class TokenRefError(SiftdError):
     """Raised when an ``env:``/``file:`` token reference cannot be resolved.
 
     Callers adapt this to their own contract: the sync path wraps it in
     ``AuthError``; the delegation client swallows it and falls through to None.
+
+    Joins SiftdError directly rather than AuthError — see AuthLoginError's
+    docstring for why.
     """
 
 

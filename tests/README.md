@@ -94,10 +94,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 184 | 3168 |
+| `tests/` | 185 | 3174 |
 | `tests/adapters/` | 19 | 161 |
-| `tests/architecture/` | 4 | 46 |
-| `tests/cli/` | 27 | 600 |
+| `tests/architecture/` | 5 | 50 |
+| `tests/cli/` | 28 | 608 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -166,6 +166,7 @@ docstring so its row is meaningful.
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 3 | AC test for ST-3b: FTS rebuild on push. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
+| [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
 | [test_git.py](test_git.py) | 35 | Tests for git utilities and workspace identity. |
 | [test_gutter.py](test_gutter.py) | 10 | Tests for siftd.output.gutter — the grain-gutter taxonomy + the rail it draws. |
@@ -174,7 +175,7 @@ docstring so its row is meaningful.
 | [test_html_sessions.py](test_html_sessions.py) | 7 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
 | [test_html_tags.py](test_html_tags.py) | 3 | Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags). |
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
-| [test_id_resolution.py](test_id_resolution.py) | 25 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
+| [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 4 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
@@ -233,7 +234,7 @@ docstring so its row is meaningful.
 | [test_search_serializer_drift.py](test_search_serializer_drift.py) | 4 | Anti-drift tests for search dataclass serialization. |
 | [test_serialization_ingest_backfill.py](test_serialization_ingest_backfill.py) | 3 | Anti-drift tests for ingest/backfill result serialization. |
 | [test_serialization_tags.py](test_serialization_tags.py) | 3 | — |
-| [test_serve.py](test_serve.py) | 47 | Tests for siftd serve — HTTP team sync server. |
+| [test_serve.py](test_serve.py) | 48 | Tests for siftd serve — HTTP team sync server. |
 | [test_serve_app_edges.py](test_serve_app_edges.py) | 3 | — |
 | [test_serve_auth_edges.py](test_serve_auth_edges.py) | 45 | — |
 | [test_serve_auth_focus.py](test_serve_auth_focus.py) | 1 | — |
@@ -319,6 +320,7 @@ docstring so its row is meaningful.
 |------|-------|---------|
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
+| [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 
@@ -327,6 +329,7 @@ docstring so its row is meaningful.
 | File | Tests | Summary |
 |------|-------|---------|
 | [cli/test_cli.py](cli/test_cli.py) | 30 | CLI smoke tests — verify commands parse and run without import errors. |
+| [cli/test_cli_errors.py](cli/test_cli_errors.py) | 8 | The main() taxonomy backstop: SiftdError renders clean, never a traceback. |
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |

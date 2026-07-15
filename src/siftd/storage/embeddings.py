@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.storage.sql_helpers import batched_execute
 
@@ -581,10 +582,8 @@ def _decode_embedding_numpy(blob: bytes) -> np.ndarray:
     return np.frombuffer(blob, dtype=np.float32)
 
 
-class IndexCompatError(Exception):
+class IndexCompatError(DriftError):
     """Raised when index metadata is incompatible with current backend configuration."""
-
-    pass
 
 
 def validate_index_compat(

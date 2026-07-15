@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from siftd.errors import DriftError
+
 
 @dataclass(frozen=True)
 class EmbedStatus:
@@ -94,8 +96,10 @@ def embeddings_available() -> bool:
     return embedding_status().usable
 
 
-class EmbeddingsNotAvailable(Exception):
+class EmbeddingsNotAvailable(DriftError):
     """Raised when embedding functionality is requested but no backend is available."""
+
+    http_status = 501
 
     def __init__(self, operation: str = "This operation", reason: str | None = None):
         self.operation = operation

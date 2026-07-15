@@ -98,9 +98,11 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api.conversations import AmbiguousPrefix, AnchorError, QueryError
+    from siftd.api import SchemaUpgradeRequiredError
+    from siftd.api.conversations import AmbiguousPrefix
     from siftd.api.dispatch import Operation, execute, render
     from siftd.api.op_spec import spec_for_path
+    from siftd.errors import SiftdError
     from siftd.serialization import serve_fmt
 
     try:
@@ -154,12 +156,6 @@ def _dispatch(
             "dispatch file-not-found on %s %s", method, path,
         )
         return Response(content={"error": "resource not found"}, status_code=404)
-    except AnchorError as e:
-        # AnchorOutOfRange / AnchorNotFound / AnchorPhraseInvalid are all
-        # user-input errors (bad --at-turn N, --around PHRASE). The local CLI
-        # treats them as exit 2 with a friendly message; the wire equivalent
-        # is 400, not 500.
-        return Response(content={"error": str(e)}, status_code=400)
     except AmbiguousPrefix as e:
         # Preserve the structured shape so an HTTP agent can programmatically
         # pick a longer prefix — mirrors `siftd id --json`. Must precede the
@@ -174,18 +170,30 @@ def _dispatch(
             },
             status_code=400,
         )
-    except (ValueError, KeyError, QueryError) as e:
+    except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
-    except Exception as e:
-        if e.__class__.__name__ == "EmbeddingsNotAvailable":
-            return Response(content={"error": str(e)}, status_code=501)
-        if e.__class__.__name__ == "EmbeddingConfigError":
-            # A configured remote backend is present but unusable (e.g. a revoked key).
-            # Not degradable (config errors never fall back to FTS) and not a generic 500 —
-            # report it honestly as an unavailable dependency. Matched by name so serve
-            # doesn't import siftd.embeddings (tests/architecture/test_imports.py).
-            return Response(content={"error": str(e)}, status_code=503)
-
+    except SchemaUpgradeRequiredError:
+        # Its message embeds the server's absolute database path (correct for
+        # the CLI, whose operator owns the filesystem) — never disclose that on
+        # the wire. Mirrors the FileNotFoundError handler above; the full
+        # message goes to the server log.
+        logging.getLogger("siftd.serve").exception(
+            "dispatch schema-upgrade-required on %s %s", method, path,
+        )
+        return Response(
+            content={"error": "server database schema requires upgrade"},
+            status_code=503,
+        )
+    except SiftdError as e:
+        # Taxonomy backstop: user-input errors (the AnchorError family,
+        # QueryError — AmbiguousPrefix is caught above for its richer
+        # structured body) and embeddings/state-drift errors
+        # (EmbeddingsNotAvailable → 501, EmbeddingConfigError/
+        # IncrementalCompatError/IndexCompatError → 503) carry their wire
+        # status on the class, so serve maps them without importing
+        # siftd.embeddings (tests/architecture/test_imports.py).
+        return Response(content={"error": str(e)}, status_code=e.http_status)
+    except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
             content={"error": f"{path} failed"},

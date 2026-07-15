@@ -14,12 +14,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.domain import Harness, Source
+from siftd.errors import SiftdError
 
 if TYPE_CHECKING:
     from siftd.domain.peek import PeekExchange, PeekScanResult
 
 
-class AdapterParseError(RuntimeError):
+class AdapterParseError(SiftdError):
     """Raised when a source matches an adapter but cannot be parsed safely."""
 
 

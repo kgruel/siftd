@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from siftd.errors import DriftError
+
 if TYPE_CHECKING:
     from siftd.embeddings.remote import RemoteBackend
 
@@ -30,10 +32,15 @@ class EmbeddingBackend(Protocol):
 
 
 class EmbeddingError(Exception):
-    """Base for embedding backend failures."""
+    """Domain grouping base for embedding backend failures — deliberately plain
+    (not a taxonomy member). ``EmbeddingTransientError`` subclasses it and must
+    stay outside ``SiftdError`` (degrade-to-fts control flow); if this class
+    joined ``DriftError`` directly, the transient subclass would inherit that
+    membership transitively. ``EmbeddingConfigError`` carries both bases
+    instead, so existing ``except EmbeddingError`` catches keep working."""
 
 
-class EmbeddingConfigError(EmbeddingError):
+class EmbeddingConfigError(DriftError, EmbeddingError):
     """[embed] config is present but unusable — bad backend name, unresolvable key ref,
     or a preset missing a required model/base_url. Never retried, never degraded."""
 

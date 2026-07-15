@@ -125,8 +125,15 @@ def test_embed_no_backend_configured(main_db, tmp_path, monkeypatch, capsys):
 
 
 def test_embed_v1_index_rebuild_hint(main_db, tmp_path, capsys):
-    """An incremental build over a v1 index errors, pointing at --rebuild."""
+    """An incremental build over a v1 index errors, pointing at --rebuild.
+
+    Goes through main(argv): slice 5 removed cmd_embed's local DriftError
+    catch, so IncrementalCompatError's rendering (clean line, exit 1) is
+    owned by the taxonomy backstop — calling cmd_embed directly would let
+    it propagate, by design."""
     import sqlite3
+
+    from siftd.cli import main
 
     edb = tmp_path / "embed.db"
     cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
@@ -137,9 +144,11 @@ def test_embed_v1_index_rebuild_hint(main_db, tmp_path, capsys):
     raw.commit()
     raw.close()
 
-    rc = cmd_embed(make_args(db=str(main_db), embed_db=str(edb)))
+    rc = main(["--db", str(main_db), "embed", "--embed-db", str(edb)])
     assert rc == 1
-    assert "siftd embed --rebuild" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "siftd embed --rebuild" in err
+    assert "Traceback" not in err
 
 
 def test_embed_first_build_surfaces_egress_notice(main_db, tmp_path, capsys, monkeypatch):

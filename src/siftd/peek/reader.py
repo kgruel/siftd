@@ -9,6 +9,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters
+from siftd.errors import UserInputError
 from siftd.peek.scanner import DiscoveredFile, _discover_files, _scan_session_file
 from siftd.peek.types import SessionDetail
 from siftd.safecall import parse_json
@@ -16,7 +17,7 @@ from siftd.safecall import parse_json
 logger = logging.getLogger(__name__)
 
 
-class AmbiguousSessionError(Exception):
+class AmbiguousSessionError(UserInputError):
     """Raised when a session ID prefix matches multiple files."""
 
     def __init__(self, prefix: str, matches: list[Path]):

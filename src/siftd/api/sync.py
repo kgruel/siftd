@@ -37,6 +37,7 @@ from siftd.domain.sync import (
     SyncStatus,
     parse_sync_header,
 )
+from siftd.errors import DriftError, SiftdError
 from siftd.safecall import parse_json
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ SYNC_HTTP_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _WINDOW_SAFETY = 0.8  # size headroom: target each window at 80% of the cap
 
 
-class SyncError(Exception):
+class SyncError(SiftdError):
     """Raised when a sync operation fails."""
 
 
@@ -141,7 +142,10 @@ def _receive_or_sync_error(
         receive_database(source, target, rebuild_fts=rebuild_fts)
     except ValueError as e:
         raise SyncError(f"Pulled database is invalid: {e}") from e
-    except (sqlite3.Error, RuntimeError, OSError) as e:
+    except (sqlite3.Error, RuntimeError, OSError, DriftError) as e:
+        # DriftError: PreflightError/SchemaUpgradeRequiredError shed their
+        # RuntimeError base (slice 5); keep wrapping them so callers get the
+        # promised SyncError with merge context.
         raise SyncError(f"{context}: {e}") from e
 
 
@@ -648,7 +652,9 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
             source_path=slice_path,
             rebuild_fts=False,
         )
-    except (RuntimeError, FileNotFoundError) as e:
+    except (RuntimeError, FileNotFoundError, DriftError) as e:
+        # DriftError: see sync_pull_merge — preserves the SyncError wrap for
+        # the shed classes.
         raise SyncError(f"Local merge failed: {e}") from e
 
     return True

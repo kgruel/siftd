@@ -7,6 +7,7 @@ Usage:
     python scripts/gen_docs.py schema          # Generate schema reference only
     python scripts/gen_docs.py cli             # Generate CLI reference only
     python scripts/gen_docs.py config          # Generate config reference only
+    python scripts/gen_docs.py exceptions      # Generate exception-taxonomy reference only
     python scripts/gen_docs.py readmes         # Fill generated spans in per-folder READMEs
     python scripts/gen_docs.py readmes --list  # List managed README paths (one per line)
     python scripts/gen_docs.py readmes --bootstrap  # Create missing managed READMEs
@@ -784,6 +785,175 @@ def generate_config_docs() -> str:
 
 
 # =============================================================================
+# Exceptions reference (taxonomy map)
+# =============================================================================
+#
+# The classifier and the carve-out policy live in the architecture ratchet
+# (tests/architecture/test_exceptions.py) — the test enforces them, this
+# generator renders them. Loading the test module keeps one source of truth;
+# duplicating the AST closure here would drift.
+
+_EXC_RATCHET = REPO_ROOT / "tests" / "architecture" / "test_exceptions.py"
+
+# Presentation contract per taxonomy base (the backstop in cli/__init__.py
+# main() and serve _dispatch read these off the classes; the doc states them).
+_BRANCH_PRESENTATION = {
+    "SiftdError": ("1", "500"),
+    "UserInputError": ("2", "400"),
+    "DriftError": ("1", "503"),
+}
+
+
+def _load_exception_ratchet():
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_exc_ratchet", _EXC_RATCHET)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _class_docstring_first_line(rel: str, name: str) -> str:
+    """First docstring sentence of class `name` in src/siftd/<rel> (AST, no import).
+
+    First *sentence*, not first line — several docstrings wrap their opening
+    sentence across lines, and a hard line cut truncates mid-thought."""
+    tree = ast.parse((REPO_ROOT / "src" / "siftd" / rel).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            doc = ast.get_docstring(node) or ""
+            paragraph = " ".join(doc.split("\n\n")[0].split())
+            return paragraph.split(". ")[0].rstrip(".")
+    return ""
+
+
+def _class_http_status_override(rel: str, name: str) -> str | None:
+    """A literal `http_status = N` assignment in the class body, if any."""
+    tree = ast.parse((REPO_ROOT / "src" / "siftd" / rel).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == name:
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, ast.Assign)
+                    and any(
+                        isinstance(t, ast.Name) and t.id == "http_status"
+                        for t in stmt.targets
+                    )
+                    and isinstance(stmt.value, ast.Constant)
+                ):
+                    return str(stmt.value.value)
+    return None
+
+
+def generate_exceptions_docs() -> str:
+    """Generate the exception-taxonomy reference from the ratchet's classifier."""
+    ratchet = _load_exception_ratchet()
+    classes = ratchet._collect_classes()
+    _, members = ratchet._exception_classes(classes)
+
+    # Parent lookup: a member hangs off whichever base is a taxonomy base or
+    # another member; module-level order keeps siblings stable.
+    member_names = {name for _, name in members}
+    children: dict[str, list[tuple[str, str]]] = {}
+    for rel, name in sorted(members):
+        parent = next(
+            (
+                b
+                for b in classes[(rel, name)]
+                if b in ratchet.TAXONOMY_BASES or b in member_names
+            ),
+            "SiftdError",
+        )
+        children.setdefault(parent, []).append((rel, name))
+
+    def tree_lines(parent: str, prefix: str = "") -> list[str]:
+        rows = children.get(parent, [])
+        out = []
+        for i, (rel, name) in enumerate(rows):
+            last = i == len(rows) - 1
+            branch = "└── " if last else "├── "
+            override = _class_http_status_override(rel, name)
+            suffix = f"  (HTTP {override})" if override else ""
+            out.append(f"{prefix}{branch}{name}{suffix} — {rel}")
+            out.extend(tree_lines(name, prefix + ("    " if last else "│   ")))
+        return out
+
+    lines = [
+        "# Exception Reference",
+        "",
+        "_Auto-generated from `src/siftd/` and `tests/architecture/test_exceptions.py`._",
+        "",
+        "The taxonomy bases live in `src/siftd/errors.py`; concrete exceptions stay in",
+        "the module that owns their domain and join a branch by inheritance. The",
+        "contract: `str(e)` is a complete, user-actionable message built by the class",
+        "from structured context — raise sites pass data, not prose. Boundaries catch",
+        "the bases: the CLI backstop (`cli/__init__.py main()`) renders the message and",
+        "exits, and serve dispatch maps `e.http_status` to a response — so a new",
+        "exception that joins the taxonomy is handled everywhere without touching a",
+        "catch site.",
+        "",
+        "## Taxonomy map",
+        "",
+        "```",
+        "SiftdError (exit 1, HTTP 500) — errors.py",
+    ]
+    # Branches first (declared order), then direct root joiners.
+    for branch_name in ("UserInputError", "DriftError"):
+        exit_code, http = _BRANCH_PRESENTATION[branch_name]
+        is_last_branch = branch_name == "DriftError" and "SiftdError" not in children
+        marker = "├── " if not is_last_branch else "└── "
+        lines.append(f"{marker}{branch_name} (exit {exit_code}, HTTP {http}) — errors.py")
+        cont = "│   " if not is_last_branch else "    "
+        lines.extend(tree_lines(branch_name, cont))
+    lines.extend(tree_lines("SiftdError"))
+    lines.append("```")
+    lines.extend([
+        "",
+        "## Members",
+        "",
+        "| Class | Module | Branch | Purpose |",
+        "|-------|--------|--------|---------|",
+    ])
+
+    def flat(parent: str, branch_label: str):
+        for rel, name in children.get(parent, []):
+            yield rel, name, branch_label
+            yield from flat(name, branch_label)
+
+    rows = list(flat("UserInputError", "UserInputError"))
+    rows += list(flat("DriftError", "DriftError"))
+    rows += list(flat("SiftdError", "SiftdError (root)"))
+    for rel, name, branch_label in rows:
+        purpose = _class_docstring_first_line(rel, name)
+        lines.append(f"| `{name}` | `{rel}` | {branch_label} | {purpose} |")
+
+    lines.extend([
+        "",
+        "## Outside the taxonomy (permanent carve-outs)",
+        "",
+        "These are excluded by design and enforced by the ratchet — a traceback or a",
+        "structural handling path is the *correct* behavior for them, not a bug:",
+        "",
+        "| Class | Module | Why it stays out |",
+        "|-------|--------|------------------|",
+    ])
+    for (rel, name), reason in sorted(ratchet.PERMANENT_CARVEOUTS.items()):
+        lines.append(f"| `{name}` | `{rel}` | {reason} |")
+
+    lines.extend([
+        "",
+        "## Enforcement",
+        "",
+        "`tests/architecture/test_exceptions.py` is the ratchet: every exception",
+        "defined under `src/siftd/` must join the taxonomy or sit on an explicit",
+        "allowlist, and classes merely *named* like exceptions must classify as one.",
+        "A new exception that joins nothing fails CI with a pointer here.",
+        "",
+    ])
+    return "\n".join(lines)
+
+
+# =============================================================================
 # README Generation (per-folder navigable docs)
 # =============================================================================
 #
@@ -1261,7 +1431,7 @@ def generate_readmes(*, bootstrap: bool = False) -> None:
 # Main
 # =============================================================================
 
-DEFAULT_TARGETS = ["cli", "api", "schema", "config", "readmes"]
+DEFAULT_TARGETS = ["cli", "api", "schema", "config", "exceptions", "readmes"]
 
 
 def run(targets: list[str], *, strict: bool = False, bootstrap: bool = False) -> int:
@@ -1297,6 +1467,11 @@ def run(targets: list[str], *, strict: bool = False, bootstrap: bool = False) ->
         elif target == "config":
             out_path = DOCS_DIR / "config.md"
             out_path.write_text(generate_config_docs())
+            print(f"Generated: {out_path}")
+
+        elif target == "exceptions":
+            out_path = DOCS_DIR / "exceptions.md"
+            out_path.write_text(generate_exceptions_docs())
             print(f"Generated: {out_path}")
 
         elif target == "readmes":

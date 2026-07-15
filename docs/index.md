@@ -20,3 +20,5 @@ How siftd works under the hood.
 - [CLI](reference/cli.md) — all commands and flags
 - [API](reference/api.md) — library usage
 - [Schema](reference/schema.md) — database tables and columns
+- [Config](reference/config.md) — all config keys and defaults
+- [Exceptions](reference/exceptions.md) — the error taxonomy, wire statuses, exit codes

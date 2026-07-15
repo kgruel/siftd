@@ -40,8 +40,6 @@ def cmd_embed(args) -> int:
         return 1
 
     from siftd.api import (
-        EmbeddingConfigError,
-        IncrementalCompatError,
         build_index,
         egress_notice_pending,
         mark_egress_notified,
@@ -63,12 +61,10 @@ def cmd_embed(args) -> int:
     except FileNotFoundError as e:
         status.error(str(e), hint="Run 'siftd ingest' to create it.")
         return 1
-    except IncrementalCompatError as e:
-        status.error(str(e))
-        return 1
-    except (RuntimeError, ValueError, EmbeddingConfigError) as e:
-        # EmbeddingConfigError (e.g. a revoked key mid-embed) is not a RuntimeError;
-        # catch it for a clean error line rather than a traceback.
+    except (RuntimeError, ValueError) as e:
+        # Builtin raises from the build (backend/network wrappers). Taxonomy
+        # errors (IncrementalCompatError, EmbeddingConfigError) escape to the
+        # main() backstop, which renders them identically.
         status.error(str(e))
         return 1
 

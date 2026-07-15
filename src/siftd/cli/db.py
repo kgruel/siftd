@@ -18,6 +18,7 @@ from pathlib import Path
 
 from siftd.cli._common import resolve_db
 from siftd.dateparse import parse_date
+from siftd.errors import SiftdError
 from siftd.output import fmt_count, status
 
 
@@ -433,7 +434,10 @@ def cmd_db_merge(args) -> int:
             replace=replace,
             preflight=not args.no_preflight,
         )
-    except RuntimeError as e:
+    except (RuntimeError, SiftdError) as e:
+        # SiftdError: PreflightError/SchemaUpgradeRequiredError shed their
+        # RuntimeError base; catch locally to keep the "Merge failed:" context
+        # the backstop wouldn't add.
         status.error(f"Merge failed: {e}")
         return 1
 
@@ -583,10 +587,11 @@ def cmd_db_receive(args) -> int:
         print(json.dumps(result))
         return 0
 
-    except ValueError as e:
-        print(json.dumps({"error": str(e)}), file=sys.stderr)
-        return 1
-    except RuntimeError as e:
+    except (ValueError, RuntimeError, SiftdError) as e:
+        # SiftdError keeps taxonomy members that shed their built-in bases
+        # (PreflightError, SchemaUpgradeRequiredError) inside the JSON error
+        # envelope this wire-facing command owes machine consumers — the
+        # human-format backstop in main() must not see them.
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
     except sqlite3.OperationalError as e:

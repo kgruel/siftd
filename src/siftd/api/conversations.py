@@ -12,6 +12,7 @@ from typing import ClassVar
 from painted import Fidelity
 
 from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
+from siftd.errors import UserInputError
 from siftd.paths import db_path as default_db_path
 from siftd.safecall import parse_json
 from siftd.safecall import read_text as _safe_read_text
@@ -44,7 +45,7 @@ from siftd.storage.sqlite import open_database
 _logger = logging.getLogger(__name__)
 
 
-class AnchorError(Exception):
+class AnchorError(UserInputError):
     """Raised when an anchor cannot be resolved during get_conversation."""
 
 
@@ -72,7 +73,7 @@ class AnchorPhraseInvalid(AnchorError):
         super().__init__(f"invalid FTS5 phrase: {phrase!r}")
 
 
-class AmbiguousPrefix(Exception):
+class AmbiguousPrefix(UserInputError):
     """Prefix matches multiple targets — caller must use a longer prefix or full ID.
 
     ``candidate_kinds`` (when supplied) is parallel to ``matched_ids`` and labels
@@ -1328,7 +1329,7 @@ def list_query_files() -> list[QueryFile]:
     return [by_name[name] for name in sorted(by_name)]
 
 
-class QueryError(Exception):
+class QueryError(UserInputError):
     """Error running a SQL query file."""
 
     pass
