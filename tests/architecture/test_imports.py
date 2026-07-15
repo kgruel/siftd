@@ -87,6 +87,7 @@ MODULE_GROUPS: dict[str, str] = {
     "skill_gen": "utilities",
     "tool_query": "utilities",
     "dateparse": "utilities",
+    "errors": "utilities",
     "safecall": "utilities",
     "__init__": "api",
 }

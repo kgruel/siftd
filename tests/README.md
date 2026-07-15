@@ -96,8 +96,8 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 184 | 3168 |
 | `tests/adapters/` | 19 | 161 |
-| `tests/architecture/` | 4 | 46 |
-| `tests/cli/` | 27 | 600 |
+| `tests/architecture/` | 5 | 48 |
+| `tests/cli/` | 28 | 608 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -319,6 +319,7 @@ docstring so its row is meaningful.
 |------|-------|---------|
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
+| [architecture/test_exceptions.py](architecture/test_exceptions.py) | 2 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 
@@ -327,6 +328,7 @@ docstring so its row is meaningful.
 | File | Tests | Summary |
 |------|-------|---------|
 | [cli/test_cli.py](cli/test_cli.py) | 30 | CLI smoke tests — verify commands parse and run without import errors. |
+| [cli/test_cli_errors.py](cli/test_cli_errors.py) | 8 | The main() taxonomy backstop: SiftdError renders clean, never a traceback. |
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |

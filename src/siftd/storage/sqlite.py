@@ -17,6 +17,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from siftd.domain import Conversation
+from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
 from siftd.storage.attributes import set_attribute
@@ -52,8 +53,13 @@ MIGRATION_BUSY_TIMEOUT_MS = int(os.environ.get("SIFTD_MIGRATION_BUSY_TIMEOUT_MS"
 _logger = logging.getLogger(__name__)
 
 
-class SchemaUpgradeRequiredError(RuntimeError):
+class SchemaUpgradeRequiredError(RuntimeError, DriftError):
     """Raised on read-only open of a stale-schema DB that cannot be auto-upgraded.
+
+    The RuntimeError base is transitional: existing per-command catch tuples
+    net RuntimeError and must keep catching this until they are swept
+    (taxonomy slice 5); the DriftError base is what the CLI backstop and
+    serve mapping key on.
 
     The fix is to make the database file (and parent directory) writable so a
     subsequent open can apply the schema migration in-place, or to migrate a

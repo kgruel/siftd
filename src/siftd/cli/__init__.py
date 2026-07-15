@@ -4,7 +4,6 @@ import argparse
 import logging
 import sys
 
-from siftd.api import SchemaUpgradeRequiredError
 from siftd.cli._common import _get_version
 from siftd.cli.auth import build_auth_parser
 from siftd.cli.data import build_data_parser
@@ -23,6 +22,7 @@ from siftd.cli.sessions import build_sessions_parser
 from siftd.cli.show import build_show_parser
 from siftd.cli.tags import build_tags_parser
 from siftd.cli.upgrade import build_upgrade_parser
+from siftd.errors import SiftdError, UserInputError
 from siftd.paths import db_path
 
 
@@ -348,11 +348,14 @@ def main(argv=None) -> int:
     except KeyboardInterrupt:
         # Exit cleanly on Ctrl+C (130 = 128 + SIGINT)
         return 130
-    except SchemaUpgradeRequiredError as e:
-        # Auto-upgrade path can fire from any read-only subcommand. Catch here
-        # so users see the friendly message rather than a Python traceback.
+    except SiftdError as e:
+        # Taxonomy backstop (siftd/errors.py): any user-facing error can fire
+        # from any subcommand; render the message rather than a traceback.
+        # Commands still catch locally when they do something smarter than
+        # print-and-exit (degrade, continue a loop) — this net only sees what
+        # escapes them.
         status.error(str(e))
-        return 1
+        return 2 if isinstance(e, UserInputError) else 1
 
     # Post-command: passive update check (non-blocking)
     from siftd.cli.upgrade import maybe_print_notice, maybe_start_check
