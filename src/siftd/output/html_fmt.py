@@ -1092,7 +1092,7 @@ def _render_turn_blocks(
     interactive_tags: bool = False,
     tag_action_url: str = "",
     tag_suggest_url: str = "",
-    block_copy_url_base: str = "",
+    copy_url_base: str = "",
 ) -> tuple[list[str], list[str], int, Counter[str], list[dict]]:
     """Render exchanges as user/assistant ``.turn`` blocks — shared by the folio
     body and the search context slice (the unfold view).
@@ -1202,7 +1202,7 @@ def _render_turn_blocks(
                     interactive_tags=interactive_tags,
                     tag_action_url=tag_action_url,
                     tag_suggest_url=tag_suggest_url,
-                    block_copy_url_base=block_copy_url_base,
+                    copy_url_base=copy_url_base,
                 )
                 if trace else _FolioEmitter()
             )
@@ -1353,7 +1353,7 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         interactive_tags=body_interactive,
         tag_action_url=context.get("tag_action_url", ""),
         tag_suggest_url=context.get("tag_suggest_url", ""),
-        block_copy_url_base=context.get("block_copy_url_base", ""),
+        copy_url_base=context.get("copy_url_base", ""),
     )
 
     total_tokens = (

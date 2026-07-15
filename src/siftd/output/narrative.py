@@ -118,7 +118,7 @@ class HtmlEmitter:
         interactive_tags: bool = False,
         tag_action_url: str = "",
         tag_suggest_url: str = "",
-        block_copy_url_base: str = "",
+        copy_url_base: str = "",
     ) -> None:
         from html import escape
 
@@ -141,10 +141,10 @@ class HtmlEmitter:
         self._interactive_tags = interactive_tags
         self._tag_action_url = tag_action_url
         self._tag_suggest_url = tag_suggest_url
-        # Mount point of the raw-block route (serve knowledge, threaded like
-        # tag_action_url). Empty → no Copy button (CLI html export has no
+        # Mount point of the raw-text route (serve knowledge, threaded like
+        # tag_action_url). Empty → no Copy buttons (CLI html export has no
         # server to fetch from).
-        self._block_copy_url_base = block_copy_url_base
+        self._copy_url_base = copy_url_base
         # Optional Activity registry (the folio's chronological tool ledger).
         # When passed, each tool-call gets a folio-unique ``id="evt-N"`` anchor
         # and one record {id, name, target, status, turn} is appended — the
@@ -202,7 +202,9 @@ class HtmlEmitter:
         cls = " is-target" if event_id == self._target else ""
         return attrs, cls
 
-    def _tag_affordance(self, entity_type: str, target_id: str | None) -> str:
+    def _tag_affordance(
+        self, entity_type: str, target_id: str | None, *, copy_controls: str = "",
+    ) -> str:
         """Top-right hover-reveal tag menu for one taggable trace block, or "".
 
         Rendered only when interactive tagging is on and the block has a real
@@ -210,10 +212,12 @@ class HtmlEmitter:
         so the dropdown opens and stays open on click with no JS — the CSP's
         missing ``unsafe-eval`` never comes up. Its panel body is the same tag
         section reading mode uses (chips with × + add-input), so a mutation swaps
-        just the inner section and the open dropdown persists. The affordance is a
-        SIBLING of the block's ``<details>`` (never a child): a collapsed block
-        hides its non-summary children, so a child affordance would vanish when
-        the tool call is folded — and a sibling's clicks never toggle the block.
+        just the inner section and the open dropdown persists — ``copy_controls``
+        (see :meth:`_copy_button`) sit above it, outside the swap. The affordance
+        is a SIBLING of the block's ``<details>`` (never a child): a collapsed
+        block hides its non-summary children, so a child affordance would vanish
+        when the tool call is folded — and a sibling's clicks never toggle the
+        block.
         """
         if not self._interactive_tags or not target_id:
             return ""
@@ -230,23 +234,26 @@ class HtmlEmitter:
             entity_type=entity_type,
             section_class="tag-section tag-section--elem",
         )
-        # Block panels also carry the copy control: fetch the stored block text
-        # verbatim (the raw-block route) and write it to the clipboard — the
-        # rendered DOM is not a faithful copy source (markdown re-rendering,
-        # presenter line caps). enhance.js owns the click via data-copy-src.
-        copy_btn = ""
-        if entity_type == "block" and self._block_copy_url_base:
-            copy_btn = (
-                f'<button type="button" class="tag-menu__copy"'
-                f' data-copy-src="{self._block_copy_url_base}/{self._escape(target_id)}/raw"'
-                '>Copy text</button>'
-            )
         return (
             '<details class="tag-menu">'
             f'<summary class="tag-menu__toggle" title="Tag this {self._escape(entity_type)}"'
             ' aria-label="Tag">+</summary>'
-            f'<div class="tag-menu__panel">{copy_btn}{section}</div>'
+            f'<div class="tag-menu__panel">{copy_controls}{section}</div>'
             "</details>"
+        )
+
+    def _copy_button(self, kind: str, target_id: str | None, label: str) -> str:
+        """One copy control for the panel, or "": fetches the stored payload
+        verbatim from the raw-text route (``{base}/{kind}/{id}``) and writes it
+        to the clipboard — the rendered DOM is not a faithful copy source
+        (markdown re-rendering, presenter line caps). enhance.js owns the
+        click via ``data-copy-src``. ``kind`` is api's COPY_TEXT_KINDS word."""
+        if not self._copy_url_base or not target_id:
+            return ""
+        return (
+            f'<button type="button" class="tag-menu__copy"'
+            f' data-copy-src="{self._copy_url_base}/{kind}/{self._escape(target_id)}"'
+            f">{self._escape(label)}</button>"
         )
 
     def _wrap_block(self, block_html: str, block_id: str | None) -> str:
@@ -260,7 +267,10 @@ class HtmlEmitter:
         path with a real block id — CLI html export and the search-context
         slice stay byte-for-byte unchanged.
         """
-        affordance = self._tag_affordance("block", block_id)
+        affordance = self._tag_affordance(
+            "block", block_id,
+            copy_controls=self._copy_button("block", block_id, "Copy text"),
+        )
         if not affordance:
             return block_html
         return (
@@ -458,8 +468,17 @@ class HtmlEmitter:
 
         # A tagged run of identical tools collapses to one row with no single id
         # (tool_call_id is None then) — no affordance on an aggregate. Otherwise
-        # wrap the block in a positioned container carrying the top-right tag menu.
-        affordance = self._tag_affordance("tool_call", tool_call_id)
+        # wrap the block in a positioned container carrying the top-right tag
+        # menu. Tool panels get copy controls for the payloads the panel shows:
+        # input and result copy from the STORE (presenters cap lines in the DOM),
+        # each offered only when that payload is actually present.
+        affordance = self._tag_affordance(
+            "tool_call", tool_call_id,
+            copy_controls=(
+                (self._copy_button("tool_input", tool_call_id, "Copy input") if raw_input else "")
+                + (self._copy_button("tool_result", tool_call_id, "Copy result") if raw_result else "")
+            ),
+        )
         if affordance:
             block = "\n".join(parts)
             self.parts.append(

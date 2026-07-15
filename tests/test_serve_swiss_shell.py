@@ -577,22 +577,39 @@ def test_element_tag_post_is_owner_scoped_404_not_403(tmp_path):
     assert r.status_code == 404
 
 
-def test_trace_block_panel_carries_copy_button(ctx):
-    """Slice 2: a block panel offers the copy control, pointing at the raw-block
-    route via data-copy-src (enhance.js fetches + clipboards it). Only block
-    panels get it — tool/run menus tag events, which have no single raw text."""
+def test_trace_panels_carry_copy_controls(ctx):
+    """Slice 2: block panels offer "Copy text" and tool panels offer
+    "Copy input"/"Copy result", all pointing at the raw-text route via
+    data-copy-src (enhance.js fetches + clipboards the stored payload). Run
+    menus get none — a response run has no single raw text."""
     import re
 
     client, cid = ctx
     trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
     assert 'class="tag-menu__copy"' in trace
-    m = re.search(r'data-copy-src="(/block/[^"]+/raw)"', trace)
-    assert m, "copy button should target the raw-block route"
+    for kind in ("block", "tool_input", "tool_result"):
+        m = re.search(rf'data-copy-src="(/raw/{kind}/[^"]+)"', trace)
+        assert m, f"expected a {kind} copy control in the trace"
+        r = client.get(m.group(1))
+        assert r.status_code == 200, f"{kind} copy URL should serve"
+        assert r.headers["content-type"].startswith("text/plain")
 
-    # The advertised URL actually serves the stored text.
-    r = client.get(m.group(1))
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/plain")
+
+def test_raw_tool_payloads_are_verbatim(ctx):
+    """The tool copy controls serve the STORED input/result payloads keyed by
+    the tool_call event ULID — not the presenter-shaped DOM forms."""
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    tool_id = re.search(r'data-copy-src="/raw/tool_result/([^"]+)"', trace).group(1)
+
+    r_in = client.get(f"/raw/tool_input/{tool_id}")
+    r_out = client.get(f"/raw/tool_result/{tool_id}")
+    assert r_in.text == '{"file_path": "x.py"}'      # _make_db's stored input
+    assert r_out.text == '{"text": "file body"}'     # _make_db's stored result
+    # Unknown kinds are 404 (clamped vocabulary), same shape as unknown ids.
+    assert client.get(f"/raw/bogus/{tool_id}").status_code == 404
 
 
 def test_block_raw_returns_verbatim_extracted_text(tmp_path):
@@ -616,10 +633,10 @@ def test_block_raw_returns_verbatim_extracted_text(tmp_path):
         conn.close()
 
     with _hx_client(create_app(db_path=db, auth_config=None)) as client:
-        r = client.get(f"/block/{block_id}/raw")
+        r = client.get(f"/raw/block/{block_id}")
         assert r.status_code == 200
         assert r.text == long_text                      # verbatim, unabridged
-        assert client.get("/block/01UNKNOWNBLOCKID/raw").status_code == 404
+        assert client.get("/raw/block/01UNKNOWNBLOCKID").status_code == 404
 
 
 def test_block_raw_is_owner_scoped_404_not_403(tmp_path):
@@ -658,7 +675,7 @@ def test_block_raw_is_owner_scoped_404_not_403(tmp_path):
     auth = {"static_token": "s3cret", "identity": "alice"}
     with _hx_client(create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
         r = client.get(
-            f"/block/{bob_block}/raw", headers={"Authorization": "Bearer s3cret"},
+            f"/raw/block/{bob_block}", headers={"Authorization": "Bearer s3cret"},
         )
     assert r.status_code == 404
     assert "bobs secret" not in r.text

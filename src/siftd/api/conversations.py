@@ -1009,53 +1009,86 @@ def _fetch_conversation_block_tags(
     return out
 
 
-def get_block_text(
-    block_id: str,
+# The copy-source vocabulary of the trace surface: a content block's own text,
+# or one of a tool call's two payloads. Each kind names its resolver arm and
+# its storage read; the raw-text route clamps to this tuple.
+COPY_TEXT_KINDS = ("block", "tool_input", "tool_result")
+
+
+def get_copy_text(
+    kind: str,
+    target_id: str,
     *,
     db_path: Path | None = None,
     owner: str | None = None,
 ) -> str | None:
-    """Verbatim text of one content block (event_content ULID), full fidelity.
+    """Verbatim text of one copyable trace element, full fidelity.
 
-    The copy source for the trace block surface: the rendered trace is not a
-    faithful copy source (markdown re-rendering, presenter line caps), so copy
-    reads the store. Extraction matches ``_build_narrative``'s per-type
-    extractors — what copies is what the trace shows, unabridged; a block type
-    without an extractor returns its stored content string as-is.
+    The copy source for the trace surface: the rendered trace is not a
+    faithful copy source (markdown re-rendering, presenter line caps), so
+    copy reads the store. ``kind`` picks the payload:
 
-    Owner-scoped through the owning event's conversation (the resolver's
-    block arm): an unresolvable or foreign block is ``None`` — 404-shaped,
-    existence not leaked.
+    - ``block`` — a content block (event_content ULID); extraction matches
+      ``_build_narrative``'s per-type extractors, so what copies is what the
+      trace shows, unabridged. A block type without an extractor returns its
+      stored content string as-is.
+    - ``tool_input`` / ``tool_result`` — a tool call's stored input string /
+      result blob, keyed by the tool_call event ULID (the same address the
+      tool panel tags). Empty payloads are ``None``.
+
+    Owner-scoped through the owning conversation via the resolver's block /
+    tool_call arms: an unresolvable, foreign, or unknown-kind target is
+    ``None`` — 404-shaped, existence not leaked.
 
     Raises:
-        AmbiguousPrefix: If ``block_id`` is a prefix matching several blocks.
-            The web affordance always sends full ULIDs; this surfaces only to
-            programmatic callers.
+        AmbiguousPrefix: If ``target_id`` is a prefix matching several
+            targets. The web affordance always sends full ULIDs; this
+            surfaces only to programmatic callers.
     """
+    if kind not in COPY_TEXT_KINDS:
+        return None
     db = db_path or default_db_path()
     if not db.exists():
         return None
 
     conn = open_database(db, read_only=True)
     try:
-        resolved = resolve_entity_id(conn, "block", block_id, owner=owner)
+        if kind == "block":
+            resolved = resolve_entity_id(conn, "block", target_id, owner=owner)
+            if not resolved:
+                return None
+            row = conn.execute(
+                "SELECT block_type, content FROM event_content WHERE id = ?",
+                (resolved,),
+            ).fetchone()
+            if row is None:
+                return None
+            block_type = row["block_type"]
+            raw = row["content"] or ""
+            if block_type == "text":
+                return _extract_text(raw)
+            if block_type == "thinking":
+                return _extract_thinking(raw)
+            if block_type in ("tool_result", "tool_output"):
+                return _extract_tool_result(raw)
+            return raw
+
+        resolved = resolve_entity_id(conn, "tool_call", target_id, owner=owner)
         if not resolved:
             return None
+        if kind == "tool_input":
+            row = conn.execute(
+                "SELECT input FROM event_tool_call WHERE event_id = ?",
+                (resolved,),
+            ).fetchone()
+            return row["input"] if row and row["input"] else None
         row = conn.execute(
-            "SELECT block_type, content FROM event_content WHERE id = ?",
+            "SELECT cb.content AS result FROM event_tool_call etc "
+            "LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash "
+            "WHERE etc.event_id = ?",
             (resolved,),
         ).fetchone()
-        if row is None:
-            return None
-        block_type = row["block_type"]
-        raw = row["content"] or ""
-        if block_type == "text":
-            return _extract_text(raw)
-        if block_type == "thinking":
-            return _extract_thinking(raw)
-        if block_type in ("tool_result", "tool_output"):
-            return _extract_tool_result(raw)
-        return raw
+        return row["result"] if row and row["result"] else None
     finally:
         conn.close()
 

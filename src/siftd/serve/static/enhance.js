@@ -442,11 +442,12 @@
     a.setAttribute('hx-push-url', rest ? location.pathname + location.search : '/?view=' + view);
   }
 
-  // --- block copy (data-copy-src) --------------------------------------------
-  // Copy buttons in trace block panels fetch the STORED block text from the
-  // raw-block route and write it to the clipboard — the rendered DOM is not a
-  // faithful copy source (markdown re-rendering, presenter line caps). One
-  // delegated listener; buttons arrive and leave with htmx swaps for free.
+  // --- trace copy (data-copy-src) --------------------------------------------
+  // Copy buttons in trace panels (block text, tool input/result) fetch the
+  // STORED payload from the raw-text route and write it to the clipboard — the
+  // rendered DOM is not a faithful copy source (markdown re-rendering,
+  // presenter line caps). One delegated listener; buttons arrive and leave
+  // with htmx swaps for free.
   // Auth rides whatever bearer auth.js stamped on <body hx-headers> — parsed,
   // not reimplemented, so the two stay in step.
   function hxAuthHeaders() {

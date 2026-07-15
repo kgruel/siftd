@@ -397,8 +397,9 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
   padding:8px 10px; background:var(--panel); border:1px solid var(--hair);
   border-radius:var(--radius); box-shadow:0 4px 14px rgba(0,0,0,.14); }
 .tag-menu__panel .tag-section--elem { margin-top:0; }
-/* Copy control in a block panel: fetches the stored block text verbatim
-   (enhance.js, data-copy-src) — the DOM is not a faithful copy source. */
+/* Copy controls in a trace panel (block text, tool input/result): fetch the
+   stored payload verbatim (enhance.js, data-copy-src) — the DOM is not a
+   faithful copy source. */
 .tag-menu__copy { display:block; width:100%; margin:0 0 6px; padding:3px 8px;
   font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.08em;
   text-transform:uppercase; text-align:left; cursor:pointer;
