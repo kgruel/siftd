@@ -135,6 +135,11 @@ class NarrativeBlock:
     content: str | None = None
     tool_calls: list[ToolCallDetail] = field(default_factory=list)
     event_id: str | None = None
+    # The block's own event_content ULID — the target_kind='block' tag/copy
+    # address. None for "tool_calls" blocks (they aggregate several tool_use
+    # rows; the tool_call EVENT id is the address there) and for peek-sourced
+    # narratives (no DB rows pre-ingest).
+    block_id: str | None = None
 
 
 @dataclass
@@ -225,6 +230,13 @@ class ConversationDetail:
     # Each value is a list of (tag name, target_kind) pairs — the kind rides the
     # chip so a remove posts against the assignment the user actually clicked.
     event_tags: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
+    # Block-level tags keyed by event_content id — a separate map from
+    # event_tags on purpose: block ids and event ids are distinct keyspaces,
+    # and keying both through one map is exactly the one-hop mismatch that
+    # produced the WS8 block-chip leak. Values are (tag name, kind) pairs
+    # like event_tags; kind is always 'block' today but the pair shape keeps
+    # chip-remove semantics uniform across maps.
+    block_tags: dict[str, list[tuple[str, str]]] = field(default_factory=dict)
 
     @property
     def exchanges(self) -> list[Exchange]:
@@ -818,8 +830,10 @@ def get_conversation(
         # canonical precomputed value (None when no priced usage), never faked.
         tags = fetch_conversation_tags(conn, conv_id) if fidelity.depth >= 3 else []
         # Element tags always fetched (one batched query, no N+1) so transcript
-        # chips appear at any depth.
+        # chips appear at any depth. Block tags ride the same rule via their
+        # own map (separate keyspace — see ConversationDetail.block_tags).
         event_tags = _fetch_conversation_event_tags(conn, conv_id)
+        block_tags = _fetch_conversation_block_tags(conn, conv_id)
         cost = (
             get_conversation_cost(conn, conv_id)
             if fidelity.depth >= 3 and has_conversation_stats_table(conn)
@@ -847,6 +861,7 @@ def get_conversation(
             tags=tags,
             cost=cost,
             event_tags=event_tags,
+            block_tags=block_tags,
         )
     finally:
         conn.close()
@@ -969,6 +984,31 @@ def _fetch_conversation_event_tags(
     return out
 
 
+def _fetch_conversation_block_tags(
+    conn: sqlite3.Connection, conversation_id: str
+) -> dict[str, list[tuple[str, str]]]:
+    """Batch-fetch block tags for a conversation, keyed by event_content id.
+
+    The block sibling of :func:`_fetch_conversation_event_tags` — one query,
+    no N+1, descending one hop further (event_content → events). Kept as a
+    separate map because block ids live in a different keyspace than event
+    ids; see ``ConversationDetail.block_tags``.
+    """
+    rows = conn.execute(
+        "SELECT ta.target_id, tg.name FROM tag_assignments ta "
+        "JOIN tags tg ON tg.id = ta.tag_id "
+        "JOIN event_content ec ON ec.id = ta.target_id "
+        "JOIN events e ON e.id = ec.event_id "
+        "WHERE e.conversation_id = ? AND ta.target_kind = 'block' "
+        "ORDER BY tg.name",
+        (conversation_id,),
+    ).fetchall()
+    out: dict[str, list[tuple[str, str]]] = {}
+    for row in rows:
+        out.setdefault(row["target_id"], []).append((row["name"], "block"))
+    return out
+
+
 def _matches_tool_filter(tool_name: str, status: str, tool_filter: str | None) -> bool:
     """Check if a tool call matches the given filter."""
     if tool_filter is None:
@@ -1069,6 +1109,7 @@ def _build_narrative(
                         block_type="text",
                         content=text,
                         event_id=resp_id,
+                        block_id=block["id"],
                     ))
 
             elif block_type == "thinking":
@@ -1081,6 +1122,7 @@ def _build_narrative(
                             block_type="thinking",
                             content=text,
                             event_id=resp_id,
+                            block_id=block["id"],
                         ))
 
             elif block_type == "tool_use":
@@ -1127,6 +1169,7 @@ def _build_narrative(
                         block_type=block_type,
                         content=text,
                         event_id=resp_id,
+                        block_id=block["id"],
                     ))
 
         # Flush remaining tool calls

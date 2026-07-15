@@ -1289,8 +1289,8 @@ class TestBuildNarrative:
         """L648-655: text block flushes pending tool calls."""
         from siftd.api.conversations import _build_narrative
         blocks = [
-            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
-            {"block_type": "text", "content": "After tools"},
+            {"id": "b1", "block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"id": "b2", "block_type": "text", "content": "After tools"},
         ]
         tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
@@ -1310,8 +1310,8 @@ class TestBuildNarrative:
         """L668-675: thinking block flushes pending tool calls."""
         from siftd.api.conversations import _build_narrative
         blocks = [
-            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
-            {"block_type": "thinking", "content": '{"thinking": "hmm"}'},
+            {"id": "b1", "block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"id": "b2", "block_type": "thinking", "content": '{"thinking": "hmm"}'},
         ]
         tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "shell.execute", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(
@@ -1348,8 +1348,8 @@ class TestBuildNarrative:
         """L718-732: tool_result/tool_output blocks."""
         from siftd.api.conversations import _build_narrative
         blocks = [
-            {"block_type": "tool_use", "content": '{"id": "tu1"}'},
-            {"block_type": "tool_result", "content": '{"text": "result data"}'},
+            {"id": "b1", "block_type": "tool_use", "content": '{"id": "tu1"}'},
+            {"id": "b2", "block_type": "tool_result", "content": '{"text": "result data"}'},
         ]
         tool_calls = [{"tool_call_id": "tc-1", "external_id": "tu1", "tool_name": "file.read", "status": "success", "input": "{}", "result": "ok"}]
         result = _build_narrative(

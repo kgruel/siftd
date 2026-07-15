@@ -105,3 +105,30 @@ def test_json_fmt_stats(monkeypatch):
 def test_select_format():
     from siftd.output.format_registry import select_format
     assert select_format() is not None
+
+
+# --- block_id threading (block action surface) ---
+
+def test_walker_threads_block_id_to_json():
+    """The walker forwards a source block's block_id (its event_content ULID)
+    to text/thinking/tool_output; JsonEmitter emits it default-on so JSON
+    consumers can address blocks (a block_id is a `siftd tag block <id>`
+    target). Blocks without one — peek narratives, aggregates — omit the key."""
+    e = JsonEmitter()
+    walk_narrative(
+        [
+            NS(block_type="text", content="hi", tool_calls=[],
+               event_id="01EVT", block_id="01BLKTEXT"),
+            NS(block_type="thinking", content="hm", tool_calls=[],
+               event_id="01EVT", block_id="01BLKTHINK"),
+            NS(block_type="tool_result", content="out", tool_calls=[],
+               event_id="01EVT", block_id="01BLKRES"),
+            _block("text", "no id"),  # duck-typed block without block_id
+        ],
+        e, fidelity=_fid(),
+    )
+    by_content = {b.get("content"): b for b in e.blocks}
+    assert by_content["hi"]["block_id"] == "01BLKTEXT"
+    assert by_content["hm"]["block_id"] == "01BLKTHINK"
+    assert by_content["out"]["block_id"] == "01BLKRES"
+    assert "block_id" not in by_content["no id"]

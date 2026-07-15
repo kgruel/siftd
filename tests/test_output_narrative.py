@@ -114,3 +114,67 @@ def test_html_emitter_anchors_tool_first_run(monkeypatch):
     assert "is-target" in html
     # A standalone tool_output opening a new run is anchored too.
     assert 'class="tool-result" data-event-id="01TO"' in html
+
+
+def test_html_emitter_block_id_inert_when_not_interactive():
+    # CLI html export and the search-context slice pass no tagging context:
+    # a block_id must change nothing — no wrapper, no data-block-id, output
+    # byte-identical to the pre-block emitter.
+    e = HtmlEmitter()
+    e.thinking("think", event_id="01A", block_id="01BLK1")
+    e.tool_output("tool_result", "out", event_id="01A", block_id="01BLK2")
+    html = e.to_html()
+    assert "trace-block--blk" not in html
+    assert "data-block-id" not in html
+
+
+def test_html_emitter_wraps_blocks_with_corner_menu_when_interactive():
+    # Interactive trace: each prose/thinking/tool-output block wraps in a
+    # positioned .trace-block--blk carrying data-block-id + a corner tag menu
+    # posting entity_type=block, chips fed from the block_tags map.
+    e = HtmlEmitter(
+        event_tags={"01A": []},
+        block_tags={"01BLKPROSE": [("docs", "block")]},
+        interactive_tags=True,
+        tag_action_url="/tag", tag_suggest_url="/api/v1/tags",
+    )
+    e.text("prose", event_id="01A", block_id="01BLKPROSE")
+    e.thinking("hm", event_id="01A", block_id="01BLKTHINK")
+    e.tool_output("tool_result", "out", event_id="01A", block_id="01BLKOUT")
+    html = e.to_html()
+    assert html.count("trace-block--blk") == 3
+    for bid in ("01BLKPROSE", "01BLKTHINK", "01BLKOUT"):
+        assert f'data-block-id="{bid}"' in html
+    assert 'name="entity_type" value="block"' in html
+    assert "docs" in html  # the block's chip renders in its panel
+
+
+def test_html_emitter_block_panel_never_reads_event_map():
+    # Separate-keyspace rule (the WS8 chip-leak lesson): a block panel keys
+    # ONLY into block_tags. An event_tags entry that happens to carry the
+    # block's id — the exact one-hop confusion that produced the leak — must
+    # not surface as a block chip.
+    e = HtmlEmitter(
+        event_tags={"01BLK": [("leaky", "response")]},
+        block_tags={},
+        interactive_tags=True,
+        tag_action_url="/tag", tag_suggest_url="/api/v1/tags",
+    )
+    e.text("prose", event_id="01A", block_id="01BLK")
+    html = e.to_html()
+    assert 'data-block-id="01BLK"' in html  # the wrapper is there
+    assert "leaky" not in html              # the event-map entry is not
+
+
+def test_html_emitter_block_without_id_gets_no_wrapper():
+    # Interactive but no block identity (peek narratives, older duck shapes):
+    # no affordance — a menu with no postable target would be a dead control.
+    e = HtmlEmitter(
+        event_tags={}, block_tags={},
+        interactive_tags=True,
+        tag_action_url="/tag", tag_suggest_url="/api/v1/tags",
+    )
+    e.text("prose", event_id="01A", block_id=None)
+    html = e.to_html()
+    assert "trace-block--blk" not in html
+    assert "data-block-id" not in html

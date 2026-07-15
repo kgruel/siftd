@@ -502,13 +502,14 @@ def fetch_response_content_blocks(
     """Fetch all content blocks for responses, ordered by block_index.
 
     Returns dict mapping response_id to list of rows with
-    block_type, content, and block_index.
+    id, block_type, content, and block_index. ``id`` is the block's own
+    event_content ULID — the target_kind='block' tag address (WS8).
     """
     if not response_ids:
         return {}
 
     sql = (
-        "SELECT event_id AS response_id, block_type, content, block_index "
+        "SELECT id, event_id AS response_id, block_type, content, block_index "
         "FROM event_content "
         "WHERE event_id IN ({placeholders})"
     )

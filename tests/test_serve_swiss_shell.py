@@ -419,6 +419,87 @@ def test_exchange_chip_on_prompt_section_removes_as_exchange(tmp_path):
         assert "exch" not in client.get("/folio", params={"id": cid}).text
 
 
+def test_trace_blocks_offer_corner_tag_affordance(ctx):
+    """Block surface: in trace mode each prose/thinking/tool-output block wraps
+    in a positioned .trace-block--blk carrying its event_content ULID as
+    data-block-id plus a corner tag menu posting entity_type=block. Reading
+    mode has no block wrappers (the folio body is prose, tagged per turn)."""
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    reading = client.get("/folio", params={"id": cid, "mode": "reading"}).text
+
+    assert "trace-block--blk" in trace
+    assert 'data-block-id="' in trace
+    assert 'name="entity_type" value="block"' in trace
+    assert "trace-block--blk" not in reading
+    assert "data-block-id" not in reading
+
+
+def test_trace_block_tag_roundtrip_via_post_tag(tmp_path):
+    """A block's corner affordance round-trips through POST /tag: the block id
+    resolves, the tag applies and removes as target_kind='block', the returned
+    fragment is the block's own section (no sibling event tags riding along),
+    and the audit records the block's event_content ULID."""
+    import re
+
+    from siftd.storage.sqlite import open_database
+
+    db, cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db)
+    try:
+        block_id = conn.execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id"
+            " WHERE e.kind = 'response' AND ec.block_type = 'text' LIMIT 1"
+        ).fetchone()["id"]
+        response_id = conn.execute(
+            "SELECT event_id FROM event_content WHERE id = ?", (block_id,)
+        ).fetchone()["event_id"]
+    finally:
+        conn.close()
+
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+        # The block's own ULID rides its affordance form and wrapper.
+        assert f'data-block-id="{block_id}"' in body
+        assert re.search(rf'name="id" value="{re.escape(block_id)}"', body)
+
+        # A response-level tag exists alongside — it must never surface in the
+        # block's fragment (separate keyspaces, the WS8 chip-leak rule).
+        client.post("/tag", data={
+            "action": "apply", "id": response_id, "entity_type": "response",
+            "tag": "resp-only",
+        })
+
+        r = client.post("/tag", data={
+            "action": "apply", "id": block_id, "entity_type": "block", "tag": "blk-note",
+        })
+        assert r.status_code == 201
+        assert "blk-note" in r.text
+        assert 'name="entity_type" value="block"' in r.text
+        assert "resp-only" not in r.text
+
+        # Chip visible in a fresh trace render; block panel still leak-free.
+        fresh = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+        assert "blk-note" in fresh
+
+        r2 = client.post("/tag", data={
+            "action": "remove", "id": block_id, "entity_type": "block", "tag": "blk-note",
+        })
+        assert r2.status_code == 201
+        assert "blk-note<" not in r2.text
+
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT target_type, target FROM audit_log WHERE action = 'tag.apply'"
+            " AND target_type = 'block' ORDER BY occurred_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row["target"] == block_id
+
+
 def test_mixed_kind_section_rerenders_as_its_section(tmp_path):
     """Regression: an exchange-chip mutation on a prompt section must re-render
     the PROMPT view. Without section_type the fragment reflected only the

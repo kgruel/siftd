@@ -386,6 +386,13 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
   opacity:1; color:var(--ink); border-color:var(--hair-strong);
   background:var(--panel); }
 @media (hover: none) { .tag-menu > summary { opacity:1; } }
+/* Block-level action surface: every prose/thinking/tool-output block in an
+   interactive trace is wrapped in .trace-block--blk carrying data-block-id,
+   inheriting the affordance grammar above wholesale. The one block-specific
+   rule is the horizontal inset: a run's FIRST block shares its top edge with
+   the run wrapper, so without it the block's + would sit directly under the
+   run-level + at the same corner. One slot left keeps both reachable. */
+.trace-block--blk > .tag-menu { right:32px; }
 .tag-menu__panel { position:absolute; top:calc(100% + 4px); right:0; min-width:180px;
   padding:8px 10px; background:var(--panel); border:1px solid var(--hair);
   border-radius:var(--radius); box-shadow:0 4px 14px rgba(0,0,0,.14); }

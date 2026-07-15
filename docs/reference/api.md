@@ -268,6 +268,7 @@ Full conversation with timeline.
 | `tags` | `list[str]` |  |
 | `cost` | `float \| None` |  |
 | `event_tags` | `dict[str, list[tuple[str, str]]]` |  |
+| `block_tags` | `dict[str, list[tuple[str, str]]]` |  |
 
 ### Exchange
 
@@ -292,6 +293,7 @@ A single block in the response narrative.
 | `content` | `str \| None` |  |
 | `tool_calls` | `list[ToolCallDetail]` |  |
 | `event_id` | `str \| None` |  |
+| `block_id` | `str \| None` |  |
 
 ### ToolCallDetail
 

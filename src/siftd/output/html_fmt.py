@@ -974,12 +974,18 @@ class _FolioEmitter:
     def __init__(self) -> None:
         self.parts: list[str] = []
 
-    def text(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def text(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         self.parts.append(_md_to_html(content))
 
-    def thinking(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def thinking(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         self.parts.append(
             f'<details class="turn-think"><summary>thinking</summary>'
             f"<pre>{escape(content)}</pre></details>"
@@ -998,8 +1004,11 @@ class _FolioEmitter:
     ) -> None:
         del name, count, raw_input, raw_result, status, event_id, tool_call_id
 
-    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
-        del block_type, content, event_id
+    def tool_output(
+        self, block_type: str, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del block_type, content, event_id, block_id
 
     def to_html(self) -> str:
         return "\n".join(self.parts)
@@ -1079,6 +1088,7 @@ def _render_turn_blocks(
     mode: str = "reading",
     target_event_id: str | None = None,
     event_tags: dict[str, list[tuple[str, str]]] | None = None,
+    block_tags: dict[str, list[tuple[str, str]]] | None = None,
     interactive_tags: bool = False,
     tag_action_url: str = "",
     tag_suggest_url: str = "",
@@ -1187,6 +1197,7 @@ def _render_turn_blocks(
                     tool_seq=tool_seq if collect else None,
                     turn_no=n,
                     event_tags=event_tags,
+                    block_tags=block_tags,
                     interactive_tags=interactive_tags,
                     tag_action_url=tag_action_url,
                     tag_suggest_url=tag_suggest_url,
@@ -1327,10 +1338,16 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
     body_event_tags: dict[str, list[tuple[str, str]]] | None = (
         (getattr(detail, "event_tags", None) or {}) if not live_poll_url else None
     )
+    # Block tags ride the same gate: a live folio's blocks have no
+    # event_content rows yet, so there is nothing to key on.
+    body_block_tags: dict[str, list[tuple[str, str]]] | None = (
+        (getattr(detail, "block_tags", None) or {}) if not live_poll_url else None
+    )
     body_interactive = context.get("interactive_tags", False) and not live_poll_url
     body, rail, n, tool_counter, tool_seq = _render_turn_blocks(
         turns, fidelity, id_prefix="t", mode=mode, target_event_id=target_event_id,
         event_tags=body_event_tags,
+        block_tags=body_block_tags,
         interactive_tags=body_interactive,
         tag_action_url=context.get("tag_action_url", ""),
         tag_suggest_url=context.get("tag_suggest_url", ""),

@@ -22,13 +22,19 @@ class MarkdownEmitter:
     def __init__(self) -> None:
         self.lines: list[str] = []
 
-    def text(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def text(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         self.lines.append(content)
         self.lines.append("")
 
-    def thinking(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def thinking(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         self.lines.append("> **Thinking**")
         self.lines.append(">")
         for line in content.split("\n"):
@@ -77,8 +83,11 @@ class MarkdownEmitter:
             for rline in result_text.split("\n"):
                 self.lines.append(f"  {rline}")
 
-    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def tool_output(
+        self, block_type: str, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         self.lines.append(f"```\n{content}\n```")
         self.lines.append("")
 
@@ -105,6 +114,7 @@ class HtmlEmitter:
         tool_seq: list[dict] | None = None,
         turn_no: int | None = None,
         event_tags: dict[str, list[tuple[str, str]]] | None = None,
+        block_tags: dict[str, list[tuple[str, str]]] | None = None,
         interactive_tags: bool = False,
         tag_action_url: str = "",
         tag_suggest_url: str = "",
@@ -122,7 +132,11 @@ class HtmlEmitter:
         # the interactivity + route context, let each tool-call block carry a
         # top-right hover-reveal tag affordance. Off by default — the CLI html
         # export and the search-context slice pass nothing and stay chip-free.
+        # block_tags is the separate event_content-keyed map — block ids and
+        # event ids are distinct keyspaces (the WS8 chip-leak lesson), so the
+        # affordance picks its map by entity kind, never by key coincidence.
         self._event_tags = event_tags
+        self._block_tags = block_tags
         self._interactive_tags = interactive_tags
         self._tag_action_url = tag_action_url
         self._tag_suggest_url = tag_suggest_url
@@ -200,7 +214,10 @@ class HtmlEmitter:
             return ""
         from siftd.output.html_fmt import _render_tag_section
 
-        pairs = (self._event_tags or {}).get(target_id, [])
+        # Pick the map by entity kind: block targets are event_content ULIDs,
+        # everything else is an events ULID. Never fall through across maps.
+        tag_map = self._block_tags if entity_type == "block" else self._event_tags
+        pairs = (tag_map or {}).get(target_id, [])
         section = _render_tag_section(
             target_id, pairs, True,
             tag_action_url=self._tag_action_url,
@@ -216,39 +233,77 @@ class HtmlEmitter:
             "</details>"
         )
 
-    def text(self, content: str, *, event_id: str | None = None) -> None:
+    def _wrap_block(self, block_html: str, block_id: str | None) -> str:
+        """Wrap one prose/thinking/tool-output element in the per-block action
+        surface — a positioned container carrying ``data-block-id`` plus the
+        corner tag menu — or return it unwrapped.
+
+        Same sibling-wrapper rule as the tool affordance: a collapsed
+        ``<details>`` block hides non-summary children, so the menu must live
+        beside the block, never inside it. Emitted only on the interactive
+        path with a real block id — CLI html export and the search-context
+        slice stay byte-for-byte unchanged.
+        """
+        affordance = self._tag_affordance("block", block_id)
+        if not affordance:
+            return block_html
+        return (
+            f'<div class="trace-block trace-block--blk"'
+            f' data-block-id="{self._escape(block_id or "")}">'
+            f"{affordance}\n{block_html}</div>"
+        )
+
+    def text(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
         attrs, cls = self._anchor(event_id)
         try:
             import mistune
 
             md = mistune.create_markdown(escape=True)
             rendered = md(content)
-            self.parts.append(f'<div class="narrative-text{cls}"{attrs}>{rendered}</div>')
+            self.parts.append(self._wrap_block(
+                f'<div class="narrative-text{cls}"{attrs}>{rendered}</div>', block_id,
+            ))
         except ImportError:
             # Fallback: escaped text when mistune not installed. Only the first
             # paragraph carries the anchor (one per event run).
+            paras: list[str] = []
             first = True
             for p in content.split("\n\n"):
                 stripped = p.strip()
                 if not stripped:
                     continue
                 a, c = (attrs, cls) if first else ("", "")
-                self.parts.append(
+                paras.append(
                     f'<p class="narrative-text{c}"{a}>{self._escape(stripped)}</p>'
                 )
                 first = False
+            if not paras:
+                return
+            if self._interactive_tags and block_id:
+                self.parts.append(self._wrap_block("\n".join(paras), block_id))
+            else:
+                # Unwrapped: keep each paragraph a separate part (byte-identical
+                # to the pre-block output, which joins parts with newlines).
+                self.parts.extend(paras)
 
-    def thinking(self, content: str, *, event_id: str | None = None) -> None:
+    def thinking(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
         attrs, cls = self._anchor(event_id)
         # Collapsed by default, like the inline tool calls: the trace shows the
         # agent's flow as a skim, with thinking/tool payloads expanded on demand
         # rather than dumped as a wall.
-        self.parts.append(
+        self.parts.append(self._wrap_block(
             f'<details class="thinking{cls}"{attrs}>'
             f"<summary>Thinking</summary>"
             f"<pre>{self._escape(content)}</pre>"
-            f"</details>"
-        )
+            f"</details>",
+            block_id,
+        ))
 
     def thinking_placeholder(self, *, event_id: str | None = None) -> None:
         attrs, cls = self._anchor(event_id)
@@ -397,12 +452,16 @@ class HtmlEmitter:
         else:
             self.parts.append("\n".join(parts))
 
-    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+    def tool_output(
+        self, block_type: str, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
         del block_type
         attrs, cls = self._anchor(event_id)
-        self.parts.append(
-            f'<pre class="tool-result{cls}"{attrs}>{self._escape(content)}</pre>'
-        )
+        self.parts.append(self._wrap_block(
+            f'<pre class="tool-result{cls}"{attrs}>{self._escape(content)}</pre>',
+            block_id,
+        ))
 
     def to_html(self) -> str:
         # Close the final run wrapper if one is still open (idempotent — a second
