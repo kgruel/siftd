@@ -52,9 +52,11 @@ class AnchorError(UserInputError):
 class AnchorOutOfRange(AnchorError):
     """--at-turn N is out of range for this conversation."""
 
-    def __init__(self, turn_count: int) -> None:
+    def __init__(self, turn_count: int, requested: int | None = None) -> None:
         self.turn_count = turn_count
-        super().__init__(f"turn index out of range (conversation has {turn_count} turns)")
+        self.requested = requested
+        flag = f"--at-turn {requested}" if requested is not None else "--at-turn"
+        super().__init__(f"{flag} is out of range (conversation has {turn_count} turns)")
 
 
 class AnchorNotFound(AnchorError):
@@ -62,7 +64,11 @@ class AnchorNotFound(AnchorError):
 
     def __init__(self, phrase: str) -> None:
         self.phrase = phrase
-        super().__init__(f"phrase not found in conversation: {phrase!r}")
+        self.hint = (
+            f"Try 'siftd search \"{phrase}\"' to locate conversations containing "
+            f"this phrase, or shorten the phrase."
+        )
+        super().__init__(f"--around {phrase!r} not found in conversation")
 
 
 class AnchorPhraseInvalid(AnchorError):
@@ -70,7 +76,7 @@ class AnchorPhraseInvalid(AnchorError):
 
     def __init__(self, phrase: str) -> None:
         self.phrase = phrase
-        super().__init__(f"invalid FTS5 phrase: {phrase!r}")
+        super().__init__(f"--around {phrase!r} is not a valid FTS5 phrase")
 
 
 class AmbiguousPrefix(UserInputError):
@@ -611,7 +617,7 @@ def _resolve_anchor(
     if anchor == "at_turn":
         n = int(anchor_value)  # type: ignore[arg-type]
         if n < 0 or n >= len(turns):
-            raise AnchorOutOfRange(len(turns))
+            raise AnchorOutOfRange(len(turns), requested=n)
         return n
     if anchor == "around":
         phrase = str(anchor_value)

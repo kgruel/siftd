@@ -47,15 +47,15 @@ def _args(**kwargs):
 
 
 def test_query_detail_branches(monkeypatch, capsys, tmp_path):
-    # --exchanges without anchor exits 2
-    with pytest.raises(SystemExit) as exc:
-        _query_detail(_args(conversation_id="c1", exchanges=0, db=str(tmp_path / "db.sqlite")))
-    assert exc.value.code == 2
+    from siftd.errors import UserInputError
 
-    # --exchanges < 1 with anchor also exits 2
-    with pytest.raises(SystemExit) as exc:
+    # Window/anchor validation raises UserInputError (backstop owns the exit-2
+    # rendering; boundary coverage lives in test_query_anchor_window.py).
+    with pytest.raises(UserInputError, match="--exchanges"):
+        _query_detail(_args(conversation_id="c1", exchanges=0, db=str(tmp_path / "db.sqlite")))
+
+    with pytest.raises(UserInputError, match="at least 1"):
         _query_detail(_args(conversation_id="c1", exchanges=0, from_end=True, db=str(tmp_path / "db.sqlite")))
-    assert exc.value.code == 2
 
     detail = SimpleNamespace(
         id="c1",

@@ -48,6 +48,13 @@ class SiftdError(Exception):
     # `except SiftdError: ... e.http_status` dispatch.
     http_status: int = 500
 
+    # Optional remediation NEXT STEP, rendered by the CLI backstop on
+    # status.error's hint channel. Distinct from the message (the fact +
+    # inline remediation): set it only when the follow-up is a separate
+    # command the user could run (e.g. AnchorNotFound suggesting a search).
+    # CLI-only — serve bodies carry str(e) and drop the hint.
+    hint: str | None = None
+
 
 class UserInputError(SiftdError):
     """The request itself is malformed or unresolvable — bad flag values,

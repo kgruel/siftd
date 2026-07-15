@@ -717,40 +717,34 @@ class TestSearchPrivacyWarning:
 
 
 class TestSortAxisValidation:
-    """Tests for --sort axis: parser-time rejection of invalid combinations."""
+    """--sort axis: invalid combinations raise UserInputError, which the main()
+    backstop maps to exit 2 — asserted through the argparse boundary since
+    cmd_search no longer owns the rendering (cli-argparse-test-gap)."""
 
     def test_sort_time_with_mode_conversations_rejected(self, indexed_db, capsys):
         """--sort=time with --view=conversations exits 2 before execution."""
-        args = make_args(
-            query=["error"],
-            db=str(indexed_db["db_path"]),
-            embed_db=str(indexed_db["embed_db_path"]),
-            sort="time",
-            view="conversations",
-        )
+        from siftd.cli import main
 
-        with pytest.raises(SystemExit) as exc_info:
-            cmd_search(args)
+        rc = main([
+            "--db", str(indexed_db["db_path"]),
+            "search", "error", "--sort", "time", "--view", "conversations",
+        ])
         captured = capsys.readouterr()
 
-        assert exc_info.value.code == 2
+        assert rc == 2
         assert "--view=conversations is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_mode_thread_rejected(self, indexed_db, capsys):
         """--sort=time with --view=thread exits 2 before execution."""
-        args = make_args(
-            query=["error"],
-            db=str(indexed_db["db_path"]),
-            embed_db=str(indexed_db["embed_db_path"]),
-            sort="time",
-            view="thread",
-        )
+        from siftd.cli import main
 
-        with pytest.raises(SystemExit) as exc_info:
-            cmd_search(args)
+        rc = main([
+            "--db", str(indexed_db["db_path"]),
+            "search", "error", "--sort", "time", "--view", "thread",
+        ])
         captured = capsys.readouterr()
 
-        assert exc_info.value.code == 2
+        assert rc == 2
         assert "--view=thread is incompatible with --sort=time" in captured.err
 
     def test_sort_time_with_json_chunks_valid(self, indexed_db, capsys):

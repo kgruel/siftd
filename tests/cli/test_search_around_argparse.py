@@ -10,6 +10,7 @@ import pytest
 
 from siftd.cli._common import _parse_turns_range
 from siftd.cli.search import _validate_search_axes, build_search_parser
+from siftd.errors import UserInputError
 
 
 def _make_parser():
@@ -119,22 +120,21 @@ class TestParseTurnsRangeValidation:
     def test_valid_equals_start_end(self):
         assert _parse_turns_range("2:2") == (2, 2)
 
-    def test_no_colon_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
+    # Invalid inputs raise UserInputError (the main() backstop renders it and
+    # exits 2 — pinned at the boundary by TestTurnsWithoutAroundExitCode below);
+    # the helper no longer hand-rolls print+sys.exit(2).
+
+    def test_no_colon_raises_user_input_error(self):
+        with pytest.raises(UserInputError, match="A:B format"):
             _parse_turns_range("0")
-        assert exc.value.code == 2
-        assert "A:B format" in capsys.readouterr().err
 
-    def test_non_integer_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
+    def test_non_integer_raises_user_input_error(self):
+        with pytest.raises(UserInputError, match="integers"):
             _parse_turns_range("a:b")
-        assert exc.value.code == 2
-        assert "integers" in capsys.readouterr().err
 
-    def test_end_less_than_start_exits_2(self, capsys):
-        with pytest.raises(SystemExit) as exc:
+    def test_end_less_than_start_raises_user_input_error(self):
+        with pytest.raises(UserInputError, match="must be >= start"):
             _parse_turns_range("3:1")
-        assert exc.value.code == 2
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +193,9 @@ class TestTurnsRequiresAround:
 class TestTurnsWithoutAroundExitCode:
     """Verify that axis validation exits 2 (not 1) when --turns is given without --around.
 
-    Must go through main() so that sys.exit(2) inside cmd_search propagates correctly
-    (per cli-argparse-test-gap: direct cmd_search(args) calls can't verify exit codes).
+    Must go through main() (per cli-argparse-test-gap): cmd_search raises
+    UserInputError and the taxonomy backstop maps it to a returned exit code 2 —
+    main() returns the code rather than raising SystemExit.
 
     A dummy DB file is required: db.exists() is checked before axis validation, so
     without an existing DB the command exits 1 (DB not found) before reaching validation.
@@ -205,9 +206,8 @@ class TestTurnsWithoutAroundExitCode:
 
         dummy_db = tmp_path / "siftd.db"
         dummy_db.touch()
-        with pytest.raises(SystemExit) as exc:
-            main(["--db", str(dummy_db), "search", "test", "--turns", "-2:+2"])
-        assert exc.value.code == 2
+        rc = main(["--db", str(dummy_db), "search", "test", "--turns", "-2:+2"])
+        assert rc == 2
         err = capsys.readouterr().err
         assert "--turns" in err
         assert "--around" in err
@@ -217,9 +217,8 @@ class TestTurnsWithoutAroundExitCode:
 
         dummy_db = tmp_path / "siftd.db"
         dummy_db.touch()
-        with pytest.raises(SystemExit) as exc:
-            main(["--db", str(dummy_db), "search", "test", "--turns=-2:+2"])
-        assert exc.value.code == 2
+        rc = main(["--db", str(dummy_db), "search", "test", "--turns=-2:+2"])
+        assert rc == 2
         assert "--turns" in capsys.readouterr().err
 
 
