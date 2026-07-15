@@ -4,10 +4,11 @@ import importlib.resources
 import shutil
 from pathlib import Path
 
+from siftd.errors import SiftdError
 from siftd.paths import adapters_dir, formatters_dir, queries_dir
 
 
-class CopyError(Exception):
+class CopyError(SiftdError):
     """Error copying a resource."""
 
     pass

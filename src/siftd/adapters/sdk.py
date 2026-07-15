@@ -14,13 +14,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.domain import Harness, Source
+from siftd.errors import SiftdError
 
 if TYPE_CHECKING:
     from siftd.domain.peek import PeekExchange, PeekScanResult
 
 
-class AdapterParseError(RuntimeError):
-    """Raised when a source matches an adapter but cannot be parsed safely."""
+class AdapterParseError(RuntimeError, SiftdError):
+    """Raised when a source matches an adapter but cannot be parsed safely.
+
+    transitional: shed RuntimeError in slice 5.
+    """
 
 
 def open_external_db(path: Path) -> sqlite3.Connection:

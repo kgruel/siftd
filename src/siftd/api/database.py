@@ -6,6 +6,7 @@ Exposes database connection management to CLI without direct storage imports.
 import sqlite3
 from pathlib import Path
 
+from siftd.errors import SiftdError
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import (
     SchemaUpgradeRequiredError,
@@ -27,8 +28,11 @@ _PREFLIGHT_CHECKS = ["db-fk-integrity", "db-trigger-presence"]
 _MAX_FINDINGS_IN_MSG = 3
 
 
-class PreflightError(RuntimeError):
-    """Raised when a source database fails integrity pre-flight checks."""
+class PreflightError(RuntimeError, SiftdError):
+    """Raised when a source database fails integrity pre-flight checks.
+
+    transitional: shed RuntimeError in slice 5.
+    """
 
 
 def audit_db_integrity(path: Path) -> list:

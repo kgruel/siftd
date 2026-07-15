@@ -5,8 +5,10 @@ from __future__ import annotations
 import os
 import subprocess
 
+from siftd.errors import SiftdError
 
-class AuthError(Exception):
+
+class AuthError(SiftdError):
     """Raised when token acquisition fails."""
 
 

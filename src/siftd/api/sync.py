@@ -37,6 +37,7 @@ from siftd.domain.sync import (
     SyncStatus,
     parse_sync_header,
 )
+from siftd.errors import SiftdError
 from siftd.safecall import parse_json
 
 logger = logging.getLogger(__name__)
@@ -45,7 +46,7 @@ SYNC_HTTP_CHUNK_SIZE = 1024 * 1024  # 1 MiB
 _WINDOW_SAFETY = 0.8  # size headroom: target each window at 80% of the cap
 
 
-class SyncError(Exception):
+class SyncError(SiftdError):
     """Raised when a sync operation fails."""
 
 

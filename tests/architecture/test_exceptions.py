@@ -53,16 +53,7 @@ PERMANENT_CARVEOUTS = {
 
 # Pre-taxonomy stragglers, keyed the same way, valued by the slice that
 # migrates them. Shrink-only: entries are deleted as slices land, never added.
-TRANSITIONAL = {
-    # Slice 4 — operation family
-    ("credentials.py", "AuthLoginError"): "slice 4",
-    ("credentials.py", "TokenRefError"): "slice 4",
-    ("api/auth.py", "AuthError"): "slice 4",
-    ("api/sync.py", "SyncError"): "slice 4",
-    ("api/resources.py", "CopyError"): "slice 4",
-    ("api/database.py", "PreflightError"): "slice 4",
-    ("adapters/sdk.py", "AdapterParseError"): "slice 4",
-}
+TRANSITIONAL = {}
 
 
 def _base_names(node: ast.ClassDef) -> list[str]:
