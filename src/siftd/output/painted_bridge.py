@@ -328,8 +328,11 @@ class PaintedEmitter:
 
     # -- NarrativeEmitter interface --
 
-    def text(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def text(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         # Walker already truncated; render markdown structure onto painted spans.
         # Line-shaped elements join the pending run; a table flushes and lands as
         # its own Block — same interleaving discipline as tool_content.
@@ -346,8 +349,11 @@ class PaintedEmitter:
                 self._parts.append(self._gutter_block(item, "assistant"))
                 self._content_since_break = True
 
-    def thinking(self, content: str, *, event_id: str | None = None) -> None:
-        del event_id
+    def thinking(
+        self, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del event_id, block_id
         # No box — a dim `thinking` label over the reasoning, italic via
         # ds.thinking and indented, word-wrapped to the width. Typography over
         # chrome: a transcript is a feed, and a box rule fights a variable-width
@@ -426,7 +432,11 @@ class PaintedEmitter:
             )
         )
 
-    def tool_output(self, block_type: str, content: str, *, event_id: str | None = None) -> None:
+    def tool_output(
+        self, block_type: str, content: str, *,
+        event_id: str | None = None, block_id: str | None = None,
+    ) -> None:
+        del block_id
         del event_id
         self._block_break()
         self._set_kind("tool")

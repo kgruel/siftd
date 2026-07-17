@@ -386,10 +386,28 @@ div.tool-call.tool-error { border-left-color:var(--accent); }
   opacity:1; color:var(--ink); border-color:var(--hair-strong);
   background:var(--panel); }
 @media (hover: none) { .tag-menu > summary { opacity:1; } }
+/* Block-level action surface: every prose/thinking/tool-output block in an
+   interactive trace is wrapped in .trace-block--blk carrying data-block-id,
+   inheriting the affordance grammar above wholesale. The one block-specific
+   rule is the horizontal inset: a run's FIRST block shares its top edge with
+   the run wrapper, so without it the block's + would sit directly under the
+   run-level + at the same corner. One slot left keeps both reachable. */
+.trace-block--blk > .tag-menu { right:32px; }
 .tag-menu__panel { position:absolute; top:calc(100% + 4px); right:0; min-width:180px;
   padding:8px 10px; background:var(--panel); border:1px solid var(--hair);
   border-radius:var(--radius); box-shadow:0 4px 14px rgba(0,0,0,.14); }
 .tag-menu__panel .tag-section--elem { margin-top:0; }
+/* Copy controls in a trace panel (block text, tool input/result): fetch the
+   stored payload verbatim (enhance.js, data-copy-src) — the DOM is not a
+   faithful copy source. */
+.tag-menu__copy { display:block; width:100%; margin:0 0 6px; padding:3px 8px;
+  font-family:var(--font-mono); font-size:var(--fs-micro); letter-spacing:.08em;
+  text-transform:uppercase; text-align:left; cursor:pointer;
+  border:1px solid var(--hair); border-radius:3px;
+  background:var(--paper); color:var(--mid); }
+.tag-menu__copy:hover { color:var(--ink); border-color:var(--hair-strong); }
+.tag-menu__copy.is-copied { color:var(--ink); background:var(--panel);
+  border-color:var(--hair-strong); }
 /* Inside the always-open panel the add form is not ghosted — the menu itself is
    the reveal, so nested hover-gating would need a second interaction. */
 .tag-menu__panel .tag-section--elem .tag-add { opacity:1; pointer-events:auto; }

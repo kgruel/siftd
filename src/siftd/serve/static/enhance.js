@@ -442,6 +442,40 @@
     a.setAttribute('hx-push-url', rest ? location.pathname + location.search : '/?view=' + view);
   }
 
+  // --- trace copy (data-copy-src) --------------------------------------------
+  // Copy buttons in trace panels (block text, tool input/result) fetch the
+  // STORED payload from the raw-text route and write it to the clipboard — the
+  // rendered DOM is not a faithful copy source (markdown re-rendering,
+  // presenter line caps). One delegated listener; buttons arrive and leave
+  // with htmx swaps for free.
+  // Auth rides whatever bearer auth.js stamped on <body hx-headers> — parsed,
+  // not reimplemented, so the two stay in step.
+  function hxAuthHeaders() {
+    try { return JSON.parse(document.body.getAttribute('hx-headers') || '{}'); }
+    catch (e) { return {}; }
+  }
+  function flashCopyState(btn, label) {
+    var old = btn.textContent;
+    btn.textContent = label;
+    if (label === 'Copied') btn.classList.add('is-copied');
+    setTimeout(function () {
+      btn.textContent = old;
+      btn.classList.remove('is-copied');
+    }, 1200);
+  }
+  document.body.addEventListener('click', function (e) {
+    var btn = e.target && e.target.closest && e.target.closest('[data-copy-src]');
+    if (!btn) return;
+    fetch(btn.getAttribute('data-copy-src'), { headers: hxAuthHeaders() })
+      .then(function (r) {
+        if (!r.ok) throw new Error('fetch ' + r.status);
+        return r.text();
+      })
+      .then(function (text) { return navigator.clipboard.writeText(text); })
+      .then(function () { flashCopyState(btn, 'Copied'); })
+      .catch(function () { flashCopyState(btn, 'Failed'); });
+  });
+
   // htmx reads hx-push-url fresh at click time but CACHES hx-get (the mount), so
   // syncResumeNav's rewritten mount alone is ignored. configRequest fires before
   // each request with a mutable path — override it from the rail's current hx-get

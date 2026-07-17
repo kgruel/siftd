@@ -419,6 +419,87 @@ def test_exchange_chip_on_prompt_section_removes_as_exchange(tmp_path):
         assert "exch" not in client.get("/folio", params={"id": cid}).text
 
 
+def test_trace_blocks_offer_corner_tag_affordance(ctx):
+    """Block surface: in trace mode each prose/thinking/tool-output block wraps
+    in a positioned .trace-block--blk carrying its event_content ULID as
+    data-block-id plus a corner tag menu posting entity_type=block. Reading
+    mode has no block wrappers (the folio body is prose, tagged per turn)."""
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    reading = client.get("/folio", params={"id": cid, "mode": "reading"}).text
+
+    assert "trace-block--blk" in trace
+    assert 'data-block-id="' in trace
+    assert 'name="entity_type" value="block"' in trace
+    assert "trace-block--blk" not in reading
+    assert "data-block-id" not in reading
+
+
+def test_trace_block_tag_roundtrip_via_post_tag(tmp_path):
+    """A block's corner affordance round-trips through POST /tag: the block id
+    resolves, the tag applies and removes as target_kind='block', the returned
+    fragment is the block's own section (no sibling event tags riding along),
+    and the audit records the block's event_content ULID."""
+    import re
+
+    from siftd.storage.sqlite import open_database
+
+    db, cid = _make_db(tmp_path / "team.db")
+    conn = open_database(db)
+    try:
+        block_id = conn.execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id"
+            " WHERE e.kind = 'response' AND ec.block_type = 'text' LIMIT 1"
+        ).fetchone()["id"]
+        response_id = conn.execute(
+            "SELECT event_id FROM event_content WHERE id = ?", (block_id,)
+        ).fetchone()["event_id"]
+    finally:
+        conn.close()
+
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        body = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+        # The block's own ULID rides its affordance form and wrapper.
+        assert f'data-block-id="{block_id}"' in body
+        assert re.search(rf'name="id" value="{re.escape(block_id)}"', body)
+
+        # A response-level tag exists alongside — it must never surface in the
+        # block's fragment (separate keyspaces, the WS8 chip-leak rule).
+        client.post("/tag", data={
+            "action": "apply", "id": response_id, "entity_type": "response",
+            "tag": "resp-only",
+        })
+
+        r = client.post("/tag", data={
+            "action": "apply", "id": block_id, "entity_type": "block", "tag": "blk-note",
+        })
+        assert r.status_code == 201
+        assert "blk-note" in r.text
+        assert 'name="entity_type" value="block"' in r.text
+        assert "resp-only" not in r.text
+
+        # Chip visible in a fresh trace render; block panel still leak-free.
+        fresh = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+        assert "blk-note" in fresh
+
+        r2 = client.post("/tag", data={
+            "action": "remove", "id": block_id, "entity_type": "block", "tag": "blk-note",
+        })
+        assert r2.status_code == 201
+        assert "blk-note<" not in r2.text
+
+    conn = open_database(db)
+    try:
+        row = conn.execute(
+            "SELECT target_type, target FROM audit_log WHERE action = 'tag.apply'"
+            " AND target_type = 'block' ORDER BY occurred_at DESC LIMIT 1"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    assert row["target"] == block_id
+
+
 def test_mixed_kind_section_rerenders_as_its_section(tmp_path):
     """Regression: an exchange-chip mutation on a prompt section must re-render
     the PROMPT view. Without section_type the fragment reflected only the
@@ -494,6 +575,110 @@ def test_element_tag_post_is_owner_scoped_404_not_403(tmp_path):
             headers={"Authorization": "Bearer s3cret"},
         )
     assert r.status_code == 404
+
+
+def test_trace_panels_carry_copy_controls(ctx):
+    """Slice 2: block panels offer "Copy text" and tool panels offer
+    "Copy input"/"Copy result", all pointing at the raw-text route via
+    data-copy-src (enhance.js fetches + clipboards the stored payload). Run
+    menus get none — a response run has no single raw text."""
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    assert 'class="tag-menu__copy"' in trace
+    for kind in ("block", "tool_input", "tool_result"):
+        m = re.search(rf'data-copy-src="(/raw/{kind}/[^"]+)"', trace)
+        assert m, f"expected a {kind} copy control in the trace"
+        r = client.get(m.group(1))
+        assert r.status_code == 200, f"{kind} copy URL should serve"
+        assert r.headers["content-type"].startswith("text/plain")
+
+
+def test_raw_tool_payloads_are_verbatim(ctx):
+    """The tool copy controls serve the STORED input/result payloads keyed by
+    the tool_call event ULID — not the presenter-shaped DOM forms."""
+    import re
+
+    client, cid = ctx
+    trace = client.get("/folio", params={"id": cid, "mode": "trace"}).text
+    tool_id = re.search(r'data-copy-src="/raw/tool_result/([^"]+)"', trace).group(1)
+
+    r_in = client.get(f"/raw/tool_input/{tool_id}")
+    r_out = client.get(f"/raw/tool_result/{tool_id}")
+    assert r_in.text == '{"file_path": "x.py"}'      # _make_db's stored input
+    assert r_out.text == '{"text": "file body"}'     # _make_db's stored result
+    # Unknown kinds are 404 (clamped vocabulary), same shape as unknown ids.
+    assert client.get(f"/raw/bogus/{tool_id}").status_code == 404
+
+
+def test_block_raw_returns_verbatim_extracted_text(tmp_path):
+    """The raw-block route returns the block's extracted text — the stored
+    content, not the rendered form and not the JSON envelope. Unknown ids 404."""
+    import json
+
+    from siftd.storage.sqlite import open_database
+
+    db, _cid = _make_db(tmp_path / "team.db")
+    long_text = "line one\n" * 40 + "the last verbatim line"
+    conn = open_database(db)
+    try:
+        rid = conn.execute("SELECT id FROM events WHERE kind='response' LIMIT 1").fetchone()["id"]
+        insert_response_content(conn, rid, 7, "text", json.dumps({"text": long_text}))
+        conn.commit()
+        block_id = conn.execute(
+            "SELECT id FROM event_content WHERE block_index = 7"
+        ).fetchone()["id"]
+    finally:
+        conn.close()
+
+    with _hx_client(create_app(db_path=db, auth_config=None)) as client:
+        r = client.get(f"/raw/block/{block_id}")
+        assert r.status_code == 200
+        assert r.text == long_text                      # verbatim, unabridged
+        assert client.get("/raw/block/01UNKNOWNBLOCKID").status_code == 404
+
+
+def test_block_raw_is_owner_scoped_404_not_403(tmp_path):
+    """An owner-scoped caller fetching another tenant's block gets 404 — the
+    resolver scopes blocks through the owning event's conversation, and a 403
+    would confirm the block exists."""
+    conn = create_database(tmp_path / "owned.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS conversation_owners (conversation_id TEXT,"
+        " user_id TEXT, push_id TEXT, assigned_at TEXT)"
+    )
+    h = get_or_create_harness(conn, "claude_code", source="anthropic", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/bob-proj", "2026-01-01T00:00:00Z")
+    m = get_or_create_model(conn, "claude-opus")
+    p = get_or_create_provider(conn, "anthropic")
+    bob_cid = insert_conversation(
+        conn, external_id="cB", harness_id=h, workspace_id=ws,
+        started_at="2026-01-15T10:00:00Z",
+    )
+    bob_pid = insert_prompt(conn, bob_cid, "cBp", "2026-01-15T10:00:00Z")
+    bob_rid = insert_response(
+        conn, bob_cid, bob_pid, m, p, "cBr", "2026-01-15T10:00:00Z",
+        input_tokens=1, output_tokens=1,
+    )
+    insert_response_content(conn, bob_rid, 0, "text", '{"text": "bobs secret"}')
+    bob_block = conn.execute(
+        "SELECT id FROM event_content WHERE event_id = ?", (bob_rid,)
+    ).fetchone()["id"]
+    conn.execute(
+        "INSERT INTO conversation_owners VALUES (?,?,?,?)",
+        (bob_cid, "bob", None, "2026-01-15T10:00:00Z"),
+    )
+    conn.commit()
+    conn.close()
+
+    auth = {"static_token": "s3cret", "identity": "alice"}
+    with _hx_client(create_app(db_path=tmp_path / "owned.db", auth_config=auth)) as client:
+        r = client.get(
+            f"/raw/block/{bob_block}", headers={"Authorization": "Bearer s3cret"},
+        )
+    assert r.status_code == 404
+    assert "bobs secret" not in r.text
 
 
 def test_stub_view_carries_head_metadata(ctx):

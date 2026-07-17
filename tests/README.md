@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3175 |
+| `tests/` | 185 | 3186 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 608 |
@@ -194,14 +194,14 @@ docstring so its row is meaningful.
 | [test_mmr_focus.py](test_mmr_focus.py) | 1 | — |
 | [test_model_names.py](test_model_names.py) | 4 | Tests for model name parsing. |
 | [test_model_names_edges.py](test_model_names_edges.py) | 1 | — |
-| [test_narrative.py](test_narrative.py) | 12 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
+| [test_narrative.py](test_narrative.py) | 13 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
 | [test_normalizers.py](test_normalizers.py) | 4 | Cross-format normalizer validation tests. |
 | [test_op_route_parity.py](test_op_route_parity.py) | 7 | Contract tests: CLI Operation params must be accepted by their serve route. |
 | [test_output_common.py](test_output_common.py) | 32 | Tests for siftd.output.common — pure formatting helpers. |
 | [test_output_format_registry.py](test_output_format_registry.py) | 1 | — |
 | [test_output_formats.py](test_output_formats.py) | 129 | Tests for output format rendering: lists, search, detail, narrative. |
 | [test_output_help.py](test_output_help.py) | 23 | Unit tests for siftd.output.help — the one help grammar. |
-| [test_output_narrative.py](test_output_narrative.py) | 5 | — |
+| [test_output_narrative.py](test_output_narrative.py) | 9 | — |
 | [test_output_painted_bridge_edges.py](test_output_painted_bridge_edges.py) | 2 | — |
 | [test_output_terminal_fmt.py](test_output_terminal_fmt.py) | 1 | — |
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
@@ -251,7 +251,7 @@ docstring so its row is meaningful.
 | [test_serve_html_routes_stepup.py](test_serve_html_routes_stepup.py) | 9 | — |
 | [test_serve_routes_edges.py](test_serve_routes_edges.py) | 25 | — |
 | [test_serve_routes_stepup.py](test_serve_routes_stepup.py) | 8 | — |
-| [test_serve_swiss_shell.py](test_serve_swiss_shell.py) | 78 | Serve-lane tests for the Swiss shell + folio/stub routes (Phase B slice 1). |
+| [test_serve_swiss_shell.py](test_serve_swiss_shell.py) | 84 | Serve-lane tests for the Swiss shell + folio/stub routes (Phase B slice 1). |
 | [test_serve_tags_visible.py](test_serve_tags_visible.py) | 2 | Route test: GET /api/v1/tags?visible=activity enriches with the activity spark. |
 | [test_serve_workspace_detail_route.py](test_serve_workspace_detail_route.py) | 3 | Route test for GET /api/v1/workspaces/{id} (workspace-detail Operation). |
 | [test_serve_workspaces_view.py](test_serve_workspaces_view.py) | 7 | Serve-lane smoke for the Swiss Workspaces view (master ledger + detail). |
