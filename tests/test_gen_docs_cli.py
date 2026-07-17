@@ -19,6 +19,8 @@ import importlib.util
 import sys
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _GEN_DOCS = _REPO_ROOT / "scripts" / "gen_docs.py"
 
@@ -62,6 +64,12 @@ def test_cli_docs_excludes_plumbing():
         assert f"## siftd {cmd}\n" not in content, f"plumbing command leaked into cli.md: {cmd!r}"
 
 
+@pytest.mark.skipif(
+    sys.version_info[:2] != gen_docs.CANONICAL_PYTHON,
+    reason="cli.md is byte-reproducible only under the canonical interpreter "
+    "(argparse help rendering varies across versions); the ci.yml docs job "
+    "enforces freshness there",
+)
 def test_committed_cli_md_is_up_to_date():
     """The checked-in docs/reference/cli.md must match the generator's output."""
     committed = (_REPO_ROOT / "docs" / "reference" / "cli.md").read_text()
