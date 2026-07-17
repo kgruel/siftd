@@ -639,6 +639,14 @@ def generate_schema_docs() -> str:
 # CLI Reference Generation
 # =============================================================================
 
+# argparse help rendering is not stable across interpreter versions (3.14
+# changed usage-line layout for mutually-exclusive groups containing a
+# positional, which reshapes `siftd search`'s usage block; 3.13 happens to
+# match 3.12 today, but only canonical is guaranteed). The committed cli.md
+# is byte-reproducible only under this version — the same one the ci.yml
+# `docs` job pins.
+CANONICAL_PYTHON = (3, 12)
+
 
 def run_help(args: list[str]) -> str:
     """Run siftd CLI with given args and capture help output."""
