@@ -1,0 +1,120 @@
+// project-map — the maintained structural map of siftd.
+//
+// This vertex describes what the project IS: user capabilities, architectural
+// patterns, implementation components, extension/transport interfaces, durable
+// and transient data, end-to-end flows, and enforced invariants. Work state,
+// decisions, and release arcs remain in project.vertex; keeping those concerns
+// separate prevents the map from becoming a second roadmap.
+//
+// Maintenance contract:
+//   - Re-emit the same keyed entity when reality changes; history remains in the
+//     fact stream while the fold presents current truth.
+//   - Keep fold keys globally unique across kinds. The current graph matcher
+//     aliases equal keys even when their kind-qualified addresses differ.
+//   - Give typed-edge fields bare target keys (`api`, not `component/api`): the
+//     declaration supplies the kind, and a qualified value is double-prefixed.
+//   - Keep evidence= values repo-relative and point them at the strongest
+//     authored or executable source available.
+//   - Name stages <flow>/<NN>-<action>. `after` makes their ordering explicit;
+//     do not reuse a stage name for a different semantic step.
+//   - Finish a deliberate refresh with an audit fact and a seal. The seal is a
+//     reviewable snapshot boundary, not a claim that the map can never drift.
+//
+// Status vocabulary: current | optional | planned | deprecated.
+name "project-map"
+store "/Users/kaygee/Code/siftd/.loops/data/project-map.db"
+
+loops {
+  capability {
+    fold { items "by" "name" }
+    preview "status" "message"
+    search "name" "message" "surface" "evidence"
+    edge "implemented_by" targets="component"
+  }
+
+  architecture {
+    fold { items "by" "name" }
+    preview "status" "message"
+    search "name" "message" "rationale" "evidence"
+    edge "components" targets="component"
+  }
+
+  component {
+    fold { items "by" "name" }
+    preview "layer" "path"
+    search "name" "message" "responsibility" "path" "evidence"
+    edge "depends_on" targets="component"
+  }
+
+  interface {
+    fold { items "by" "name" }
+    preview "type" "surface"
+    search "name" "message" "surface" "contract" "evidence"
+    edge "provided_by" targets="component"
+    edge "consumed_by" targets="component"
+  }
+
+  datum {
+    fold { items "by" "name" }
+    preview "role" "persistence"
+    search "name" "message" "shape" "location" "evidence"
+    edge "owned_by" targets="component"
+    edge "derived_from" targets="datum"
+  }
+
+  flow {
+    fold { items "by" "name" }
+    preview "status" "trigger"
+    search "name" "message" "trigger" "evidence"
+    edge "supports" targets="capability"
+  }
+
+  // Stages point backward through `after`, producing a readable causal chain.
+  // `uses`, `input`, and `output` may be comma-separated sets; order belongs in
+  // the stage chain rather than in those set-valued topology edges.
+  stage {
+    fold { items "by" "name" }
+    preview "action" "optional"
+    search "name" "action" "message" "evidence"
+    edge "flow" targets="flow"
+    edge "after" targets="stage"
+    edge "uses" targets="component"
+    edge "input" targets="datum"
+    edge "output" targets="datum"
+  }
+
+  invariant {
+    fold { items "by" "name" }
+    preview "status" "message"
+    search "name" "message" "enforcement" "evidence"
+    edge "scope" targets="component"
+  }
+
+  // One append-only receipt per deliberate map review.
+  audit {
+    fold { items "collect" 0 }
+    preview "status" "revision" "message"
+    search "message" "method" "coverage" "revision"
+  }
+
+  seal {
+    fold { items "collect" 10 }
+    preview "message"
+    search "message"
+  }
+
+  boundary when="seal"
+}
+
+observers {
+  // Initial Codex-authored baseline. Its facts remain unsigned until this
+  // delegated identity is given key custody; the store boundary tick may still
+  // be signed independently. `loops store verify` reports both layers.
+  "kyle/codex" { }
+  project {
+    key "ZRCvxRrSPE+YQtQcHeZsA0iU23YDXb/WaFA+Ocp2nzk="
+  }
+  "kyle/fable" {
+    key "GlMa67gI+oMg7lyyK2R8JjOYigo7lisqKJuxQaT6nB4="
+  }
+}
