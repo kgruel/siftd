@@ -5,6 +5,66 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-07-18
+
+> The stewardship release. Adapters gain an explicit support contract —
+> tiers, a per-adapter disable knob, staleness detection — plus a new
+> family member (Antigravity CLI) and a round of parse-drift fixes for the
+> ones that already ship. Errors stop being accidents: a two-branch
+> exception taxonomy gives every failure a deliberate exit code, message
+> shape, and HTTP status, enforced by an AST ratchet. And the web trace
+> view learns per-block identity: tag any block where you read it, copy
+> any block or tool payload verbatim.
+
+### Added
+
+- **Antigravity CLI adapter** — ingests `~/.gemini/antigravity-cli`
+  sessions, with model identity resolved from the sidecar DB and
+  background-task stitching.
+- **Adapter support tiers + disable knob** — every adapter declares a
+  support tier (surfaced by `siftd adapters`), and
+  `adapters.<name>.enabled = false` turns an adapter off across ingest,
+  peek, and doctor. A new `adapter-stale` doctor check flags adapters
+  whose logs are present but no longer being picked up.
+- **Trace-mode block surface (web)** — every content block in the trace
+  view carries identity: a per-block tag affordance (block tags were
+  already writable via CLI colon-paths; now they're visible and editable
+  where you read), and verbatim copy for blocks and tool payloads via
+  `/raw/{kind}/{id}` (`block`, `tool_input`, `tool_result`).
+- **Exception reference** — generated `docs/reference/exceptions.md`
+  documents the full error taxonomy and its exit-code/HTTP mapping.
+
+### Changed
+
+- **Errors carry a contract** — the `SiftdError` taxonomy splits failures
+  into `UserInputError` (exit 2 / HTTP 400) and `DriftError` (exit 1 /
+  HTTP 503). The CLI backstop renders clean one-line messages with
+  optional hints instead of tracebacks — e.g. a stale embeddings index
+  during `siftd search` now explains itself and suggests the fix — and
+  serve maps the same taxonomy to status codes. Membership is enforced by
+  an architecture ratchet test.
+
+### Fixed
+
+- **claude_code adapter drift** — `gitBranch`, `toolUseResult`, and usage
+  parsing track the current log format.
+- **codex_cli dual-path discovery** — sessions are found under both
+  layout generations.
+- **peek** — adapter alias drift refresh.
+- **cli.md reference generator** — repaired via lane-registry
+  introspection (the lanes help format had silently truncated it to zero
+  sections); byte-reproducibility is now explicitly pinned to the
+  canonical interpreter (Python 3.14 changed argparse usage layout).
+
+### Internal
+
+- Per-folder README documentation system with generated spans and a
+  strict drift gate in `./dev check` and CI; `.claude` skills/commands
+  tracked in-repo; hooks moved to tracked `.githooks`.
+- Non-src simplification sweep: test-lane dedup, dead residue removed.
+- Prefix-resolution primitive dissolved six copies of the
+  resolve/ambiguity dance; `list_tags` count arms folded.
+
 ## [0.11.0] - 2026-07-08
 
 > The search-coherence release. Element tagging lands as a first-class read
