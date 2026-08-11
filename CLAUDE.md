@@ -31,6 +31,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 ./dev docs           # Generate reference docs + README generated spans
 ./dev docs --check   # Verify docs aren't stale (strict; last step of ./dev check)
 ./dev check          # Lint + test (CI equivalent, quiet by default)
+./dev check --all    # ...plus the serve, embeddings, and slow lanes (also --serve/--embed/--slow)
 ./dev agent <template> <path>  # Launch agent with prompt template
 ```
 
@@ -54,8 +55,10 @@ src/siftd/
 ├── serialization/  # Serve-layer JSON formatting (architecture boundary)
 ├── serve/          # HTTP server (optional [serve] extra) — routes, auth, htmx UI
 ├── storage/        # SQLite ops, schema, content blobs
+├── builtin_queries/ # Shipped SQL reports
 ├── search.py       # Hybrid FTS5 + vector search, MMR reranking
 ├── config.py       # Config management (~/.config/siftd/config.toml)
+├── errors.py       # SiftdError taxonomy (exit-code + HTTP-status contract)
 └── safecall.py     # Unified exception handling
 tests/              # Pytest, mirrors src structure
 ```
@@ -92,9 +95,36 @@ siftd show <id>           # View conversation detail
 siftd peek                # View live/recent sessions (bypasses DB)
 siftd tag <id> <tag>      # Tag a conversation
 siftd export --last       # Export most recent session
+siftd embed               # Embedding index lifecycle (build/status/clear)
 ```
 
 Run `siftd <cmd> --help` for full options.
+
+## Release process
+
+Trunk-based. `main` is the only long-lived branch; **publishing is tagging**, not
+merging — nothing reaches users until a `v*` tag fires the CI → publish → homebrew
+chain. There are no release or staging branches: "the 0.x.0 work" is already
+expressible as *commits on main since the previous tag*, and a second container for
+it would only accumulate merge debt and defer integration risk to one big merge.
+(Revisit only if multi-version support becomes real — not before 1.0.)
+
+1. **`main` is always releasable.** Never publish from it directly.
+2. **One slice = one short-lived branch**, merged when `./dev check` is green, then
+   deleted. Commit freely on the branch as work goes green; push is user-initiated.
+3. **Re-run the harness on `main` after every merge.** Branch-level green is not
+   transitive across merge.
+4. **`CHANGELOG.md`'s `[Unreleased]` is the release container.** Each slice adds its
+   line as it lands — never reconstruct the changelog archaeologically at cut time.
+5. **Breaking changes ship behind a compat ledger** with a stated removal version, so
+   every intermediate state of `main` is a working surface, never a half-done rename.
+6. **Scope lives in the loops roadmap node** for the version (`sl read project --kind
+   roadmap`). Slices ratify into it; it answers "is this in the release?"
+7. **Tier the scope: defining vs ride-along.** Defining items gate the release;
+   ride-alongs are cut first. Never weaken a defining item to make a date.
+8. **Cut = tag**, only once the defining set is green and ride-alongs are decided.
+   Follow the `release` skill for the mechanics (changelog, bump, tag, CI/PyPI watch,
+   local `uv tool` reinstall).
 
 ## Before you're done
 
