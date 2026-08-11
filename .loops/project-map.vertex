@@ -22,7 +22,7 @@
 //
 // Status vocabulary: current | optional | planned | deprecated.
 name "project-map"
-store "/Users/kaygee/Code/siftd/.loops/data/project-map.db"
+store "data/project-map.jsonl"
 
 loops {
   capability {

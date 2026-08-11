@@ -1,5 +1,5 @@
 name "project"
-store "/Users/kaygee/Code/siftd/.loops/data/project.db"
+store "data/project.jsonl"
 
 loops {
   decision   { fold { items "by" "topic" }
