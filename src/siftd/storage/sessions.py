@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -586,46 +587,27 @@ class PendingTagRecovery:
         return sum(1 for a in self.applied if a.already_present)
 
 
-def recover_pending_tags(
+_PENDING_ROW_COLUMNS = (
+    "id, harness_session_id, tag_name, entity_type, exchange_index, "
+    "last_marker, created_at"
+)
+
+
+def _apply_pending_rows(
     conn: sqlite3.Connection,
-    *,
-    max_age_hours: int = 48,
-    discard_unresolved: bool = False,
-    commit: bool = False,
-) -> PendingTagRecovery:
-    """Apply queued tags whose session has already been ingested.
+    rows: list[sqlite3.Row],
+    resolve_conversation: Callable[[str], str | None],
+) -> tuple[list[AppliedPendingTag], list[UnresolvedPendingTag], set[str]]:
+    """Apply the rows whose target resolves; report the rest.
 
-    The queue only drains when a session's transcript is ingested again. A
-    settled session never re-ingests (its hash is unchanged), so its rows
-    would sit in pending_tags forever — this is the recovery path for them,
-    and the only one that exists.
-
-    Scope is the *orphaned* rows: those with no matching active_sessions row,
-    which is exactly what the ``pending-tags`` doctor check counts. Sessions
-    still registered are left alone — they may still be live, and their
-    late-bound markers should resolve against the finished transcript, not a
-    mid-flight one. Stale registrations are pruned first (see
-    :func:`prune_stale_sessions`), which brings their rows into scope.
-
-    Rows that resolve are applied and consumed. Rows that don't are reported
-    and *kept*, unless ``discard_unresolved`` is set — deleting a queued tag
-    is data loss, never a repair, so it takes an explicit opt-in. An
-    assignment that already exists (a hand-recovered tag) counts as applied:
-    the intent holds, so the row has done its job and is consumed.
+    Shared by the ingest drain (:func:`drain_pending_tags`, where the
+    conversation is already known) and the recovery path
+    (:func:`recover_pending_tags`, which looks it up per session id) so the
+    two agree on targeting *and* on the rule that only an applied row is
+    consumed. Returns (applied, unresolved, consumable row ids) — the caller
+    owns the delete, since the two paths differ on what to do with the rest.
     """
     from siftd.storage.tags import apply_tag, get_or_create_tag
-
-    stale_pruned = prune_stale_sessions(conn, max_age_hours)
-
-    rows = conn.execute(
-        """
-        SELECT id, harness_session_id, tag_name, entity_type, exchange_index,
-               last_marker, created_at
-        FROM pending_tags
-        WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
-        ORDER BY created_at
-        """,
-    ).fetchall()
 
     applied: list[AppliedPendingTag] = []
     unresolved: list[UnresolvedPendingTag] = []
@@ -633,7 +615,7 @@ def recover_pending_tags(
 
     for row in rows:
         sid = row["harness_session_id"]
-        conversation_id = resolve_session_conversation(conn, sid)
+        conversation_id = resolve_conversation(sid)
 
         if conversation_id is None:
             reason = "no ingested conversation matches this session id"
@@ -665,6 +647,94 @@ def recover_pending_tags(
             )
         )
         consumed_ids.add(row["id"])
+
+    return applied, unresolved, consumed_ids
+
+
+def drain_pending_tags(
+    conn: sqlite3.Connection,
+    harness_session_ids: list[str],
+    conversation_id: str,
+    *,
+    commit: bool = False,
+) -> tuple[list[AppliedPendingTag], list[UnresolvedPendingTag]]:
+    """Apply the tags queued for a session that has just been ingested.
+
+    ``harness_session_ids`` is every key form the session may have been
+    queued under (see the ingest drain's ``_session_key_candidates``). *All*
+    of them are drained, not just the first with rows: shipped tooling writes
+    both forms in a single session — the session-start hook registers
+    ``<adapter>::<uuid>`` while ``siftd tag --session <uuid>`` writes the bare
+    uuid — and both name the same session.
+
+    Only rows that resolve to a real target are applied and consumed. A row
+    whose target does not exist yet (no response in the transcript, exchange
+    index past the end) is left queued, so the next ingest — or
+    ``siftd doctor fix --pending-tags`` — can still land it. Deleting a
+    queued tag is data loss, never a repair.
+    """
+    if not harness_session_ids:
+        return ([], [])
+
+    placeholders = ",".join("?" * len(harness_session_ids))
+    rows = conn.execute(
+        f"SELECT {_PENDING_ROW_COLUMNS} FROM pending_tags "
+        f"WHERE harness_session_id IN ({placeholders}) ORDER BY created_at",
+        harness_session_ids,
+    ).fetchall()
+
+    applied, unresolved, consumed_ids = _apply_pending_rows(
+        conn, rows, lambda _sid: conversation_id,
+    )
+    _delete_pending_rows(conn, list(consumed_ids))
+
+    if commit:
+        conn.commit()
+
+    return applied, unresolved
+
+
+def recover_pending_tags(
+    conn: sqlite3.Connection,
+    *,
+    max_age_hours: int = 48,
+    discard_unresolved: bool = False,
+    commit: bool = False,
+) -> PendingTagRecovery:
+    """Apply queued tags whose session has already been ingested.
+
+    The queue only drains when a session's transcript is ingested again. A
+    settled session never re-ingests (its hash is unchanged), so its rows
+    would sit in pending_tags forever — this is the recovery path for them,
+    and the only one that exists.
+
+    Scope is the *orphaned* rows: those with no matching active_sessions row,
+    which is exactly what the ``pending-tags`` doctor check counts. Sessions
+    still registered are left alone — they may still be live, and their
+    late-bound markers should resolve against the finished transcript, not a
+    mid-flight one. Stale registrations are pruned first (see
+    :func:`prune_stale_sessions`), which brings their rows into scope.
+
+    Rows that resolve are applied and consumed. Rows that don't are reported
+    and *kept*, unless ``discard_unresolved`` is set — deleting a queued tag
+    is data loss, never a repair, so it takes an explicit opt-in. An
+    assignment that already exists (a hand-recovered tag) counts as applied:
+    the intent holds, so the row has done its job and is consumed.
+    """
+    stale_pruned = prune_stale_sessions(conn, max_age_hours)
+
+    rows = conn.execute(
+        f"""
+        SELECT {_PENDING_ROW_COLUMNS}
+        FROM pending_tags
+        WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
+        ORDER BY created_at
+        """,
+    ).fetchall()
+
+    applied, unresolved, consumed_ids = _apply_pending_rows(
+        conn, rows, lambda sid: resolve_session_conversation(conn, sid),
+    )
 
     _delete_pending_rows(conn, list(consumed_ids))
 
@@ -736,15 +806,33 @@ def _delete_pending_rows(conn: sqlite3.Connection, ids: list[str]) -> int:
     return cur.rowcount
 
 
-def get_orphaned_pending_tags_count(conn: sqlite3.Connection) -> int:
-    """Count pending tags for sessions not in active_sessions."""
-    cur = conn.execute(
+def count_orphaned_pending_tags(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Split the pending rows for unregistered sessions into (recoverable, not).
+
+    A row is recoverable when its session id resolves to an ingested
+    conversation — ``doctor fix --pending-tags`` can apply it. A row that
+    resolves to nothing (a typo'd session id, a conversation since removed)
+    never will, and deleting it is data loss rather than a repair, so counting
+    it as an actionable warning leaves ``siftd doctor --strict`` permanently
+    red with no non-destructive way out. Split so the two get different
+    severities.
+    """
+    rows = conn.execute(
         """
-        SELECT COUNT(*) FROM pending_tags
+        SELECT harness_session_id, COUNT(*) AS n FROM pending_tags
         WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
+        GROUP BY harness_session_id
         """
-    )
-    return cur.fetchone()[0]
+    ).fetchall()
+
+    recoverable = 0
+    unrecoverable = 0
+    for row in rows:
+        if resolve_session_conversation(conn, row["harness_session_id"]) is None:
+            unrecoverable += row["n"]
+        else:
+            recoverable += row["n"]
+    return recoverable, unrecoverable
 
 
 def get_stale_sessions_count(

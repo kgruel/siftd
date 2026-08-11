@@ -968,6 +968,85 @@ class TestDoctorFixPendingTagsRecovery:
         assert "01KZKF9APH6N" in unresolved
         assert unresolved["01KZKF9APH6N"]
 
+    def test_stale_registration_is_pruned_then_recovered(self, pending_db, capsys):
+        """The advertised prune → in-scope → applied sequence, end to end.
+
+        `recover_pending_tags` prunes stale registrations first *so that* their
+        queued tags come into scope, and the check advertises it ("idle for
+        over 48 hours — the fix prunes them"). Only the fresh-session negative
+        case was covered, so the DELETE was never exercised against a real row.
+        """
+        from datetime import UTC, datetime, timedelta
+
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import open_database
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        register_session(conn, "SESSION-A", "live_test")
+        old = (datetime.now(UTC) - timedelta(hours=200)).isoformat()
+        conn.execute(
+            "UPDATE active_sessions SET last_seen_at = ?, started_at = ? "
+            "WHERE harness_session_id = ?",
+            (old, old, "SESSION-A"),
+        )
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["stale_sessions_pruned"] == 1
+        applied = {a["tag"]: a for a in data["applied"]}
+        assert applied["keeper"]["target_id"] == ids["parent"]
+
+    def test_exchange_rows_resolve_by_index(self, pending_db, capsys):
+        """`tag --session <id> --exchange N` rows recover too, in range and past it."""
+        from siftd.storage.sessions import queue_tag
+        from siftd.storage.sqlite import open_database
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        prompt_id = conn.execute(
+            "SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt'",
+            (ids["marked"],),
+        ).fetchone()["id"]
+        queue_tag(conn, "SESSION-B", "on-exchange-1", entity_type="exchange", exchange_index=1)
+        queue_tag(conn, "SESSION-B", "past-end", entity_type="exchange", exchange_index=9)
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+
+        applied = {a["tag"]: a for a in data["applied"]}
+        assert applied["on-exchange-1"]["target_kind"] == "exchange"
+        assert applied["on-exchange-1"]["target_id"] == prompt_id
+        # Past the end resolves to nothing, so the row is kept, not discarded.
+        unresolved = {u["tag"]: u["reason"] for u in data["unresolved"]}
+        assert "exchange 9" in unresolved["past-end"]
+        assert ("SESSION-B", "past-end") in self._queued(db_path)
+
+    def test_doctor_converges_after_the_fix(self, pending_db, capsys):
+        """A converged DB reports info, not a warning `--strict` can never clear.
+
+        Unresolvable rows are kept by design, so counting them as an actionable
+        warning left `doctor --strict` (documented for CI) permanently at exit
+        1 unless the user ran the destructive discard.
+        """
+        db_path, _ = pending_db
+        main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+        capsys.readouterr()
+
+        rc = main(["--db", str(db_path), "doctor", "run", "pending-tags", "--strict",
+                   "--json"])
+        report = json.loads(capsys.readouterr().out)
+        severities = {f["severity"] for f in report["findings"] if f["check"] == "pending-tags"}
+        assert "warning" not in severities
+        assert "info" in severities  # the kept rows are still reported
+        assert rc == 0
+
     def test_discard_unresolved_without_pending_tags_is_reported(self, test_db, tmp_path, monkeypatch, capsys):
         """The destructive-sounding flag never applies silently to another fix."""
         # Keep the findings cache (read and cleared by the batch fix path)

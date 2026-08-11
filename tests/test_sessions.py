@@ -10,7 +10,7 @@ from siftd.storage.sessions import (
     cleanup_stale_sessions,
     consume_pending_tags,
     ensure_session_tables,
-    get_orphaned_pending_tags_count,
+    count_orphaned_pending_tags,
     get_pending_tags,
     get_session_info,
     get_stale_sessions_count,
@@ -362,19 +362,19 @@ class TestPendingTagsSchemaUpgrade:
 
 
 class TestOrphanedAndStaleCounts:
-    """Tests for get_orphaned_pending_tags_count() and get_stale_sessions_count()."""
+    """Tests for count_orphaned_pending_tags() and get_stale_sessions_count()."""
 
-    def test_orphaned_count(self, db):
-        """Count tags for sessions not in active_sessions."""
-        # Register one session with a tag
+    def test_orphaned_count_splits_by_resolvability(self, db):
+        """Only sessions absent from active_sessions count, split by whether
+        the fix could ever apply them."""
+        # Register one session with a tag — not orphaned, so not counted.
         register_session(db, "registered", "claude_code", commit=True)
         queue_tag(db, "registered", "tag1", commit=True)
 
-        # Add tag for unregistered session
+        # Orphaned, and no conversation was ever ingested for it.
         queue_tag(db, "unregistered", "tag2", commit=True)
 
-        count = get_orphaned_pending_tags_count(db)
-        assert count == 1
+        assert count_orphaned_pending_tags(db) == (0, 1)
 
     def test_stale_sessions_count(self, db):
         """Count sessions older than max_age_hours (uses last_seen_at)."""

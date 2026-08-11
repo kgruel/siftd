@@ -19,7 +19,7 @@ class PendingTagsCheck:
 
     def run(self, ctx: CheckContext) -> list[Finding]:
         from siftd.storage.sessions import (
-            get_orphaned_pending_tags_count,
+            count_orphaned_pending_tags,
             get_stale_sessions_count,
         )
 
@@ -32,19 +32,39 @@ class PendingTagsCheck:
         if not cur.fetchone():
             return []
 
-        orphaned = get_orphaned_pending_tags_count(conn)
-        if orphaned > 0:
+        recoverable, unrecoverable = count_orphaned_pending_tags(conn)
+        if recoverable > 0:
             findings.append(
                 Finding(
                     check=self.name,
                     severity="warning",
                     message=(
-                        f"{orphaned} queued tag(s) not yet applied — the fix applies "
+                        f"{recoverable} queued tag(s) not yet applied — the fix applies "
                         "the ones whose session has been ingested"
                     ),
                     fix_available=True,
                     fix_command="siftd doctor fix --pending-tags",
-                    context={"orphaned_count": orphaned},
+                    context={"orphaned_count": recoverable},
+                )
+            )
+        if unrecoverable > 0:
+            # These resolve to no ingested conversation, so the fix can never
+            # apply them and deleting them is data loss, not a repair. Keeping
+            # them an actionable warning would leave `doctor --strict` red
+            # forever with no non-destructive way out — so: info, and name the
+            # opt-in that clears them.
+            findings.append(
+                Finding(
+                    check=self.name,
+                    severity="info",
+                    message=(
+                        f"{unrecoverable} queued tag(s) name a session that was never "
+                        "ingested — kept, since discarding a queued tag is data loss; "
+                        "clear them with "
+                        "`siftd doctor fix --pending-tags --discard-unresolved`"
+                    ),
+                    fix_available=False,
+                    context={"unresolvable_count": unrecoverable},
                 )
             )
 

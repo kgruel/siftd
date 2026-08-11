@@ -17,15 +17,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   stripped, parent uuid for `::agent::` subagent transcripts), which also
   rescues queues stranded by earlier versions. The same mismatch left
   live sessions registered forever; ingest now unregisters the bare key
-  too.
-- **Conversation tags survive re-ingest.** When a transcript's hash
-  changes, ingest replaces the conversation row, and the polymorphic
-  cleanup trigger took its `tag_assignments` with it — so tagging a live
-  session lost the tag on the next ingest. Conversation-level assignments
-  are now snapshotted before the delete and re-pointed at the replacement
-  row (`applied_at` preserved) inside the same transaction. Limitation:
-  event-level tags (`--last-*`, `--exchange` targets) are not re-pointed,
-  since events also get new IDs on re-ingest; that is deferred to 0.13.0.
+  too. Both key forms drain in one pass rather than only the first with
+  rows: an agent tagging via `--current` queues under the prefixed id the
+  session-start hook registered, while `siftd tag --session <uuid>` queues
+  under the bare one, and a session routinely has both.
+- **Ingest no longer discards a queued tag it could not apply.** The drain
+  deleted every row for the session up front and only then resolved
+  targets, so a `--last-tool-call` queued before any tool ran, or an
+  `--exchange N` past the end of a still-growing transcript, was destroyed
+  with nothing left for `doctor` to see. Rows are now consumed only once
+  they have actually been applied; the rest stay queued for the next
+  ingest or for `siftd doctor fix --pending-tags`. Ingest and recovery now
+  share one target resolver, so they can no longer disagree.
+- **Session tags stay with the session, not a subagent.** A subagent
+  transcript shares its session's queue keys with the parent, so an ingest
+  that reached the subagent first — routinely, when the parent is
+  byte-stable while the Agent is still writing — took the tag and left
+  `siftd query -l` pointing at a sidecar transcript. The drain now agrees
+  with the recovery path (which already skipped subagent rows) and leaves
+  those rows queued for the parent.
+- **Conversation *and* element tags survive re-ingest, on every adapter.**
+  When a transcript changes, ingest replaces the conversation row, and the
+  polymorphic cleanup triggers took its `tag_assignments` with it — so
+  tagging a live session lost the tag on the next ingest. Assignments are
+  now snapshotted before the delete and re-pointed at the replacement rows
+  (`applied_at` preserved) inside the same transaction: the conversation
+  by its `external_id`, and prompt / response / tool-call / exchange tags
+  by their event's `(kind, external_id)`, so a `--last-response` or a
+  hand-applied element tag stays on the same turn instead of being
+  destroyed by the next ingest. This now covers the session-dedup
+  strategy (`gemini_cli`, `opencode`, `antigravity_cli`) as well as the
+  file-dedup one, where the previous release note over-claimed. A
+  replacement whose transcript no longer parses to a conversation has
+  nothing to carry the tags to; it now says what was dropped instead of
+  dropping it silently. Remaining limitations, deferred to 0.13.0:
+  block-level tags (the trace-block surface) are not re-pointed, and
+  `doctor fix --pending-tags` still resolves late-bound markers against
+  whatever the transcript holds at that moment, which for a session that
+  is still running may not be its final turn.
 - **`siftd doctor fix --pending-tags` repairs instead of deleting.** It ran
   `cleanup_stale_sessions`, so the remedy doctor advertised for stranded
   queued tags destroyed exactly the data that was recoverable. It now
@@ -42,6 +71,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`applied` / `unresolved` / `discarded` / `stale_sessions_pruned`,
   replacing `sessions_deleted` / `tags_deleted`), and the doctor check's
   wording no longer describes deletion as a fix.
+- **`siftd doctor --strict` can reach green again.** Queued rows that
+  resolve to no ingested conversation are kept by design, but they were
+  still counted as an actionable warning — so `--strict` (documented for
+  CI) exited 1 forever and `doctor fix` kept advertising a fix that
+  changed nothing. The check now splits the count: rows the fix can apply
+  stay a warning, rows that resolve to nothing become an `info` finding
+  naming `--discard-unresolved`.
 
 ## [0.12.0] - 2026-07-18
 
