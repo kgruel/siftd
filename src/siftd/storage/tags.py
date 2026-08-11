@@ -173,7 +173,15 @@ class ConversationTagSnapshot:
     dropped_blocks: int = 0
 
     def __bool__(self) -> bool:
-        return bool(self.conversation or self.events)
+        """True when the snapshot holds anything — to carry *or* to report.
+
+        The dropped counters are part of it. A snapshot holding only
+        assignments that cannot be re-pointed (block tags, events with no
+        external_id) has nothing to restore but everything to say, and
+        reading as empty is exactly how that loss went unannounced in the
+        empty-transcript branch of re-ingest.
+        """
+        return bool(self.conversation or self.events or self.dropped)
 
     @property
     def dropped(self) -> int:

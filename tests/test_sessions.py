@@ -332,7 +332,8 @@ class TestOrphanedAndStaleCounts:
         # Orphaned, and no conversation was ever ingested for it.
         queue_tag(db, "unregistered", "tag2", commit=True)
 
-        assert count_orphaned_pending_tags(db) == (0, 1)
+        counts = count_orphaned_pending_tags(db)
+        assert (counts.recoverable, counts.target_pending, counts.session_unresolvable) == (0, 0, 1)
 
     def test_stale_sessions_count(self, db):
         """Count sessions older than max_age_hours (uses last_seen_at)."""
@@ -352,3 +353,129 @@ class TestOrphanedAndStaleCounts:
         assert count == 1
 
 
+
+
+# The keys the coverage rule has to get right. Enumerated as a vocabulary and
+# crossed with itself rather than hand-picked as pairs, so the SQL and the
+# Python form are pinned to each other over every combination — including the
+# ones nobody thought to write down.
+_KEY_VOCABULARY = [
+    "abc",
+    "claude_code::abc",
+    "a::b::c",
+    "b::c",
+    "c",
+    "a::b",
+    "bc",
+    "x::a%c",
+    "a%c",
+    "x::a_c",
+    "a_c",
+    "%",
+    "_",
+    "",
+    "::abc",
+    "claude_code::abcdef",
+]
+
+
+class TestSessionKeyCoverage:
+    """The `<adapter>::` prefix rule is written twice; it must mean one thing.
+
+    `_covers_sql` is what the orphan scope and conversation lookup run inside
+    SQLite; `_covered_keys` is what the set-wise resolver runs in Python. A
+    silent divergence between them re-opens exactly the bug this rule exists
+    to close, and no single behavioral test would catch it — so cross the
+    whole vocabulary and assert they agree everywhere.
+    """
+
+    @pytest.mark.parametrize("outer", _KEY_VOCABULARY)
+    def test_sql_and_python_forms_agree(self, db, outer):
+        from siftd.storage.sessions import _covered_keys, _covers_sql
+
+        covered = set(_covered_keys(outer))
+        for inner in _KEY_VOCABULARY:
+            matched = db.execute(
+                f"SELECT {_covers_sql(':outer', ':inner')}",
+                {"outer": outer, "inner": inner},
+            ).fetchone()[0]
+            assert bool(matched) is (inner in covered), (outer, inner)
+
+    def test_wildcards_are_literal(self, db):
+        """The rule is a suffix comparison, not a LIKE — `%`/`_` match nothing."""
+        from siftd.storage.sessions import _covered_keys
+
+        assert "a%c" in _covered_keys("x::a%c")
+        assert "%" not in _covered_keys("x::abc")
+        assert "a_c" not in _covered_keys("x::abc")
+
+
+class TestSetWiseSessionResolution:
+    """The set-wise resolver must answer exactly what the per-key one does."""
+
+    @pytest.fixture
+    def conversations(self, db):
+        from siftd.storage.sqlite import get_or_create_harness, insert_conversation
+
+        harness_id = get_or_create_harness(db, "live_test", source="test", log_format="jsonl")
+        ids = {}
+        for external_id, started_at in [
+            ("live_test::SESSION-A", "2024-01-15T10:00:00Z"),
+            ("live_test::SESSION-A::agent::sub1", "2024-01-15T10:05:00Z"),
+            ("SESSION-B", "2024-01-16T10:00:00Z"),
+            ("a::b::c", "2024-01-17T10:00:00Z"),
+        ]:
+            ids[external_id] = insert_conversation(
+                db, external_id=external_id, harness_id=harness_id,
+                workspace_id=None, started_at=started_at,
+            )
+        db.commit()
+        return ids
+
+    def test_matches_the_per_key_resolver(self, db, conversations):
+        from siftd.storage.sessions import (
+            resolve_session_conversation,
+            resolve_session_conversations,
+        )
+
+        keys = [*_KEY_VOCABULARY, "SESSION-A", "SESSION-B", "live_test::SESSION-A", "b::c"]
+        batch = resolve_session_conversations(db, keys)
+        assert {key: batch.get(key) for key in keys} == {
+            key: resolve_session_conversation(db, key) for key in keys
+        }
+
+    def test_newest_conversation_wins_per_key(self, db, conversations):
+        """Re-ingest under several ids leaves duplicates; the newest is the live one."""
+        from siftd.storage.sessions import resolve_session_conversations
+        from siftd.storage.sqlite import get_or_create_harness, insert_conversation
+
+        harness_id = get_or_create_harness(db, "other", source="test", log_format="jsonl")
+        newer = insert_conversation(
+            db, external_id="other::SESSION-B", harness_id=harness_id,
+            workspace_id=None, started_at="2024-06-01T10:00:00Z",
+        )
+        db.commit()
+        assert resolve_session_conversations(db, ["SESSION-B"])["SESSION-B"] == newer
+
+    def test_one_conversations_scan_regardless_of_key_count(self, db, conversations):
+        """The `pending-tags` check runs in doctor's fast lane, so its cost is a contract.
+
+        Resolving key by key full-scans `conversations` per key (the suffix
+        match is unindexable), which made the check O(sessions x
+        conversations). Pin the scan count instead of the wall clock: one pass,
+        however many sessions are queued.
+        """
+        from siftd.storage.sessions import count_orphaned_pending_tags
+
+        for n in range(12):
+            queue_tag(db, f"session-{n}", f"tag-{n}", commit=True)
+
+        statements = []
+        db.set_trace_callback(statements.append)
+        try:
+            count_orphaned_pending_tags(db)
+        finally:
+            db.set_trace_callback(None)
+
+        scans = [s for s in statements if "FROM conversations" in s]
+        assert len(scans) == 1, scans

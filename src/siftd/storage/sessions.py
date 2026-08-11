@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 from siftd.ids import ulid as _ulid
 
@@ -499,30 +500,85 @@ def prune_stale_sessions(
     return cur.rowcount
 
 
+def _covers_sql(outer: str, inner: str) -> str:
+    """SQL fragment for "``outer`` names the same session as ``inner``".
+
+    ``pending_tags`` and ``active_sessions`` are keyed by whatever id the
+    harness reported, while adapters are free to namespace their
+    ``external_id`` (claude_code writes ``claude_code::<uuid>``). So the match
+    is "equal, or equal after an ``<adapter>::`` prefix" — expressed as a
+    suffix comparison rather than a LIKE, so a session id containing ``%`` or
+    ``_`` can't act as a wildcard.
+
+    The rule has one home and is *composed* by its callers rather than
+    retyped: directed, where only one side can carry the prefix
+    (:func:`resolve_session_conversation`), or symmetric, where either can
+    (:data:`_ORPHANED_PENDING_SCOPE`). :func:`_covered_keys` is the same rule
+    in Python; ``tests/test_sessions.py`` pins the two together.
+
+    ``outer`` and ``inner`` are SQL expressions — a column name or a named
+    parameter — never user data.
+    """
+    return (
+        f"({outer} = {inner} "
+        f"OR substr({outer}, -(length({inner}) + 2)) = '::' || {inner})"
+    )
+
+
+def _covered_keys(key: str) -> list[str]:
+    """Every session key ``key`` stands for: itself, then each ``::``-suffix.
+
+    The Python side of :func:`_covers_sql` — ``inner in _covered_keys(outer)``
+    is exactly what that fragment tests. Used to invert the match: given a
+    conversation's ``external_id``, the queue keys that could name it, so a
+    whole key set resolves in one pass (:func:`resolve_session_conversations`).
+    """
+    forms = [key]
+    idx = key.find("::")
+    while idx != -1:
+        forms.append(key[idx + 2:])
+        idx = key.find("::", idx + 2)
+    return forms
+
+
+# A pending row is orphaned only when *no* equivalent key form is registered.
+# The shipped session-start hook registers `<adapter>::<uuid>` while
+# `siftd tag --session <uuid>` queues the bare uuid, so an exact-key scope
+# calls a still-live session's rows orphaned — and recovery then resolves
+# their `--last-*` markers against a half-written transcript, pinning the tag
+# to a non-final turn. Symmetric, because either side may be the prefixed one.
+_ORPHANED_PENDING_SCOPE = f"""
+    NOT EXISTS (
+        SELECT 1 FROM active_sessions s
+        WHERE {_covers_sql("s.harness_session_id", "pending_tags.harness_session_id")}
+           OR {_covers_sql("pending_tags.harness_session_id", "s.harness_session_id")}
+    )
+"""
+
+
 def resolve_session_conversation(
     conn: sqlite3.Connection,
     harness_session_id: str,
 ) -> str | None:
     """Return the conversation id an ingested session belongs to, or None.
 
-    ``pending_tags`` is keyed by the bare id the harness reports, while
-    adapters are free to namespace their ``external_id`` (claude_code writes
-    ``claude_code::<uuid>``). So the match is "equal, or equal after an
-    ``<adapter>::`` prefix" — expressed as a suffix comparison rather than a
-    LIKE, so a session id containing ``%`` or ``_`` can't act as a wildcard.
+    The session key is matched against ``external_id`` by the rule
+    :func:`_covers_sql` documents — directed, since it is the adapter that
+    namespaces, so only ``external_id`` can carry the prefix.
 
     Subagent rows (``...::agent::<id>``) are excluded so a session-level tag
     lands on the parent conversation, matching the ingest-drain semantic.
     When a transcript has been re-ingested under several ids, the newest row
     wins — it is the one a query would return today.
+
+    This is the single-key form, for the ingest drain. Resolving a whole
+    queue with it is O(keys x conversations): see
+    :func:`resolve_session_conversations`.
     """
     cur = conn.execute(
-        """
+        f"""
         SELECT id FROM conversations
-        WHERE (
-                external_id = :sid
-                OR substr(external_id, -(length(:sid) + 2)) = '::' || :sid
-              )
+        WHERE {_covers_sql("external_id", ":sid")}
           AND instr(external_id, '::agent::') = 0
         ORDER BY started_at DESC, id DESC
         LIMIT 1
@@ -531,6 +587,49 @@ def resolve_session_conversation(
     )
     row = cur.fetchone()
     return row["id"] if row else None
+
+
+def resolve_session_conversations(
+    conn: sqlite3.Connection,
+    harness_session_ids: Iterable[str],
+) -> dict[str, str]:
+    """Set-wise :func:`resolve_session_conversation` — key to conversation id.
+
+    Same rule, one pass. The suffix match is unindexable, so the single-key
+    form full-scans ``conversations``; running it per key made both the
+    ``pending-tags`` check and its fix O(sessions x conversations), which the
+    fast doctor lane cannot afford. Here the match is inverted — each
+    conversation is expanded to the keys it covers (:func:`_covered_keys`) and
+    intersected with the wanted set — so the whole queue resolves in a single
+    scan. Keys that resolve to nothing are absent from the result, so
+    ``.get`` is the drop-in for the single-key call.
+
+    The newest row wins per key, matching the single-key form's
+    ``ORDER BY started_at DESC, id DESC`` (SQLite sorts NULL timestamps last
+    under DESC, so a dated row outranks an undated one).
+    """
+    wanted = set(harness_session_ids)
+    if not wanted:
+        return {}
+
+    winner: dict[str, tuple[tuple[int, str, str], str]] = {}
+    for row in conn.execute(
+        "SELECT id, external_id, started_at FROM conversations "
+        "WHERE instr(external_id, '::agent::') = 0"
+    ):
+        external_id = row["external_id"]
+        if external_id is None:
+            continue
+        keys = wanted.intersection(_covered_keys(external_id))
+        if not keys:
+            continue
+        started_at = row["started_at"]
+        rank = (0, "", row["id"]) if started_at is None else (1, started_at, row["id"])
+        for key in keys:
+            if key not in winner or winner[key][0] < rank:
+                winner[key] = (rank, row["id"])
+
+    return {key: conversation_id for key, (_rank, conversation_id) in winner.items()}
 
 
 @dataclass
@@ -544,6 +643,13 @@ class AppliedPendingTag:
     already_present: bool  # the assignment already existed (manual recovery)
 
 
+# What stops a queued row from being applied. The two need different
+# handling, not just different wording: a target-pending row is one ingest
+# away from landing, so it is neither something the fix can advertise nor
+# something `--discard-unresolved` should sweep up.
+UnresolvedKind = Literal["target-pending", "session-unresolvable"]
+
+
 @dataclass
 class UnresolvedPendingTag:
     """A queued tag that could not be applied; its queue row is kept."""
@@ -551,6 +657,7 @@ class UnresolvedPendingTag:
     harness_session_id: str
     tag_name: str
     reason: str
+    kind: UnresolvedKind
 
 
 @dataclass
@@ -598,8 +705,10 @@ def _apply_pending_rows(
         conversation_id = resolve_conversation(sid)
 
         if conversation_id is None:
+            kind: UnresolvedKind = "session-unresolvable"
             reason = "no ingested conversation matches this session id"
         else:
+            kind = "target-pending"
             target = _resolve_pending_target(conn, row, conversation_id)
             # A str is the failure reason; a tuple is the resolved target.
             reason = target if isinstance(target, str) else None
@@ -607,7 +716,10 @@ def _apply_pending_rows(
         if reason is not None:
             unresolved.append(
                 UnresolvedPendingTag(
-                    harness_session_id=sid, tag_name=row["tag_name"], reason=reason,
+                    harness_session_id=sid,
+                    tag_name=row["tag_name"],
+                    reason=reason,
+                    kind=kind,
                 )
             )
             continue
@@ -688,12 +800,13 @@ def recover_pending_tags(
     would sit in pending_tags forever — this is the recovery path for them,
     and the only one that exists.
 
-    Scope is the *orphaned* rows: those with no matching active_sessions row,
-    which is exactly what the ``pending-tags`` doctor check counts. Sessions
-    still registered are left alone — they may still be live, and their
-    late-bound markers should resolve against the finished transcript, not a
-    mid-flight one. Stale registrations are pruned first (see
-    :func:`prune_stale_sessions`), which brings their rows into scope.
+    Scope is the *orphaned* rows: those for which no equivalent session key
+    is registered (:data:`_ORPHANED_PENDING_SCOPE`), which is exactly what the
+    ``pending-tags`` doctor check counts. Sessions still registered are left
+    alone — they may still be live, and their late-bound markers should
+    resolve against the finished transcript, not a mid-flight one. Stale
+    registrations are pruned first (see :func:`prune_stale_sessions`), which
+    brings their rows into scope.
 
     Rows that resolve are applied and consumed. Rows that don't are reported
     and *kept*, unless ``discard_unresolved`` is set — deleting a queued tag
@@ -707,23 +820,34 @@ def recover_pending_tags(
         f"""
         SELECT {_PENDING_ROW_COLUMNS}
         FROM pending_tags
-        WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
+        WHERE {_ORPHANED_PENDING_SCOPE}
         ORDER BY created_at
         """,
     ).fetchall()
 
-    applied, unresolved, consumed_ids = _apply_pending_rows(
-        conn, rows, lambda sid: resolve_session_conversation(conn, sid),
+    # One resolution pass, shared with the check via
+    # :func:`count_orphaned_pending_tags` — the buckets it reports and the
+    # outcome here are then the same computation, not two that agree by
+    # inspection.
+    resolved = resolve_session_conversations(
+        conn, {row["harness_session_id"] for row in rows},
     )
+    applied, unresolved, consumed_ids = _apply_pending_rows(conn, rows, resolved.get)
 
     _delete_pending_rows(conn, list(consumed_ids))
 
     discarded = 0
-    if discard_unresolved and unresolved:
-        # Everything not consumed is, by construction, an unresolved row.
-        discarded = _delete_pending_rows(
-            conn, [r["id"] for r in rows if r["id"] not in consumed_ids],
-        )
+    if discard_unresolved:
+        # Scoped to the session-unresolvable bucket. A row whose session did
+        # resolve is only waiting on a target the transcript does not hold
+        # yet, so the next ingest can still land it — sweeping it up here
+        # would discard a tag that is still live, which is the opposite of
+        # what this flag is for.
+        discarded = _delete_pending_rows(conn, [
+            row["id"] for row in rows
+            if row["id"] not in consumed_ids
+            and resolved.get(row["harness_session_id"]) is None
+        ])
 
     if commit:
         conn.commit()
@@ -786,33 +910,59 @@ def _delete_pending_rows(conn: sqlite3.Connection, ids: list[str]) -> int:
     return cur.rowcount
 
 
-def count_orphaned_pending_tags(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Split the pending rows for unregistered sessions into (recoverable, not).
+@dataclass
+class OrphanedPendingCounts:
+    """Orphaned pending rows, split by what stops each from being applied."""
 
-    A row is recoverable when its session id resolves to an ingested
-    conversation — ``doctor fix --pending-tags`` can apply it. A row that
-    resolves to nothing (a typo'd session id, a conversation since removed)
-    never will, and deleting it is data loss rather than a repair, so counting
-    it as an actionable warning leaves ``siftd doctor --strict`` permanently
-    red with no non-destructive way out. Split so the two get different
-    severities.
+    recoverable: int = 0
+    """Session and target both resolve — ``doctor fix --pending-tags`` applies these."""
+
+    target_pending: int = 0
+    """Session resolves, target does not exist yet; a later ingest may land them."""
+
+    session_unresolvable: int = 0
+    """Session matches no ingested conversation; only ``--discard-unresolved`` moves these."""
+
+
+def count_orphaned_pending_tags(conn: sqlite3.Connection) -> OrphanedPendingCounts:
+    """Bucket the pending rows for unregistered sessions by what blocks them.
+
+    Only ``recoverable`` is something the fix can move, and the check may only
+    advertise a fix for that bucket: a warning the fix cannot clear leaves
+    ``siftd doctor --strict`` (documented for CI) permanently red with no
+    non-destructive way out. Two distinct things used to be counted as
+    recoverable — a row whose *session* resolves but whose *target* does not
+    (an ``--exchange`` past the end, ``--last-tool-call`` before any tool ran)
+    is exactly as unfixable today as a typo'd session id, and only differs in
+    whether a later ingest might change that.
+
+    Classified per row through the same resolvers the fix runs
+    (:func:`resolve_session_conversations`, then
+    :func:`_resolve_pending_target`), so the buckets reported here and the
+    outcome of :func:`recover_pending_tags` are one computation rather than
+    two that have to be kept in agreement.
     """
     rows = conn.execute(
-        """
-        SELECT harness_session_id, COUNT(*) AS n FROM pending_tags
-        WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
-        GROUP BY harness_session_id
-        """
+        f"SELECT {_PENDING_ROW_COLUMNS} FROM pending_tags WHERE {_ORPHANED_PENDING_SCOPE}"
     ).fetchall()
 
-    recoverable = 0
-    unrecoverable = 0
+    counts = OrphanedPendingCounts()
+    if not rows:
+        return counts
+
+    resolved = resolve_session_conversations(
+        conn, {row["harness_session_id"] for row in rows},
+    )
     for row in rows:
-        if resolve_session_conversation(conn, row["harness_session_id"]) is None:
-            unrecoverable += row["n"]
+        conversation_id = resolved.get(row["harness_session_id"])
+        if conversation_id is None:
+            counts.session_unresolvable += 1
+        elif isinstance(_resolve_pending_target(conn, row, conversation_id), str):
+            # A str is the failure reason; a tuple is a resolved target.
+            counts.target_pending += 1
         else:
-            recoverable += row["n"]
-    return recoverable, unrecoverable
+            counts.recoverable += 1
+    return counts
 
 
 def get_stale_sessions_count(

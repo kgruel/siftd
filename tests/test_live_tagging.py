@@ -807,6 +807,42 @@ class TestReingestPreservesConversationTags:
             for r in caplog.records
         )
 
+    def test_emptied_transcript_names_a_block_only_loss(self, live_db, claude_root, caplog):
+        """A snapshot holding *only* unrestorable assignments still reports.
+
+        Block tags are counted, never carried (re-pointing them is deferred),
+        so a conversation tagged only at block level produced a snapshot with
+        empty carry lists — which read as "nothing here" and skipped the
+        warning outright, losing the tag in silence. The counters are part of
+        what the snapshot holds, so they are part of whether it has anything
+        to say.
+        """
+        session_uuid = "5f6a7b8c-3030-4040-8050-606070708080"
+        transcript = _write_claude_transcript(
+            claude_root / f"{session_uuid}.jsonl", session_uuid
+        )
+        ingest_all(live_db["conn"], [claude_code])
+
+        conversation_id = _conversation_id(live_db["conn"], f"claude_code::{session_uuid}")
+        block_id = live_db["conn"].execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id "
+            "WHERE e.conversation_id = ? LIMIT 1",
+            (conversation_id,),
+        ).fetchone()["id"]
+        apply_tag(
+            live_db["conn"], "block", block_id,
+            get_or_create_tag(live_db["conn"], "block-only"), commit=True,
+        )
+
+        transcript.write_text("")
+        with caplog.at_level(logging.WARNING, logger="siftd.ingestion.orchestration"):
+            ingest_all(live_db["conn"], [claude_code])
+
+        assert any(
+            "1 block tag(s)" in r.message and "no longer parses" in r.message
+            for r in caplog.records
+        ), [r.message for r in caplog.records]
+
 
 class TestReingestPreservesEventTags:
     """Event-level assignments must survive a conversation replacement too.

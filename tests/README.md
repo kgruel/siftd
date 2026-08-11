@@ -94,10 +94,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3202 |
+| `tests/` | 185 | 3208 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
-| `tests/cli/` | 28 | 619 |
+| `tests/cli/` | 28 | 623 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -183,7 +183,7 @@ docstring so its row is meaningful.
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
-| [test_live_tagging.py](test_live_tagging.py) | 26 | Integration tests for live session tagging flow. |
+| [test_live_tagging.py](test_live_tagging.py) | 27 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
 | [test_merge.py](test_merge.py) | 35 | Tests for siftd db merge — importing a slice into the main database. |
@@ -255,7 +255,7 @@ docstring so its row is meaningful.
 | [test_serve_tags_visible.py](test_serve_tags_visible.py) | 2 | Route test: GET /api/v1/tags?visible=activity enriches with the activity spark. |
 | [test_serve_workspace_detail_route.py](test_serve_workspace_detail_route.py) | 3 | Route test for GET /api/v1/workspaces/{id} (workspace-detail Operation). |
 | [test_serve_workspaces_view.py](test_serve_workspaces_view.py) | 7 | Serve-lane smoke for the Swiss Workspaces view (master ledger + detail). |
-| [test_sessions.py](test_sessions.py) | 26 | Tests for live session tracking and pending tag storage. |
+| [test_sessions.py](test_sessions.py) | 31 | Tests for live session tracking and pending tag storage. |
 | [test_shell_categorization.py](test_shell_categorization.py) | 7 | Tests for categorize_shell_command — pure function with 15 categories. |
 | [test_slice.py](test_slice.py) | 16 | Tests for siftd db slice — filtered database export. |
 | [test_sql_helper_hygiene.py](test_sql_helper_hygiene.py) | 15 | H4: SQL helper hygiene — table and column allowlist tests. |
@@ -333,7 +333,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
-| [cli/test_data.py](cli/test_data.py) | 97 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
+| [cli/test_data.py](cli/test_data.py) | 101 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 50 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |

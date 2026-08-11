@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -1041,7 +1042,12 @@ def _doctor_fix_pending_tags(args) -> int:
                     for a in result.applied
                 ],
                 "unresolved": [
-                    {"session": u.harness_session_id, "tag": u.tag_name, "reason": u.reason}
+                    {
+                        "session": u.harness_session_id,
+                        "tag": u.tag_name,
+                        "reason": u.reason,
+                        "kind": u.kind,
+                    }
                     for u in result.unresolved
                 ],
                 "discarded": result.discarded,
@@ -1060,29 +1066,55 @@ def _doctor_fix_pending_tags(args) -> int:
 
     if result.discarded:
         status.warning(f"Discarded {result.discarded} pending tag(s) that resolve to no conversation")
-    elif result.unresolved:
-        # Show the keys, not just a count: the session ids are what a user
-        # needs to chase these down (or to recognize a mistyped id).
-        _print_unresolved_pending(result.unresolved)
-    elif not result.applied and not result.stale_sessions_pruned:
+    # Show the keys, not just a count: the session ids are what a user needs
+    # to chase these down (or to recognize a mistyped id). Reported even
+    # alongside a discard, since --discard-unresolved no longer sweeps the
+    # target-pending bucket, so rows can survive it.
+    _print_unresolved_pending(result.unresolved)
+    if not (
+        result.applied or result.stale_sessions_pruned or result.discarded or result.unresolved
+    ):
         status.info("No pending tags to apply")
 
     return 0
 
 
 def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
-    """Report kept pending tags with their session keys and why they didn't resolve."""
-    status.warning(
-        f"{len(unresolved)} pending tag(s) match no ingested conversation — kept, not deleted",
-        hint=(
-            "Run 'siftd ingest' if those sessions are new, then re-run this fix. "
-            "Use '--discard-unresolved' to drop them, or '--json' for the full list."
-        ),
-    )
-    for u in unresolved[:sample]:
-        print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
-    if len(unresolved) > sample:
-        print(f"    ... {len(unresolved) - sample} more")
+    """Report kept pending tags, split by what is blocking each.
+
+    Same buckets the `pending-tags` check reports, and for the same reason:
+    a row whose session never ingested needs a decision (chase it down, or
+    `--discard-unresolved`), while a row still waiting on a target only needs
+    another ingest — collapsing the two mislabels each as the other.
+    """
+    by_kind = {"session-unresolvable": [], "target-pending": []}
+    for u in unresolved:
+        by_kind[u.kind].append(u)
+
+    def _sample(rows: list) -> None:
+        for u in rows[:sample]:
+            print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
+        if len(rows) > sample:
+            print(f"    ... {len(rows) - sample} more")
+
+    stranded = by_kind["session-unresolvable"]
+    if stranded:
+        status.warning(
+            f"{len(stranded)} pending tag(s) match no ingested conversation — kept, not deleted",
+            hint=(
+                "Run 'siftd ingest' if those sessions are new, then re-run this fix. "
+                "Use '--discard-unresolved' to drop them, or '--json' for the full list."
+            ),
+        )
+        _sample(stranded)
+
+    waiting = by_kind["target-pending"]
+    if waiting:
+        status.info(
+            f"{len(waiting)} pending tag(s) name a target the transcript does not hold "
+            "yet — kept queued; a later ingest may still land them",
+        )
+        _sample(waiting)
 
 
 def _doctor_list(args) -> int:
@@ -1247,9 +1279,11 @@ def _fix_pending_tags(conn, db_path):
     from siftd.api.sessions import recover_pending_tags
 
     result = recover_pending_tags(conn, max_age_hours=48, commit=True)
+    kept = Counter(u.kind for u in result.unresolved)
     return (
         f"{len(result.applied)} tag(s) applied, "
-        f"{len(result.unresolved)} unresolved (kept), "
+        f"{kept['target-pending']} awaiting a target (kept), "
+        f"{kept['session-unresolvable']} matching no conversation (kept), "
         f"{result.stale_sessions_pruned} stale session(s) pruned"
     )
 

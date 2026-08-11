@@ -756,8 +756,7 @@ def _reingest_file(
         # lost rather than dropping it silently.
         if tag_snapshot:
             logger.warning(
-                f"{len(tag_snapshot.conversation)} conversation tag(s) and "
-                f"{len(tag_snapshot.events)} element tag(s) were dropped: "
+                f"{_describe_snapshot(tag_snapshot)} were dropped: "
                 f"{file_path} no longer parses to a conversation"
             )
         # Record with NULL conversation_id
@@ -820,6 +819,27 @@ def _snapshot_tags_for_replacement(
     its assignments" has a single home.
     """
     return snapshot_conversation_tags(conn, conversation_id)
+
+
+def _describe_snapshot(snapshot: ConversationTagSnapshot) -> str:
+    """Name the nonzero parts of a snapshot, for a loss warning.
+
+    Enumerated rather than templated, so a snapshot carrying only assignments
+    that could never be re-pointed doesn't report "0 conversation tag(s) and 0
+    element tag(s)" — a warning that names everything except the loss it fired
+    for. Never empty at the call site: a snapshot is falsy exactly when every
+    part is zero.
+    """
+    parts = []
+    if snapshot.conversation:
+        parts.append(f"{len(snapshot.conversation)} conversation tag(s)")
+    if snapshot.events:
+        parts.append(f"{len(snapshot.events)} element tag(s)")
+    if snapshot.dropped_events:
+        parts.append(f"{snapshot.dropped_events} synthetic-event tag(s)")
+    if snapshot.dropped_blocks:
+        parts.append(f"{snapshot.dropped_blocks} block tag(s)")
+    return ", ".join(parts)
 
 
 def _restore_tags_after_replacement(

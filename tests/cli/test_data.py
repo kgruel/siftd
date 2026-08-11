@@ -2,6 +2,7 @@
 
 import io
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
@@ -834,6 +835,9 @@ class TestDoctorFixPendingTagsRecovery:
 
         queue_tag(conn, "SESSION-A", "keeper")
         queue_tag(conn, "SESSION-B", "on-last-response", last_marker="last_response")
+        # Session resolves, target does not: SESSION-B ran no tool. A later
+        # ingest may still land it, so it is neither fixable nor discardable.
+        queue_tag(conn, "SESSION-B", "on-last-tool-call", last_marker="last_tool_call")
         queue_tag(conn, "SESSION-C", "subagent-only")
         queue_tag(conn, "01KZKF9APH6N", "typo-key")  # resolves to nothing
         conn.commit()
@@ -911,16 +915,32 @@ class TestDoctorFixPendingTagsRecovery:
         assert "leaned up" not in text
 
     def test_discard_is_opt_in_and_says_discard(self, pending_db, capsys):
-        """--discard-unresolved deletes the leftovers and calls it discarding."""
+        """--discard-unresolved deletes the stranded rows and calls it discarding."""
         db_path, _ = pending_db
         rc = main([
             "--db", str(db_path), "doctor", "fix", "--pending-tags", "--discard-unresolved",
         ])
         assert rc == 0
-        assert self._queued(db_path) == set()
+        assert ("01KZKF9APH6N", "typo-key") not in self._queued(db_path)
+        assert ("SESSION-C", "subagent-only") not in self._queued(db_path)
 
         captured = capsys.readouterr()
         assert "iscarded" in captured.out + captured.err
+
+    def test_discard_spares_rows_still_waiting_on_a_target(self, pending_db, capsys):
+        """The flag clears rows that match no conversation — not rows mid-flight.
+
+        A row whose session resolved is one ingest away from landing; the next
+        turn of the transcript may be the tool call it names. Sweeping it up
+        with the genuinely stranded rows would be losing a live tag under a
+        flag whose whole point is that the loss is deliberate.
+        """
+        db_path, _ = pending_db
+        rc = main([
+            "--db", str(db_path), "doctor", "fix", "--pending-tags", "--discard-unresolved",
+        ])
+        assert rc == 0
+        assert ("SESSION-B", "on-last-tool-call") in self._queued(db_path)
 
     def test_existing_assignment_counts_as_applied(self, pending_db, capsys):
         """A hand-recovered tag makes its queue row satisfied, not failed."""
@@ -956,6 +976,46 @@ class TestDoctorFixPendingTagsRecovery:
 
         assert ("SESSION-A", "keeper") in self._queued(db_path)
         assert ("keeper", "conversation", ids["parent"]) not in self._assignments(db_path)
+
+    def test_prefixed_registration_shields_bare_queued_rows(self, pending_db, capsys):
+        """A live session is protected whichever key form registered it.
+
+        The shipped session-start hook registers `<adapter>::<uuid>` while
+        `siftd tag --session <uuid>` queues the bare uuid, so an exact-key
+        orphan scope declared a still-live session abandoned — and recovery
+        then resolved its `--last-*` markers against a half-written
+        transcript, pinning the tag to a non-final turn.
+        """
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import open_database
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        register_session(conn, "live_test::SESSION-A", "live_test")
+        conn.commit()
+        conn.close()
+
+        main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+
+        assert ("SESSION-A", "keeper") in self._queued(db_path)
+        assert ("keeper", "conversation", ids["parent"]) not in self._assignments(db_path)
+
+    def test_bare_registration_shields_prefixed_queued_rows(self, pending_db, capsys):
+        """The same, the other way round: either side may carry the prefix."""
+        from siftd.storage.sessions import queue_tag, register_session
+        from siftd.storage.sqlite import open_database
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        queue_tag(conn, "live_test::SESSION-A", "prefixed-row")
+        register_session(conn, "SESSION-A", "live_test")
+        conn.commit()
+        conn.close()
+
+        main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+
+        assert ("live_test::SESSION-A", "prefixed-row") in self._queued(db_path)
+        assert ("prefixed-row", "conversation", ids["parent"]) not in self._assignments(db_path)
 
     def test_json_reports_unresolved_keys(self, pending_db, capsys):
         """The machine channel carries the full unresolved list, with reasons."""
@@ -1031,9 +1091,9 @@ class TestDoctorFixPendingTagsRecovery:
     def test_doctor_converges_after_the_fix(self, pending_db, capsys):
         """A converged DB reports info, not a warning `--strict` can never clear.
 
-        Unresolvable rows are kept by design, so counting them as an actionable
-        warning left `doctor --strict` (documented for CI) permanently at exit
-        1 unless the user ran the destructive discard.
+        Both kept buckets are kept by design, so counting either as an
+        actionable warning left `doctor --strict` (documented for CI)
+        permanently at exit 1 unless the user ran the destructive discard.
         """
         db_path, _ = pending_db
         main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
@@ -1042,10 +1102,48 @@ class TestDoctorFixPendingTagsRecovery:
         rc = main(["--db", str(db_path), "doctor", "run", "pending-tags", "--strict",
                    "--json"])
         report = json.loads(capsys.readouterr().out)
-        severities = {f["severity"] for f in report["findings"] if f["check"] == "pending-tags"}
+        findings = [f for f in report["findings"] if f["check"] == "pending-tags"]
+        severities = {f["severity"] for f in findings}
         assert "warning" not in severities
         assert "info" in severities  # the kept rows are still reported
         assert rc == 0
+
+        # The target-pending residue is reported honestly: not fixable now,
+        # but not a dead end either.
+        waiting = [f for f in findings if f["context"].get("target_pending_count")]
+        assert len(waiting) == 1
+        assert waiting[0]["context"]["target_pending_count"] == 1
+        assert waiting[0]["fix_available"] is False
+        assert "may resolve after further ingest" in waiting[0]["message"]
+
+    def test_check_buckets_match_the_fix_outcome(self, pending_db):
+        """Every row the check counts as recoverable is a row the fix applies.
+
+        The check advertises a fix and the fix decides what to apply; when the
+        two classify differently, `doctor --strict` either stays red on rows
+        nothing can move or goes quiet on rows that needed attention. Assert
+        the correspondence over all three buckets rather than trusting that
+        two call sites of the same resolvers stay in step.
+        """
+        from siftd.api.sessions import recover_pending_tags
+        from siftd.storage.sessions import count_orphaned_pending_tags
+        from siftd.storage.sqlite import open_database
+
+        db_path, _ = pending_db
+        conn = open_database(db_path)
+        counts = count_orphaned_pending_tags(conn)
+        result = recover_pending_tags(conn, max_age_hours=48, commit=True)
+        conn.close()
+
+        kept = Counter(u.kind for u in result.unresolved)
+        assert (counts.recoverable, counts.target_pending, counts.session_unresolvable) == (
+            len(result.applied),
+            kept["target-pending"],
+            kept["session-unresolvable"],
+        )
+        # And the fixture really does exercise all three, or the assertion
+        # above is satisfied by zeros.
+        assert min(counts.recoverable, counts.target_pending, counts.session_unresolvable) > 0
 
     def test_discard_unresolved_without_pending_tags_is_reported(self, test_db, tmp_path, monkeypatch, capsys):
         """The destructive-sounding flag never applies silently to another fix."""
@@ -1156,7 +1254,10 @@ class TestDataDirectBranches:
             assert kwargs.get("discard_unresolved", False) is False
             return PendingTagRecovery(
                 applied=[AppliedPendingTag("s", "t", "conversation", "c", False)] * 7,
-                unresolved=[UnresolvedPendingTag("s2", "t2", "why")] * 8,
+                unresolved=(
+                    [UnresolvedPendingTag("s2", "t2", "why", "session-unresolvable")] * 8
+                    + [UnresolvedPendingTag("s3", "t3", "no target yet", "target-pending")] * 3
+                ),
                 discarded=0,
                 stale_sessions_pruned=2,
             )
@@ -1164,7 +1265,10 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.api.sessions.recover_pending_tags", _fake_recover)
         summary = data_cli._fix_pending_tags(object(), Path("/d"))
         assert "7 tag(s) applied" in summary
-        assert "8 unresolved (kept)" in summary
+        # The batch summary splits the two kept buckets: they call for
+        # different next steps, and only one of them is ever discardable.
+        assert "3 awaiting a target (kept)" in summary
+        assert "8 matching no conversation (kept)" in summary
 
     def test_doctor_fix_dispatches_embed_through_registry(self, test_db, monkeypatch, capsys):
         """Integration: a cached 'siftd embed' finding resolves through _FIX_REGISTRY and
@@ -1550,7 +1654,11 @@ class TestDataDirectBranches:
             "siftd.api.sessions.recover_pending_tags",
             lambda *_a, **_k: PendingTagRecovery(
                 applied=[AppliedPendingTag("sess-1", "keeper", "conversation", "conv-1", False)],
-                unresolved=[UnresolvedPendingTag("sess-2", "lost", "no ingested conversation")],
+                unresolved=[
+                    UnresolvedPendingTag(
+                        "sess-2", "lost", "no ingested conversation", "session-unresolvable"
+                    )
+                ],
                 discarded=0,
                 stale_sessions_pruned=1,
             ),

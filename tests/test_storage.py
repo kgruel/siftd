@@ -696,7 +696,7 @@ class TestSessions:
         db.execute("UPDATE active_sessions SET started_at='2020-01-01T00:00:00', last_seen_at='2020-01-01T00:00:00'")
         db.commit()
         assert sess.get_stale_sessions_count(db, max_age_hours=1) == 1
-        assert sess.count_orphaned_pending_tags(db) == (0, 0)
+        assert sess.count_orphaned_pending_tags(db) == sess.OrphanedPendingCounts()
         s, _ = sess.cleanup_stale_sessions(db, max_age_hours=1, commit=True)
         assert s == 1
 

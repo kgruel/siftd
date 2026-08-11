@@ -50,11 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   file-dedup one, where the previous release note over-claimed. A
   replacement whose transcript no longer parses to a conversation has
   nothing to carry the tags to; it now says what was dropped instead of
-  dropping it silently. Remaining limitations, deferred to 0.13.0:
+  dropping it silently, and names every kind of loss it is holding — a
+  conversation tagged only at block level skipped the warning entirely,
+  because assignments that could never be re-pointed were not counted as
+  "anything to report". Remaining limitations, deferred to 0.13.0:
   block-level tags (the trace-block surface) are not re-pointed, and
   `doctor fix --pending-tags` still resolves late-bound markers against
-  whatever the transcript holds at that moment, which for a session that
-  is still running may not be its final turn.
+  whatever the transcript holds at that moment — now only a risk for a
+  still-running session whose registration has lapsed, since a registered
+  one is out of the fix's scope entirely.
 - **`siftd doctor fix --pending-tags` repairs instead of deleting.** It ran
   `cleanup_stale_sessions`, so the remedy doctor advertised for stranded
   queued tags destroyed exactly the data that was recoverable. It now
@@ -64,20 +68,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   drain's own resolution for `--last-*` and `--exchange` targets — and
   consumes the queue row. Rows that match no conversation are reported
   with their session key and **kept**; deleting them now takes the explicit
-  `--discard-unresolved`. Stale session registrations are still pruned, but
-  their queued tags are no longer pruned with them. This is the only
+  `--discard-unresolved`. Recovery is scoped to sessions that are no longer
+  registered, and "registered" now allows for either key form: the
+  session-start hook registers `claude_code::<uuid>` while `tag --session`
+  queues the bare uuid, so an exact-key scope called a *live* session's rows
+  abandoned and resolved their `--last-*` markers against a half-written
+  transcript, pinning the tag to a non-final turn. Stale session
+  registrations are still pruned, but their queued tags are no longer
+  pruned with them. This is the only
   recovery path for tags queued before the drain was fixed: a settled
   session never re-ingests. The `--json` output changes shape accordingly
   (`applied` / `unresolved` / `discarded` / `stale_sessions_pruned`,
   replacing `sessions_deleted` / `tags_deleted`), and the doctor check's
   wording no longer describes deletion as a fix.
-- **`siftd doctor --strict` can reach green again.** Queued rows that
-  resolve to no ingested conversation are kept by design, but they were
-  still counted as an actionable warning — so `--strict` (documented for
-  CI) exited 1 forever and `doctor fix` kept advertising a fix that
-  changed nothing. The check now splits the count: rows the fix can apply
-  stay a warning, rows that resolve to nothing become an `info` finding
-  naming `--discard-unresolved`.
+- **`siftd doctor --strict` can reach green again.** Queued rows that the
+  fix cannot apply are kept by design, but they were still counted as an
+  actionable warning — so `--strict` (documented for CI) exited 1 forever
+  and `doctor fix` kept advertising a fix that changed nothing. The check
+  now reports three buckets, classified by the same resolvers the fix runs:
+  rows whose session *and* target resolve stay a warning; rows waiting on a
+  target the transcript does not hold yet (a `--last-*` marker with no such
+  event, an `--exchange` past the end) become an `info` finding that says a
+  later ingest may still land them; and rows whose session was never
+  ingested become an `info` finding naming `--discard-unresolved`. That flag
+  is scoped to the last bucket — a row still waiting on a target is one
+  ingest away from landing, so discarding it would lose a live tag. The
+  check also resolves the whole queue in a single pass over `conversations`
+  instead of one full scan per queued session, which is what it takes to
+  belong in doctor's fast lane on a real-sized database.
 
 ## [0.12.0] - 2026-07-18
 
