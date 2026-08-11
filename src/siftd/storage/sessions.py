@@ -649,10 +649,14 @@ class AppliedPendingTag:
 # something `--discard-unresolved` should sweep up.
 UnresolvedKind = Literal["target-pending", "session-unresolvable"]
 
+# The bucket `--discard-unresolved` clears, named once. Every other statement
+# of the rule is a second copy waiting to drift out of step with this one.
+DISCARDABLE_KIND: UnresolvedKind = "session-unresolvable"
+
 
 @dataclass
 class UnresolvedPendingTag:
-    """A queued tag that could not be applied; its queue row is kept."""
+    """A queued tag that could not be applied."""
 
     harness_session_id: str
     tag_name: str
@@ -662,11 +666,22 @@ class UnresolvedPendingTag:
 
 @dataclass
 class PendingTagRecovery:
-    """Outcome of :func:`recover_pending_tags`."""
+    """Outcome of :func:`recover_pending_tags`.
+
+    ``unresolved`` and ``discarded`` partition the rows that were not applied:
+    a row appears in exactly one, so no reader can describe a deleted row as
+    kept. ``discarded`` carries the same detail as ``unresolved`` rather than a
+    bare count — a delete is the outcome most worth being able to name after
+    the fact.
+    """
 
     applied: list[AppliedPendingTag]
     unresolved: list[UnresolvedPendingTag]
-    discarded: int  # unresolved rows deleted under explicit opt-in
+    """Not applied and still queued."""
+
+    discarded: list[UnresolvedPendingTag]
+    """Not applied and deleted, under the explicit ``discard_unresolved`` opt-in."""
+
     stale_sessions_pruned: int
 
     @property
@@ -684,7 +699,7 @@ def _apply_pending_rows(
     conn: sqlite3.Connection,
     rows: list[sqlite3.Row],
     resolve_conversation: Callable[[str], str | None],
-) -> tuple[list[AppliedPendingTag], list[UnresolvedPendingTag], set[str]]:
+) -> tuple[list[AppliedPendingTag], list[tuple[str, UnresolvedPendingTag]], set[str]]:
     """Apply the rows whose target resolves; report the rest.
 
     Shared by the ingest drain (:func:`drain_pending_tags`, where the
@@ -693,11 +708,15 @@ def _apply_pending_rows(
     two agree on targeting *and* on the rule that only an applied row is
     consumed. Returns (applied, unresolved, consumable row ids) — the caller
     owns the delete, since the two paths differ on what to do with the rest.
+
+    Each unresolved entry is paired with its queue row id, so a caller that
+    deletes some of them can partition by the classification already made here
+    instead of re-deriving which rows those were.
     """
     from siftd.storage.tags import apply_tag, get_or_create_tag
 
     applied: list[AppliedPendingTag] = []
-    unresolved: list[UnresolvedPendingTag] = []
+    unresolved: list[tuple[str, UnresolvedPendingTag]] = []
     consumed_ids: set[str] = set()
 
     for row in rows:
@@ -714,14 +733,15 @@ def _apply_pending_rows(
             reason = target if isinstance(target, str) else None
 
         if reason is not None:
-            unresolved.append(
+            unresolved.append((
+                row["id"],
                 UnresolvedPendingTag(
                     harness_session_id=sid,
                     tag_name=row["tag_name"],
                     reason=reason,
                     kind=kind,
-                )
-            )
+                ),
+            ))
             continue
 
         target_kind, target_id = target
@@ -783,7 +803,9 @@ def drain_pending_tags(
     if commit:
         conn.commit()
 
-    return applied, unresolved
+    # The drain deletes nothing it did not apply, so it has no use for the
+    # queue row ids riding along with the unresolved entries.
+    return applied, [entry for _row_id, entry in unresolved]
 
 
 def recover_pending_tags(
@@ -810,9 +832,14 @@ def recover_pending_tags(
 
     Rows that resolve are applied and consumed. Rows that don't are reported
     and *kept*, unless ``discard_unresolved`` is set — deleting a queued tag
-    is data loss, never a repair, so it takes an explicit opt-in. An
-    assignment that already exists (a hand-recovered tag) counts as applied:
-    the intent holds, so the row has done its job and is consumed.
+    is data loss, never a repair, so it takes an explicit opt-in, and even
+    then only :data:`DISCARDABLE_KIND` rows go. An assignment that already
+    exists (a hand-recovered tag) counts as applied: the intent holds, so the
+    row has done its job and is consumed.
+
+    A row that was deleted is reported as ``discarded``, never as
+    ``unresolved`` — the two lists partition what was not applied, so no
+    reader can present a deleted row as one that was kept.
     """
     stale_pruned = prune_stale_sessions(conn, max_age_hours)
 
@@ -836,25 +863,29 @@ def recover_pending_tags(
 
     _delete_pending_rows(conn, list(consumed_ids))
 
-    discarded = 0
-    if discard_unresolved:
-        # Scoped to the session-unresolvable bucket. A row whose session did
-        # resolve is only waiting on a target the transcript does not hold
-        # yet, so the next ingest can still land it — sweeping it up here
-        # would discard a tag that is still live, which is the opposite of
-        # what this flag is for.
-        discarded = _delete_pending_rows(conn, [
-            row["id"] for row in rows
-            if row["id"] not in consumed_ids
-            and resolved.get(row["harness_session_id"]) is None
-        ])
+    # Partition on the classification _apply_pending_rows already made, rather
+    # than restating "which rows does the flag clear" as a second predicate
+    # over the raw rows. The scope is DISCARDABLE_KIND: a row whose session did
+    # resolve is only waiting on a target the transcript does not hold yet, so
+    # the next ingest can still land it — sweeping it up here would discard a
+    # tag that is still live, which is the opposite of what this flag is for.
+    kept: list[UnresolvedPendingTag] = []
+    discarded: list[UnresolvedPendingTag] = []
+    discard_ids: list[str] = []
+    for row_id, entry in unresolved:
+        if discard_unresolved and entry.kind == DISCARDABLE_KIND:
+            discarded.append(entry)
+            discard_ids.append(row_id)
+        else:
+            kept.append(entry)
+    _delete_pending_rows(conn, discard_ids)
 
     if commit:
         conn.commit()
 
     return PendingTagRecovery(
         applied=applied,
-        unresolved=unresolved,
+        unresolved=kept,
         discarded=discarded,
         stale_sessions_pruned=stale_pruned,
     )

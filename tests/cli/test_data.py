@@ -837,7 +837,7 @@ class TestCmdDoctor:
         assert data == {
             "applied": [],
             "unresolved": [],
-            "discarded": 0,
+            "discarded": [],
             "stale_sessions_pruned": 0,
         }
 
@@ -1017,6 +1017,50 @@ class TestDoctorFixPendingTagsRecovery:
         assert rc == 0
         assert ("SESSION-B", "on-last-tool-call") in self._queued(db_path)
 
+    def test_a_discarded_row_is_reported_once_as_discarded(self, pending_db, capsys):
+        """A deleted row is never also listed as kept, in either channel.
+
+        `unresolved` used to keep the rows the discard had just deleted, so
+        both renderers printed them under "kept, not deleted" alongside the
+        discard count, and `--json` offered them as still-queued work. The two
+        lists partition what was not applied, so a row lands in exactly one.
+        """
+        db_path, _ = pending_db
+        rc = main([
+            "--db", str(db_path), "doctor", "fix", "--pending-tags",
+            "--discard-unresolved", "--json",
+        ])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+
+        discarded = {u["session"] for u in data["discarded"]}
+        unresolved = {u["session"] for u in data["unresolved"]}
+        assert "01KZKF9APH6N" in discarded
+        assert discarded & unresolved == set()
+        # The survivor is the target-pending row, and it is listed as kept.
+        assert unresolved == {"SESSION-B"}
+        # The discarded entries carry the same detail as the kept ones.
+        assert all(u["reason"] and u["kind"] == "session-unresolvable" for u in data["discarded"])
+
+    def test_text_channel_never_lists_a_discarded_row_as_kept(self, pending_db, capsys):
+        """Same partition, in the human channel."""
+        db_path, _ = pending_db
+        rc = main([
+            "--db", str(db_path), "doctor", "fix", "--pending-tags", "--discard-unresolved",
+        ])
+        assert rc == 0
+        text = capsys.readouterr()
+        out = text.out + text.err
+
+        assert "Discarded 2 pending tag(s)" in out
+        # Named, because a delete is the outcome most worth being able to
+        # chase afterwards.
+        assert "01KZKF9APH6N" in out
+        assert out.count("01KZKF9APH6N") == 1
+        # The kept-rows heading describes only what survived.
+        kept_heading = "match no ingested conversation — kept, not deleted"
+        assert kept_heading not in out
+
     def test_existing_assignment_counts_as_applied(self, pending_db, capsys):
         """A hand-recovered tag makes its queue row satisfied, not failed."""
         from siftd.storage.sqlite import open_database
@@ -1098,7 +1142,7 @@ class TestDoctorFixPendingTagsRecovery:
         rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags", "--json"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
-        assert data["discarded"] == 0
+        assert data["discarded"] == []
         unresolved = {u["session"]: u["reason"] for u in data["unresolved"]}
         assert "01KZKF9APH6N" in unresolved
         assert unresolved["01KZKF9APH6N"]
@@ -1334,7 +1378,7 @@ class TestDataDirectBranches:
                     [UnresolvedPendingTag("s2", "t2", "why", "session-unresolvable")] * 8
                     + [UnresolvedPendingTag("s3", "t3", "no target yet", "target-pending")] * 3
                 ),
-                discarded=0,
+                discarded=[],
                 stale_sessions_pruned=2,
             )
 
@@ -1769,7 +1813,7 @@ class TestDataDirectBranches:
                         "sess-2", "lost", "no ingested conversation", "session-unresolvable"
                     )
                 ],
-                discarded=0,
+                discarded=[],
                 stale_sessions_pruned=1,
             ),
         )

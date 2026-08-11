@@ -989,6 +989,54 @@ class TestSubagentDrainTargetsParent:
             _conversation_id(live_db["conn"], parent_external)
         )
 
+    def test_subagent_ingest_keeps_the_parent_registered(self, live_db, claude_root):
+        """Unregister what was drained, not what was skipped.
+
+        The narrowing above leaves the parent's queued rows for the parent's
+        own ingest — but unregistering every key form anyway told the recovery
+        path those rows were orphaned. `doctor fix --pending-tags` would then
+        apply a `--last-*` marker against whatever the parent transcript held
+        mid-flight, which is the exact loss the registration exists to
+        prevent. The subagent's own key still clears: it really was ingested.
+        """
+        session_uuid = "c0ffee11-2222-4333-8444-555566667777"
+        agent_id = "b0bb1e5d00dad0000"
+        _write_claude_transcript(claude_root / f"{session_uuid}.jsonl", session_uuid)
+        subagent = _write_claude_transcript(
+            claude_root / "subagents" / f"agent-{agent_id}.jsonl",
+            session_uuid,
+            agent_id=agent_id,
+        )
+        ingest_all(live_db["conn"], [claude_code])
+
+        parent_key = f"claude_code::{session_uuid}"
+        subagent_key = f"{parent_key}::agent::{agent_id}"
+        # The shipped session-start hook registers the prefixed form.
+        register_session(live_db["conn"], parent_key, "claude_code")
+        register_session(live_db["conn"], subagent_key, "claude_code")
+        queue_tag(live_db["conn"], session_uuid, "decision:final", last_marker="last_response",
+                  commit=True)
+
+        # Only the subagent changes, so only it reaches the drain.
+        _append_turn(subagent, session_uuid, agent_id=agent_id)
+        ingest_all(live_db["conn"], [claude_code])
+
+        assert is_session_registered(live_db["conn"], parent_key)
+        assert not is_session_registered(live_db["conn"], subagent_key)
+        assert [p.tag_name for p in get_pending_tags(live_db["conn"], session_uuid)] == [
+            "decision:final"
+        ]
+
+        # And the round-1 liveness guard holds because of it: recovery treats
+        # the parent as live and leaves its row alone.
+        from siftd.storage.sessions import recover_pending_tags
+
+        result = recover_pending_tags(live_db["conn"], max_age_hours=48, commit=True)
+        assert result.applied == []
+        assert [p.tag_name for p in get_pending_tags(live_db["conn"], session_uuid)] == [
+            "decision:final"
+        ]
+
 
 class TestReplacementPreservesTagsPerDedupStrategy:
     """Ratchet: every replacement path carries the conversation's tags.

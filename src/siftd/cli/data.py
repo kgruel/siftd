@@ -1060,16 +1060,12 @@ def _doctor_fix_pending_tags(args) -> int:
                     }
                     for a in result.applied
                 ],
-                "unresolved": [
-                    {
-                        "session": u.harness_session_id,
-                        "tag": u.tag_name,
-                        "reason": u.reason,
-                        "kind": u.kind,
-                    }
-                    for u in result.unresolved
-                ],
-                "discarded": result.discarded,
+                "unresolved": [_pending_entry(u) for u in result.unresolved],
+                # A list, not a count, and disjoint from `unresolved`: a
+                # consumer reading both must never see a deleted row described
+                # as one that was kept, and a delete is the outcome most worth
+                # being able to name afterwards.
+                "discarded": [_pending_entry(u) for u in result.discarded],
                 "stale_sessions_pruned": result.stale_sessions_pruned,
             },
             indent=2,
@@ -1084,11 +1080,15 @@ def _doctor_fix_pending_tags(args) -> int:
         status.info(f"Pruned {result.stale_sessions_pruned} stale session registration(s)")
 
     if result.discarded:
-        status.warning(f"Discarded {result.discarded} pending tag(s) that resolve to no conversation")
+        status.warning(
+            f"Discarded {len(result.discarded)} pending tag(s) that resolve to no conversation"
+        )
+        _print_pending_sample(result.discarded)
     # Show the keys, not just a count: the session ids are what a user needs
     # to chase these down (or to recognize a mistyped id). Reported even
     # alongside a discard, since --discard-unresolved no longer sweeps the
-    # target-pending bucket, so rows can survive it.
+    # target-pending bucket, so rows can survive it — and `unresolved` now
+    # holds only what survived, so nothing is listed under both headings.
     _print_unresolved_pending(result.unresolved)
     if not (
         result.applied or result.stale_sessions_pruned or result.discarded or result.unresolved
@@ -1096,6 +1096,24 @@ def _doctor_fix_pending_tags(args) -> int:
         status.info("No pending tags to apply")
 
     return 0
+
+
+def _pending_entry(entry) -> dict:
+    """One queued-tag row, as the machine channel reports it."""
+    return {
+        "session": entry.harness_session_id,
+        "tag": entry.tag_name,
+        "reason": entry.reason,
+        "kind": entry.kind,
+    }
+
+
+def _print_pending_sample(rows: list, sample: int = 10) -> None:
+    """List the session keys behind a count, capped."""
+    for u in rows[:sample]:
+        print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
+    if len(rows) > sample:
+        print(f"    ... {len(rows) - sample} more")
 
 
 def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
@@ -1110,12 +1128,6 @@ def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
     for u in unresolved:
         by_kind[u.kind].append(u)
 
-    def _sample(rows: list) -> None:
-        for u in rows[:sample]:
-            print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
-        if len(rows) > sample:
-            print(f"    ... {len(rows) - sample} more")
-
     stranded = by_kind["session-unresolvable"]
     if stranded:
         status.warning(
@@ -1125,7 +1137,7 @@ def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
                 "Use '--discard-unresolved' to drop them, or '--json' for the full list."
             ),
         )
-        _sample(stranded)
+        _print_pending_sample(stranded, sample)
 
     waiting = by_kind["target-pending"]
     if waiting:
@@ -1133,7 +1145,7 @@ def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
             f"{len(waiting)} pending tag(s) name a target the transcript does not hold "
             "yet — kept queued; a later ingest may still land them",
         )
-        _sample(waiting)
+        _print_pending_sample(waiting, sample)
 
 
 def _doctor_list(args) -> int:

@@ -432,6 +432,32 @@ def ingest_all(
                     # Hash changed - re-ingest
                     # Delete old conversation/record
                     tag_snapshot: ConversationTagSnapshot | None = None
+                    if existing_info["conversation_id"] and _conversation_claimed_elsewhere(
+                        conn, existing_info["conversation_id"], file_path
+                    ):
+                        # Two paths carry one session and this one changed. The
+                        # delete below is ON DELETE CASCADE, so replacing the
+                        # shared conversation would take the *other* path's
+                        # bookkeeping row and its events with it — the same
+                        # destruction the collision repair and the self-heal
+                        # already guard against, on the one delete site that
+                        # had no guard. Settle exactly as the collision repair
+                        # settles its loser: keep the link, stamp this file's
+                        # hash so the copies do not churn (and so an errored
+                        # row stops being re-examined every run), and say so —
+                        # a frozen copy is only diagnosable if it is named. The
+                        # freeze is mutual and deliberate: neither copy may
+                        # replace the conversation, so its content is whatever
+                        # the path that won the slot last stored.
+                        _settle_duplicate_path(
+                            conn, file_path, existing_info["conversation_id"],
+                            current_hash, st,
+                        )
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped (duplicate)")
+                        emit_event("skipped (duplicate)")
+                        continue
                     if existing_info["conversation_id"]:
                         # Ordering is forced: UNIQUE(harness_id, external_id)
                         # means the old row must go before the new one lands,
@@ -792,6 +818,39 @@ def _conversation_claimed_elsewhere(
     ).fetchone() is not None
 
 
+def _settle_duplicate_path(
+    conn: sqlite3.Connection,
+    file_path: str,
+    conversation_id: str,
+    file_hash: str,
+    file_stat: os.stat_result,
+) -> None:
+    """Leave a second copy of a tracked transcript linked, named, and settled.
+
+    Only one path can hold a session's ``(harness_id, external_id)`` slot and
+    neither copy is more authoritative, so the loser records what it actually
+    has — a link to the conversation that exists — rather than replacing it.
+    Stamping this file's own hash is what stops the copies taking turns: it is
+    the one case where the row may assert content it did not ingest, because
+    there is no convergence to wait for (contrast the lost-race branch of the
+    duplicate-collision handler, where re-hashing next run is the whole point).
+    """
+    external_id = conn.execute(
+        "SELECT external_id FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    logger.warning(
+        f"{file_path} duplicates a transcript already tracked under another path "
+        f"(external_id {external_id['external_id'] if external_id else conversation_id}); "
+        "its change was not ingested — the conversation stays as the path holding "
+        "the slot left it"
+    )
+    link_ingested_file(
+        conn, file_path, file_hash, conversation_id,
+        file_mtime=file_stat.st_mtime, file_size=file_stat.st_size,
+    )
+    conn.commit()
+
+
 def _count_file_error(
     source: Source,
     adapter: AdapterModule,
@@ -1099,13 +1158,6 @@ def _apply_pending_tags(
     ):
         drain_keys = candidates[:1]
 
-    def _unregister_all() -> None:
-        # Sessions are registered under whichever key the harness reported —
-        # the bare one, in practice. Unregister every candidate so ingest
-        # actually clears the active_sessions row it just ingested.
-        for key in candidates:
-            unregister_session(conn, key)
-
     # Drain every key form, not just the first with rows: an agent tagging via
     # `--current` queues under the adapter-prefixed id the session-start hook
     # registered, while `siftd tag --session <uuid>` queues under the bare one.
@@ -1124,6 +1176,17 @@ def _apply_pending_tags(
             f"{u.reason}"
         )
 
-    # Unregister the session (every key form it may be registered under)
-    _unregister_all()
+    # Unregister exactly what was drained. Sessions are registered under
+    # whichever key form the harness reported — the bare one from `siftd
+    # register`, the adapter-prefixed one from the shipped session-start hook —
+    # so every drained key has to be cleared or the row outlives its ingest.
+    # But a key deliberately *excluded* from the drain keeps its registration:
+    # the subagent narrowing above leaves the parent's rows queued for the
+    # parent's own ingest, and unregistering the parent would tell the recovery
+    # path those rows are orphaned. It would then apply them against whatever
+    # the parent transcript held at that moment — the very "resolve a
+    # `--last-*` marker against a mid-flight transcript" the registration
+    # exists to prevent.
+    for key in drain_keys:
+        unregister_session(conn, key)
     return len(applied)

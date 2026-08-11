@@ -904,6 +904,103 @@ class TestBookkeepingRecovery:
             assert self._conversation_id(conn, "poison_test::S7") == conv_id
         assert self._orphans(conn) == 0
 
+    def test_changed_duplicate_does_not_replace_the_shared_conversation(self, tmp_path):
+        """The main replace path must ask who else holds the conversation.
+
+        The collision repair and the self-heal both check before deleting, but
+        the ordinary hash-changed branch did not — so once two paths shared a
+        conversation (a state the repair itself creates), the first content
+        change on either of them deleted it, and ON DELETE CASCADE took the
+        other path's bookkeeping row and every event with it.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database, get_ingested_file_info
+
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        first.write_text("{}")
+        second.write_text("{}")
+        entries = {
+            str(first): {"external_id": "poison_test::S9", "text": "from-a",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+            str(second): {"external_id": "poison_test::S9", "text": "from-b",
+                          "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "shared.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S9")
+        # The sharing state is reached through the collision repair, not by
+        # hand: both rows now point at the one conversation.
+        assert get_ingested_file_info(conn, str(first))["conversation_id"] == conv_id
+        assert get_ingested_file_info(conn, str(second))["conversation_id"] == conv_id
+
+        # The loser's bytes change. Its row's pointer is non-NULL, so the
+        # hash-changed branch would snapshot-and-delete the shared row.
+        second.write_text('{"more": 1}')
+        entries[str(second)]["text"] = "from-b-v2"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        assert self._conversation_id(conn, "poison_test::S9") == conv_id
+        # The path that holds the slot keeps its row and its content.
+        assert get_ingested_file_info(conn, str(first))["conversation_id"] == conv_id
+        assert self._indexed(conn, "from-a") == 1
+        # The change was not ingested as authoritative — that is the whole
+        # point of settling rather than replacing.
+        assert self._indexed(conn, "from-b-v2") == 0
+        assert self._orphans(conn) == 0
+
+    def test_settled_duplicate_stops_re_entering(self, tmp_path, caplog):
+        """Settling means settled: the copy names its freeze once, then skips.
+
+        Warning on every run would be noise, and leaving the row's hash stale
+        would re-enter the replace branch forever. The row records the bytes it
+        has, so the next run stat-skips — the same reason the collision repair
+        stamps its loser's hash.
+        """
+        import logging
+
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database
+
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        first.write_text("{}")
+        second.write_text("{}")
+        entries = {
+            str(first): {"external_id": "poison_test::S10", "text": "from-a",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+            str(second): {"external_id": "poison_test::S10", "text": "from-b",
+                          "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "settled.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S10")
+
+        second.write_text('{"more": 1}')
+        # The seeding ingest above already warned once, from the collision
+        # repair; only the replace path's own warning is under test here.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="siftd.ingestion.orchestration"):
+            ingest_all(conn, [adapter])
+        named = [r for r in caplog.records if str(second) in r.message]
+        assert len(named) == 1, [r.message for r in caplog.records]
+        assert "its change was not ingested" in named[0].message
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="siftd.ingestion.orchestration"):
+            for _ in range(3):
+                stats = ingest_all(conn, [adapter])
+                assert stats.files_errored == 0
+                assert stats.files_replaced == 0
+        assert [r.message for r in caplog.records] == []
+        assert self._conversation_id(conn, "poison_test::S10") == conv_id
+        assert self._orphans(conn) == 0
+
     def test_failed_repair_leaves_the_bookkeeping_untouched(self, tmp_path, monkeypatch):
         """The collision path must never reach the pointer-clearing writer.
 

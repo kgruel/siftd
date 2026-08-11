@@ -35,7 +35,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   byte-stable while the Agent is still writing — took the tag and left
   `siftd query -l` pointing at a sidecar transcript. The drain now agrees
   with the recovery path (which already skipped subagent rows) and leaves
-  those rows queued for the parent.
+  those rows queued for the parent — and leaves the parent's session
+  *registration* in place while it does. Unregistering every key form on a
+  subagent's ingest told the recovery path the parent's queued rows were
+  orphaned, so `doctor fix --pending-tags` would apply a `--last-*` marker
+  against a parent transcript that was still being written. Ingest now
+  unregisters exactly the keys it drained.
 - **Conversation *and* element tags survive re-ingest, on every adapter.**
   When a transcript changes, ingest replaces the conversation row, and the
   polymorphic cleanup triggers took its `tag_assignments` with it — so
@@ -80,7 +85,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session never re-ingests. The `--json` output changes shape accordingly
   (`applied` / `unresolved` / `discarded` / `stale_sessions_pruned`,
   replacing `sessions_deleted` / `tags_deleted`), and the doctor check's
-  wording no longer describes deletion as a fix.
+  wording no longer describes deletion as a fix. `unresolved` and
+  `discarded` partition what was not applied — a row appears in exactly one,
+  and `discarded` carries each deleted row's session key and reason rather
+  than a bare count, so neither channel can present a deleted row as one
+  that was kept.
 - **`siftd doctor --strict` can reach green again.** Queued rows that the
   fix cannot apply are kept by design, but they were still counted as an
   actionable warning — so `--strict` (documented for CI) exited 1 forever
@@ -141,7 +150,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row away and replaced a live transcript with a stale copy's content; and
   two paths carrying one session (a restored backup, an overlapping
   `--path`) settle on one conversation with a warning naming the duplicate,
-  instead of taking turns replacing each other every run.
+  instead of taking turns replacing each other every run. That settlement
+  now holds on the ordinary replace path too, which was the one delete site
+  with no such guard: a content change on either copy deleted the shared
+  conversation and cascaded the other copy's bookkeeping row and events
+  away. A changed duplicate is linked, named, and left settled — its change
+  is not ingested, because only the path holding the session's slot can
+  write that conversation.
 - **A locked-out ingest no longer looks like a successful one.** The lock is
   per-database, so `siftd ingest --path … --adapter …` blocked by a
   concurrent run did none of the work it was asked for — and said nothing,
