@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3205 |
+| `tests/` | 185 | 3202 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 619 |
@@ -255,7 +255,7 @@ docstring so its row is meaningful.
 | [test_serve_tags_visible.py](test_serve_tags_visible.py) | 2 | Route test: GET /api/v1/tags?visible=activity enriches with the activity spark. |
 | [test_serve_workspace_detail_route.py](test_serve_workspace_detail_route.py) | 3 | Route test for GET /api/v1/workspaces/{id} (workspace-detail Operation). |
 | [test_serve_workspaces_view.py](test_serve_workspaces_view.py) | 7 | Serve-lane smoke for the Swiss Workspaces view (master ledger + detail). |
-| [test_sessions.py](test_sessions.py) | 29 | Tests for live session tracking and pending tag storage. |
+| [test_sessions.py](test_sessions.py) | 26 | Tests for live session tracking and pending tag storage. |
 | [test_shell_categorization.py](test_shell_categorization.py) | 7 | Tests for categorize_shell_command — pure function with 15 categories. |
 | [test_slice.py](test_slice.py) | 16 | Tests for siftd db slice — filtered database export. |
 | [test_sql_helper_hygiene.py](test_sql_helper_hygiene.py) | 15 | H4: SQL helper hygiene — table and column allowlist tests. |

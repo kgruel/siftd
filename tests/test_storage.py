@@ -688,9 +688,8 @@ class TestSessions:
         tags = sess.get_pending_tags(db, "s1")
         assert len(tags) == 2
         assert tags[1].entity_type == "exchange" and tags[1].exchange_index == 2
-        consumed = sess.consume_pending_tags(db, "s1", commit=True)
-        assert len(consumed) == 2
-        assert sess.consume_pending_tags(db, "s1") == []
+        assert sess.delete_pending_tag(db, "imp", commit=True) == 1
+        assert [t.tag_name for t in sess.get_pending_tags(db, "s1")] == ["rev"]
 
     def test_stale_cleanup(self, db):
         sess.register_session(db, "s1", "t", commit=True)

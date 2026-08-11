@@ -8,7 +8,6 @@ import pytest
 from siftd.storage.sessions import (
     PendingTag,
     cleanup_stale_sessions,
-    consume_pending_tags,
     ensure_session_tables,
     count_orphaned_pending_tags,
     get_pending_tags,
@@ -158,47 +157,6 @@ class TestQueueTag:
         assert result is not None
         tags = get_pending_tags(db, "session-456")
         assert len(tags) == 1
-
-
-class TestConsumePendingTags:
-    """Tests for consume_pending_tags()."""
-
-    def test_consume_returns_and_deletes_tags(self, db):
-        """Consuming pending tags returns them and removes from DB."""
-        register_session(db, "session-123", "claude_code", commit=True)
-        queue_tag(db, "session-123", "tag1", commit=True)
-        queue_tag(db, "session-123", "tag2", commit=True)
-
-        tags = consume_pending_tags(db, "session-123", commit=True)
-
-        assert len(tags) == 2
-        assert {t.tag_name for t in tags} == {"tag1", "tag2"}
-
-        # Tags should be gone
-        remaining = get_pending_tags(db, "session-123")
-        assert len(remaining) == 0
-
-    def test_consume_preserves_entity_type_and_index(self, db):
-        """Consumed tags include entity_type and exchange_index."""
-        register_session(db, "session-123", "claude_code", commit=True)
-        queue_tag(db, "session-123", "conv-tag", commit=True)
-        queue_tag(db, "session-123", "exch-tag", entity_type="exchange", exchange_index=3, commit=True)
-
-        tags = consume_pending_tags(db, "session-123", commit=True)
-
-        conv_tag = next(t for t in tags if t.tag_name == "conv-tag")
-        exch_tag = next(t for t in tags if t.tag_name == "exch-tag")
-
-        assert conv_tag.entity_type == "conversation"
-        assert conv_tag.exchange_index is None
-        assert exch_tag.entity_type == "exchange"
-        assert exch_tag.exchange_index == 3
-
-    def test_consume_empty_returns_empty_list(self, db):
-        """Consuming from a session with no tags returns empty list."""
-        tags = consume_pending_tags(db, "session-999", commit=True)
-
-        assert tags == []
 
 
 class TestCleanupStaleSessions:
