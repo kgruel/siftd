@@ -37,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   too. Both key forms drain in one pass rather than only the first with
   rows: an agent tagging via `--current` queues under the prefixed id the
   session-start hook registered, while `siftd tag --session <uuid>` queues
-  under the bare one, and a session routinely has both.
+  under the bare one, and a session routinely has both. (kgruel/siftd#28)
 - **Ingest no longer discards a queued tag it could not apply.** The drain
   deleted every row for the session up front and only then resolved
   targets, so a `--last-tool-call` queued before any tool ran, or an
@@ -80,7 +80,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `doctor fix --pending-tags` still resolves late-bound markers against
   whatever the transcript holds at that moment — now only a risk for a
   still-running session whose registration has lapsed, since a registered
-  one is out of the fix's scope entirely.
+  one is out of the fix's scope entirely. (kgruel/siftd#29)
 - **`siftd doctor fix --pending-tags` repairs instead of deleting.** It ran
   `cleanup_stale_sessions`, so the remedy doctor advertised for stranded
   queued tags destroyed exactly the data that was recoverable. It now
@@ -156,7 +156,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   replacement, using the same machinery as a normal replacement — without
   that, the first ingest after upgrading would have destroyed the tags on
   every affected conversation at once. Thanks to the reporter whose
-  cross-host analysis isolated this. (kgruel/siftd#29)
+  cross-host analysis isolated this.
 - **Ingest bookkeeping never asserts content it did not ingest.** Follow-up
   hardening on the above, from an adversarial review of the fix itself.
   The collision repair recorded the file's *current* hash and mtime while
