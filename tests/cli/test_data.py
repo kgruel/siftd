@@ -512,6 +512,26 @@ class TestCmdIngestAlreadyRunning:
         out, err = capsys.readouterr()
         assert "already running" not in out + err
 
+    def test_scoped_run_says_so_even_when_auto_quieted(self, tmp_path, capsys, monkeypatch):
+        """A scoped ingest that did nothing must say so on a pipe.
+
+        The lock is per-database — never per-adapter or per-path — so a run that
+        asked for specific work did none of it. Auto-quiet fires on any non-TTY,
+        which is every ``siftd ingest --path … && siftd search …`` in a script,
+        and swallowing the notice there makes the chain look like it worked.
+        """
+        from siftd.api import ingest as ingest_api
+
+        monkeypatch.setattr("sys.stdout.isatty", lambda: False)
+        db_path = tmp_path / "test.db"
+        with ingest_api._ingest_lock(db_path):
+            rc = main(self._args(db_path, []))
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "Another ingest is already running" in err
+        assert "were not ingested" in err
+
     def test_json_mode_emits_a_skipped_event(self, tmp_path, capsys, monkeypatch):
         from siftd.api import ingest as ingest_api
 
@@ -1218,8 +1238,8 @@ class TestDataDirectBranches:
             raise RuntimeError("nope")
 
         steps = [("Good", lambda conn, db: "did 3"), ("Bad", boom)]
-        errors = data_cli._run_fix_steps(steps, conn=None, db=None)
-        assert errors == 1
+        errors, not_applied = data_cli._run_fix_steps(steps, conn=None, db=None)
+        assert (errors, not_applied) == (1, 0)
         out = capsys.readouterr().out
         assert "Good: did 3" in out
         assert "Bad: nope" in out
@@ -1233,10 +1253,10 @@ class TestDataDirectBranches:
         def boom(conn, db):
             raise RuntimeError("nope")
 
-        errors = data_cli._run_fix_steps(
+        errors, not_applied = data_cli._run_fix_steps(
             [("Good", lambda conn, db: "ok"), ("Bad", boom)], conn=None, db=None
         )
-        assert errors == 1
+        assert (errors, not_applied) == (1, 0)
         out = capsys.readouterr().out
         assert "Good: ok" in out and "Bad: nope" in out
         # A live frame was painted (spinner and/or resolved glyph), not a plain log.
@@ -1348,6 +1368,37 @@ class TestDataDirectBranches:
         assert called, "the 'siftd embed' fixer must run through _FIX_REGISTRY"
         assert called.get("rebuild") is False
         assert Path(called["db_path"]) == Path(test_db)
+
+    def test_doctor_fix_does_not_claim_a_locked_out_ingest_was_applied(
+        self, test_db, monkeypatch, capsys
+    ):
+        """A fix that declined to run is still pending.
+
+        ``doctor fix`` used to mark a lock-out ✓, print "All fixes applied.",
+        exit 0 AND clear the findings cache — discarding a finding nothing had
+        fixed. The step has to be able to say "not applied".
+        """
+        monkeypatch.setattr(
+            "siftd.doctor.fixes.load_findings_cache",
+            lambda: [{"fix_command": "siftd ingest", "check": "ingest_pending", "message": "x"}],
+        )
+        cleared = []
+        monkeypatch.setattr(
+            "siftd.doctor.fixes.clear_findings_cache", lambda: cleared.append(True)
+        )
+        monkeypatch.setattr(
+            "siftd.api.run_ingest",
+            lambda **kwargs: SimpleNamespace(skipped_locked=True, stats=None),
+        )
+
+        rc = data_cli._doctor_fix(SimpleNamespace(db=str(test_db)))
+
+        out = capsys.readouterr()
+        combined = out.out + out.err
+        assert rc == 0
+        assert "not applied" in combined
+        assert "All fixes applied" not in combined
+        assert not cleared, "a pending fix must stay in the cache"
 
     def test_fix_ingest_forwards_egress_notice(self, monkeypatch, capsys):
         """_fix_ingest passes on_notice to run_ingest so the remote first-egress disclosure

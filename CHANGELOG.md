@@ -115,13 +115,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   clearing it, turning a lost race into a no-op; and the re-ingest path
   resolves the conversation by `(harness_id, external_id)` instead of
   trusting a NULL pointer, so rows already poisoned in the field heal
-  themselves on the next ingest. The self-heal snapshots the orphan's tags
-  and re-points them at the replacement, using the same machinery as a
-  normal replacement — without that, the first ingest after upgrading would
-  have destroyed the tags on every affected conversation at once. Clearing
-  the pointer is still correct for a genuine parse failure, and still
-  happens there. Thanks to the reporter whose cross-host analysis isolated
-  this. (kgruel/siftd#29)
+  themselves on the next ingest — including the ones whose transcript has
+  since gone quiet, which is most of them: a row carrying an error is now
+  re-examined whatever its stat says, because the failure write stamped the
+  file's own hash and mtime and so hid it behind the unchanged-file skip
+  forever. A row whose file is gone cannot be re-derived and keeps its
+  marker; the conversation it produced stays indexed and searchable. The
+  self-heal snapshots the orphan's tags and re-points them at the
+  replacement, using the same machinery as a normal replacement — without
+  that, the first ingest after upgrading would have destroyed the tags on
+  every affected conversation at once. Thanks to the reporter whose
+  cross-host analysis isolated this. (kgruel/siftd#29)
+- **Ingest bookkeeping never asserts content it did not ingest.** Follow-up
+  hardening on the above, from an adversarial review of the fix itself.
+  The collision repair recorded the file's *current* hash and mtime while
+  linking the conversation some *other* read had produced, so the next run's
+  unchanged-file skip matched and the delta was never indexed — with the
+  error cleared, the only signal was gone too. It now leaves the row's
+  hash/stat at whatever was actually ingested, so the next run re-hashes and
+  converges. Three related repairs: a failure after a successful ingest no
+  longer NULLs the conversation pointer (the rollback has resurrected that
+  conversation, so it is live, not stale — a transient `database is locked`
+  used to orphan it permanently); the re-ingest path no longer deletes a
+  conversation another path's bookkeeping row points at, which cascaded that
+  row away and replaced a live transcript with a stale copy's content; and
+  two paths carrying one session (a restored backup, an overlapping
+  `--path`) settle on one conversation with a warning naming the duplicate,
+  instead of taking turns replacing each other every run.
+- **A locked-out ingest no longer looks like a successful one.** The lock is
+  per-database, so `siftd ingest --path … --adapter …` blocked by a
+  concurrent run did none of the work it was asked for — and said nothing,
+  because output auto-quiets whenever stdout is not a TTY (every script and
+  cron chain). A scoped run now reports the skip unless `--quiet` was passed
+  explicitly. `siftd doctor fix` reported the same lock-out as an applied
+  fix, printed "All fixes applied.", and cleared the finding from its cache;
+  it now marks the step not applied and keeps the finding pending. When the
+  advisory lock cannot be taken at all (an NFS mount that refuses `flock`),
+  ingest still runs — refusing would be the worse failure — but now logs a
+  warning instead of degrading silently.
 
 ## [0.12.0] - 2026-07-18
 

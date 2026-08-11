@@ -5,6 +5,7 @@ Provides API-level write primitives for ingestion and FTS rebuild operations.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -17,6 +18,8 @@ from siftd.api.database import create_database
 from siftd.api.search import rebuild_fts_index
 from siftd.errors import UserInputError
 from siftd.ingestion import IngestEvent, IngestStats, ingest_all
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterSelectionError(UserInputError):
@@ -111,7 +114,9 @@ def _ingest_lock(db_path: Path) -> Iterator[bool]:
     ``flock`` is POSIX-only, and even on POSIX a filesystem may refuse it
     (some NFS mounts). Both degrade to running unlocked — the pre-0.12.1
     behavior — because refusing to ingest would be a worse failure than the
-    race this prevents.
+    race this prevents. The refusal is logged at WARNING: degrading silently
+    would leave a user who upgraded for the lock believing they are serialized
+    when they are not.
     """
     try:
         import fcntl
@@ -132,7 +137,15 @@ def _ingest_lock(db_path: Path) -> Iterator[bool]:
             handle.close()
         yield False
         return
-    except OSError:  # pragma: no cover — unlockable filesystem / unwritable dir
+    except OSError as exc:
+        # Degrading is deliberate, but silence is not: an ingest that is not
+        # serialized is one that can still lose the UNIQUE race, and a user who
+        # upgraded for the lock has no other way to learn it is not in effect.
+        logger.warning(
+            f"Ingest is running unserialized: could not lock {lock_path} "
+            f"({exc.strerror or exc}). Concurrent ingests of this database can "
+            "still collide (kgruel/siftd#29)."
+        )
         if handle is not None:
             handle.close()
         yield True

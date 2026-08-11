@@ -461,10 +461,18 @@ def cmd_ingest(args) -> int:
         # failure: the same sources are already being processed. Exit 0 so a
         # cron/wrapper pair that overlaps stays quiet instead of alarming.
         message = "Another ingest is already running — skipped."
+        # The lock is per-database, never per-adapter or per-path, so a run that
+        # asked for specific work did none of it. Auto-quiet (any non-TTY, which
+        # is every scripted `siftd ingest --path … && siftd search …`) must not
+        # swallow that; only an explicit --quiet does.
+        scoped = bool(args.path or args.adapter)
         if json_mode:
             renderer._emit({"type": "skipped", "reason": "locked", "message": message})
-        elif not quiet:
-            status.info(message)
+        elif not quiet or (scoped and not quiet_explicit):
+            status.info(
+                message
+                + (" The requested paths/adapters were not ingested." if scoped else "")
+            )
         return 0
 
     stats = result.stats
@@ -1150,8 +1158,20 @@ def _doctor_list(args) -> int:
     return 0
 
 
-def _run_fix_steps(steps: list, conn, db) -> int:
-    """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
+class _FixNotApplied(Exception):
+    """A fix step declined to run. Not a failure, and not a fix either.
+
+    Raised by a step that could not do its work for a benign reason (an ingest
+    already holds the lock). It has to be distinguishable from success: a ``✓``
+    plus "All fixes applied." over work that never happened is a lie the caller
+    then acts on — and the findings cache would be cleared as if it were fixed.
+    """
+
+
+def _run_fix_steps(steps: list, conn, db) -> tuple[int, int]:
+    """Run ``(label, fn)`` fix steps as a live spinner step-log.
+
+    Returns ``(errors, not_applied)``.
 
     The two hand-rolled ``\\r``-overwrite spinners dissolve onto the generic
     ``ProgressConsumer(shape="steps")`` — each step feeds a pending spinner that
@@ -1166,6 +1186,7 @@ def _run_fix_steps(steps: list, conn, db) -> int:
 
     plain_icons = current_icons() if supports_unicode() else ASCII_ICONS
     errors = 0
+    not_applied = 0
 
     consumer = ProgressConsumer(shape="steps")
     with consumer:
@@ -1177,6 +1198,9 @@ def _run_fix_steps(steps: list, conn, db) -> int:
             try:
                 result = fn(conn, db)
                 outcome, text = "done", f"{label}: {result}"
+            except _FixNotApplied as e:
+                outcome, text = "error", f"{label}: not applied — {e}"
+                not_applied += 1
             except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
                 outcome, text = "error", f"{label}: {e}"
                 errors += 1
@@ -1186,7 +1210,7 @@ def _run_fix_steps(steps: list, conn, db) -> int:
             else:
                 mark = plain_icons.ok if outcome == "done" else plain_icons.error
                 print(f"  {mark} {text}")
-    return errors
+    return errors, not_applied
 
 
 def _doctor_fix(args) -> int:
@@ -1216,15 +1240,25 @@ def _doctor_fix(args) -> int:
     print(f"Applying {fmt_count(len(actionable))} fix(es):\n")
 
     steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
-    errors = _run_fix_steps(steps, conn, db)
+    errors, not_applied = _run_fix_steps(steps, conn, db)
 
     conn.close()
-    clear_findings_cache()
+    # A fix that declined to run is still pending, so the cache it came from
+    # stays: clearing it would drop the finding on the floor unfixed. The fixes
+    # that did run are idempotent, so re-running the batch is safe.
+    if not not_applied:
+        clear_findings_cache()
 
     print()
     if errors:
         status.error(f"Done with {errors} error(s).", hint="Run 'siftd doctor' to verify.")
         return 1
+    if not_applied:
+        status.warning(
+            f"{fmt_count(not_applied)} fix(es) not applied.",
+            hint="Re-run 'siftd doctor fix' once the blocking condition clears.",
+        )
+        return 0
     status.confirm("All fixes applied.", hint="Run 'siftd doctor' to verify.")
     return 0
 
@@ -1237,7 +1271,7 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
         return 1
 
     conn = open_database(db)
-    errors = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
+    errors, _not_applied = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
     conn.close()
     return 1 if errors else 0
 
@@ -1251,7 +1285,7 @@ def _fix_ingest(conn, db_path):
     # Matches the ingest command's on_notice → status.info in its plain-text mode.
     result = run_ingest(db_path=db_path, on_notice=status.info)
     if result.skipped_locked:
-        return "skipped — another ingest is already running"
+        raise _FixNotApplied("another ingest is already running")
     stats = result.stats
     if stats is None:
         return "0 file(s) ingested, 0 skipped"

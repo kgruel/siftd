@@ -260,6 +260,63 @@ class TestIngestLock:
             with ingest_api._ingest_lock(alias) as second:
                 assert second is False
 
+    def test_lock_is_held_for_the_whole_ingest(self, tmp_path, monkeypatch):
+        """The lock must cover the work, not just the entry.
+
+        Every other test here takes the lock itself and calls run_ingest as the
+        loser, which only pins "run_ingest respects someone else's lock". Hoist
+        the ingest out of the ``with`` block and all of them still pass while
+        the race is fully back — so this one runs as the winner and has a second
+        acquirer try mid-ingest. flock contends across file descriptors, so no
+        threads, subprocesses or sleeps are involved.
+        """
+        db = tmp_path / "held.db"
+        stats = IngestStats(files_found=1)
+        self._wire(monkeypatch, stats)
+        seen = {}
+
+        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None):
+            with ingest_api._ingest_lock(db) as second:
+                seen["during"] = second
+            return stats
+
+        monkeypatch.setattr(ingest_api, "ingest_all", _ingest_all)
+
+        result = ingest_api.run_ingest(db_path=db)
+
+        assert result.skipped_locked is False
+        assert seen["during"] is False, "the lock was not held during the ingest"
+        # ...and released afterwards.
+        with ingest_api._ingest_lock(db) as after:
+            assert after is True
+
+    def test_unlockable_filesystem_degrades_with_a_warning(self, tmp_path, monkeypatch, caplog):
+        """Degrading is deliberate; degrading silently is not.
+
+        An NFS/CIFS mount that refuses flock leaves both ingests racing exactly
+        as before the lock existed. Nothing else — not --json, not the summary,
+        not doctor — says so, so the log line is the only signal a user has that
+        their ingests are not serialized.
+        """
+        import errno
+        import fcntl
+        import logging
+
+        def _refuse(*_args, **_kwargs):
+            raise OSError(errno.ENOLCK, "No locks available")
+
+        monkeypatch.setattr(fcntl, "flock", _refuse)
+
+        db = tmp_path / "nfs.db"
+        with caplog.at_level(logging.WARNING, logger="siftd.api.ingest"):
+            with ingest_api._ingest_lock(db) as held:
+                assert held is True
+                with ingest_api._ingest_lock(db) as second:
+                    assert second is True, "unlockable means unserialized, by design"
+
+        assert "unserialized" in caplog.text
+        assert str(db) in caplog.text
+
     def test_missing_fcntl_degrades_to_unlocked(self, tmp_path, monkeypatch):
         """No advisory lock on a platform without flock — never a hard failure."""
         import builtins

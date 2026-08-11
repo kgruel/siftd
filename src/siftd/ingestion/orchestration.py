@@ -389,13 +389,24 @@ def ingest_all(
                 existing_info = get_ingested_file_info(conn, file_path)
                 if existing_info:
                     location = source.as_path
+                    st = location.stat()
+
+                    # A row carrying an error is re-examined every run, whatever
+                    # its stat says. _record_file_error stamps the *failing*
+                    # file's own hash/mtime/size, so a transcript that stops
+                    # changing after a failure matches both skips below forever
+                    # — which is why rows poisoned by the #29 race survived
+                    # every later ingest instead of healing. Re-examining them
+                    # is what makes the recovery below reachable without the
+                    # file having to grow again.
+                    unresolved = existing_info["error"] is not None
 
                     # Fast path: stat-only skip (no file I/O for hashing)
-                    st = location.stat()
                     stored_mtime = existing_info["file_mtime"]
                     stored_size = existing_info["file_size"]
                     if (
-                        stored_mtime is not None
+                        not unresolved
+                        and stored_mtime is not None
                         and st.st_mtime == stored_mtime
                         and st.st_size == stored_size
                     ):
@@ -408,7 +419,7 @@ def ingest_all(
                     # Slow path: mtime or size changed (or no stored stat), hash the file
                     current_hash = compute_file_hash(location)
 
-                    if current_hash == existing_info["file_hash"]:
+                    if not unresolved and current_hash == existing_info["file_hash"]:
                         # Content unchanged, mtime drifted — update stored stat
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
@@ -606,17 +617,47 @@ def ingest_all(
                         existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
                     if existing:
                         location = source.as_path
-                        st = location.stat()
-                        fh = compute_file_hash(location)
                         # Upsert, not insert: the conn.rollback() above has
                         # resurrected any ingested_files row this file's
                         # transaction had deleted (the re-ingest branch DELETEs
                         # the old row before re-storing), so a row is normally
                         # present here — carrying a stale hash and possibly a
                         # stale error. Re-point it either way.
+                        prior = get_ingested_file_info(conn, file_path)
+                        if _conversation_claimed_elsewhere(conn, existing["id"], file_path):
+                            # Two paths carry one session (a restored backup, an
+                            # overlapping --path). Only one of them can hold the
+                            # (harness_id, external_id) slot and neither is more
+                            # authoritative, so settle rather than churn: link at
+                            # the conversation that exists and stamp THIS file's
+                            # hash, so the copies do not take turns replacing
+                            # each other's content on every run. Say so — a
+                            # frozen copy is only diagnosable if it is named.
+                            st = location.stat()
+                            fh = compute_file_hash(location)
+                            mtime, size = st.st_mtime, st.st_size
+                            logger.warning(
+                                f"{file_path} duplicates a transcript already tracked under "
+                                f"another path (external_id {conv.external_id}); linking to the "
+                                "existing conversation and leaving its content as ingested"
+                            )
+                        else:
+                            # A lost race, or a row poisoned by an older siftd:
+                            # the conversation holds some OTHER read of this
+                            # path. Point the row at it — never NULL — but do
+                            # not claim the bytes just hashed were ingested,
+                            # because they were not. Keep whatever hash/stat the
+                            # row already asserted (a never-matching sentinel
+                            # when there is no row) so the next run re-hashes,
+                            # takes the re-ingest branch with a non-NULL pointer,
+                            # and converges on the current content instead of
+                            # freezing silently on the winner's.
+                            fh = prior["file_hash"] if prior else ""
+                            mtime = prior["file_mtime"] if prior else None
+                            size = prior["file_size"] if prior else None
                         link_ingested_file(
                             conn, file_path, fh, existing["id"],
-                            file_mtime=st.st_mtime, file_size=st.st_size,
+                            file_mtime=mtime, file_size=size,
                         )
                         conn.commit()
                         stats.files_skipped += 1
@@ -677,17 +718,21 @@ def _record_file_error(
     on_file: Callable[[Source, str], None] | None,
     emit_event: Callable[[str, object | None], None] | None,
 ) -> None:
-    """Record a file that failed ingestion so it won't retry.
+    """Record a file that failed ingestion, without discarding a live pointer.
 
-    If the file was previously recorded as a success, update the row to
-    reflect the new error state so the failure is queryable and the stale
-    conversation link is cleared.
+    The failure is written to the row so it is queryable (``get_ingest_errors``,
+    ``siftd doctor``) and so the next ingest re-examines the file whatever its
+    stat says.
 
-    Clearing the link is right for a genuine failure — nothing parsed, so no
-    conversation belongs to this path — and wrong when the store failed
-    *because* the conversation already exists. The duplicate-conversation
-    branch in :func:`ingest_all` therefore never routes here; it repairs the
-    pointer and reports through :func:`_count_file_error` instead.
+    The conversation link is *kept* whenever the row has one and that
+    conversation still exists. It survives here because every caller rolled the
+    transaction back first, which resurrects the conversation the re-ingest
+    branch had already deleted — so "the parse failed" is not evidence that
+    nothing belongs to this path, and NULLing the pointer would strand a live
+    conversation exactly the way kgruel/siftd#29 describes. A path that never
+    produced a conversation has nothing to keep and records NULL as before. The
+    duplicate-conversation branch in :func:`ingest_all` does not route here at
+    all; it repairs the pointer and reports through :func:`_count_file_error`.
     """
     try:
         existing = get_ingested_file_info(conn, file_path)
@@ -695,13 +740,16 @@ def _record_file_error(
         st = location.stat()
         file_hash = compute_file_hash(location)
         if existing:
-            # Update existing row: clear conversation link, set error
+            # Update existing row: set error, keep a pointer that still resolves
+            keep = existing["conversation_id"]
+            if keep is not None and not _conversation_exists(conn, keep):
+                keep = None
             conn.execute(
                 """UPDATE ingested_files
-                   SET file_hash = ?, conversation_id = NULL, error = ?,
+                   SET file_hash = ?, conversation_id = ?, error = ?,
                        file_mtime = ?, file_size = ?
                    WHERE path = ?""",
-                (file_hash, error, st.st_mtime, st.st_size, file_path),
+                (file_hash, keep, error, st.st_mtime, st.st_size, file_path),
             )
             conn.commit()
         else:
@@ -714,6 +762,34 @@ def _record_file_error(
     except Exception:
         pass  # Don't fail the whole ingest because we couldn't record the error
     _count_file_error(source, adapter, error, stats, on_file, emit_event)
+
+
+def _conversation_exists(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    """Whether a conversation row is still present."""
+    return conn.execute(
+        "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone() is not None
+
+
+def _conversation_claimed_elsewhere(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    file_path: str,
+) -> bool:
+    """Whether some OTHER path's bookkeeping row points at this conversation.
+
+    ``ingested_files.conversation_id`` has no uniqueness constraint, so two
+    paths carrying one session (a restored backup, an overlapping ``--path``)
+    can both reference one conversation — a state the duplicate-collision
+    repair itself creates. It is also ``ON DELETE CASCADE``, so replacing that
+    conversation takes the other path's row with it. Anywhere this code is
+    about to delete a conversation it did not itself store, or to declare one
+    unowned, it has to ask first.
+    """
+    return conn.execute(
+        "SELECT 1 FROM ingested_files WHERE conversation_id = ? AND path != ? LIMIT 1",
+        (conversation_id, file_path),
+    ).fetchone() is not None
 
 
 def _count_file_error(
@@ -852,6 +928,15 @@ def _reingest_file(
         # conversation's tags on the first ingest after upgrade.
         harness_id = _harness_id_for_conversation(conn, conversation)
         orphan = find_conversation_by_external_id(conn, harness_id, conversation.external_id)
+        if orphan and _conversation_claimed_elsewhere(conn, orphan["id"], file_path):
+            # Not an orphan: another path's bookkeeping row points at it, so
+            # this file is a second copy of a tracked transcript. Deleting it
+            # would destroy that conversation's events AND — conversation_id is
+            # ON DELETE CASCADE — the other path's row. Leave it alone and let
+            # store_conversation collide: the duplicate-conversation handler in
+            # ingest_all links this path at the existing conversation, which is
+            # lossless.
+            orphan = None
         if orphan:
             tag_snapshot = _snapshot_tags_for_replacement(conn, orphan["id"])
             delete_conversation(conn, orphan["id"])
