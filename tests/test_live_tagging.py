@@ -3,8 +3,11 @@
 Tests the full workflow: register → queue tag → ingest → verify tag applied.
 """
 
+import json
+
 import pytest
 
+from siftd.adapters import claude_code
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, Usage
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
@@ -16,9 +19,9 @@ from siftd.storage.sessions import (
     queue_tag,
     register_session,
 )
-from siftd.storage.tags import delete_tag, get_or_create_tag, rename_tag
+from siftd.storage.tags import apply_tag, delete_tag, get_or_create_tag, rename_tag
 from siftd.storage.sqlite import create_database, open_database
-from conftest import make_conversation
+from conftest import FIXTURES_DIR, make_conversation
 
 
 def make_live_adapter(source_path, conversation):
@@ -546,3 +549,202 @@ class TestLiveTaggingFlow:
         # Now it should be stale
         stale_count = get_stale_sessions_count(live_db["conn"], max_age_hours=48)
         assert stale_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Real-adapter regression coverage
+#
+# The tests above fabricate conversations whose external_id IS the queue key,
+# so the adapter's own namespacing never enters the tested path — which is
+# exactly where the "tags queued, never applied" bug hid. The tests below drive
+# the real claude_code adapter over a real transcript, so external_id comes out
+# as `claude_code::<uuid>` (or `claude_code::<uuid>::agent::<id>`) while the
+# queue/registration keys stay bare, as `siftd tag --session` writes them.
+# ---------------------------------------------------------------------------
+
+
+def _write_claude_transcript(dest, session_uuid, *, agent_id=None):
+    """Write a realistic claude_code transcript for `session_uuid` at `dest`."""
+    lines = (FIXTURES_DIR / "claude_code_minimal.jsonl").read_text().splitlines()
+    records = [json.loads(line) for line in lines if line.strip()]
+    for record in records:
+        record["sessionId"] = session_uuid
+        if agent_id:
+            record["agentId"] = agent_id
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text("\n".join(json.dumps(r) for r in records) + "\n")
+    return dest
+
+
+def _append_turn(path, session_uuid, *, agent_id=None):
+    """Append a turn, so the file hash (and size) changes like a live session."""
+    record = {
+        "type": "user",
+        "sessionId": session_uuid,
+        "timestamp": "2024-01-15T10:05:00Z",
+        "uuid": "msg-appended",
+        "message": {"role": "user", "content": [{"type": "text", "text": "One more thing"}]},
+    }
+    if agent_id:
+        record["agentId"] = agent_id
+    with path.open("a") as handle:
+        handle.write(json.dumps(record) + "\n")
+
+
+def _conversation_id(conn, external_id):
+    row = conn.execute(
+        "SELECT id FROM conversations WHERE external_id = ?", (external_id,)
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def _conversation_tag_names(conn, external_id):
+    cur = conn.execute(
+        """
+        SELECT t.name FROM tags t
+        JOIN tag_assignments ta ON ta.tag_id = t.id
+        JOIN conversations c ON c.id = ta.target_id
+        WHERE ta.target_kind = 'conversation' AND c.external_id = ?
+        """,
+        (external_id,),
+    )
+    return [row[0] for row in cur.fetchall()]
+
+
+@pytest.fixture
+def claude_root(tmp_path, monkeypatch):
+    """Point the real claude_code adapter at a temp transcript directory."""
+    root = tmp_path / "projects"
+    root.mkdir()
+    monkeypatch.setattr(claude_code, "DEFAULT_LOCATIONS", [str(root)])
+    return root
+
+
+class TestClaudeCodeSessionTagging:
+    """Regression tests for the bare-uuid vs adapter-prefixed key mismatch."""
+
+    def test_bare_queued_tag_applies_to_prefixed_conversation(self, live_db, claude_root):
+        """`tag --session <uuid>` queues bare; the conversation is prefixed."""
+        session_uuid = "0039a352-b40d-43c8-8c04-ef440fd54841"
+        _write_claude_transcript(claude_root / f"{session_uuid}.jsonl", session_uuid)
+
+        queue_tag(live_db["conn"], session_uuid, "decision:auth", commit=True)
+
+        ingest_all(live_db["conn"], [claude_code])
+
+        external_id = f"claude_code::{session_uuid}"
+        assert _conversation_id(live_db["conn"], external_id) is not None
+        assert "decision:auth" in _conversation_tag_names(live_db["conn"], external_id)
+        assert get_pending_tags(live_db["conn"], session_uuid) == []
+
+    def test_bare_queued_tag_applies_to_subagent_conversation(self, live_db, claude_root):
+        """Tags queued against the bare parent uuid reach a subagent transcript."""
+        session_uuid = "9f0f4b7c-1111-4222-8333-444455556666"
+        agent_id = "agent-xyz-123"
+        _write_claude_transcript(
+            claude_root / "subagents" / f"{session_uuid}-{agent_id}.jsonl",
+            session_uuid,
+            agent_id=agent_id,
+        )
+
+        queue_tag(live_db["conn"], session_uuid, "decision:api-design", commit=True)
+
+        ingest_all(live_db["conn"], [claude_code])
+
+        external_id = f"claude_code::{session_uuid}::agent::{agent_id}"
+        assert _conversation_id(live_db["conn"], external_id) is not None
+        assert "decision:api-design" in _conversation_tag_names(live_db["conn"], external_id)
+        assert get_pending_tags(live_db["conn"], session_uuid) == []
+
+    def test_ingest_unregisters_bare_registered_session(self, live_db, claude_root):
+        """`siftd register` records the bare uuid; ingest must clear that row."""
+        session_uuid = "5c1d8e2a-7777-4888-9999-aaaabbbbcccc"
+        _write_claude_transcript(claude_root / f"{session_uuid}.jsonl", session_uuid)
+
+        register_session(
+            live_db["conn"], session_uuid, "claude_code", "/test/workspace", commit=True
+        )
+        assert is_session_registered(live_db["conn"], session_uuid)
+
+        ingest_all(live_db["conn"], [claude_code])
+
+        assert not is_session_registered(live_db["conn"], session_uuid)
+
+
+class TestReingestPreservesConversationTags:
+    """Regression tests for tag loss when a changed transcript is re-ingested."""
+
+    def test_direct_tag_survives_reingest(self, live_db, claude_root):
+        """A tag applied to the conversation row survives its replacement."""
+        session_uuid = "2b7c9d10-1234-4567-89ab-cdef01234567"
+        transcript = _write_claude_transcript(
+            claude_root / f"{session_uuid}.jsonl", session_uuid
+        )
+        ingest_all(live_db["conn"], [claude_code])
+
+        external_id = f"claude_code::{session_uuid}"
+        first_id = _conversation_id(live_db["conn"], external_id)
+        tag_id = get_or_create_tag(live_db["conn"], "keeper")
+        apply_tag(live_db["conn"], "conversation", first_id, tag_id, commit=True)
+
+        # The session keeps going: the transcript grows, so the hash changes and
+        # ingest replaces the conversation row.
+        _append_turn(transcript, session_uuid)
+        ingest_all(live_db["conn"], [claude_code])
+
+        second_id = _conversation_id(live_db["conn"], external_id)
+        assert second_id is not None and second_id != first_id
+        assert "keeper" in _conversation_tag_names(live_db["conn"], external_id)
+        # The stale assignment is gone, not merely shadowed.
+        orphans = live_db["conn"].execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind = 'conversation' AND target_id = ?",
+            (first_id,),
+        ).fetchone()[0]
+        assert orphans == 0
+
+    def test_queued_tag_survives_later_reingest(self, live_db, claude_root):
+        """queue → ingest (applies) → transcript grows → re-ingest keeps the tag.
+
+        This is the composition case: consume_pending_tags deletes the queue row
+        when it applies, so the second ingest has nothing left to replay — only
+        carrying the assignment across the replacement keeps the tag.
+        """
+        session_uuid = "8e4f0a55-2222-4333-8444-555566667777"
+        transcript = _write_claude_transcript(
+            claude_root / f"{session_uuid}.jsonl", session_uuid
+        )
+        queue_tag(live_db["conn"], session_uuid, "decision:queued", commit=True)
+
+        ingest_all(live_db["conn"], [claude_code])
+        external_id = f"claude_code::{session_uuid}"
+        assert "decision:queued" in _conversation_tag_names(live_db["conn"], external_id)
+
+        _append_turn(transcript, session_uuid)
+        ingest_all(live_db["conn"], [claude_code])
+
+        assert "decision:queued" in _conversation_tag_names(live_db["conn"], external_id)
+
+    def test_emptied_transcript_drops_snapshot(self, live_db, claude_root):
+        """A transcript that goes empty has no replacement row to carry tags to."""
+        session_uuid = "3a1b2c3d-9999-4888-8777-666655554444"
+        transcript = _write_claude_transcript(
+            claude_root / f"{session_uuid}.jsonl", session_uuid
+        )
+        ingest_all(live_db["conn"], [claude_code])
+
+        external_id = f"claude_code::{session_uuid}"
+        first_id = _conversation_id(live_db["conn"], external_id)
+        tag_id = get_or_create_tag(live_db["conn"], "vanishing")
+        apply_tag(live_db["conn"], "conversation", first_id, tag_id, commit=True)
+
+        transcript.write_text("")
+        ingest_all(live_db["conn"], [claude_code])
+
+        # The conversation is gone, and its assignments went with it — the
+        # snapshot is deliberately dropped rather than re-pointed at nothing.
+        assert _conversation_id(live_db["conn"], external_id) is None
+        orphans = live_db["conn"].execute(
+            "SELECT COUNT(*) FROM tag_assignments WHERE target_kind = 'conversation' AND target_id = ?",
+            (first_id,),
+        ).fetchone()[0]
+        assert orphans == 0

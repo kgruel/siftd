@@ -42,7 +42,7 @@ from siftd.storage.sqlite import (
     store_conversation,
     update_file_stat,
 )
-from siftd.storage.tags import apply_tag, get_or_create_tag
+from siftd.storage.tags import apply_tag, get_or_create_tag, get_tag_assignments
 
 from .discovery import discover_all
 
@@ -395,7 +395,22 @@ def ingest_all(
 
                     # Hash changed - re-ingest
                     # Delete old conversation/record
+                    tag_snapshot: list[tuple[str, str]] = []
                     if existing_info["conversation_id"]:
+                        # Conversation-level tags are keyed by the conversation
+                        # ULID, and delete_conversation's AFTER DELETE trigger
+                        # (tr_polymorphic_conversations_cleanup) removes them.
+                        # The replacement row gets a fresh ULID, so without this
+                        # snapshot every re-ingest of a live transcript silently
+                        # drops its tags. Ordering is forced: UNIQUE(harness_id,
+                        # external_id) means the old row must go before the new
+                        # one lands, and an AFTER DELETE trigger means a
+                        # post-delete UPDATE would match zero rows. So: snapshot
+                        # → delete → re-ingest → re-point, all in one
+                        # transaction (_reingest_file owns the commit).
+                        tag_snapshot = get_tag_assignments(
+                            conn, "conversation", existing_info["conversation_id"]
+                        )
                         delete_conversation(conn, existing_info["conversation_id"])
                     else:
                         # No conversation (empty or errored file) — remove old record
@@ -405,6 +420,7 @@ def ingest_all(
                     conv = _reingest_file(
                         conn, source, adapter, file_path, current_hash, st, stats, filter_binary,
                         _workspace_cache=_workspace_cache,
+                        tag_snapshot=tag_snapshot,
                     )
                     if on_file:
                         on_file(source, "updated")
@@ -699,6 +715,7 @@ def _reingest_file(
     filter_binary: bool,
     *,
     _workspace_cache: dict | None = None,
+    tag_snapshot: list[tuple[str, str]] | None = None,
 ) -> object | None:
     """Re-ingest a file that has changed (file-based dedup strategy).
 
@@ -707,13 +724,23 @@ def _reingest_file(
 
     Note: delete_conversation also deletes the ingested_files record,
     so we create a new record rather than updating.
+
+    tag_snapshot carries the deleted conversation's (tag_id, applied_at)
+    assignments so they can be re-pointed at the replacement row before the
+    commit — the caller cannot do it afterwards, because that would either
+    split the transaction or (post-delete) match zero rows. Only
+    conversation-level assignments are carried: events also get new ULIDs on
+    re-ingest, and matching them to their predecessors is deferred (0.13.0).
     """
     harness_name = adapter.NAME
 
     conversation = _parse_source_conversation(source, adapter, file_path)
 
     if conversation is None:
-        # File became empty - record with NULL conversation_id
+        # File became empty — there is no replacement row to carry the
+        # snapshotted tags to, so they are deliberately dropped along with the
+        # conversation they described.
+        # Record with NULL conversation_id
         harness_kwargs = {}
         if hasattr(adapter, "HARNESS_SOURCE"):
             harness_kwargs["source"] = adapter.HARNESS_SOURCE
@@ -725,6 +752,13 @@ def _reingest_file(
         return None
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+
+    # Re-point the pre-delete tag assignments at the replacement row,
+    # preserving applied_at (explicit re-point, same style as
+    # storage/migrate_workspaces.py — there is no FK to cascade from).
+    for tag_id, applied_at in tag_snapshot or ():
+        apply_tag(conn, "conversation", conv_id, tag_id, applied_at=applied_at)
+
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
 
@@ -767,6 +801,38 @@ _LAST_MARKER_DISPATCH: dict[str, tuple[str, str]] = {
 }
 
 
+def _session_key_candidates(adapter: AdapterModule, external_id: str) -> list[str]:
+    """Return the session keys a conversation may have been queued/registered under.
+
+    `siftd tag --session <id>` and `siftd register` both key off the bare
+    harness session id the tool reports (a uuid, for claude_code). Adapters,
+    however, are free to namespace their `external_id`; claude_code builds
+    `claude_code::<uuid>` (and `claude_code::<uuid>::agent::<agent-id>` for
+    subagents), so the conversation's external_id never equals the queue key.
+
+    Ordered, deduped candidates:
+
+    1. `external_id` itself — adapters whose external_id *is* the bare session
+       id (the pre-existing behavior).
+    2. The parent form for subagents (`...::agent::<id>` stripped) — also
+       pre-existing, and correct for a bare-external_id adapter.
+    3. The bare form: the adapter-name prefix stripped off the parent form.
+       For claude_code that is `<uuid>` for both plain and subagent
+       conversations — never `<uuid>::agent::<id>`, which is not a key any
+       write path produces. The prefix is matched against `adapter.NAME`
+       rather than split on the first `::` so an adapter that uses `::` for
+       something else is left alone.
+    """
+    parent = external_id.split("::agent::")[0]
+    prefix = f"{getattr(adapter, 'NAME', '')}::"
+    candidates = [external_id, parent]
+    if prefix != "::" and parent.startswith(prefix):
+        candidates.append(parent[len(prefix):])
+    # dict.fromkeys preserves order while dropping the duplicate that a
+    # non-subagent external_id (external_id == parent) produces.
+    return list(dict.fromkeys(candidates))
+
+
 def _apply_pending_tags(
     conn: sqlite3.Connection,
     adapter: AdapterModule,
@@ -782,31 +848,33 @@ def _apply_pending_tags(
         return 0
 
     session_id = conversation.external_id
-    pending = consume_pending_tags(conn, session_id)
+    candidates = _session_key_candidates(adapter, session_id)
 
-    # For subagent conversations (external_id contains ::agent::),
-    # also check for tags queued against the parent session.
-    # This handles the case where a user tags during a subagent session —
-    # the tag targets the parent session ID, but the subagent conversation
-    # has a different external_id.
+    # Consume from the first key that has anything queued.
     #
-    # Ingest-order note: if the parent conversation is ingested first in the
-    # same run, it will consume the tags itself (correct — both belong to the
-    # same session). The subagent fallback only fires when the subagent is
-    # ingested before the parent, or when the parent file was skipped
-    # (unchanged since last ingest). Either way, the tag lands on exactly one
-    # conversation in the session, which is the intended "tag this session"
-    # semantic.
-    parent_id = None
-    if not pending and "::agent::" in session_id:
-        parent_id = session_id.split("::agent::")[0]
-        pending = consume_pending_tags(conn, parent_id)
+    # Ingest-order note (subagents): if the parent conversation is ingested
+    # first in the same run, it will consume the tags itself (correct — both
+    # belong to the same session). The subagent fallback only fires when the
+    # subagent is ingested before the parent, or when the parent file was
+    # skipped (unchanged since last ingest). Either way, the tag lands on
+    # exactly one conversation in the session, which is the intended
+    # "tag this session" semantic.
+    pending: list = []
+    for key in candidates:
+        pending = consume_pending_tags(conn, key)
+        if pending:
+            break
+
+    def _unregister_all() -> None:
+        # Sessions are registered under whichever key the harness reported —
+        # the bare one, in practice. Unregister every candidate so ingest
+        # actually clears the active_sessions row it just ingested.
+        for key in candidates:
+            unregister_session(conn, key)
 
     if not pending:
         # No pending tags, but still unregister the session
-        unregister_session(conn, session_id)
-        if parent_id:
-            unregister_session(conn, parent_id)
+        _unregister_all()
         return 0
 
     applied = 0
@@ -866,10 +934,8 @@ def _apply_pending_tags(
                     f"tag '{pt.tag_name}' not applied"
                 )
 
-    # Unregister the session (and parent if subagent)
-    unregister_session(conn, session_id)
-    if parent_id:
-        unregister_session(conn, parent_id)
+    # Unregister the session (every key form it may be registered under)
+    _unregister_all()
     return applied
 
 

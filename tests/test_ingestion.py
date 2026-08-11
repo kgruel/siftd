@@ -468,3 +468,49 @@ class TestApplyPendingTagsLastMarkers:
         ).fetchone()
         assert row is None
         conn.close()
+
+
+class TestSessionKeyCandidates:
+    """Key forms a pending tag / registered session may be stored under."""
+
+    class _ClaudeCode:
+        NAME = "claude_code"
+
+    def test_prefixed_conversation_falls_back_to_bare(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        assert _session_key_candidates(self._ClaudeCode(), "claude_code::abc") == [
+            "claude_code::abc",
+            "abc",
+        ]
+
+    def test_subagent_tries_bare_parent_not_bare_subagent(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        # `<uuid>::agent::<id>` is not a key any write path produces, so it must
+        # not appear: the queue only ever holds the bare parent uuid.
+        assert _session_key_candidates(
+            self._ClaudeCode(), "claude_code::abc::agent::a1"
+        ) == ["claude_code::abc::agent::a1", "claude_code::abc", "abc"]
+
+    def test_bare_external_id_is_its_own_only_candidate(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        assert _session_key_candidates(self._ClaudeCode(), "abc") == ["abc"]
+
+    def test_other_adapters_prefix_is_left_alone(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        class _Other:
+            NAME = "other"
+
+        # `::` that isn't this adapter's name prefix is not stripped.
+        assert _session_key_candidates(_Other(), "claude_code::abc") == ["claude_code::abc"]
+
+    def test_adapter_without_name_attribute(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        class _Nameless:
+            pass
+
+        assert _session_key_candidates(_Nameless(), "::abc") == ["::abc"]

@@ -115,6 +115,32 @@ def get_tags_for(
     ).fetchall()
 
 
+def get_tag_assignments(
+    conn: sqlite3.Connection,
+    target_kind: str,
+    target_id: str,
+) -> list[tuple[str, str]]:
+    """Return (tag_id, applied_at) pairs assigned to a target.
+
+    Unlike :func:`get_tags_for` (which resolves names for display), this
+    returns the raw assignment identity so a caller can re-point the same
+    assignments at a replacement row via :func:`apply_tag`. Used by ingest
+    when a changed transcript forces delete-then-insert of a conversation:
+    the AFTER DELETE cleanup trigger takes the assignments with it, so they
+    must be snapshotted first.
+    """
+    if target_kind not in _VALID_TARGET_KINDS:
+        raise ValueError(f"Unknown target_kind {target_kind!r}. Valid: {sorted(_VALID_TARGET_KINDS)}")
+    return [
+        (row["tag_id"], row["applied_at"])
+        for row in conn.execute(
+            "SELECT tag_id, applied_at FROM tag_assignments "
+            "WHERE target_kind = ? AND target_id = ?",
+            (target_kind, target_id),
+        ).fetchall()
+    ]
+
+
 def rename_tag(conn: sqlite3.Connection, old_name: str, new_name: str, *, commit: bool = False) -> bool:
     """Rename a tag. Returns True if renamed, False if old_name not found.
 

@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Pending session tags are applied again.** `siftd tag --session <id>`
+  queues under the bare harness session id, but ingest drained the queue
+  by the adapter-namespaced `external_id` (`claude_code::<uuid>`), so for
+  Claude Code the queue never drained and every queued tag was silently
+  lost. Ingest now falls back to the bare id (adapter-name prefix
+  stripped, parent uuid for `::agent::` subagent transcripts), which also
+  rescues queues stranded by earlier versions. The same mismatch left
+  live sessions registered forever; ingest now unregisters the bare key
+  too.
+- **Conversation tags survive re-ingest.** When a transcript's hash
+  changes, ingest replaces the conversation row, and the polymorphic
+  cleanup trigger took its `tag_assignments` with it — so tagging a live
+  session lost the tag on the next ingest. Conversation-level assignments
+  are now snapshotted before the delete and re-pointed at the replacement
+  row (`applied_at` preserved) inside the same transaction. Limitation:
+  event-level tags (`--last-*`, `--exchange` targets) are not re-pointed,
+  since events also get new IDs on re-ingest; that is deferred to 0.13.0.
+
 ## [0.12.0] - 2026-07-18
 
 > The stewardship release. Adapters gain an explicit support contract —
