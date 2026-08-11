@@ -1006,8 +1006,15 @@ def cmd_copy(args) -> int:
 
 
 def _doctor_fix_pending_tags(args) -> int:
-    """Clean up stale sessions and orphaned pending tags."""
-    from siftd.api.sessions import cleanup_stale_sessions
+    """Apply queued session tags to their ingested conversations.
+
+    The queue only drains at ingest, and a settled session never re-ingests,
+    so this is the only recovery path for tags that were queued while the
+    drain was broken. It applies; it does not clean up. Rows that resolve to
+    no conversation are reported and kept — discarding them needs
+    ``--discard-unresolved``.
+    """
+    from siftd.api.sessions import recover_pending_tags
 
     db = resolve_db(args)
 
@@ -1015,24 +1022,67 @@ def _doctor_fix_pending_tags(args) -> int:
         status.db_missing(db)
         return 1
 
+    discard = getattr(args, "discard_unresolved", False)
     conn = open_database(db)
-
-    sessions_deleted, tags_deleted = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
+    result = recover_pending_tags(conn, max_age_hours=48, discard_unresolved=discard, commit=True)
+    conn.close()
 
     if args.json:
-        out = {
-            "sessions_deleted": sessions_deleted,
-            "tags_deleted": tags_deleted,
-        }
-        print(json.dumps(out, indent=2))
-    else:
-        if sessions_deleted or tags_deleted:
-            status.confirm(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
-        else:
-            status.info("No stale sessions or orphaned tags to clean up")
+        print(json.dumps(
+            {
+                "applied": [
+                    {
+                        "session": a.harness_session_id,
+                        "tag": a.tag_name,
+                        "target_kind": a.target_kind,
+                        "target_id": a.target_id,
+                        "already_present": a.already_present,
+                    }
+                    for a in result.applied
+                ],
+                "unresolved": [
+                    {"session": u.harness_session_id, "tag": u.tag_name, "reason": u.reason}
+                    for u in result.unresolved
+                ],
+                "discarded": result.discarded,
+                "stale_sessions_pruned": result.stale_sessions_pruned,
+            },
+            indent=2,
+        ))
+        return 0
 
-    conn.close()
+    if result.applied:
+        already = result.already_present
+        detail = f" ({already} already applied by hand)" if already else ""
+        status.confirm(f"Applied {len(result.applied)} queued tag(s) to their conversations{detail}")
+    if result.stale_sessions_pruned:
+        status.info(f"Pruned {result.stale_sessions_pruned} stale session registration(s)")
+
+    if result.discarded:
+        status.warning(f"Discarded {result.discarded} pending tag(s) that resolve to no conversation")
+    elif result.unresolved:
+        # Show the keys, not just a count: the session ids are what a user
+        # needs to chase these down (or to recognize a mistyped id).
+        _print_unresolved_pending(result.unresolved)
+    elif not result.applied and not result.stale_sessions_pruned:
+        status.info("No pending tags to apply")
+
     return 0
+
+
+def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
+    """Report kept pending tags with their session keys and why they didn't resolve."""
+    status.warning(
+        f"{len(unresolved)} pending tag(s) match no ingested conversation — kept, not deleted",
+        hint=(
+            "Run 'siftd ingest' if those sessions are new, then re-run this fix. "
+            "Use '--discard-unresolved' to drop them, or '--json' for the full list."
+        ),
+    )
+    for u in unresolved[:sample]:
+        print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
+    if len(unresolved) > sample:
+        print(f"    ... {len(unresolved) - sample} more")
 
 
 def _doctor_list(args) -> int:
@@ -1191,10 +1241,17 @@ def _fix_backfill_git_remote(conn, db_path):
 
 
 def _fix_pending_tags(conn, db_path):
-    from siftd.api.sessions import cleanup_stale_sessions
+    # Never discards: this is the batch path (`siftd doctor fix`), where the
+    # user has not opted into deleting anything. Unresolved rows are counted
+    # and kept; `siftd doctor fix --pending-tags` reports them in detail.
+    from siftd.api.sessions import recover_pending_tags
 
-    sessions, tags = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
-    return f"{sessions} session(s), {tags} tag(s) cleaned up"
+    result = recover_pending_tags(conn, max_age_hours=48, commit=True)
+    return (
+        f"{len(result.applied)} tag(s) applied, "
+        f"{len(result.unresolved)} unresolved (kept), "
+        f"{result.stale_sessions_pruned} stale session(s) pruned"
+    )
 
 
 def _fix_blob_refcount(conn, db_path):
@@ -1228,7 +1285,7 @@ _FIX_REGISTRY = {
     "siftd embed": ("Indexing embeddings", _fix_embed),
     "siftd embed --rebuild": ("Rebuilding embeddings index", _fix_embed_rebuild),
     "siftd backfill --git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
-    "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
+    "siftd doctor fix --pending-tags": ("Applying queued session tags", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),
     "siftd doctor fix --triggers": ("Recreating blob ref-count triggers", _fix_blob_triggers),
 }
@@ -1448,6 +1505,7 @@ def cmd_doctor(args) -> int:
     if action != "fix":
         for flag, name in (
             ("pending_tags", "--pending-tags"),
+            ("discard_unresolved", "--discard-unresolved"),
             ("blob_refcount", "--blob-refcount"),
             ("triggers", "--triggers"),
         ):
@@ -1466,6 +1524,10 @@ def cmd_doctor(args) -> int:
     if action == "fix":
         if getattr(args, "pending_tags", False):
             return _doctor_fix_pending_tags(args)
+        # --discard-unresolved only means anything to the pending-tags fix;
+        # say so rather than silently ignoring a destructive-sounding flag.
+        if getattr(args, "discard_unresolved", False):
+            status.info("--discard-unresolved ignored without '--pending-tags'")
         if getattr(args, "blob_refcount", False):
             return _doctor_fix_flagged(args, "siftd doctor fix --blob-refcount")
         if getattr(args, "triggers", False):
@@ -1613,7 +1675,9 @@ def build_data_parser(subparsers) -> None:
   siftd doctor run ingest-pending       # run specific check
   siftd doctor run check1 check2        # run multiple checks
   siftd doctor fix                      # show fix commands for issues
-  siftd doctor fix --pending-tags       # clean up stale sessions/tags
+  siftd doctor fix --pending-tags       # apply queued session tags to their conversations
+  siftd doctor fix --pending-tags --discard-unresolved
+                                        # ...and delete the ones that match nothing
   siftd doctor --json                   # output as JSON
   siftd doctor --strict                 # exit 1 on warnings (for CI)
 
@@ -1629,7 +1693,13 @@ exit codes:
     p_doctor.add_argument("subcommand", nargs="*", help="list | run [checks...] | fix | <check-name>")
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
-    p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
+    p_doctor.add_argument("--pending-tags", action="store_true", help="Apply queued session tags to their ingested conversations (use with 'fix')")
+    p_doctor.add_argument(
+        "--discard-unresolved",
+        action="store_true",
+        dest="discard_unresolved",
+        help="Also delete pending tags that match no conversation (use with 'fix --pending-tags'). Destructive.",
+    )
     p_doctor.add_argument("--deep", action="store_true", help="Include deep integrity checks (slower).")
     p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")

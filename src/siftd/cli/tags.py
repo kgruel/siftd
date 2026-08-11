@@ -93,7 +93,10 @@ def _tag_session(args, db: Path, session_id: str) -> int:
     if args.remove:
         status.error(
             "--remove not supported with --session",
-            hint="Use 'siftd doctor fix --pending-tags' to clear pending tags",
+            hint=(
+                "A queued tag applies at ingest; remove it from the conversation "
+                "once it lands ('siftd tag --remove <conversation-id> <tag>')."
+            ),
         )
         conn.close()
         return 1

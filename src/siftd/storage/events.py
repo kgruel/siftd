@@ -210,6 +210,63 @@ def get_prompts_for_conv(
     ).fetchall()
 
 
+def get_last_event_id(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    kind: str,
+) -> str | None:
+    """Return the most-recent event ID of `kind` in this conversation, or None.
+
+    Ordered by (timestamp DESC, id DESC) so ULID ordering breaks ties
+    deterministically when multiple events share a timestamp.
+
+    Resolves the ``last_*`` pending-tag markers. Two callers need it: the
+    ingest drain (:mod:`siftd.ingestion.orchestration`) and the doctor
+    recovery path (:func:`siftd.storage.sessions.recover_pending_tags`);
+    both resolve against a settled transcript, so the answer is the same.
+    """
+    cur = conn.execute(
+        """
+        SELECT id FROM events
+        WHERE conversation_id = ? AND kind = ?
+        ORDER BY timestamp DESC, id DESC
+        LIMIT 1
+        """,
+        (conversation_id, kind),
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
+def get_prompt_by_index(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    exchange_index: int | None,
+) -> str | None:
+    """Get the prompt ID at a specific exchange index (1-based).
+
+    Returns None if index is out of range or None. Raises ValueError for a
+    non-positive index — the API is 1-based, so 0 is a caller bug, not an
+    empty result.
+    """
+    if exchange_index is None:
+        return None
+    if exchange_index < 1:
+        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
+
+    cur = conn.execute(
+        """
+        SELECT id FROM events
+        WHERE kind = 'prompt' AND conversation_id = ?
+        ORDER BY timestamp, id
+        LIMIT 1 OFFSET ?
+        """,
+        (conversation_id, exchange_index - 1),
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
 def get_responses_for_prompt(
     conn: sqlite3.Connection,
     prompt_id: str,

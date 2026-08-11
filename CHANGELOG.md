@@ -26,6 +26,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   row (`applied_at` preserved) inside the same transaction. Limitation:
   event-level tags (`--last-*`, `--exchange` targets) are not re-pointed,
   since events also get new IDs on re-ingest; that is deferred to 0.13.0.
+- **`siftd doctor fix --pending-tags` repairs instead of deleting.** It ran
+  `cleanup_stale_sessions`, so the remedy doctor advertised for stranded
+  queued tags destroyed exactly the data that was recoverable. It now
+  resolves each queued tag to the conversation its session became
+  (matching the bare session id against the adapter-prefixed `external_id`,
+  skipping subagent transcripts), applies it there — reusing the ingest
+  drain's own resolution for `--last-*` and `--exchange` targets — and
+  consumes the queue row. Rows that match no conversation are reported
+  with their session key and **kept**; deleting them now takes the explicit
+  `--discard-unresolved`. Stale session registrations are still pruned, but
+  their queued tags are no longer pruned with them. This is the only
+  recovery path for tags queued before the drain was fixed: a settled
+  session never re-ingests. The `--json` output changes shape accordingly
+  (`applied` / `unresolved` / `discarded` / `stale_sessions_pruned`,
+  replacing `sessions_deleted` / `tags_deleted`), and the doctor check's
+  wording no longer describes deletion as a fix.
 
 ## [0.12.0] - 2026-07-18
 

@@ -6,6 +6,9 @@ Exposes live session registration and pending tag operations to CLI.
 import sqlite3
 
 from siftd.storage.sessions import (
+    PendingTagRecovery,
+)
+from siftd.storage.sessions import (
     cleanup_stale_sessions as _cleanup_stale_sessions,
 )
 from siftd.storage.sessions import (
@@ -18,14 +21,19 @@ from siftd.storage.sessions import (
     queue_tag as _queue_tag,
 )
 from siftd.storage.sessions import (
+    recover_pending_tags as _recover_pending_tags,
+)
+from siftd.storage.sessions import (
     register_session as _register_session,
 )
 
 __all__ = [
+    "PendingTagRecovery",
     "cleanup_stale_sessions",
     "find_active_session",
     "is_session_registered",
     "queue_tag",
+    "recover_pending_tags",
     "register_session",
 ]
 
@@ -93,6 +101,32 @@ def cleanup_stale_sessions(
 ) -> tuple[int, int]:
     """Delete sessions and pending tags older than max_age_hours.
 
+    Destructive — queued tags are discarded, not applied. Prefer
+    :func:`recover_pending_tags`, which applies what it can and keeps the
+    rest; this remains for callers that really want the sweep.
+
     Returns (sessions_deleted, tags_deleted).
     """
     return _cleanup_stale_sessions(conn, max_age_hours, commit=commit)
+
+
+def recover_pending_tags(
+    conn: sqlite3.Connection,
+    *,
+    max_age_hours: int = 48,
+    discard_unresolved: bool = False,
+    commit: bool = False,
+) -> PendingTagRecovery:
+    """Apply queued session tags whose session has already been ingested.
+
+    Prunes stale session registrations, applies every orphaned pending tag
+    that resolves to an ingested conversation (consuming its queue row), and
+    reports the ones that don't. Unresolved rows are kept unless
+    ``discard_unresolved`` is set.
+    """
+    return _recover_pending_tags(
+        conn,
+        max_age_hours=max_age_hours,
+        discard_unresolved=discard_unresolved,
+        commit=commit,
+    )

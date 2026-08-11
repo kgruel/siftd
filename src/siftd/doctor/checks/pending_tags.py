@@ -2,10 +2,16 @@ from siftd.doctor.checks import CheckContext, CheckCost, Finding
 
 
 class PendingTagsCheck:
-    """Detects orphaned pending tags for sessions that may never be ingested."""
+    """Detects queued session tags that are waiting to be applied.
+
+    ``siftd tag --session`` queues a tag to be applied when that session is
+    next ingested. A session whose transcript has settled never re-ingests,
+    so its queued tags stay queued — this check surfaces them, and the fix
+    applies them to the conversation the session became.
+    """
 
     name = "pending-tags"
-    description = "Pending tags for sessions that may never be ingested"
+    description = "Queued session tags waiting to be applied"
     has_fix = True
     requires_db = True
     requires_embed_db = False
@@ -32,7 +38,10 @@ class PendingTagsCheck:
                 Finding(
                     check=self.name,
                     severity="warning",
-                    message=f"{orphaned} pending tag(s) for unregistered sessions",
+                    message=(
+                        f"{orphaned} queued tag(s) not yet applied — the fix applies "
+                        "the ones whose session has been ingested"
+                    ),
                     fix_available=True,
                     fix_command="siftd doctor fix --pending-tags",
                     context={"orphaned_count": orphaned},
@@ -45,7 +54,7 @@ class PendingTagsCheck:
                 Finding(
                     check=self.name,
                     severity="info",
-                    message=f"{stale} active session(s) older than 48 hours",
+                    message=f"{stale} session registration(s) idle for over 48 hours — the fix prunes them",
                     fix_available=True,
                     fix_command="siftd doctor fix --pending-tags",
                     context={"stale_count": stale},

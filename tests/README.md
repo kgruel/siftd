@@ -97,7 +97,7 @@ docstring so its row is meaningful.
 | `tests/` | 185 | 3197 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
-| `tests/cli/` | 28 | 608 |
+| `tests/cli/` | 28 | 616 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -333,7 +333,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
-| [cli/test_data.py](cli/test_data.py) | 86 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
+| [cli/test_data.py](cli/test_data.py) | 94 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 50 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |

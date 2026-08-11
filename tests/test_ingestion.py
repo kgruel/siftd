@@ -5,11 +5,10 @@ from datetime import UTC
 import pytest
 
 from siftd.adapters.sdk import AdapterParseError
+from siftd.storage.events import get_last_event_id, get_prompt_by_index
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
-    _get_last_event_id,
-    _get_prompt_by_index,
     _get_single_conversation,
     _normalize_status,
     _parse_timestamp,
@@ -189,40 +188,40 @@ class TestSummarizeConversation:
 
 class TestGetPromptByIndex:
     def test_zero_raises_value_error(self, tmp_path):
-        """_get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+        """get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
         from siftd.storage.sqlite import open_database
 
         conn = open_database(tmp_path / "t.db")
         try:
             with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                _get_prompt_by_index(conn, "any-conv-id", 0)
+                get_prompt_by_index(conn, "any-conv-id", 0)
         finally:
             conn.close()
 
     def test_negative_raises_value_error(self, tmp_path):
-        """_get_prompt_by_index rejects negative exchange_index."""
+        """get_prompt_by_index rejects negative exchange_index."""
         from siftd.storage.sqlite import open_database
 
         conn = open_database(tmp_path / "t.db")
         try:
             with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                _get_prompt_by_index(conn, "any-conv-id", -1)
+                get_prompt_by_index(conn, "any-conv-id", -1)
         finally:
             conn.close()
 
     def test_none_returns_none(self, tmp_path):
-        """_get_prompt_by_index returns None when exchange_index is None."""
+        """get_prompt_by_index returns None when exchange_index is None."""
         from siftd.storage.sqlite import open_database
 
         conn = open_database(tmp_path / "t.db")
         try:
-            assert _get_prompt_by_index(conn, "any-conv-id", None) is None
+            assert get_prompt_by_index(conn, "any-conv-id", None) is None
         finally:
             conn.close()
 
 
 class TestGetLastEventId:
-    """_get_last_event_id picks the most-recent event of `kind`."""
+    """get_last_event_id picks the most-recent event of `kind`."""
 
     def _seed(self, tmp_path):
         from siftd.storage.sqlite import (
@@ -253,14 +252,14 @@ class TestGetLastEventId:
     def test_last_prompt(self, tmp_path):
         conn, c, _p1, p2, *_ = self._seed(tmp_path)
         try:
-            assert _get_last_event_id(conn, c, "prompt") == p2
+            assert get_last_event_id(conn, c, "prompt") == p2
         finally:
             conn.close()
 
     def test_last_response(self, tmp_path):
         conn, c, _p1, _p2, _r1, r2, *_ = self._seed(tmp_path)
         try:
-            assert _get_last_event_id(conn, c, "response") == r2
+            assert get_last_event_id(conn, c, "response") == r2
         finally:
             conn.close()
 
@@ -268,7 +267,7 @@ class TestGetLastEventId:
         conn, c, *_, tc1, tc2 = self._seed(tmp_path)
         del tc1
         try:
-            assert _get_last_event_id(conn, c, "tool_call") == tc2
+            assert get_last_event_id(conn, c, "tool_call") == tc2
         finally:
             conn.close()
 
@@ -284,7 +283,7 @@ class TestGetLastEventId:
         c = insert_conversation(conn, external_id="c", harness_id=h,
                                 workspace_id=ws, started_at="2024-01-15T10:00:00Z")
         try:
-            assert _get_last_event_id(conn, c, "response") is None
+            assert get_last_event_id(conn, c, "response") is None
         finally:
             conn.close()
 

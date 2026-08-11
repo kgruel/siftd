@@ -746,20 +746,24 @@ class TestCmdDoctor:
         assert "--pending-tags ignored" in err
 
     def test_doctor_fix_pending_tags(self, test_db, capsys):
-        """siftd doctor fix --pending-tags runs cleanup."""
+        """siftd doctor fix --pending-tags on a clean DB reports nothing to do."""
         rc = main(["--db", str(test_db), "doctor", "fix", "--pending-tags"])
         assert rc == 0
         captured = capsys.readouterr()
         text = (captured.out + captured.err).lower()
-        assert "stale" in text or "clean" in text
+        assert "no pending tags to apply" in text
 
     def test_doctor_fix_pending_tags_json(self, test_db, capsys):
-        """siftd doctor fix --pending-tags --json returns JSON."""
+        """siftd doctor fix --pending-tags --json returns the recovery shape."""
         rc = main(["--db", str(test_db), "doctor", "fix", "--pending-tags", "--json"])
         assert rc == 0
         data = json.loads(capsys.readouterr().out)
-        assert "sessions_deleted" in data
-        assert "tags_deleted" in data
+        assert data == {
+            "applied": [],
+            "unresolved": [],
+            "discarded": 0,
+            "stale_sessions_pruned": 0,
+        }
 
     def test_doctor_fix_pending_tags_missing_db(self, tmp_path, capsys):
         """doctor fix --pending-tags with missing DB returns error."""
@@ -772,6 +776,206 @@ class TestCmdDoctor:
         assert rc == 0
         out = capsys.readouterr().out
         assert "ingest-pending" in out
+
+
+class TestDoctorFixPendingTagsRecovery:
+    """`doctor fix --pending-tags` applies queued tags; it never deletes silently.
+
+    The queue is keyed by the bare harness session id while conversations
+    carry the adapter-prefixed `external_id`, and a settled session never
+    re-ingests — so this fix is the only path that ever applies those rows.
+    Everything here drives the argparse layer, because the `--pending-tags`
+    / `--discard-unresolved` pairing is parse-time behavior.
+    """
+
+    @pytest.fixture
+    def pending_db(self, tmp_path):
+        """A DB with ingested conversations and a queue of unapplied tags."""
+        from siftd.storage.sessions import queue_tag
+        from siftd.storage.sqlite import (
+            create_database,
+            get_or_create_harness,
+            get_or_create_model,
+            insert_conversation,
+            insert_prompt,
+            insert_response,
+        )
+
+        db_path = tmp_path / "pending.db"
+        conn = create_database(db_path)
+        harness_id = get_or_create_harness(conn, "live_test", source="test", log_format="jsonl")
+        model_id = get_or_create_model(conn, "claude-3-opus-20240229")
+
+        ids = {}
+        # Parent + subagent rows for the same session: the tag must land on
+        # the parent, which is what the ingest drain would have done.
+        ids["parent"] = insert_conversation(
+            conn, external_id="live_test::SESSION-A", harness_id=harness_id,
+            workspace_id=None, started_at="2024-01-15T10:00:00Z",
+        )
+        ids["subagent"] = insert_conversation(
+            conn, external_id="live_test::SESSION-A::agent::sub1", harness_id=harness_id,
+            workspace_id=None, started_at="2024-01-15T10:05:00Z",
+        )
+        # A session with events, for the late-bound marker path.
+        ids["marked"] = insert_conversation(
+            conn, external_id="live_test::SESSION-B", harness_id=harness_id,
+            workspace_id=None, started_at="2024-01-16T10:00:00Z",
+        )
+        prompt_id = insert_prompt(conn, ids["marked"], "p1", "2024-01-16T10:00:00Z")
+        ids["response"] = insert_response(
+            conn, ids["marked"], prompt_id, model_id, None, "r1", "2024-01-16T10:00:01Z",
+        )
+        # A subagent-only session: nothing to tag at the parent level.
+        ids["orphan_subagent"] = insert_conversation(
+            conn, external_id="live_test::SESSION-C::agent::sub9", harness_id=harness_id,
+            workspace_id=None, started_at="2024-01-17T10:00:00Z",
+        )
+
+        queue_tag(conn, "SESSION-A", "keeper")
+        queue_tag(conn, "SESSION-B", "on-last-response", last_marker="last_response")
+        queue_tag(conn, "SESSION-C", "subagent-only")
+        queue_tag(conn, "01KZKF9APH6N", "typo-key")  # resolves to nothing
+        conn.commit()
+        conn.close()
+        return db_path, ids
+
+    @staticmethod
+    def _assignments(db_path):
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db_path, read_only=True)
+        try:
+            return {
+                (r["name"], r["target_kind"], r["target_id"])
+                for r in conn.execute(
+                    "SELECT t.name, a.target_kind, a.target_id "
+                    "FROM tag_assignments a JOIN tags t ON t.id = a.tag_id"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+
+    @staticmethod
+    def _queued(db_path):
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(db_path, read_only=True)
+        try:
+            return {
+                (r["harness_session_id"], r["tag_name"])
+                for r in conn.execute(
+                    "SELECT harness_session_id, tag_name FROM pending_tags"
+                ).fetchall()
+            }
+        finally:
+            conn.close()
+
+    def test_applies_to_the_parent_conversation(self, pending_db, capsys):
+        """A bare session key resolves through the adapter prefix, skipping subagents."""
+        db_path, ids = pending_db
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+        assert rc == 0
+
+        assignments = self._assignments(db_path)
+        assert ("keeper", "conversation", ids["parent"]) in assignments
+        assert ("keeper", "conversation", ids["subagent"]) not in assignments
+        # Applied rows are consumed; nothing else is.
+        assert ("SESSION-A", "keeper") not in self._queued(db_path)
+
+    def test_last_marker_resolves_to_the_event(self, pending_db, capsys):
+        """Marker rows reuse the drain's resolution rather than degrading to the conversation."""
+        db_path, ids = pending_db
+        main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+
+        assignments = self._assignments(db_path)
+        assert ("on-last-response", "response", ids["response"]) in assignments
+
+    def test_unresolvable_rows_are_kept_and_named(self, pending_db, capsys):
+        """No conversation → the row survives and its key is reported, not swallowed."""
+        db_path, _ = pending_db
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+        assert rc == 0
+
+        queued = self._queued(db_path)
+        assert ("01KZKF9APH6N", "typo-key") in queued
+        # A session whose only conversation is a subagent stays queued too:
+        # tagging the subagent would be the wrong target, not a partial win.
+        assert ("SESSION-C", "subagent-only") in queued
+
+        captured = capsys.readouterr()
+        text = captured.out + captured.err
+        assert "01KZKF9APH6N" in text
+        assert "kept, not deleted" in text
+        # The old wording ("cleaned up") described deletion as repair.
+        assert "leaned up" not in text
+
+    def test_discard_is_opt_in_and_says_discard(self, pending_db, capsys):
+        """--discard-unresolved deletes the leftovers and calls it discarding."""
+        db_path, _ = pending_db
+        rc = main([
+            "--db", str(db_path), "doctor", "fix", "--pending-tags", "--discard-unresolved",
+        ])
+        assert rc == 0
+        assert self._queued(db_path) == set()
+
+        captured = capsys.readouterr()
+        assert "iscarded" in captured.out + captured.err
+
+    def test_existing_assignment_counts_as_applied(self, pending_db, capsys):
+        """A hand-recovered tag makes its queue row satisfied, not failed."""
+        from siftd.storage.sqlite import open_database
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        apply_tag(conn, "conversation", ids["parent"], get_or_create_tag(conn, "keeper"))
+        conn.commit()
+        conn.close()
+
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        applied = {a["tag"]: a for a in data["applied"]}
+        assert applied["keeper"]["already_present"] is True
+        assert applied["keeper"]["target_id"] == ids["parent"]
+        assert ("SESSION-A", "keeper") not in self._queued(db_path)
+
+    def test_registered_session_is_left_alone(self, pending_db, capsys):
+        """A live session's queue still belongs to the ingest drain."""
+        from siftd.storage.sessions import register_session
+        from siftd.storage.sqlite import open_database
+
+        db_path, ids = pending_db
+        conn = open_database(db_path)
+        register_session(conn, "SESSION-A", "live_test")
+        conn.commit()
+        conn.close()
+
+        main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
+
+        assert ("SESSION-A", "keeper") in self._queued(db_path)
+        assert ("keeper", "conversation", ids["parent"]) not in self._assignments(db_path)
+
+    def test_json_reports_unresolved_keys(self, pending_db, capsys):
+        """The machine channel carries the full unresolved list, with reasons."""
+        db_path, _ = pending_db
+        rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags", "--json"])
+        assert rc == 0
+        data = json.loads(capsys.readouterr().out)
+        assert data["discarded"] == 0
+        unresolved = {u["session"]: u["reason"] for u in data["unresolved"]}
+        assert "01KZKF9APH6N" in unresolved
+        assert unresolved["01KZKF9APH6N"]
+
+    def test_discard_unresolved_without_pending_tags_is_reported(self, test_db, tmp_path, monkeypatch, capsys):
+        """The destructive-sounding flag never applies silently to another fix."""
+        # Keep the findings cache (read and cleared by the batch fix path)
+        # inside the test's own XDG state.
+        monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "state"))
+        main(["--db", str(test_db), "doctor", "fix", "--discard-unresolved"])
+        captured = capsys.readouterr()
+        assert "--discard-unresolved ignored" in captured.out + captured.err
 
 
 class TestDataDirectBranches:
@@ -862,8 +1066,26 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.api.migrations.backfill_git_remotes", lambda conn: {"updated": 5})
         assert "5 workspace" in data_cli._fix_backfill_git_remote(object(), Path("/d"))
 
-        monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (7, 8))
-        assert "7 session" in data_cli._fix_pending_tags(object(), Path("/d"))
+        # The batch path applies and reports; it never discards.
+        from siftd.storage.sessions import (
+            AppliedPendingTag,
+            PendingTagRecovery,
+            UnresolvedPendingTag,
+        )
+
+        def _fake_recover(conn, **kwargs):
+            assert kwargs.get("discard_unresolved", False) is False
+            return PendingTagRecovery(
+                applied=[AppliedPendingTag("s", "t", "conversation", "c", False)] * 7,
+                unresolved=[UnresolvedPendingTag("s2", "t2", "why")] * 8,
+                discarded=0,
+                stale_sessions_pruned=2,
+            )
+
+        monkeypatch.setattr("siftd.api.sessions.recover_pending_tags", _fake_recover)
+        summary = data_cli._fix_pending_tags(object(), Path("/d"))
+        assert "7 tag(s) applied" in summary
+        assert "8 unresolved (kept)" in summary
 
     def test_doctor_fix_dispatches_embed_through_registry(self, test_db, monkeypatch, capsys):
         """Integration: a cached 'siftd embed' finding resolves through _FIX_REGISTRY and
@@ -1237,8 +1459,26 @@ class TestDataDirectBranches:
         out = capsys.readouterr().out
         assert "Usage: siftd copy formatter" in out and "markdown" in out
 
-        # doctor fix pending tags non-json cleanup message (680)
-        monkeypatch.setattr("siftd.api.sessions.cleanup_stale_sessions", lambda *_a, **_k: (1, 2))
+        # doctor fix pending tags non-json report: applied + pruned on stdout,
+        # the kept-not-deleted warning on stderr.
+        from siftd.storage.sessions import (
+            AppliedPendingTag,
+            PendingTagRecovery,
+            UnresolvedPendingTag,
+        )
+
+        monkeypatch.setattr(
+            "siftd.api.sessions.recover_pending_tags",
+            lambda *_a, **_k: PendingTagRecovery(
+                applied=[AppliedPendingTag("sess-1", "keeper", "conversation", "conv-1", False)],
+                unresolved=[UnresolvedPendingTag("sess-2", "lost", "no ingested conversation")],
+                discarded=0,
+                stale_sessions_pruned=1,
+            ),
+        )
         rc = data_cli._doctor_fix_pending_tags(SimpleNamespace(db=str(test_db), json=False))
         assert rc == 0
-        assert "Cleaned up 1 stale session" in capsys.readouterr().out
+        captured = capsys.readouterr()
+        assert "Applied 1 queued tag(s)" in captured.out + captured.err
+        assert "Pruned 1 stale session registration(s)" in captured.out + captured.err
+        assert "sess-2" in captured.out

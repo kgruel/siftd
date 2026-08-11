@@ -25,7 +25,12 @@ from typing import TYPE_CHECKING
 
 from siftd.adapters.sdk import AdapterParseError
 from siftd.domain import Source
-from siftd.storage.sessions import consume_pending_tags, unregister_session
+from siftd.storage.events import get_last_event_id, get_prompt_by_index
+from siftd.storage.sessions import (
+    LAST_MARKER_DISPATCH,
+    consume_pending_tags,
+    unregister_session,
+)
 from siftd.storage.sqlite import (
     clear_ingested_file_error,
     clear_vocabulary_caches,
@@ -790,17 +795,6 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
 
 
-# Late-bound markers resolve to the most recent event of the kind at ingest
-# time. Map: marker → (target_kind, kind-to-fetch). last_exchange is anchored
-# on the prompt event, so its target_kind differs from the kind queried.
-_LAST_MARKER_DISPATCH: dict[str, tuple[str, str]] = {
-    "last_prompt": ("prompt", "prompt"),
-    "last_response": ("response", "response"),
-    "last_exchange": ("exchange", "prompt"),
-    "last_tool_call": ("tool_call", "tool_call"),
-}
-
-
 def _session_key_candidates(adapter: AdapterModule, external_id: str) -> list[str]:
     """Return the session keys a conversation may have been queued/registered under.
 
@@ -882,7 +876,7 @@ def _apply_pending_tags(
         tag_id = get_or_create_tag(conn, pt.tag_name)
 
         if pt.last_marker:
-            dispatch = _LAST_MARKER_DISPATCH.get(pt.last_marker)
+            dispatch = LAST_MARKER_DISPATCH.get(pt.last_marker)
             if dispatch is None:
                 logger.warning(
                     f"Unknown last_marker {pt.last_marker!r} for tag '{pt.tag_name}' "
@@ -890,7 +884,7 @@ def _apply_pending_tags(
                 )
                 continue
             target_kind, fetch_kind = dispatch
-            event_id = _get_last_event_id(conn, conversation_id, fetch_kind)
+            event_id = get_last_event_id(conn, conversation_id, fetch_kind)
             if event_id is None:
                 logger.warning(
                     f"No {fetch_kind} found for session {session_id[:12]}; "
@@ -914,7 +908,7 @@ def _apply_pending_tags(
         elif pt.entity_type == "exchange":
             # Look up the prompt at exchange_index
             try:
-                prompt_id = _get_prompt_by_index(conn, conversation_id, pt.exchange_index)
+                prompt_id = get_prompt_by_index(conn, conversation_id, pt.exchange_index)
             except ValueError as e:
                 logger.warning(
                     f"Invalid exchange_index for tag '{pt.tag_name}' in session {session_id[:12]}: {e}"
@@ -937,53 +931,3 @@ def _apply_pending_tags(
     # Unregister the session (every key form it may be registered under)
     _unregister_all()
     return applied
-
-
-def _get_last_event_id(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    kind: str,
-) -> str | None:
-    """Return the most-recent event ID of `kind` in this conversation, or None.
-
-    Ordered by (timestamp DESC, id DESC) so ULID ordering breaks ties
-    deterministically when multiple events share a timestamp.
-    """
-    cur = conn.execute(
-        """
-        SELECT id FROM events
-        WHERE conversation_id = ? AND kind = ?
-        ORDER BY timestamp DESC, id DESC
-        LIMIT 1
-        """,
-        (conversation_id, kind),
-    )
-    row = cur.fetchone()
-    return row["id"] if row else None
-
-
-def _get_prompt_by_index(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    exchange_index: int | None,
-) -> str | None:
-    """Get the prompt ID at a specific exchange index (1-based).
-
-    Returns None if index is out of range or None.
-    """
-    if exchange_index is None:
-        return None
-    if exchange_index < 1:
-        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
-
-    cur = conn.execute(
-        """
-        SELECT id FROM events
-        WHERE kind = 'prompt' AND conversation_id = ?
-        ORDER BY timestamp, id
-        LIMIT 1 OFFSET ?
-        """,
-        (conversation_id, exchange_index - 1),
-    )
-    row = cur.fetchone()
-    return row["id"] if row else None

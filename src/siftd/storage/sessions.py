@@ -26,6 +26,18 @@ _VALID_LAST_MARKERS: frozenset[str] = frozenset({
     "last_prompt", "last_response", "last_exchange", "last_tool_call",
 })
 
+# How each late-bound marker resolves: marker → (target_kind, kind-to-fetch).
+# last_exchange is anchored on the prompt event, so its target_kind differs
+# from the kind queried. Lives here beside _VALID_LAST_MARKERS (the marker
+# vocabulary's home); both the ingest drain and the doctor recovery path
+# resolve markers through it.
+LAST_MARKER_DISPATCH: dict[str, tuple[str, str]] = {
+    "last_prompt": ("prompt", "prompt"),
+    "last_response": ("response", "response"),
+    "last_exchange": ("exchange", "prompt"),
+    "last_tool_call": ("tool_call", "tool_call"),
+}
+
 
 @dataclass
 class PendingTag:
@@ -432,6 +444,11 @@ def cleanup_stale_sessions(
     Uses last_seen_at (not started_at) to determine staleness,
     so sessions that are re-registered stay fresh.
 
+    Destructive: queued tags are discarded, not applied. This is no longer
+    what ``siftd doctor fix --pending-tags`` runs — that path now applies
+    what it can via :func:`recover_pending_tags` and keeps the rest. Kept as
+    a public API function for callers that really do want the sweep.
+
     Returns (sessions_deleted, tags_deleted).
     """
     cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
@@ -476,6 +493,247 @@ def cleanup_stale_sessions(
         conn.commit()
 
     return (sessions_deleted, tags_deleted)
+
+
+def prune_stale_sessions(
+    conn: sqlite3.Connection,
+    max_age_hours: int = 48,
+    *,
+    commit: bool = False,
+) -> int:
+    """Delete active_sessions rows not seen for max_age_hours. Returns the count.
+
+    Unlike :func:`cleanup_stale_sessions`, the session's queued tags are left
+    in pending_tags: a registration going stale says the harness stopped
+    reporting, not that the intent to tag expired. The tags become "orphaned"
+    (no matching active_sessions row) and are then the recovery path's input.
+    """
+    cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
+    cur = conn.execute(
+        "DELETE FROM active_sessions WHERE COALESCE(last_seen_at, started_at) < ?",
+        (cutoff,),
+    )
+    if commit:
+        conn.commit()
+    return cur.rowcount
+
+
+def resolve_session_conversation(
+    conn: sqlite3.Connection,
+    harness_session_id: str,
+) -> str | None:
+    """Return the conversation id an ingested session belongs to, or None.
+
+    ``pending_tags`` is keyed by the bare id the harness reports, while
+    adapters are free to namespace their ``external_id`` (claude_code writes
+    ``claude_code::<uuid>``). So the match is "equal, or equal after an
+    ``<adapter>::`` prefix" — expressed as a suffix comparison rather than a
+    LIKE, so a session id containing ``%`` or ``_`` can't act as a wildcard.
+
+    Subagent rows (``...::agent::<id>``) are excluded so a session-level tag
+    lands on the parent conversation, matching the ingest-drain semantic.
+    When a transcript has been re-ingested under several ids, the newest row
+    wins — it is the one a query would return today.
+    """
+    cur = conn.execute(
+        """
+        SELECT id FROM conversations
+        WHERE (
+                external_id = :sid
+                OR substr(external_id, -(length(:sid) + 2)) = '::' || :sid
+              )
+          AND instr(external_id, '::agent::') = 0
+        ORDER BY started_at DESC, id DESC
+        LIMIT 1
+        """,
+        {"sid": harness_session_id},
+    )
+    row = cur.fetchone()
+    return row["id"] if row else None
+
+
+@dataclass
+class AppliedPendingTag:
+    """A queued tag that now holds on a real target; its queue row is consumed."""
+
+    harness_session_id: str
+    tag_name: str
+    target_kind: str
+    target_id: str
+    already_present: bool  # the assignment already existed (manual recovery)
+
+
+@dataclass
+class UnresolvedPendingTag:
+    """A queued tag that could not be applied; its queue row is kept."""
+
+    harness_session_id: str
+    tag_name: str
+    reason: str
+
+
+@dataclass
+class PendingTagRecovery:
+    """Outcome of :func:`recover_pending_tags`."""
+
+    applied: list[AppliedPendingTag]
+    unresolved: list[UnresolvedPendingTag]
+    discarded: int  # unresolved rows deleted under explicit opt-in
+    stale_sessions_pruned: int
+
+    @property
+    def already_present(self) -> int:
+        return sum(1 for a in self.applied if a.already_present)
+
+
+def recover_pending_tags(
+    conn: sqlite3.Connection,
+    *,
+    max_age_hours: int = 48,
+    discard_unresolved: bool = False,
+    commit: bool = False,
+) -> PendingTagRecovery:
+    """Apply queued tags whose session has already been ingested.
+
+    The queue only drains when a session's transcript is ingested again. A
+    settled session never re-ingests (its hash is unchanged), so its rows
+    would sit in pending_tags forever — this is the recovery path for them,
+    and the only one that exists.
+
+    Scope is the *orphaned* rows: those with no matching active_sessions row,
+    which is exactly what the ``pending-tags`` doctor check counts. Sessions
+    still registered are left alone — they may still be live, and their
+    late-bound markers should resolve against the finished transcript, not a
+    mid-flight one. Stale registrations are pruned first (see
+    :func:`prune_stale_sessions`), which brings their rows into scope.
+
+    Rows that resolve are applied and consumed. Rows that don't are reported
+    and *kept*, unless ``discard_unresolved`` is set — deleting a queued tag
+    is data loss, never a repair, so it takes an explicit opt-in. An
+    assignment that already exists (a hand-recovered tag) counts as applied:
+    the intent holds, so the row has done its job and is consumed.
+    """
+    from siftd.storage.tags import apply_tag, get_or_create_tag
+
+    stale_pruned = prune_stale_sessions(conn, max_age_hours)
+
+    rows = conn.execute(
+        """
+        SELECT id, harness_session_id, tag_name, entity_type, exchange_index,
+               last_marker, created_at
+        FROM pending_tags
+        WHERE harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
+        ORDER BY created_at
+        """,
+    ).fetchall()
+
+    applied: list[AppliedPendingTag] = []
+    unresolved: list[UnresolvedPendingTag] = []
+    consumed_ids: set[str] = set()
+
+    for row in rows:
+        sid = row["harness_session_id"]
+        conversation_id = resolve_session_conversation(conn, sid)
+
+        if conversation_id is None:
+            reason = "no ingested conversation matches this session id"
+        else:
+            target = _resolve_pending_target(conn, row, conversation_id)
+            # A str is the failure reason; a tuple is the resolved target.
+            reason = target if isinstance(target, str) else None
+
+        if reason is not None:
+            unresolved.append(
+                UnresolvedPendingTag(
+                    harness_session_id=sid, tag_name=row["tag_name"], reason=reason,
+                )
+            )
+            continue
+
+        target_kind, target_id = target
+        tag_id = get_or_create_tag(conn, row["tag_name"])
+        assignment = apply_tag(
+            conn, target_kind, target_id, tag_id, applied_at=row["created_at"],
+        )
+        applied.append(
+            AppliedPendingTag(
+                harness_session_id=sid,
+                tag_name=row["tag_name"],
+                target_kind=target_kind,
+                target_id=target_id,
+                already_present=assignment is None,
+            )
+        )
+        consumed_ids.add(row["id"])
+
+    _delete_pending_rows(conn, list(consumed_ids))
+
+    discarded = 0
+    if discard_unresolved and unresolved:
+        # Everything not consumed is, by construction, an unresolved row.
+        discarded = _delete_pending_rows(
+            conn, [r["id"] for r in rows if r["id"] not in consumed_ids],
+        )
+
+    if commit:
+        conn.commit()
+
+    return PendingTagRecovery(
+        applied=applied,
+        unresolved=unresolved,
+        discarded=discarded,
+        stale_sessions_pruned=stale_pruned,
+    )
+
+
+def _resolve_pending_target(
+    conn: sqlite3.Connection,
+    row: sqlite3.Row,
+    conversation_id: str,
+) -> tuple[str, str] | str:
+    """Resolve one pending row to (target_kind, target_id), or a failure reason.
+
+    Mirrors the ingest drain's targeting: late-bound marker, then plain
+    conversation, then 1-based exchange index. A row whose target doesn't
+    exist yet (no response in the transcript, index past the end) resolves to
+    a reason, not a target — nothing is applied, so nothing is consumed.
+    """
+    from siftd.storage.events import get_last_event_id, get_prompt_by_index
+
+    if row["last_marker"]:
+        dispatch = LAST_MARKER_DISPATCH.get(row["last_marker"])
+        if dispatch is None:
+            return f"unknown marker {row['last_marker']!r}"
+        target_kind, fetch_kind = dispatch
+        event_id = get_last_event_id(conn, conversation_id, fetch_kind)
+        if event_id is None:
+            return f"conversation has no {fetch_kind} event to carry {row['last_marker']}"
+        return (target_kind, event_id)
+
+    if row["entity_type"] == "conversation":
+        return ("conversation", conversation_id)
+
+    if row["entity_type"] == "exchange":
+        try:
+            prompt_id = get_prompt_by_index(conn, conversation_id, row["exchange_index"])
+        except ValueError as e:
+            return f"invalid exchange index: {e}"
+        if prompt_id is None:
+            return f"exchange {row['exchange_index']} not found in the conversation"
+        return ("exchange", prompt_id)
+
+    return f"unsupported entity_type {row['entity_type']!r}"
+
+
+def _delete_pending_rows(conn: sqlite3.Connection, ids: list[str]) -> int:
+    """Delete pending_tags rows by id. Returns the number deleted."""
+    if not ids:
+        return 0
+    placeholders = ",".join("?" * len(ids))
+    cur = conn.execute(
+        f"DELETE FROM pending_tags WHERE id IN ({placeholders})", ids,
+    )
+    return cur.rowcount
 
 
 def get_orphaned_pending_tags_count(conn: sqlite3.Connection) -> int:

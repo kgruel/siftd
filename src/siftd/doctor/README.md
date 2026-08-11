@@ -55,7 +55,7 @@ that only reads a cached count is `fast`; one that walks the filesystem is
 | `ingest-errors` | [checks/ingest_errors.py](checks/ingest_errors.py) | fast | Files that failed ingestion (recorded with error) |
 | `ingest-pending` | [checks/ingest_pending.py](checks/ingest_pending.py) | slow | Files discovered by adapters but not yet ingested |
 | `orphaned-chunks` | [checks/orphaned_chunks.py](checks/orphaned_chunks.py) | fast | Embedding chunks referencing deleted conversations |
-| `pending-tags` | [checks/pending_tags.py](checks/pending_tags.py) | fast | Pending tags for sessions that may never be ingested |
+| `pending-tags` | [checks/pending_tags.py](checks/pending_tags.py) | fast | Queued session tags waiting to be applied |
 | `pricing-provenance` | [checks/pricing_provenance.py](checks/pricing_provenance.py) | fast | Priced models lacking version-controlled reference provenance |
 | `schema-current` | [checks/schema_current.py](checks/schema_current.py) | fast | Database schema migrations are up to date |
 | `workspace-identity` | [checks/workspace_identity.py](checks/workspace_identity.py) | fast | Workspace identity via git remote (dedup detection) |
