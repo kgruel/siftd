@@ -100,26 +100,35 @@ class TestParseTimestamp:
         "input_val,expected",
         [
             # The exact shape `update_last_pull` stores.
-            ("2024-01-15T09:30:12.780749+00:00", "2024-01-15T09:30:12.780749"),
-            ("2024-01-15T09:30:12.780749Z", "2024-01-15T09:30:12.780749"),
+            ("2024-01-15T09:30:12.780749+00:00", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12.780749Z", "2024-01-15T09:30:12"),
             # RFC 3339 allows either case for the UTC designator.
-            ("2024-01-15T09:30:12.780749z", "2024-01-15T09:30:12.780749"),
-            # Missing components widen to zero, never to "unspecified".
-            ("2024-01-15T09:30:12Z", "2024-01-15T09:30:12.000000"),
-            ("2024-01-15T09:30:12", "2024-01-15T09:30:12.000000"),
-            ("2024-01-15T09:30", "2024-01-15T09:30:00.000000"),
-            ("2024-01-15 09:30:12", "2024-01-15T09:30:12.000000"),
+            ("2024-01-15T09:30:12.780749z", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12Z", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30", "2024-01-15T09:30:00"),
+            ("2024-01-15 09:30:12", "2024-01-15T09:30:12"),
             # A non-UTC offset is converted, not dropped.
-            ("2024-01-15T09:30:12-05:00", "2024-01-15T14:30:12.000000"),
+            ("2024-01-15T09:30:12-05:00", "2024-01-15T14:30:12"),
         ],
     )
     def test_normalized_to_naive_utc(self, input_val, expected):
-        """Timestamps normalize to naive UTC with an explicit microsecond field.
+        """Timestamps normalize to naive UTC, truncated to whole seconds.
 
-        The fraction is always present: a shape that varies with the input
-        would compare inconsistently against stored `started_at` values.
+        Second precision is what makes the bound a prefix of every stored
+        spelling of that second — see `_normalize_timestamp`.
         """
         assert parse_date(input_val) == expected
+
+    def test_output_is_itself_accepted(self):
+        """The normalized form round-trips: a bound can be re-parsed unchanged.
+
+        Sync stores what it parsed, so a cursor may pass through `parse_date`
+        more than once over its life.
+        """
+        once = parse_date("2024-01-15T09:30:12.780749+00:00")
+        assert once is not None
+        assert parse_date(once) == once
 
     @pytest.mark.parametrize(
         "bad",
@@ -136,14 +145,18 @@ class TestParseTimestamp:
             parse_date(bad)
 
 
-# Every spelling of `conversations.started_at` observed in a real database.
-# Each formats one second: adapters differ on fractional precision and on
-# whether they write a UTC designator at all.
+# Every spelling of `conversations.started_at` siftd can write. Each formats
+# one second: adapters differ on fractional precision and on whether they
+# write a UTC designator at all.
 _STORED_SHAPES = (
     "{sec}.780Z",  # claude_code — milliseconds, Z
     "{sec}.780749",  # naive microseconds
     "{sec}.780749+00:00",  # explicit offset
     "{sec}Z",  # second precision, Z
+    # `epoch_ms_to_iso` whenever the millisecond component is zero — the shape
+    # that a microsecond-precision bound silently excluded, because `+` sorts
+    # below the `.` it lined up against.
+    "{sec}+00:00",
 )
 
 
@@ -177,12 +190,15 @@ class TestTimestampLexicalOrdering:
         assert shape.format(sec="2024-01-15T09:30:11") < _CURSOR_BOUND
         assert shape.format(sec="2024-01-14T23:59:59") < _CURSOR_BOUND
 
-    def test_sub_second_boundary_errs_inclusive(self):
-        """A coarser spelling inside the bound's own second sorts above it.
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_the_bound_is_a_prefix_of_its_own_second(self, shape):
+        """The property the whole scheme rests on.
 
-        Rationale for the bias lives on `dateparse._normalize_timestamp`.
+        A row anywhere in the bound's own second sorts above it whatever
+        suffix its adapter wrote, so `--since` over-includes by under a second
+        rather than depending on how `.`, `+`, `Z`, and digits order in ASCII.
         """
-        assert "2024-01-15T09:30:12Z" >= _CURSOR_BOUND
+        assert shape.format(sec="2024-01-15T09:30:12") >= _CURSOR_BOUND
 
     @pytest.mark.parametrize("shape", _STORED_SHAPES)
     def test_date_only_bound_covers_the_whole_day(self, shape):

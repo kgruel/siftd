@@ -67,18 +67,25 @@ def parse_date(value: str | None) -> str | None:
 
 
 def _normalize_timestamp(value: str) -> str:
-    """Normalize an ISO 8601 timestamp to a naive-UTC lower bound.
+    """Normalize an ISO 8601 timestamp to a naive-UTC, second-precision bound.
 
     Sync persists its pull/push cursors as `datetime.now(UTC).isoformat()` and
     hands them back to `--since`, so this is the form the round trip depends on.
 
     Filters compare the result against `conversations.started_at` as SQL
-    strings, and adapters have written that column in several spellings of the
-    same instant (`...123Z`, `...123456`, `...123456+00:00`). Rendering the
-    bound naive and UTC puts it at or below every one of those: `Z` and `+`
-    both sort above the digits and the `.` they line up against. The residue is
-    sub-second over-inclusion at the boundary, which re-pulls a row the merge
-    is idempotent over — the opposite mistake would silently skip it.
+    strings, and adapters spell that column inconsistently: `...00.123Z`,
+    `...00.123456`, `...00.123456+00:00`, `...00Z`, and — whenever
+    `epoch_ms_to_iso` lands on a whole second — `...00+00:00`. Truncating to
+    seconds makes the bound a strict *prefix* of every one of those spellings,
+    so a row in the bound's own second always sorts above it whatever suffix
+    it carries. That is the same mechanism the bare-date form relies on, one
+    level finer, and unlike a microsecond rendering it never depends on how
+    `.`, `+`, `Z`, and the digits happen to order in ASCII — where `+` sorts
+    *below* `.`, which silently dropped rows stored as `...00+00:00`.
+
+    The residue is over-inclusion within the bound's own second: `--since`
+    re-pulls at most a second of rows through an idempotent merge, and
+    `--before` gives up sub-second precision it has never been asked for.
     """
     # `fromisoformat` takes any separator character but only an uppercase UTC
     # designator, so a lowercase `z` is the one spelling it needs help with.
@@ -90,4 +97,4 @@ def _normalize_timestamp(value: str) -> str:
 
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(UTC).replace(tzinfo=None)
-    return parsed.isoformat(timespec="microseconds")
+    return parsed.isoformat(timespec="seconds")
