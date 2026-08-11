@@ -7,7 +7,6 @@ import pytest
 
 from siftd.storage.sessions import (
     PendingTag,
-    cleanup_stale_sessions,
     ensure_session_tables,
     count_orphaned_pending_tags,
     get_pending_tags,
@@ -157,52 +156,6 @@ class TestQueueTag:
         assert result is not None
         tags = get_pending_tags(db, "session-456")
         assert len(tags) == 1
-
-
-class TestCleanupStaleSessions:
-    """Tests for cleanup_stale_sessions()."""
-
-    def test_cleanup_deletes_old_sessions(self, db):
-        """Sessions older than max_age_hours are deleted."""
-        # Insert a session with old started_at and last_seen_at
-        old_time = (datetime.now() - timedelta(hours=72)).isoformat()
-        db.execute(
-            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("old-session", "claude_code", old_time, old_time),
-        )
-        db.commit()
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        assert sessions_deleted == 1
-        assert not is_session_registered(db, "old-session")
-
-    def test_cleanup_preserves_recent_sessions(self, db):
-        """Sessions younger than max_age_hours are preserved."""
-        register_session(db, "new-session", "claude_code", commit=True)
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        assert sessions_deleted == 0
-        assert is_session_registered(db, "new-session")
-
-    def test_cleanup_deletes_orphaned_tags(self, db):
-        """Tags for sessions not in active_sessions are deleted if old."""
-        # Queue tags for a session that was never registered
-        old_time = (datetime.now() - timedelta(hours=72)).isoformat()
-        db.execute(
-            "INSERT INTO pending_tags (id, harness_session_id, tag_name, entity_type, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("tag-1", "orphan-session", "orphan-tag", "conversation", old_time),
-        )
-        db.commit()
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        # Should delete the orphaned tag
-        assert tags_deleted == 1
-
-        count = db.execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0]
-        assert count == 0
 
 
 class TestQueueTagLastMarker:

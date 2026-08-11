@@ -165,6 +165,7 @@ CREATE TABLE ingested_files (
 -- Single-table query optimization
 --------------------------------------------------------------------------------
 
+CREATE INDEX idx_ingested_files_conversation ON ingested_files(conversation_id);
 CREATE INDEX idx_conversations_harness ON conversations(harness_id);
 CREATE INDEX idx_conversations_workspace ON conversations(workspace_id);
 CREATE INDEX idx_conversations_started ON conversations(started_at);

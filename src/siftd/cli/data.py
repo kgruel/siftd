@@ -5,7 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -468,7 +468,7 @@ def cmd_ingest(args) -> int:
         scoped = bool(args.path or args.adapter)
         if json_mode:
             renderer._emit({"type": "skipped", "reason": "locked", "message": message})
-        elif not quiet or (scoped and not quiet_explicit):
+        elif not quiet_explicit and (scoped or not auto_quiet):
             status.info(
                 message
                 + (" The requested paths/adapters were not ingested." if scoped else "")
@@ -1124,11 +1124,13 @@ def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
     `--discard-unresolved`), while a row still waiting on a target only needs
     another ingest — collapsing the two mislabels each as the other.
     """
-    by_kind = {"session-unresolvable": [], "target-pending": []}
+    from siftd.api.sessions import DISCARDABLE_KIND
+
+    by_kind: dict[str, list] = defaultdict(list)
     for u in unresolved:
         by_kind[u.kind].append(u)
 
-    stranded = by_kind["session-unresolvable"]
+    stranded = by_kind.pop(DISCARDABLE_KIND, [])
     if stranded:
         status.warning(
             f"{len(stranded)} pending tag(s) match no ingested conversation — kept, not deleted",
@@ -1139,7 +1141,10 @@ def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
         )
         _print_pending_sample(stranded, sample)
 
-    waiting = by_kind["target-pending"]
+    # Whatever is left is queued behind a target that does not exist yet.
+    # Drained by what remains rather than by name, so a kind added to
+    # UnresolvedKind is reported here instead of silently dropped.
+    waiting = [u for rows in by_kind.values() for u in rows]
     if waiting:
         status.info(
             f"{len(waiting)} pending tag(s) name a target the transcript does not hold "
@@ -1336,14 +1341,15 @@ def _fix_pending_tags(conn, db_path):
     # Never discards: this is the batch path (`siftd doctor fix`), where the
     # user has not opted into deleting anything. Unresolved rows are counted
     # and kept; `siftd doctor fix --pending-tags` reports them in detail.
-    from siftd.api.sessions import recover_pending_tags
+    from siftd.api.sessions import DISCARDABLE_KIND, recover_pending_tags
 
     result = recover_pending_tags(conn, max_age_hours=48, commit=True)
     kept = Counter(u.kind for u in result.unresolved)
+    stranded = kept.pop(DISCARDABLE_KIND, 0)
     return (
         f"{len(result.applied)} tag(s) applied, "
-        f"{kept['target-pending']} awaiting a target (kept), "
-        f"{kept['session-unresolvable']} matching no conversation (kept), "
+        f"{sum(kept.values())} awaiting a target (kept), "
+        f"{stranded} matching no conversation (kept), "
         f"{result.stale_sessions_pruned} stale session(s) pruned"
     )
 

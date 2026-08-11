@@ -415,68 +415,6 @@ def get_session_info(
     return None
 
 
-def cleanup_stale_sessions(
-    conn: sqlite3.Connection,
-    max_age_hours: int = 48,
-    *,
-    commit: bool = False,
-) -> tuple[int, int]:
-    """Delete sessions and pending tags older than max_age_hours.
-
-    Uses last_seen_at (not started_at) to determine staleness,
-    so sessions that are re-registered stay fresh.
-
-    Destructive: queued tags are discarded, not applied. This is no longer
-    what ``siftd doctor fix --pending-tags`` runs — that path now applies
-    what it can via :func:`recover_pending_tags` and keeps the rest. Kept as
-    a public API function for callers that really do want the sweep.
-
-    Returns (sessions_deleted, tags_deleted).
-    """
-    cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
-    sessions_deleted = 0
-    tags_deleted = 0
-
-    # Get stale session IDs (use last_seen_at, fallback to started_at for migrated rows)
-    cur = conn.execute(
-        "SELECT harness_session_id FROM active_sessions WHERE COALESCE(last_seen_at, started_at) < ?",
-        (cutoff,),
-    )
-    stale_session_ids = [row["harness_session_id"] for row in cur.fetchall()]
-
-    if stale_session_ids:
-        # Delete pending tags for stale sessions
-        placeholders = ",".join("?" * len(stale_session_ids))
-        cur = conn.execute(
-            f"DELETE FROM pending_tags WHERE harness_session_id IN ({placeholders})",
-            stale_session_ids,
-        )
-        tags_deleted = cur.rowcount
-
-        # Delete stale sessions
-        cur = conn.execute(
-            f"DELETE FROM active_sessions WHERE harness_session_id IN ({placeholders})",
-            stale_session_ids,
-        )
-        sessions_deleted = cur.rowcount
-
-    # Also delete orphaned pending tags (tags for sessions that were never registered)
-    cur = conn.execute(
-        """
-        DELETE FROM pending_tags
-        WHERE created_at < ?
-        AND harness_session_id NOT IN (SELECT harness_session_id FROM active_sessions)
-        """,
-        (cutoff,),
-    )
-    tags_deleted += cur.rowcount
-
-    if commit:
-        conn.commit()
-
-    return (sessions_deleted, tags_deleted)
-
-
 def prune_stale_sessions(
     conn: sqlite3.Connection,
     max_age_hours: int = 48,
@@ -485,10 +423,10 @@ def prune_stale_sessions(
 ) -> int:
     """Delete active_sessions rows not seen for max_age_hours. Returns the count.
 
-    Unlike :func:`cleanup_stale_sessions`, the session's queued tags are left
-    in pending_tags: a registration going stale says the harness stopped
-    reporting, not that the intent to tag expired. The tags become "orphaned"
-    (no matching active_sessions row) and are then the recovery path's input.
+    The session's queued tags are left in pending_tags: a registration going
+    stale says the harness stopped reporting, not that the intent to tag
+    expired. The tags become "orphaned" (no equivalent key registered) and are
+    then the recovery path's input.
     """
     cutoff = (datetime.now(UTC) - timedelta(hours=max_age_hours)).isoformat()
     cur = conn.execute(
@@ -723,28 +661,28 @@ def _apply_pending_rows(
         sid = row["harness_session_id"]
         conversation_id = resolve_conversation(sid)
 
+        # A str is the failure reason; a tuple is the resolved target.
+        outcome: tuple[str, str] | str
         if conversation_id is None:
             kind: UnresolvedKind = "session-unresolvable"
-            reason = "no ingested conversation matches this session id"
+            outcome = "no ingested conversation matches this session id"
         else:
             kind = "target-pending"
-            target = _resolve_pending_target(conn, row, conversation_id)
-            # A str is the failure reason; a tuple is the resolved target.
-            reason = target if isinstance(target, str) else None
+            outcome = _resolve_pending_target(conn, row, conversation_id)
 
-        if reason is not None:
+        if isinstance(outcome, str):
             unresolved.append((
                 row["id"],
                 UnresolvedPendingTag(
                     harness_session_id=sid,
                     tag_name=row["tag_name"],
-                    reason=reason,
+                    reason=outcome,
                     kind=kind,
                 ),
             ))
             continue
 
-        target_kind, target_id = target
+        target_kind, target_id = outcome
         tag_id = get_or_create_tag(conn, row["tag_name"])
         assignment = apply_tag(
             conn, target_kind, target_id, tag_id, applied_at=row["created_at"],

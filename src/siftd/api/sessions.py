@@ -6,10 +6,9 @@ Exposes live session registration and pending tag operations to CLI.
 import sqlite3
 
 from siftd.storage.sessions import (
+    DISCARDABLE_KIND,
     PendingTagRecovery,
-)
-from siftd.storage.sessions import (
-    cleanup_stale_sessions as _cleanup_stale_sessions,
+    UnresolvedKind,
 )
 from siftd.storage.sessions import (
     find_active_session as _find_active_session,
@@ -28,8 +27,9 @@ from siftd.storage.sessions import (
 )
 
 __all__ = [
+    "DISCARDABLE_KIND",
     "PendingTagRecovery",
-    "cleanup_stale_sessions",
+    "UnresolvedKind",
     "find_active_session",
     "is_session_registered",
     "queue_tag",
@@ -91,23 +91,6 @@ def is_session_registered(
 ) -> bool:
     """Check if session exists in active_sessions."""
     return _is_session_registered(conn, harness_session_id)
-
-
-def cleanup_stale_sessions(
-    conn: sqlite3.Connection,
-    max_age_hours: int = 48,
-    *,
-    commit: bool = False,
-) -> tuple[int, int]:
-    """Delete sessions and pending tags older than max_age_hours.
-
-    Destructive — queued tags are discarded, not applied. Prefer
-    :func:`recover_pending_tags`, which applies what it can and keeps the
-    rest; this remains for callers that really want the sweep.
-
-    Returns (sessions_deleted, tags_deleted).
-    """
-    return _cleanup_stale_sessions(conn, max_age_hours, commit=commit)
 
 
 def recover_pending_tags(

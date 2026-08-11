@@ -215,15 +215,22 @@ def snapshot_conversation_tags(
             (row["target_kind"], row["kind"], row["external_id"], row["tag_id"], row["applied_at"])
         )
 
-    snapshot.dropped_blocks = conn.execute(
-        """
-        SELECT COUNT(*) FROM tag_assignments ta
-        JOIN event_content ec ON ec.id = ta.target_id
-        JOIN events e ON e.id = ec.event_id
-        WHERE ta.target_kind = 'block' AND e.conversation_id = ?
-        """,
-        (conversation_id,),
-    ).fetchone()[0]
+    # The count below joins every content block of the conversation. Block
+    # tagging is new and rare, so ask the indexed question first — "does any
+    # block tag exist at all" rides idx_tag_assignments_target and answers no
+    # for most databases without touching event_content.
+    if conn.execute(
+        "SELECT 1 FROM tag_assignments WHERE target_kind = 'block' LIMIT 1"
+    ).fetchone():
+        snapshot.dropped_blocks = conn.execute(
+            """
+            SELECT COUNT(*) FROM tag_assignments ta
+            JOIN event_content ec ON ec.id = ta.target_id
+            JOIN events e ON e.id = ec.event_id
+            WHERE ta.target_kind = 'block' AND e.conversation_id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()[0]
 
     return snapshot
 

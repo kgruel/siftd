@@ -240,6 +240,7 @@ def open_database(
             ensure_tag_pins_table(conn)
             ensure_workspace_pins_table(conn)
             _ensure_git_remote_index(conn)
+            _ensure_ingested_files_conversation_index(conn)
             _ensure_usage_by_conv_model_table(conn)
             _ensure_conversation_stats_table(conn)
             ensure_conversation_owners_table(conn)
@@ -2180,6 +2181,20 @@ def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     )
 
 
+def _ensure_ingested_files_conversation_index(conn: sqlite3.Connection) -> None:
+    """Create index on ingested_files.conversation_id if missing. Idempotent.
+
+    The column is read by conversation, not by path: ingest asks "does another
+    path point at this conversation?" before every replace, and the
+    ``ON DELETE CASCADE`` from ``conversations`` asks the same question on
+    every conversation delete. Both were full table scans.
+    """
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_ingested_files_conversation "
+        "ON ingested_files(conversation_id)"
+    )
+
+
 def _ensure_conversation_stats_table(conn: sqlite3.Connection) -> None:
     """Create the conversation_stats materialized table. Idempotent."""
     from siftd.storage.conversation_stats import ensure_conversation_stats_table
@@ -2364,6 +2379,23 @@ def get_or_create_harness(conn: sqlite3.Connection, name: str, **kwargs) -> str:
     conn.execute(f"INSERT INTO harnesses ({col_names}) VALUES ({placeholders})", vals)
     _harness_cache[name] = ulid
     return ulid
+
+
+def harness_id_for_conversation(conn: sqlite3.Connection, conversation) -> str:
+    """Resolve (creating if needed) the harness row a parsed conversation names.
+
+    One home for the optional-field dance that every caller needing a
+    conversation's ``harness_id`` — to store it, or to look one up by
+    ``(harness_id, external_id)`` — was otherwise repeating.
+    """
+    harness_kwargs = {}
+    if conversation.harness.source:
+        harness_kwargs["source"] = conversation.harness.source
+    if conversation.harness.log_format:
+        harness_kwargs["log_format"] = conversation.harness.log_format
+    if conversation.harness.display_name:
+        harness_kwargs["display_name"] = conversation.harness.display_name
+    return get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
 
 
 def get_or_create_workspace(conn: sqlite3.Connection, path: str, discovered_at: str) -> str:
@@ -2719,16 +2751,7 @@ def store_conversation(
             across multiple calls. Pass the same dict to batch store_conversation
             calls to avoid repeated git subprocess calls.
     """
-    # Get or create harness
-    harness_kwargs = {}
-    if conversation.harness.source:
-        harness_kwargs["source"] = conversation.harness.source
-    if conversation.harness.log_format:
-        harness_kwargs["log_format"] = conversation.harness.log_format
-    if conversation.harness.display_name:
-        harness_kwargs["display_name"] = conversation.harness.display_name
-
-    harness_id = get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
+    harness_id = harness_id_for_conversation(conn, conversation)
 
     # Get or create provider (derived from harness source)
     provider_id = None
@@ -2961,13 +2984,7 @@ def record_ingested_file(
     """
     from datetime import UTC, datetime
 
-    # Look up harness_id from conversation
-    row = conn.execute(
-        "SELECT harness_id FROM conversations WHERE id = ?", (conversation_id,)
-    ).fetchone()
-    if not row:
-        raise ValueError(f"Conversation not found: {conversation_id}")
-    harness_id = row[0]
+    harness_id = _harness_id_of(conn, conversation_id)
 
     ulid = _ulid()
     ingested_at = datetime.now(UTC).isoformat()
@@ -2990,8 +3007,8 @@ def link_ingested_file(
     file_mtime: float | None = None,
     file_size: int | None = None,
     commit: bool = False,
-) -> str:
-    """Point a path's bookkeeping row at an existing conversation. Returns the record id.
+) -> None:
+    """Point a path's bookkeeping row at an existing conversation.
 
     Same shape as :func:`record_ingested_file` but idempotent on ``path``: it
     upserts instead of inserting, so it can repair a row that already exists
@@ -3000,15 +3017,13 @@ def link_ingested_file(
     the normal ingest paths rely on to catch a double-record bug; this one is
     for the recovery path, where a row may or may not be there and either way
     must end up pointing at ``conversation_id`` with no error.
+
+    Returns nothing: an upsert's row id is not news to a caller that already
+    knows the path, and re-reading it took a query neither caller wanted.
     """
     from datetime import UTC, datetime
 
-    row = conn.execute(
-        "SELECT harness_id FROM conversations WHERE id = ?", (conversation_id,)
-    ).fetchone()
-    if not row:
-        raise ValueError(f"Conversation not found: {conversation_id}")
-    harness_id = row[0]
+    harness_id = _harness_id_of(conn, conversation_id)
 
     ingested_at = datetime.now(UTC).isoformat()
     conn.execute(
@@ -3027,7 +3042,15 @@ def link_ingested_file(
     )
     if commit:
         conn.commit()
-    row = conn.execute("SELECT id FROM ingested_files WHERE path = ?", (path,)).fetchone()
+
+
+def _harness_id_of(conn: sqlite3.Connection, conversation_id: str) -> str:
+    """The harness a stored conversation belongs to, for its bookkeeping row."""
+    row = conn.execute(
+        "SELECT harness_id FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Conversation not found: {conversation_id}")
     return row[0]
 
 

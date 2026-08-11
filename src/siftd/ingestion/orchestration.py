@@ -39,6 +39,7 @@ from siftd.storage.sqlite import (
     find_conversation_by_external_id,
     get_ingested_file_info,
     get_or_create_harness,
+    harness_id_for_conversation,
     link_ingested_file,
     record_empty_file,
     record_failed_file,
@@ -178,22 +179,6 @@ def _parse_source_conversations(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
     return list(adapter.parse(source))
-
-
-def _harness_id_for_conversation(conn: sqlite3.Connection, conversation) -> str:
-    """Resolve (creating if needed) the harness row a parsed conversation names.
-
-    One home for the optional-field dance every caller that needs to look a
-    conversation up by ``(harness_id, external_id)`` was repeating.
-    """
-    harness_kwargs = {}
-    if conversation.harness.source:
-        harness_kwargs["source"] = conversation.harness.source
-    if conversation.harness.log_format:
-        harness_kwargs["log_format"] = conversation.harness.log_format
-    if conversation.harness.display_name:
-        harness_kwargs["display_name"] = conversation.harness.display_name
-    return get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
 
 
 def _normalize_status(status: str) -> tuple[str, str | None]:
@@ -374,6 +359,13 @@ def ingest_all(
             )
             on_event(event)
 
+        # What this file has already been measured as, for whoever needs it
+        # below — the error handlers reuse it rather than re-stat and re-hash.
+        # Reset per source: these are loop-scoped names in Python, so a value
+        # left by the previous file would otherwise be stamped onto this one.
+        st: os.stat_result | None = None
+        current_hash: str | None = None
+
         # Initialize per-harness stats
         if harness_name not in stats.by_harness:
             stats.by_harness[harness_name] = {
@@ -410,10 +402,7 @@ def ingest_all(
                         and st.st_mtime == stored_mtime
                         and st.st_size == stored_size
                     ):
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped")
-                        emit_event("skipped")
+                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     # Slow path: mtime or size changed (or no stored stat), hash the file
@@ -423,53 +412,34 @@ def ingest_all(
                         # Content unchanged, mtime drifted — update stored stat
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped")
-                        emit_event("skipped")
+                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     # Hash changed - re-ingest
                     # Delete old conversation/record
                     tag_snapshot: ConversationTagSnapshot | None = None
-                    if existing_info["conversation_id"] and _conversation_claimed_elsewhere(
-                        conn, existing_info["conversation_id"], file_path
-                    ):
-                        # Two paths carry one session and this one changed. The
-                        # delete below is ON DELETE CASCADE, so replacing the
-                        # shared conversation would take the *other* path's
-                        # bookkeeping row and its events with it — the same
-                        # destruction the collision repair and the self-heal
-                        # already guard against, on the one delete site that
-                        # had no guard. Settle exactly as the collision repair
-                        # settles its loser: keep the link, stamp this file's
-                        # hash so the copies do not churn (and so an errored
-                        # row stops being re-examined every run), and say so —
-                        # a frozen copy is only diagnosable if it is named. The
-                        # freeze is mutual and deliberate: neither copy may
-                        # replace the conversation, so its content is whatever
-                        # the path that won the slot last stored.
-                        _settle_duplicate_path(
-                            conn, file_path, existing_info["conversation_id"],
-                            current_hash, st,
-                        )
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped (duplicate)")
-                        emit_event("skipped (duplicate)")
-                        continue
                     if existing_info["conversation_id"]:
-                        # Ordering is forced: UNIQUE(harness_id, external_id)
-                        # means the old row must go before the new one lands,
-                        # and an AFTER DELETE trigger means a post-delete
-                        # UPDATE would match zero rows. So: snapshot → delete
-                        # → re-ingest → re-point, all in one transaction
-                        # (_reingest_file owns the commit). See
-                        # _snapshot_tags_for_replacement.
-                        tag_snapshot = _snapshot_tags_for_replacement(
-                            conn, existing_info["conversation_id"]
+                        tag_snapshot = _take_conversation_for_replacement(
+                            conn, existing_info["conversation_id"], file_path
                         )
-                        delete_conversation(conn, existing_info["conversation_id"])
+                        if tag_snapshot is None:
+                            # Two paths carry one session and this one changed.
+                            # Settle exactly as the collision repair settles
+                            # its loser: keep the link, stamp this file's hash
+                            # so the copies do not churn (and so an errored row
+                            # stops being re-examined every run), and name it —
+                            # a frozen copy is only diagnosable if it is named.
+                            # The freeze is mutual and deliberate: neither copy
+                            # may replace the conversation, so its content is
+                            # whatever the path that won the slot last stored.
+                            _settle_duplicate_path(
+                                conn, file_path, existing_info["conversation_id"],
+                                current_hash, st,
+                            )
+                            _count_file_skipped(
+                                source, "skipped (duplicate)", stats, on_file, emit_event
+                            )
+                            continue
                     else:
                         # No conversation recorded (empty file, errored file, or
                         # a row whose pointer was discarded by an older siftd).
@@ -501,8 +471,6 @@ def ingest_all(
                 # Fast path: stat-only skip for unchanged session files
                 existing_file_info = get_ingested_file_info(conn, file_path)
                 location = source.as_path
-                st = None
-                current_hash = None
                 if existing_file_info:
                     st = location.stat()
                     stored_mtime = existing_file_info["file_mtime"]
@@ -512,20 +480,14 @@ def ingest_all(
                         and st.st_mtime == stored_mtime
                         and st.st_size == stored_size
                     ):
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped")
-                        emit_event("skipped")
+                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     current_hash = compute_file_hash(location)
                     if current_hash == existing_file_info["file_hash"]:
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped")
-                        emit_event("skipped")
+                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                 # A session source may yield MANY conversations (one per
@@ -536,10 +498,7 @@ def ingest_all(
                 # cascade-delete the marker (see record_session_file).
                 conversations = _parse_source_conversations(source, adapter, file_path)
                 if not conversations:
-                    stats.files_skipped += 1
-                    if on_file:
-                        on_file(source, "skipped (empty)")
-                    emit_event("skipped (empty)")
+                    _count_file_skipped(source, "skipped (empty)", stats, on_file, emit_event)
                     continue
 
                 if st is None:
@@ -552,7 +511,7 @@ def ingest_all(
                 last_conversation = None
 
                 for conversation in conversations:
-                    harness_id = _harness_id_for_conversation(conn, conversation)
+                    harness_id = harness_id_for_conversation(conn, conversation)
                     file_harness_id = harness_id
 
                     existing = find_conversation_by_external_id(
@@ -564,11 +523,20 @@ def ingest_all(
                         # tags, ownership, and manual state).
                         if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
                             # Same delete-then-insert shape as the file branch,
-                            # so it loses tags the same way without the same
-                            # snapshot. Unlike that branch the replacement is
-                            # already parsed here, so the carry is unconditional.
-                            tag_snapshot = _snapshot_tags_for_replacement(conn, existing["id"])
-                            delete_conversation(conn, existing["id"])
+                            # so it loses tags the same way and takes the same
+                            # claim. A session marker is conversation_id=NULL by
+                            # design, so a refusal is unreachable here today —
+                            # the guard rides along structurally rather than as
+                            # a comment asserting it can't happen.
+                            tag_snapshot = _take_conversation_for_replacement(
+                                conn, existing["id"], file_path
+                            )
+                            if tag_snapshot is None:
+                                logger.warning(
+                                    f"{file_path}: another path's bookkeeping row points at "
+                                    f"{conversation.external_id}; leaving it as ingested"
+                                )
+                                continue
                             conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
                             _restore_tags_after_replacement(
                                 conn, conv_id, tag_snapshot, conversation.external_id
@@ -603,8 +571,10 @@ def ingest_all(
                     stats.files_replaced += 1
                     file_status = "replaced"
                 else:
-                    stats.files_skipped += 1
-                    file_status = "skipped (older)"
+                    _count_file_skipped(
+                        source, "skipped (older)", stats, on_file, emit_event
+                    )
+                    continue
                 if on_file:
                     on_file(source, file_status)
                 emit_event(file_status, conversation=last_conversation)
@@ -639,7 +609,7 @@ def ingest_all(
                     conv = _parse_source_conversation(source, adapter, file_path)
                     existing = None
                     if conv is not None:
-                        h_id = _harness_id_for_conversation(conn, conv)
+                        h_id = harness_id_for_conversation(conn, conv)
                         existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
                     if existing:
                         location = source.as_path
@@ -651,21 +621,13 @@ def ingest_all(
                         # stale error. Re-point it either way.
                         prior = get_ingested_file_info(conn, file_path)
                         if _conversation_claimed_elsewhere(conn, existing["id"], file_path):
-                            # Two paths carry one session (a restored backup, an
-                            # overlapping --path). Only one of them can hold the
-                            # (harness_id, external_id) slot and neither is more
-                            # authoritative, so settle rather than churn: link at
-                            # the conversation that exists and stamp THIS file's
-                            # hash, so the copies do not take turns replacing
-                            # each other's content on every run. Say so — a
-                            # frozen copy is only diagnosable if it is named.
-                            st = location.stat()
-                            fh = compute_file_hash(location)
-                            mtime, size = st.st_mtime, st.st_size
-                            logger.warning(
-                                f"{file_path} duplicates a transcript already tracked under "
-                                f"another path (external_id {conv.external_id}); linking to the "
-                                "existing conversation and leaving its content as ingested"
+                            # A second copy of a tracked transcript — the same
+                            # situation the replace path settles, reached from
+                            # the other direction, so it settles the same way.
+                            _settle_duplicate_path(
+                                conn, file_path, existing["id"],
+                                compute_file_hash(location), location.stat(),
+                                external_id=conv.external_id,
                             )
                         else:
                             # A lost race, or a row poisoned by an older siftd:
@@ -678,18 +640,17 @@ def ingest_all(
                             # takes the re-ingest branch with a non-NULL pointer,
                             # and converges on the current content instead of
                             # freezing silently on the winner's.
-                            fh = prior["file_hash"] if prior else ""
-                            mtime = prior["file_mtime"] if prior else None
-                            size = prior["file_size"] if prior else None
-                        link_ingested_file(
-                            conn, file_path, fh, existing["id"],
-                            file_mtime=mtime, file_size=size,
+                            link_ingested_file(
+                                conn, file_path,
+                                prior["file_hash"] if prior else "",
+                                existing["id"],
+                                file_mtime=prior["file_mtime"] if prior else None,
+                                file_size=prior["file_size"] if prior else None,
+                            )
+                            conn.commit()
+                        _count_file_skipped(
+                            source, "skipped (duplicate)", stats, on_file, emit_event
                         )
-                        conn.commit()
-                        stats.files_skipped += 1
-                        if on_file:
-                            on_file(source, "skipped (duplicate)")
-                        emit_event("skipped (duplicate)")
                         continue
                     logger.warning(
                         f"Duplicate-conversation collision on {file_path} but the "
@@ -709,7 +670,8 @@ def ingest_all(
                 continue
             # Other IntegrityError (not duplicate conversation) — record as error
             _record_file_error(
-                conn, source, adapter, file_path, error_msg, stats, on_file, emit_event
+                conn, source, adapter, file_path, error_msg, stats, on_file, emit_event,
+                known_hash=current_hash, known_stat=st,
             )
 
         except Exception as e:
@@ -718,7 +680,8 @@ def ingest_all(
             # rolled-back model/provider ULID is not reused as a dangling FK.
             clear_vocabulary_caches()
             _record_file_error(
-                conn, source, adapter, file_path, str(e), stats, on_file, emit_event
+                conn, source, adapter, file_path, str(e), stats, on_file, emit_event,
+                known_hash=current_hash, known_stat=st,
             )
 
     # Rebuild the derived tier: usage_by_conv_model rollup, then conversation_stats
@@ -743,12 +706,21 @@ def _record_file_error(
     stats: IngestStats,
     on_file: Callable[[Source, str], None] | None,
     emit_event: Callable[[str, object | None], None] | None,
+    *,
+    known_hash: str | None = None,
+    known_stat: os.stat_result | None = None,
 ) -> None:
     """Record a file that failed ingestion, without discarding a live pointer.
 
     The failure is written to the row so it is queryable (``get_ingest_errors``,
     ``siftd doctor``) and so the next ingest re-examines the file whatever its
     stat says.
+
+    ``known_hash`` / ``known_stat`` are what the caller already measured this
+    run; they save a re-stat and a re-hash of a file the loop just read. What
+    gets stamped is then the run's own reading rather than a fresher one — which
+    is fine precisely because an errored row is re-examined regardless of its
+    stat, so nothing here gates a later skip.
 
     The conversation link is *kept* whenever the row has one and that
     conversation still exists. It survives here because every caller rolled the
@@ -763,8 +735,8 @@ def _record_file_error(
     try:
         existing = get_ingested_file_info(conn, file_path)
         location = source.as_path
-        st = location.stat()
-        file_hash = compute_file_hash(location)
+        st = known_stat if known_stat is not None else location.stat()
+        file_hash = known_hash if known_hash is not None else compute_file_hash(location)
         if existing:
             # Update existing row: set error, keep a pointer that still resolves
             keep = existing["conversation_id"]
@@ -824,6 +796,8 @@ def _settle_duplicate_path(
     conversation_id: str,
     file_hash: str,
     file_stat: os.stat_result,
+    *,
+    external_id: str | None = None,
 ) -> None:
     """Leave a second copy of a tracked transcript linked, named, and settled.
 
@@ -834,21 +808,80 @@ def _settle_duplicate_path(
     the one case where the row may assert content it did not ingest, because
     there is no convergence to wait for (contrast the lost-race branch of the
     duplicate-collision handler, where re-hashing next run is the whole point).
+
+    ``external_id`` names the shared session in the warning; pass it when the
+    caller has already parsed it, and it is read back from the conversation
+    otherwise.
     """
-    external_id = conn.execute(
-        "SELECT external_id FROM conversations WHERE id = ?", (conversation_id,)
-    ).fetchone()
+    if external_id is None:
+        row = conn.execute(
+            "SELECT external_id FROM conversations WHERE id = ?", (conversation_id,)
+        ).fetchone()
+        external_id = row["external_id"] if row else conversation_id
     logger.warning(
         f"{file_path} duplicates a transcript already tracked under another path "
-        f"(external_id {external_id['external_id'] if external_id else conversation_id}); "
-        "its change was not ingested — the conversation stays as the path holding "
-        "the slot left it"
+        f"(external_id {external_id}); its change was not ingested — the "
+        "conversation stays as the path holding the slot left it"
     )
     link_ingested_file(
         conn, file_path, file_hash, conversation_id,
         file_mtime=file_stat.st_mtime, file_size=file_stat.st_size,
     )
     conn.commit()
+
+
+def _count_file_skipped(
+    source: Source,
+    label: str,
+    stats: IngestStats,
+    on_file: Callable[[Source, str], None] | None,
+    emit_event: Callable[[str, object | None], None] | None,
+) -> None:
+    """Report a file this run did not ingest. Sibling of :func:`_count_file_error`.
+
+    The label is given once, so the counter, the per-file callback and the
+    event stream cannot end up describing the skip differently — which is the
+    only way the seven call sites ever diverged.
+    """
+    stats.files_skipped += 1
+    if on_file:
+        on_file(source, label)
+    if emit_event:
+        emit_event(label, None)
+
+
+def _take_conversation_for_replacement(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    file_path: str,
+) -> ConversationTagSnapshot | None:
+    """Claim a conversation for delete-then-insert, or refuse.
+
+    Returns a snapshot of the assignments the delete would otherwise destroy,
+    with the conversation already gone — or ``None`` when another path's
+    bookkeeping row points at it, in which case nothing was touched. ``None``
+    is unambiguous: a snapshot is always an object, empty at worst.
+
+    Ordering is forced, which is why this is one operation rather than three
+    calls a caller could get out of order: ``UNIQUE(harness_id, external_id)``
+    means the old row must go before the new one lands, and an AFTER DELETE
+    trigger means a post-delete re-point would match zero rows. So snapshot,
+    then delete, then let the caller store and re-point — all inside the
+    caller's transaction.
+
+    The refusal is the reason this is a function at all. ``conversation_id``
+    has no uniqueness constraint and is ``ON DELETE CASCADE``, so a
+    conversation two paths carry (a restored backup, an overlapping
+    ``--path``, or the collision repair's own re-link) would take the other
+    path's row and events with it. Routing every delete site through here
+    makes "ask before replacing" structural rather than a rule each site has
+    to remember; the sites differ only in what they do with a refusal.
+    """
+    if _conversation_claimed_elsewhere(conn, conversation_id, file_path):
+        return None
+    snapshot = snapshot_conversation_tags(conn, conversation_id)
+    delete_conversation(conn, conversation_id)
+    return snapshot
 
 
 def _count_file_error(
@@ -985,20 +1018,17 @@ def _reingest_file(
         # normal path does, snapshot first: the orphan is where the tags live,
         # so deleting it unsnapshotted would destroy every affected
         # conversation's tags on the first ingest after upgrade.
-        harness_id = _harness_id_for_conversation(conn, conversation)
+        harness_id = harness_id_for_conversation(conn, conversation)
         orphan = find_conversation_by_external_id(conn, harness_id, conversation.external_id)
-        if orphan and _conversation_claimed_elsewhere(conn, orphan["id"], file_path):
-            # Not an orphan: another path's bookkeeping row points at it, so
-            # this file is a second copy of a tracked transcript. Deleting it
-            # would destroy that conversation's events AND — conversation_id is
-            # ON DELETE CASCADE — the other path's row. Leave it alone and let
-            # store_conversation collide: the duplicate-conversation handler in
-            # ingest_all links this path at the existing conversation, which is
-            # lossless.
-            orphan = None
         if orphan:
-            tag_snapshot = _snapshot_tags_for_replacement(conn, orphan["id"])
-            delete_conversation(conn, orphan["id"])
+            # A refusal means it is not an orphan at all: another path's
+            # bookkeeping row points at it, so this file is a second copy of a
+            # tracked transcript. Leaving it lets store_conversation collide,
+            # and the duplicate-conversation handler in ingest_all links this
+            # path at the existing conversation, which is lossless.
+            tag_snapshot = _take_conversation_for_replacement(
+                conn, orphan["id"], file_path
+            )
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
@@ -1035,20 +1065,6 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["responses"] += 1
             stats.tool_calls += len(response.tool_calls)
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
-
-
-def _snapshot_tags_for_replacement(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-) -> ConversationTagSnapshot:
-    """Capture the tags a conversation about to be replaced would otherwise lose.
-
-    Both dedup strategies replace a changed transcript with delete-then-insert,
-    and the AFTER DELETE cleanup triggers take every assignment with the old
-    ULIDs. One implementation for both, so "a conversation replacement carries
-    its assignments" has a single home.
-    """
-    return snapshot_conversation_tags(conn, conversation_id)
 
 
 def _describe_snapshot(snapshot: ConversationTagSnapshot) -> str:
@@ -1127,6 +1143,29 @@ def _session_key_candidates(adapter: AdapterModule, external_id: str) -> list[st
     return list(dict.fromkeys(candidates))
 
 
+def _parent_conversation_exists(
+    conn: sqlite3.Connection,
+    conversation,
+    candidates: list[str],
+) -> bool:
+    """Has the parent transcript of this subagent conversation been ingested?
+
+    ``candidates[1]`` is the parent's own ``external_id``, so the ordinary
+    answer is one indexed lookup on ``UNIQUE(harness_id, external_id)``.
+    :func:`resolve_session_conversation` answers the same question in general —
+    for an adapter whose parent key is not its external_id — but its suffix
+    match is unindexable, so it full-scans ``conversations``. Asking it first
+    cost that scan for every subagent conversation at every call site, which on
+    a corpus with thousands of subagent transcripts is most of a rebuild's
+    ingest time. Exact probe first, general form only on a miss: same answer,
+    one index seek in the steady state.
+    """
+    harness_id = harness_id_for_conversation(conn, conversation)
+    if find_conversation_by_external_id(conn, harness_id, candidates[1]):
+        return True
+    return any(resolve_session_conversation(conn, key) for key in candidates[1:])
+
+
 def _apply_pending_tags(
     conn: sqlite3.Connection,
     adapter: AdapterModule,
@@ -1153,8 +1192,8 @@ def _apply_pending_tags(
     # when the parent exists — its own ingest, or `siftd doctor fix
     # --pending-tags`, lands them on the parent.
     drain_keys = candidates
-    if "::agent::" in session_id and any(
-        resolve_session_conversation(conn, key) for key in candidates[1:]
+    if "::agent::" in session_id and _parent_conversation_exists(
+        conn, conversation, candidates
     ):
         drain_keys = candidates[:1]
 

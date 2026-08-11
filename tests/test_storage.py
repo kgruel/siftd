@@ -697,8 +697,7 @@ class TestSessions:
         db.commit()
         assert sess.get_stale_sessions_count(db, max_age_hours=1) == 1
         assert sess.count_orphaned_pending_tags(db) == sess.OrphanedPendingCounts()
-        s, _ = sess.cleanup_stale_sessions(db, max_age_hours=1, commit=True)
-        assert s == 1
+        assert sess.prune_stale_sessions(db, max_age_hours=1, commit=True) == 1
 
 
 # === Tags ===

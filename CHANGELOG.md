@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Ingest stops full-scanning `ingested_files` on every replace.** A new
+  `idx_ingested_files_conversation` index backs the "does another path point
+  at this conversation?" question ingest now asks before replacing anything,
+  and the `ON DELETE CASCADE` that fires on every conversation delete — both
+  were table scans. Existing databases pick the index up on open; there is no
+  migration to run.
+
+### Removed
+
+- **`cleanup_stale_sessions`**, which deleted stale session registrations
+  *and* discarded their queued tags. It was never part of `siftd.api`'s
+  documented surface, and it lost its last caller when
+  `doctor fix --pending-tags` stopped treating deletion as a repair.
+  `prune_stale_sessions` does the registration half without the data loss.
+
 ### Fixed
 
 - **Pending session tags are applied again.** `siftd tag --session <id>`
