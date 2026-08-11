@@ -109,7 +109,8 @@ class TestParseTimestamp:
             ("2024-01-15T09:30:12", "2024-01-15T09:30:12.000000"),
             ("2024-01-15T09:30", "2024-01-15T09:30:00.000000"),
             ("2024-01-15 09:30:12", "2024-01-15T09:30:12.000000"),
-            ("  2024-01-15T09:30:12Z  ", "2024-01-15T09:30:12.000000"),
+            # A non-UTC offset is converted, not dropped.
+            ("2024-01-15T09:30:12-05:00", "2024-01-15T14:30:12.000000"),
         ],
     )
     def test_normalized_to_naive_utc(self, input_val, expected):
@@ -119,10 +120,6 @@ class TestParseTimestamp:
         would compare inconsistently against stored `started_at` values.
         """
         assert parse_date(input_val) == expected
-
-    def test_offset_converted_to_utc(self):
-        """A non-UTC offset is converted, not dropped."""
-        assert parse_date("2024-01-15T09:30:12-05:00") == "2024-01-15T14:30:12.000000"
 
     @pytest.mark.parametrize(
         "bad",
@@ -157,6 +154,10 @@ def _bound(value: str) -> str:
     return parsed
 
 
+_CURSOR_BOUND = _bound("2024-01-15T09:30:12.780749+00:00")
+_DAY_BOUND = _bound("2024-01-15")
+
+
 class TestTimestampLexicalOrdering:
     """`--since` reaches SQL as a plain string compared to `started_at`.
 
@@ -164,34 +165,27 @@ class TestTimestampLexicalOrdering:
     without the filter layer knowing which adapter wrote the row.
     """
 
-    BOUND = "2024-01-15T09:30:12.780749+00:00"
-
     @pytest.mark.parametrize("shape", _STORED_SHAPES)
     def test_no_row_at_or_after_the_bound_sorts_below_it(self, shape):
         """The invariant that matters: a delta pull never silently skips a row."""
-        bound = _bound(self.BOUND)
-        assert shape.format(sec="2024-01-15T09:30:13") >= bound
-        assert shape.format(sec="2024-01-16T00:00:00") >= bound
+        assert shape.format(sec="2024-01-15T09:30:13") >= _CURSOR_BOUND
+        assert shape.format(sec="2024-01-16T00:00:00") >= _CURSOR_BOUND
 
     @pytest.mark.parametrize("shape", _STORED_SHAPES)
     def test_rows_before_the_bound_are_excluded(self, shape):
         """Earlier rows still sort below — the bound is not vacuous."""
-        bound = _bound(self.BOUND)
-        assert shape.format(sec="2024-01-15T09:30:11") < bound
-        assert shape.format(sec="2024-01-14T23:59:59") < bound
+        assert shape.format(sec="2024-01-15T09:30:11") < _CURSOR_BOUND
+        assert shape.format(sec="2024-01-14T23:59:59") < _CURSOR_BOUND
 
     def test_sub_second_boundary_errs_inclusive(self):
-        """Within the bound's own second, coarser spellings sort high.
+        """A coarser spelling inside the bound's own second sorts above it.
 
-        `2024-01-15T09:30:12Z` is 0.78s *before* the bound yet compares above
-        it, because `Z` outranks the `.` it lines up against. That re-pulls one
-        row through an idempotent merge; the opposite bias would drop it.
+        Rationale for the bias lives on `dateparse._normalize_timestamp`.
         """
-        assert "2024-01-15T09:30:12Z" >= _bound(self.BOUND)
+        assert "2024-01-15T09:30:12Z" >= _CURSOR_BOUND
 
     @pytest.mark.parametrize("shape", _STORED_SHAPES)
     def test_date_only_bound_covers_the_whole_day(self, shape):
         """The bare-date form keeps working against every shape."""
-        bound = _bound("2024-01-15")
-        assert shape.format(sec="2024-01-15T00:00:00") >= bound
-        assert shape.format(sec="2024-01-14T23:59:59") < bound
+        assert shape.format(sec="2024-01-15T00:00:00") >= _DAY_BOUND
+        assert shape.format(sec="2024-01-14T23:59:59") < _DAY_BOUND

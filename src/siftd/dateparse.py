@@ -5,10 +5,10 @@ from __future__ import annotations
 import re
 from datetime import UTC, date, datetime, timedelta
 
-# An ISO 8601 timestamp, as distinct from the bare `YYYY-MM-DD` form handled
-# above it. Matched loosely on purpose — `datetime.fromisoformat` owns the real
-# validation; this only decides which branch the value belongs to.
-_TIMESTAMP_SHAPE = re.compile(r"\d{4}-\d{2}-\d{2}.\d{2}:\d{2}")
+# The vocabulary `parse_date` accepts, phrased for `--help`. Every `--since`
+# and `--before` option interpolates this, so the flags and the parser cannot
+# drift into disagreeing about what is legal.
+DATE_VOCABULARY = "YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today"
 
 
 def parse_date(value: str | None) -> str | None:
@@ -27,9 +27,9 @@ def parse_date(value: str | None) -> str | None:
     if not value:
         return None
 
-    # Keyword and relative forms are case-insensitive; the ISO forms are not,
-    # because their output is compared lexically against stored timestamps and
-    # a lowercased `t`/`z` sorts above the uppercase spelling those use.
+    # Keywords and relative forms are case-insensitive. The ISO branches read
+    # `value` rather than `keyword` only so their errors quote what the user
+    # actually typed — both re-render their result through `isoformat()`.
     value = value.strip()
     keyword = value.lower()
 
@@ -55,8 +55,10 @@ def parse_date(value: str | None) -> str | None:
         except ValueError as e:
             raise ValueError(f"invalid date: '{value}' is not a real calendar date") from e
 
-    if _TIMESTAMP_SHAPE.match(value):
-        return _parse_timestamp(value)
+    # Loose on purpose: `datetime.fromisoformat` owns the real validation, and
+    # this only picks the branch.
+    if re.match(r"\d{4}-\d{2}-\d{2}.\d{2}:\d{2}", value):
+        return _normalize_timestamp(value)
 
     raise ValueError(
         f"invalid date format: '{value}' "
@@ -64,7 +66,7 @@ def parse_date(value: str | None) -> str | None:
     )
 
 
-def _parse_timestamp(value: str) -> str:
+def _normalize_timestamp(value: str) -> str:
     """Normalize an ISO 8601 timestamp to a naive-UTC lower bound.
 
     Sync persists its pull/push cursors as `datetime.now(UTC).isoformat()` and

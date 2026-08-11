@@ -13,6 +13,7 @@ from fakes.ssh import FakeSSH, FakeSSHResult
 
 from siftd.api.sync import SyncError, _build_ssh_options, _pull_ssh, _push_ssh
 from siftd.cli import _build_parser
+from siftd.dateparse import parse_date
 from siftd.domain.sync import SYNC_HEADER, SyncRemote
 
 
@@ -189,9 +190,11 @@ class TestPullSSHCursorRoundTrip:
         argv = shlex.split(fake.commands_run[0])
         sent = argv[argv.index("--since") + 1]
 
-        # Parse through the real CLI, the way the remote shell would.
+        # Parse through the real CLI, the way the remote shell would. Comparing
+        # against parse_date pins what only this test can see: the cursor
+        # reaches the far parser unaltered by quoting and command construction.
         args = _build_parser().parse_args(["db", "send", "--since", sent])
-        assert args.since is not None
+        assert args.since == parse_date(cursor)
 
 
 class TestPullSSHEmpty:
