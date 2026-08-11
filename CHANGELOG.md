@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Every default `db pull` after the first one works again.** Sync stores its
+  pull cursor as a full ISO 8601 timestamp, then hands that string back to
+  `siftd db send --since` on the remote — where `parse_date` accepted only
+  `YYYY-MM-DD`, `Nd`, `Nw`, `today`, and `yesterday`, and rejected it. SSH
+  pulls aborted with a usage error until the user passed an explicit `--since`
+  or `--all`. `--since`/`--before` now accept ISO 8601 timestamps anywhere the
+  date vocabulary is accepted, normalizing them to UTC at second precision so
+  the bound is a prefix of every spelling adapters write into `started_at`.
+  ([#21](https://github.com/kgruel/siftd/issues/21))
+
+- **`siftd db send`/`push`/`pull` explain a bad `--since` again.** They passed
+  `parse_date` to argparse as a bare `type=`, which swallows its message and
+  prints `invalid parse_date value` instead of naming the formats it accepts.
+
 ## [0.12.1] - 2026-08-11
 
 ### Changed

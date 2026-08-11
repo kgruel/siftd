@@ -7,7 +7,23 @@ composed into query, search, and export parsers.
 
 from __future__ import annotations
 
+import argparse
 from dataclasses import dataclass
+
+from siftd.dateparse import DATE_VOCABULARY, parse_date
+
+
+def date_arg(value: str) -> str | None:
+    """`parse_date` as an argparse ``type=``, preserving its message.
+
+    argparse swallows a bare ``ValueError`` from a type callable and reports a
+    generic "invalid date_arg value", so the vocabulary hint never reaches the
+    user. ``ArgumentTypeError`` is the one it prints verbatim.
+    """
+    try:
+        return parse_date(value)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e)) from e
 
 
 @dataclass
@@ -46,16 +62,6 @@ def add_filter_args(
     Callers opt in to extensions beyond the base set
     (workspace, since, before, tag, no_tag).
     """
-    import argparse as _ap
-
-    from siftd.dateparse import parse_date
-
-    def _date_arg(value: str) -> str | None:
-        try:
-            return parse_date(value)
-        except ValueError as e:
-            raise _ap.ArgumentTypeError(str(e)) from e
-
     # One "filters" group: which conversations to match — workspace/model/date/
     # tool/owner and the tag predicates together. (Tag filters used to be a
     # separate "tag filtering" group; merged so the help reads as one purpose.)
@@ -70,12 +76,12 @@ def add_filter_args(
             help="Filter by model name",
         )
     filter_group.add_argument(
-        "--since", metavar="DATE", type=_date_arg,
-        help="Conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        "--since", metavar="DATE", type=date_arg,
+        help=f"Conversations after this date ({DATE_VOCABULARY})",
     )
     filter_group.add_argument(
-        "--before", metavar="DATE", type=_date_arg,
-        help="Conversations before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        "--before", metavar="DATE", type=date_arg,
+        help=f"Conversations before this date ({DATE_VOCABULARY})",
     )
 
     tag_group = filter_group  # tag predicates live in the same "filters" group

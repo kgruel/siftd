@@ -17,7 +17,8 @@ import tempfile
 from pathlib import Path
 
 from siftd.cli._common import resolve_db
-from siftd.dateparse import parse_date
+from siftd.cli._filters import date_arg
+from siftd.dateparse import DATE_VOCABULARY
 from siftd.errors import SiftdError
 from siftd.output import fmt_count, status
 
@@ -1141,8 +1142,8 @@ examples:
   siftd db send -w project > slice.db                # filter by workspace
   ssh host siftd --db /path db send --no-fts > /tmp/pull.db""",
     )
-    p_send.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_send.add_argument("--since", metavar="DATE", type=date_arg,
+                        help=f"Send conversations after this date ({DATE_VOCABULARY})")
     p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
     p_send.add_argument("--tag", action="append", metavar="TAG",
@@ -1195,8 +1196,8 @@ examples:
   siftd db push alcove -w project            # filter by workspace""",
     )
     p_push.add_argument("name", help="Remote name to push to")
-    p_push.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Push conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_push.add_argument("--since", metavar="DATE", type=date_arg,
+                        help=f"Push conversations after this date ({DATE_VOCABULARY})")
     p_push.add_argument("--all", action="store_true", dest="push_all",
                         help="Push all conversations (ignore last_push)")
     p_push.add_argument("--dry-run", action="store_true",
@@ -1226,8 +1227,8 @@ examples:
   siftd db pull alcove -w project            # filter by workspace""",
     )
     p_pull.add_argument("name", help="Remote name to pull from")
-    p_pull.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Pull conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+    p_pull.add_argument("--since", metavar="DATE", type=date_arg,
+                        help=f"Pull conversations after this date ({DATE_VOCABULARY})")
     p_pull.add_argument("--all", action="store_true", dest="pull_all",
                         help="Pull all conversations (ignore last_pull)")
     p_pull.add_argument("--dry-run", action="store_true",

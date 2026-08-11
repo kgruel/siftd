@@ -1,4 +1,4 @@
-"""Tests for relative date parsing in CLI."""
+"""Tests for date and timestamp parsing in CLI filters."""
 
 from datetime import date
 from unittest.mock import patch
@@ -91,3 +91,121 @@ class TestParseDate:
     def test_relative_date_keywords(self, fixed_today, input_val, expected):
         """Relative date keywords resolve correctly."""
         assert parse_date(input_val) == expected
+
+
+class TestParseTimestamp:
+    """ISO 8601 timestamps — the form sync persists as a pull/push cursor (#21)."""
+
+    @pytest.mark.parametrize(
+        "input_val,expected",
+        [
+            # The exact shape `update_last_pull` stores.
+            ("2024-01-15T09:30:12.780749+00:00", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12.780749Z", "2024-01-15T09:30:12"),
+            # RFC 3339 allows either case for the UTC designator.
+            ("2024-01-15T09:30:12.780749z", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12Z", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30", "2024-01-15T09:30:00"),
+            ("2024-01-15 09:30:12", "2024-01-15T09:30:12"),
+            # A non-UTC offset is converted, not dropped.
+            ("2024-01-15T09:30:12-05:00", "2024-01-15T14:30:12"),
+        ],
+    )
+    def test_normalized_to_naive_utc(self, input_val, expected):
+        """Timestamps normalize to naive UTC, truncated to whole seconds.
+
+        Second precision is what makes the bound a prefix of every stored
+        spelling of that second — see `_normalize_timestamp`.
+        """
+        assert parse_date(input_val) == expected
+
+    def test_output_is_itself_accepted(self):
+        """The normalized form round-trips: a bound can be re-parsed unchanged.
+
+        Sync stores what it parsed, so a cursor may pass through `parse_date`
+        more than once over its life.
+        """
+        once = parse_date("2024-01-15T09:30:12.780749+00:00")
+        assert once is not None
+        assert parse_date(once) == once
+
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "2024-13-45T01:00:00Z",
+            "2024-01-15T25:00:00",
+            "2024-01-15T09:99",
+            "2024-01-15T09:30:12+99:00",
+        ],
+    )
+    def test_impossible_timestamp_raises(self, bad):
+        """A shaped-but-impossible timestamp errors rather than passing through."""
+        with pytest.raises(ValueError, match="invalid timestamp"):
+            parse_date(bad)
+
+
+# Every spelling of `conversations.started_at` siftd can write. Each formats
+# one second: adapters differ on fractional precision and on whether they
+# write a UTC designator at all.
+_STORED_SHAPES = (
+    "{sec}.780Z",  # claude_code — milliseconds, Z
+    "{sec}.780749",  # naive microseconds
+    "{sec}.780749+00:00",  # explicit offset
+    "{sec}Z",  # second precision, Z
+    # `epoch_ms_to_iso` whenever the millisecond component is zero — the shape
+    # that a microsecond-precision bound silently excluded, because `+` sorts
+    # below the `.` it lined up against.
+    "{sec}+00:00",
+    # aider, which writes its header's bare local wall time. Carries no suffix
+    # at all, so it meets a second-precision bound by equality rather than by
+    # being a longer string — the tightest case the prefix property has.
+    "{sec}",
+)
+
+
+def _bound(value: str) -> str:
+    """`parse_date` of a non-empty value, narrowed for string comparison."""
+    parsed = parse_date(value)
+    assert parsed is not None
+    return parsed
+
+
+_CURSOR_BOUND = _bound("2024-01-15T09:30:12.780749+00:00")
+_DAY_BOUND = _bound("2024-01-15")
+
+
+class TestTimestampLexicalOrdering:
+    """`--since` reaches SQL as a plain string compared to `started_at`.
+
+    So the parsed bound has to sort correctly against every spelling above,
+    without the filter layer knowing which adapter wrote the row.
+    """
+
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_no_row_at_or_after_the_bound_sorts_below_it(self, shape):
+        """The invariant that matters: a delta pull never silently skips a row."""
+        assert shape.format(sec="2024-01-15T09:30:13") >= _CURSOR_BOUND
+        assert shape.format(sec="2024-01-16T00:00:00") >= _CURSOR_BOUND
+
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_rows_before_the_bound_are_excluded(self, shape):
+        """Earlier rows still sort below — the bound is not vacuous."""
+        assert shape.format(sec="2024-01-15T09:30:11") < _CURSOR_BOUND
+        assert shape.format(sec="2024-01-14T23:59:59") < _CURSOR_BOUND
+
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_the_bound_is_a_prefix_of_its_own_second(self, shape):
+        """The property the whole scheme rests on.
+
+        A row anywhere in the bound's own second sorts above it whatever
+        suffix its adapter wrote, so `--since` over-includes by under a second
+        rather than depending on how `.`, `+`, `Z`, and digits order in ASCII.
+        """
+        assert shape.format(sec="2024-01-15T09:30:12") >= _CURSOR_BOUND
+
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_date_only_bound_covers_the_whole_day(self, shape):
+        """The bare-date form keeps working against every shape."""
+        assert shape.format(sec="2024-01-15T00:00:00") >= _DAY_BOUND
+        assert shape.format(sec="2024-01-14T23:59:59") < _DAY_BOUND

@@ -36,10 +36,10 @@ usage: siftd query [-h] [-w SUBSTR] [-m NAME] [--since DATE] [--before DATE]
 FILTERS
   -w, --workspace SUBSTR  Filter by workspace path substring
   -m, --model NAME        Filter by model name
-  --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-  --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
+  --since DATE            Conversations after this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
+  --before DATE           Conversations before this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
   -l, --tag NAME          Filter by tag (repeatable, OR logic)
   --all-tags NAME         Require all specified tags (AND logic)
   --no-tag NAME           Exclude conversations with this tag (NOT logic)
@@ -106,10 +106,10 @@ OPTIONS
 FILTERS
   -w, --workspace SUBSTR  Filter by workspace path substring
   -m, --model NAME        Filter by model name
-  --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-  --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
+  --since DATE            Conversations after this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
+  --before DATE           Conversations before this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
   -l, --tag NAME          Filter by tag (repeatable, OR logic)
   --all-tags NAME         Require all specified tags (AND logic)
   --no-tag NAME           Exclude conversations with this tag (NOT logic)
@@ -358,10 +358,10 @@ OPTIONS
 FILTERS
   -w, --workspace SUBSTR  Filter by workspace path substring
   -m, --model NAME        Filter by model name
-  --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-  --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
+  --since DATE            Conversations after this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
+  --before DATE           Conversations before this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
   -l, --tag NAME          Filter by tag (repeatable, OR logic)
   --all-tags NAME         Require all specified tags (AND logic)
   --no-tag NAME           Exclude conversations with this tag (NOT logic)
@@ -421,10 +421,10 @@ OPTIONS
 
 FILTERS
   -w, --workspace SUBSTR  Filter by workspace path substring
-  --since DATE            Conversations after this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
-  --before DATE           Conversations before this date (YYYY-MM-DD, 7d, 1w,
-                          yesterday, today)
+  --since DATE            Conversations after this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
+  --before DATE           Conversations before this date (YYYY-MM-DD, ISO
+                          timestamp, 7d, 1w, yesterday, today)
   -l, --tag NAME          Filter by tag (repeatable, OR logic)
   --no-tag NAME           Exclude conversations with this tag (NOT logic)
   --on KIND               Scope tag filters to a specific target kind

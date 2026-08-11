@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import patch
 
@@ -10,6 +12,8 @@ import pytest
 from fakes.ssh import FakeSSH, FakeSSHResult
 
 from siftd.api.sync import SyncError, _build_ssh_options, _pull_ssh, _push_ssh
+from siftd.cli import _build_parser
+from siftd.dateparse import parse_date
 from siftd.domain.sync import SYNC_HEADER, SyncRemote
 
 
@@ -140,7 +144,7 @@ class TestPullSSHSuccess:
         with _patch_connect(fake):
             _run(_pull_ssh(
                 _remote(), tmp_path / "local.db",
-                since="2024-01",
+                since="2024-01-15",
                 filters={
                     "workspace": "proj",
                     "tag": ["public", "release"],
@@ -151,7 +155,7 @@ class TestPullSSHSuccess:
             ))
 
         cmd = fake.commands_run[0]
-        assert "--since" in cmd and "2024-01" in cmd
+        assert "--since" in cmd and "2024-01-15" in cmd
         assert "-w" in cmd and "proj" in cmd
         # Each tag/no_tag value gets its own --tag/--no-tag flag
         assert cmd.count("--tag") == 2
@@ -159,6 +163,38 @@ class TestPullSSHSuccess:
         assert cmd.count("--no-tag") == 2
         assert "private" in cmd and "draft" in cmd
         assert "--owner" in cmd and "alice" in cmd
+
+
+class TestPullSSHCursorRoundTrip:
+    """The cursor sync persists has to survive the remote's own `--since` (#21).
+
+    `_pull_ssh` shells out to `siftd db send --since <cursor>` on the far end,
+    where argparse re-parses the value — a boundary the local read path never
+    crosses, because there the cursor goes straight from config into SQL. A
+    cursor the remote parser rejects aborts every default pull after the first.
+    """
+
+    def test_persisted_cursor_parses_on_the_remote(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("siftd.config_sync.get_ssh_connect_kwargs", lambda n: {})
+        monkeypatch.setattr("siftd.config.get_config", lambda k: None)
+
+        # The expression `pull()` hands to update_last_pull, verbatim.
+        cursor = datetime.now(UTC).isoformat()
+
+        fake = FakeSSH.pull_success(b"data")
+        with _patch_connect(fake):
+            _run(_pull_ssh(
+                _remote(), tmp_path / "local.db", cursor, {}, dry_run=True,
+            ))
+
+        argv = shlex.split(fake.commands_run[0])
+        sent = argv[argv.index("--since") + 1]
+
+        # Parse through the real CLI, the way the remote shell would. Comparing
+        # against parse_date pins what only this test can see: the cursor
+        # reaches the far parser unaltered by quoting and command construction.
+        args = _build_parser().parse_args(["db", "send", "--since", sent])
+        assert args.since == parse_date(cursor)
 
 
 class TestPullSSHEmpty:

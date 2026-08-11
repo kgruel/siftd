@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import re
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+
+# The vocabulary `parse_date` accepts, phrased for `--help`. Every `--since`
+# and `--before` option interpolates this, so the flags and the parser cannot
+# drift into disagreeing about what is legal.
+DATE_VOCABULARY = "YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today"
 
 
 def parse_date(value: str | None) -> str | None:
-    """Parse date string to ISO format (YYYY-MM-DD).
+    """Parse date string to a lower bound comparable with stored timestamps.
 
     Supports:
-    - ISO format: 2024-01-01 (passthrough)
+    - ISO date: 2024-01-01 (passthrough — matches the whole day)
+    - ISO timestamp: 2024-01-01T09:30:00Z, 2024-01-01T09:30:00.123456+00:00
+      (normalized to UTC; matches from that instant)
     - Relative days: 7d, 3d (subtract N days from today)
     - Relative weeks: 1w, 2w (subtract N weeks from today)
     - Keywords: yesterday, today
@@ -20,18 +27,22 @@ def parse_date(value: str | None) -> str | None:
     if not value:
         return None
 
-    value = value.strip().lower()
+    # Keywords and relative forms are case-insensitive. The ISO branches read
+    # `value` rather than `keyword` only so their errors quote what the user
+    # actually typed — both re-render their result through `isoformat()`.
+    value = value.strip()
+    keyword = value.lower()
 
-    if value == "today":
+    if keyword == "today":
         return date.today().isoformat()
-    if value == "yesterday":
+    if keyword == "yesterday":
         return (date.today() - timedelta(days=1)).isoformat()
 
-    if match := re.fullmatch(r"(\d+)d", value):
+    if match := re.fullmatch(r"(\d+)d", keyword):
         days = int(match.group(1))
         return (date.today() - timedelta(days=days)).isoformat()
 
-    if match := re.fullmatch(r"(\d+)w", value):
+    if match := re.fullmatch(r"(\d+)w", keyword):
         weeks = int(match.group(1))
         return (date.today() - timedelta(weeks=weeks)).isoformat()
 
@@ -44,6 +55,46 @@ def parse_date(value: str | None) -> str | None:
         except ValueError as e:
             raise ValueError(f"invalid date: '{value}' is not a real calendar date") from e
 
+    # Loose on purpose: `datetime.fromisoformat` owns the real validation, and
+    # this only picks the branch.
+    if re.match(r"\d{4}-\d{2}-\d{2}.\d{2}:\d{2}", value):
+        return _normalize_timestamp(value)
+
     raise ValueError(
-        f"invalid date format: '{value}' (expected YYYY-MM-DD, Nd, Nw, today, or yesterday)"
+        f"invalid date format: '{value}' "
+        f"(expected YYYY-MM-DD, an ISO 8601 timestamp, Nd, Nw, today, or yesterday)"
     )
+
+
+def _normalize_timestamp(value: str) -> str:
+    """Normalize an ISO 8601 timestamp to a naive-UTC, second-precision bound.
+
+    Sync persists its pull/push cursors as `datetime.now(UTC).isoformat()` and
+    hands them back to `--since`, so this is the form the round trip depends on.
+
+    Filters compare the result against `conversations.started_at` as SQL
+    strings, and adapters spell that column inconsistently: `...00.123Z`,
+    `...00.123456`, `...00.123456+00:00`, `...00Z`, and — whenever
+    `epoch_ms_to_iso` lands on a whole second — `...00+00:00`. Truncating to
+    seconds makes the bound a strict *prefix* of every one of those spellings,
+    so a row in the bound's own second always sorts above it whatever suffix
+    it carries. That is the same mechanism the bare-date form relies on, one
+    level finer, and unlike a microsecond rendering it never depends on how
+    `.`, `+`, `Z`, and the digits happen to order in ASCII — where `+` sorts
+    *below* `.`, which silently dropped rows stored as `...00+00:00`.
+
+    The residue is over-inclusion within the bound's own second: `--since`
+    re-pulls at most a second of rows through an idempotent merge, and
+    `--before` gives up sub-second precision it has never been asked for.
+    """
+    # `fromisoformat` takes any separator character but only an uppercase UTC
+    # designator, so a lowercase `z` is the one spelling it needs help with.
+    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as e:
+        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
+
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
+    return parsed.isoformat(timespec="seconds")
