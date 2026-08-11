@@ -1142,7 +1142,7 @@ examples:
   ssh host siftd --db /path db send --no-fts > /tmp/pull.db""",
     )
     p_send.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Send conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+                        help="Send conversations after this date (YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today)")
     p_send.add_argument("-w", "--workspace", metavar="SUBSTR",
                         help="Filter by workspace path substring")
     p_send.add_argument("--tag", action="append", metavar="TAG",
@@ -1196,7 +1196,7 @@ examples:
     )
     p_push.add_argument("name", help="Remote name to push to")
     p_push.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Push conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+                        help="Push conversations after this date (YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today)")
     p_push.add_argument("--all", action="store_true", dest="push_all",
                         help="Push all conversations (ignore last_push)")
     p_push.add_argument("--dry-run", action="store_true",
@@ -1227,7 +1227,7 @@ examples:
     )
     p_pull.add_argument("name", help="Remote name to pull from")
     p_pull.add_argument("--since", metavar="DATE", type=parse_date,
-                        help="Pull conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)")
+                        help="Pull conversations after this date (YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today)")
     p_pull.add_argument("--all", action="store_true", dest="pull_all",
                         help="Pull all conversations (ignore last_pull)")
     p_pull.add_argument("--dry-run", action="store_true",

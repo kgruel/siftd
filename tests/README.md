@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3226 |
+| `tests/` | 185 | 3234 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 630 |
@@ -138,7 +138,7 @@ docstring so its row is meaningful.
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
-| [test_date_parsing.py](test_date_parsing.py) | 9 | Tests for relative date parsing in CLI. |
+| [test_date_parsing.py](test_date_parsing.py) | 16 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
@@ -267,7 +267,7 @@ docstring so its row is meaningful.
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
 | [test_sync_http_streaming.py](test_sync_http_streaming.py) | 14 | Tests for Y3: HTTP streaming for sync push and pull. |
 | [test_sync_progress.py](test_sync_progress.py) | 11 | Tests for push/pull progress emission (api/sync.py). |
-| [test_sync_transport.py](test_sync_transport.py) | 14 | Tests for SSH transport in siftd.api.sync using FakeSSH. |
+| [test_sync_transport.py](test_sync_transport.py) | 15 | Tests for SSH transport in siftd.api.sync using FakeSSH. |
 | [test_table.py](test_table.py) | 13 | Tests for siftd.output.table — the one width-budgeted painted table. |
 | [test_tag_activity_enrichment.py](test_tag_activity_enrichment.py) | 3 | Fidelity-gated tag activity enrichment (api.tags.list_tags + 'activity' tag). |
 | [test_tag_pins.py](test_tag_pins.py) | 8 | Tag pins: owner-scoped pin state, idempotent writes, the pinned flag surfaced |

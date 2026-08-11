@@ -71,11 +71,11 @@ def add_filter_args(
         )
     filter_group.add_argument(
         "--since", metavar="DATE", type=_date_arg,
-        help="Conversations after this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        help="Conversations after this date (YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today)",
     )
     filter_group.add_argument(
         "--before", metavar="DATE", type=_date_arg,
-        help="Conversations before this date (YYYY-MM-DD, 7d, 1w, yesterday, today)",
+        help="Conversations before this date (YYYY-MM-DD, ISO timestamp, 7d, 1w, yesterday, today)",
     )
 
     tag_group = filter_group  # tag predicates live in the same "filters" group
