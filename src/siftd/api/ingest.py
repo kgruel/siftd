@@ -210,10 +210,21 @@ def run_ingest(
     ``result.auto_index.notice``) until any surface has shown the notice — interactive
     ingest, or the first explicit ``siftd embed``.
 
-    Runs under an exclusive advisory lock on the database: a second concurrent invocation
-    does nothing and returns ``skipped_locked=True`` (stats None). This is the single funnel
-    into :func:`~siftd.ingestion.ingest_all` — the CLI ``ingest`` command and ``doctor fix
-    --ingest`` are its only callers — so the lock belongs here, not in either surface.
+    The *database* phase runs under an exclusive advisory lock on the database: a second
+    concurrent invocation does nothing and returns ``skipped_locked=True`` (stats None).
+    This is the single funnel into :func:`~siftd.ingestion.ingest_all` — the CLI ``ingest``
+    command and ``doctor fix --ingest`` are its only callers — so the lock belongs here, not
+    in either surface.
+
+    The lock is released before the post-ingest auto-index. Embedding a stale set against a
+    rate-limited remote backend can take minutes *after* every database write has landed, and
+    holding the lock across it turned that window into silently skipped ingests: an
+    overlapping run — a cron tick, a scoped ``--path`` request — got ``skipped_locked`` and,
+    under the auto-quiet that fires on any non-TTY, said nothing about it. The embedding step
+    opens its own connections and needs nothing the lock protects; before 0.12.1 there was no
+    lock at all, so releasing here restores exactly the concurrency exposure auto-indexing
+    already had while keeping database ingestion serialized. Strictly better for ingest,
+    no worse than 0.12.0 for embedding.
     """
     path = Path(db_path)
     started = perf_counter()
@@ -230,28 +241,40 @@ def run_ingest(
                 elapsed_ms=int((perf_counter() - started) * 1000),
                 skipped_locked=True,
             )
-        return _run_ingest_locked(
+        result = _run_ingest_locked(
             path=path,
-            started=started,
             adapter_names=adapter_names,
             scan_paths=scan_paths,
             filter_binary=filter_binary,
             on_event=on_event,
-            on_notice=on_notice,
         )
+
+    # Steady-state auto-index, outside the lock. Belt-and-suspenders: the hook already
+    # isolates embedding failures onto the report, but a completed ingest must never be
+    # undone by a bug in the gating logic itself either.
+    try:
+        result.auto_index = _maybe_auto_index(path, on_notice=on_notice)
+    except Exception:
+        result.auto_index = None
+
+    result.elapsed_ms = int((perf_counter() - started) * 1000)
+    return result
 
 
 def _run_ingest_locked(
     *,
     path: Path,
-    started: float,
     adapter_names: list[str] | None,
     scan_paths: list[str] | None,
     filter_binary: bool | None,
     on_event: Callable[[IngestEvent], None] | None,
-    on_notice: Callable[[str], None] | None,
 ) -> IngestRunResult:
-    """The body of :func:`run_ingest`, with the ingest lock already held."""
+    """The database phase of :func:`run_ingest`, with the ingest lock held.
+
+    Returns a result its caller still completes: ``auto_index`` and ``elapsed_ms`` are
+    filled in after the lock is released, because the embedding step deliberately runs
+    unserialized.
+    """
     db_created = not path.exists()
 
     dropin_failures: list[tuple[Path, str]] = []
@@ -282,15 +305,6 @@ def _run_ingest_locked(
     except Exception:
         pass
 
-    # Steady-state auto-index. Belt-and-suspenders: the hook already isolates embedding
-    # failures onto the report, but a completed ingest must never be undone by a bug in the
-    # gating logic itself either.
-    try:
-        auto_index = _maybe_auto_index(path, on_notice=on_notice)
-    except Exception:
-        auto_index = None
-
-    elapsed_ms = int((perf_counter() - started) * 1000)
     return IngestRunResult(
         db_path=path,
         db_created=db_created,
@@ -298,9 +312,8 @@ def _run_ingest_locked(
         adapters=selected_names,
         scan_paths=list(scan_paths or []),
         stats=stats,
-        elapsed_ms=elapsed_ms,
+        elapsed_ms=0,  # the caller sets this once the auto-index has finished
         dropin_failures=dropin_failures,
-        auto_index=auto_index,
         adapter_tiers=adapter_tiers,
         disabled_adapters=disabled_adapters,
     )

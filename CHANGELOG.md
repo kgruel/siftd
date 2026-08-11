@@ -133,14 +133,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   delete, so it collided again — and a single process then reproduced the
   failure indefinitely: the transcript froze at whatever the first run
   captured, and search silently returned a stub. One reporter's host
-  accumulated 415 such rows over eight days. Three changes: ingest now runs
-  under a per-database advisory lock, so a second invocation reports briefly
-  and exits 0 instead of racing (skipping is correct when an ingest is
-  already running); a duplicate-conversation collision now re-points the
-  bookkeeping row at the conversation that already exists rather than
-  clearing it, turning a lost race into a no-op; and the re-ingest path
-  resolves the conversation by `(harness_id, external_id)` instead of
-  trusting a NULL pointer, so rows already poisoned in the field heal
+  accumulated 415 such rows over eight days. Three changes: ingest's
+  *database phase* now runs under a per-database advisory lock, so a second
+  invocation reports briefly and exits 0 instead of racing (skipping is
+  correct when an ingest is already writing). The lock is released before
+  the post-ingest auto-index: embedding a stale set against a rate-limited
+  remote backend can run for minutes after every write has landed, and
+  holding the lock across that turned the window into silently skipped
+  ingests — a cron tick or a scoped `--path` request getting `skipped` long
+  after the conflicting writes finished. A duplicate-conversation collision
+  now re-points the bookkeeping row at the conversation that already exists
+  rather than clearing it, turning a lost race into a no-op. And the
+  re-ingest path resolves the conversation by `(harness_id, external_id)`
+  instead of trusting a NULL pointer, so rows already poisoned in the field heal
   themselves on the next ingest — including the ones whose transcript has
   since gone quiet, which is most of them: a row carrying an error is now
   re-examined whatever its stat says, because the failure write stamped the

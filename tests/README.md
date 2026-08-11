@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3224 |
+| `tests/` | 185 | 3226 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
 | `tests/cli/` | 28 | 630 |
@@ -112,7 +112,7 @@ docstring so its row is meaningful.
 | [test_api_doctor.py](test_api_doctor.py) | 6 | Tests for siftd.api.doctor — wrapper re-exports from siftd.doctor. |
 | [test_api_events.py](test_api_events.py) | 22 | Phase 4: tests for the event detail surface. |
 | [test_api_export_edges.py](test_api_export_edges.py) | 1 | — |
-| [test_api_ingest.py](test_api_ingest.py) | 13 | Tests for siftd.api.ingest. |
+| [test_api_ingest.py](test_api_ingest.py) | 15 | Tests for siftd.api.ingest. |
 | [test_api_init_edges.py](test_api_init_edges.py) | 1 | — |
 | [test_api_merge_edges.py](test_api_merge_edges.py) | 1 | — |
 | [test_api_migrations_edges.py](test_api_migrations_edges.py) | 2 | — |

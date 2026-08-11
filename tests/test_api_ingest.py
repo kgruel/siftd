@@ -290,6 +290,69 @@ class TestIngestLock:
         with ingest_api._ingest_lock(db) as after:
             assert after is True
 
+    def test_lock_is_released_before_the_auto_index(self, tmp_path, monkeypatch):
+        """The lock covers the database phase, not the embedding that follows it.
+
+        Auto-indexing a stale set against a rate-limited remote backend runs for
+        minutes after every database write has landed. Holding the lock across it
+        made every overlapping run — a cron tick, a scoped `--path` request — a
+        silent `skipped_locked`, which is the missed-ingest shape this release
+        exists to remove. So: a second run must proceed *while* the auto-index is
+        running, and must actually ingest rather than skip.
+        """
+        db = tmp_path / "phased.db"
+        stats = IngestStats(files_found=1)
+        self._wire(monkeypatch, stats)
+        seen = {}
+
+        def _auto_index(path, embed_db_path=None, *, on_notice=None):
+            with ingest_api._ingest_lock(db) as during:
+                seen["lock_free"] = during
+            # A real overlapping invocation, not just the lock probe: it must
+            # reach ingest_all rather than return skipped_locked.
+            seen["nested"] = ingest_api.run_ingest(db_path=db)
+            return ingest_api.AutoIndexReport(ran=True, chunks_added=3)
+
+        monkeypatch.setattr(ingest_api, "_maybe_auto_index", _auto_index)
+
+        result = ingest_api.run_ingest(db_path=db)
+
+        assert seen["lock_free"] is True, "the lock was still held during auto-index"
+        assert seen["nested"].skipped_locked is False
+        assert seen["nested"].stats is stats
+        # The outer run still reports its own auto-index, and the elapsed clock
+        # still covers the embedding step it waited for.
+        assert result.skipped_locked is False
+        assert result.auto_index.chunks_added == 3
+        assert result.elapsed_ms >= 0
+
+    def test_database_phase_still_locks_out_an_overlapping_run(self, tmp_path, monkeypatch):
+        """Narrowing the scope must not narrow it past the writes it protects.
+
+        The sibling above would also pass if the lock were removed entirely, so
+        pin the other end: during `ingest_all` itself, a second run is still a
+        quiet no-op.
+        """
+        db = tmp_path / "phased2.db"
+        stats = IngestStats(files_found=1)
+        self._wire(monkeypatch, stats)
+        seen = {}
+
+        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None):
+            seen["nested"] = ingest_api.run_ingest(db_path=db)
+            return stats
+
+        monkeypatch.setattr(ingest_api, "ingest_all", _ingest_all)
+        monkeypatch.setattr(
+            ingest_api, "_maybe_auto_index", lambda *_a, **_kw: None
+        )
+
+        result = ingest_api.run_ingest(db_path=db)
+
+        assert result.skipped_locked is False
+        assert seen["nested"].skipped_locked is True
+        assert seen["nested"].stats is None
+
     def test_unlockable_filesystem_degrades_with_a_warning(self, tmp_path, monkeypatch, caplog):
         """Degrading is deliberate; degrading silently is not.
 
