@@ -24,61 +24,34 @@ from siftd.storage.sessions import (
 )
 from siftd.storage.tags import apply_tag, delete_tag, get_or_create_tag, rename_tag
 from siftd.storage.sqlite import create_database, open_database
-from conftest import FIXTURES_DIR, make_conversation
+from conftest import (
+    FIXTURES_DIR,
+    conversation_id as _conversation_id,
+    make_conversation,
+    make_test_adapter,
+    tag_names,
+)
 
 
 def make_live_adapter(source_path, conversation):
     """Create a test adapter with SUPPORTS_LIVE_REGISTRATION."""
-
-    class _LiveAdapter:
-        ADAPTER_INTERFACE_VERSION = 1
-        NAME = "live_test"
-        DEFAULT_LOCATIONS = []
-        DEDUP_STRATEGY = "file"
-        HARNESS_SOURCE = "test"
-        HARNESS_LOG_FORMAT = "jsonl"
-        SUPPORTS_LIVE_REGISTRATION = True
-
-        @staticmethod
-        def can_handle(source):
-            return True
-
-        @staticmethod
-        def parse(source):
-            yield conversation
-
-        @staticmethod
-        def discover():
-            yield Source(kind="file", location=source_path)
-
-    return _LiveAdapter
+    return make_test_adapter(
+        source_path, name="live_test", harness_log_format="jsonl",
+        supports_live_registration=True,
+        parse_fn=lambda source: iter([conversation]),
+    )
 
 
 def make_non_live_adapter(source_path, conversation):
-    """Create a test adapter WITHOUT SUPPORTS_LIVE_REGISTRATION."""
+    """Create a test adapter WITHOUT SUPPORTS_LIVE_REGISTRATION.
 
-    class _NonLiveAdapter:
-        ADAPTER_INTERFACE_VERSION = 1
-        NAME = "non_live_test"
-        DEFAULT_LOCATIONS = []
-        DEDUP_STRATEGY = "file"
-        HARNESS_SOURCE = "test"
-        HARNESS_LOG_FORMAT = "jsonl"
-        # No SUPPORTS_LIVE_REGISTRATION
-
-        @staticmethod
-        def can_handle(source):
-            return True
-
-        @staticmethod
-        def parse(source):
-            yield conversation
-
-        @staticmethod
-        def discover():
-            yield Source(kind="file", location=source_path)
-
-    return _NonLiveAdapter
+    The negative half of the flag: ingest must not drain a queued tag for an
+    adapter that never claimed to track live sessions.
+    """
+    return make_test_adapter(
+        source_path, name="non_live_test", harness_log_format="jsonl",
+        parse_fn=lambda source: iter([conversation]),
+    )
 
 
 @pytest.fixture
@@ -596,14 +569,7 @@ def _append_turn(path, session_uuid, *, agent_id=None):
         handle.write(json.dumps(record) + "\n")
 
 
-def _conversation_id(conn, external_id):
-    row = conn.execute(
-        "SELECT id FROM conversations WHERE external_id = ?", (external_id,)
-    ).fetchone()
-    return row["id"] if row else None
-
-
-def _assignments(conn, tag_name):
+def _tag_target_kinds(conn, tag_name):
     """(target_kind, count) pairs for a tag — the shape a loss shows up in."""
     return [
         (row["target_kind"], row["n"])
@@ -631,16 +597,8 @@ _KNOWN_DEDUP_STRATEGIES = frozenset({"file", "session"})
 
 
 def _conversation_tag_names(conn, external_id):
-    cur = conn.execute(
-        """
-        SELECT t.name FROM tags t
-        JOIN tag_assignments ta ON ta.tag_id = t.id
-        JOIN conversations c ON c.id = ta.target_id
-        WHERE ta.target_kind = 'conversation' AND c.external_id = ?
-        """,
-        (external_id,),
-    )
-    return [row[0] for row in cur.fetchall()]
+    """Tag names on the conversation an external id resolves to."""
+    return tag_names(conn, "conversation", _conversation_id(conn, external_id))
 
 
 @pytest.fixture
@@ -737,8 +695,8 @@ class TestReingestPreservesConversationTags:
     def test_queued_tag_survives_later_reingest(self, live_db, claude_root):
         """queue → ingest (applies) → transcript grows → re-ingest keeps the tag.
 
-        This is the composition case: consume_pending_tags deletes the queue row
-        when it applies, so the second ingest has nothing left to replay — only
+        This is the composition case: the drain consumes a queue row once it
+        applies, so the second ingest has nothing left to replay — only
         carrying the assignment across the replacement keeps the tag.
         """
         session_uuid = "8e4f0a55-2222-4333-8444-555566667777"
@@ -864,14 +822,14 @@ class TestReingestPreservesEventTags:
         )
 
         ingest_all(live_db["conn"], [claude_code])
-        assert _assignments(live_db["conn"], "marked") == [("response", 1)]
+        assert _tag_target_kinds(live_db["conn"], "marked") == [("response", 1)]
         assert get_pending_tags(live_db["conn"], session_uuid) == []
 
         _append_turn(transcript, session_uuid)
         ingest_all(live_db["conn"], [claude_code])
 
         # Still exactly one response assignment — carried, not duplicated.
-        assert _assignments(live_db["conn"], "marked") == [("response", 1)]
+        assert _tag_target_kinds(live_db["conn"], "marked") == [("response", 1)]
 
     def test_manual_exchange_tag_survives_reingest(self, live_db, claude_root):
         """The 0.11 element-tagging surface holds across re-ingest as well."""
@@ -891,7 +849,7 @@ class TestReingestPreservesEventTags:
 
         new_conv_id = _conversation_id(live_db["conn"], f"claude_code::{session_uuid}")
         assert new_conv_id != conv_id
-        assert _assignments(live_db["conn"], "key-insight") == [("exchange", 1)]
+        assert _tag_target_kinds(live_db["conn"], "key-insight") == [("exchange", 1)]
         # ...and on the *same* turn, not re-resolved to the appended one.
         assert _tag_target(live_db["conn"], "key-insight") == get_prompt_by_index(
             live_db["conn"], new_conv_id, 1
@@ -913,7 +871,7 @@ class TestDrainAcrossKeyForms:
         ingest_all(live_db["conn"], [claude_code])
 
         external_id = f"claude_code::{session_uuid}"
-        assert set(_conversation_tag_names(live_db["conn"], external_id)) == {
+        assert _conversation_tag_names(live_db["conn"], external_id) == {
             "agent-tag", "human-tag",
         }
         assert get_pending_tags(live_db["conn"], session_uuid) == []
@@ -922,10 +880,10 @@ class TestDrainAcrossKeyForms:
     def test_unresolvable_row_is_kept_not_consumed(self, live_db, claude_root):
         """A target that doesn't exist yet stays queued for the next ingest.
 
-        `consume_pending_tags` deleted the whole queue before resolving
+        The drain used to delete the session's whole queue before resolving
         anything, so a row targeting a turn the transcript had not reached was
-        destroyed with only a log line — the drain doing the opposite of what
-        the recovery path documents ("deleting a queued tag is data loss").
+        destroyed with only a log line — doing the opposite of what the
+        recovery path documents ("deleting a queued tag is data loss").
         """
         session_uuid = "0f0e0d0c-7777-4888-8999-aaaabbbbcccc"
         transcript = _write_claude_transcript(
@@ -938,7 +896,7 @@ class TestDrainAcrossKeyForms:
         )
 
         ingest_all(live_db["conn"], [claude_code])
-        assert _assignments(live_db["conn"], "later-turn") == []
+        assert _tag_target_kinds(live_db["conn"], "later-turn") == []
         assert [p.tag_name for p in get_pending_tags(live_db["conn"], session_uuid)] == [
             "later-turn"
         ]
@@ -947,7 +905,7 @@ class TestDrainAcrossKeyForms:
         _append_turn(transcript, session_uuid)
         ingest_all(live_db["conn"], [claude_code])
 
-        assert _assignments(live_db["conn"], "later-turn") == [("exchange", 1)]
+        assert _tag_target_kinds(live_db["conn"], "later-turn") == [("exchange", 1)]
         assert get_pending_tags(live_db["conn"], session_uuid) == []
 
 
@@ -979,7 +937,7 @@ class TestSubagentDrainTargetsParent:
 
         parent_external = f"claude_code::{session_uuid}"
         subagent_external = f"{parent_external}::agent::{agent_id}"
-        assert _conversation_tag_names(live_db["conn"], subagent_external) == []
+        assert _conversation_tag_names(live_db["conn"], subagent_external) == set()
         # Left queued for the parent's own ingest / `doctor fix --pending-tags`,
         # which resolve_session_conversation points at the parent row.
         assert [p.tag_name for p in get_pending_tags(live_db["conn"], session_uuid)] == [
@@ -1055,32 +1013,20 @@ class TestReplacementPreservesTagsPerDedupStrategy:
         state = {"ended_at": "2024-01-15T11:00:00Z"}
         external_id = "strategy_test::S1"
 
-        class _Adapter:
-            ADAPTER_INTERFACE_VERSION = 1
-            NAME = "strategy_test"
-            DEFAULT_LOCATIONS = []
-            DEDUP_STRATEGY = dedup_strategy
-            HARNESS_SOURCE = "test"
-            HARNESS_LOG_FORMAT = "jsonl"
-            SUPPORTS_LIVE_REGISTRATION = True
+        def parse(_source):
+            yield make_conversation(
+                external_id=external_id,
+                workspace_path="/test/project",
+                started_at="2024-01-15T10:00:00Z",
+                ended_at=state["ended_at"],
+                harness_name="strategy_test",
+            )
 
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                yield make_conversation(
-                    external_id=external_id,
-                    workspace_path="/test/project",
-                    started_at="2024-01-15T10:00:00Z",
-                    ended_at=state["ended_at"],
-                    harness_name="strategy_test",
-                )
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=str(source))
+        _Adapter = make_test_adapter(
+            source, name="strategy_test", dedup=dedup_strategy,
+            harness_log_format="jsonl", supports_live_registration=True,
+            parse_fn=parse,
+        )
 
         ingest_all(conn, [_Adapter])
         first_id = _conversation_id(conn, external_id)

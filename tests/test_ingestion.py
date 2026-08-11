@@ -1,6 +1,7 @@
 """Tests for ingestion orchestration utility functions."""
 
 from datetime import UTC
+from types import SimpleNamespace
 
 import pytest
 
@@ -187,37 +188,31 @@ class TestSummarizeConversation:
 
 
 class TestGetPromptByIndex:
-    def test_zero_raises_value_error(self, tmp_path):
+    """Index validation happens before any lookup, so an empty DB is enough."""
+
+    @pytest.fixture
+    def conn(self, tmp_path):
+        from siftd.storage.sqlite import open_database
+
+        conn = open_database(tmp_path / "t.db")
+        try:
+            yield conn
+        finally:
+            conn.close()
+
+    def test_zero_raises_value_error(self, conn):
         """get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
-        from siftd.storage.sqlite import open_database
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            get_prompt_by_index(conn, "any-conv-id", 0)
 
-        conn = open_database(tmp_path / "t.db")
-        try:
-            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                get_prompt_by_index(conn, "any-conv-id", 0)
-        finally:
-            conn.close()
-
-    def test_negative_raises_value_error(self, tmp_path):
+    def test_negative_raises_value_error(self, conn):
         """get_prompt_by_index rejects negative exchange_index."""
-        from siftd.storage.sqlite import open_database
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            get_prompt_by_index(conn, "any-conv-id", -1)
 
-        conn = open_database(tmp_path / "t.db")
-        try:
-            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                get_prompt_by_index(conn, "any-conv-id", -1)
-        finally:
-            conn.close()
-
-    def test_none_returns_none(self, tmp_path):
+    def test_none_returns_none(self, conn):
         """get_prompt_by_index returns None when exchange_index is None."""
-        from siftd.storage.sqlite import open_database
-
-        conn = open_database(tmp_path / "t.db")
-        try:
-            assert get_prompt_by_index(conn, "any-conv-id", None) is None
-        finally:
-            conn.close()
+        assert get_prompt_by_index(conn, "any-conv-id", None) is None
 
 
 class TestGetLastEventId:
@@ -247,29 +242,39 @@ class TestGetLastEventId:
         tc2 = insert_tool_call(conn, r2, c, t, "tc2", "{}", "{}", "success",
                                "2024-01-15T11:00:01Z")
         conn.commit()
-        return conn, c, p1, p2, r1, r2, tc1, tc2
+        # Named rather than positional: every test wants two or three of these
+        # and unpacking the rest into throwaways obscured which ones.
+        return SimpleNamespace(
+            conn=conn, conversation=c,
+            prompts=(p1, p2), responses=(r1, r2), tool_calls=(tc1, tc2),
+        )
 
     def test_last_prompt(self, tmp_path):
-        conn, c, _p1, p2, *_ = self._seed(tmp_path)
+        seeded = self._seed(tmp_path)
         try:
-            assert get_last_event_id(conn, c, "prompt") == p2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "prompt") == (
+                seeded.prompts[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_last_response(self, tmp_path):
-        conn, c, _p1, _p2, _r1, r2, *_ = self._seed(tmp_path)
+        seeded = self._seed(tmp_path)
         try:
-            assert get_last_event_id(conn, c, "response") == r2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "response") == (
+                seeded.responses[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_last_tool_call(self, tmp_path):
-        conn, c, *_, tc1, tc2 = self._seed(tmp_path)
-        del tc1
+        seeded = self._seed(tmp_path)
         try:
-            assert get_last_event_id(conn, c, "tool_call") == tc2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "tool_call") == (
+                seeded.tool_calls[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_empty_returns_none(self, tmp_path):
         from siftd.storage.sqlite import (
@@ -529,38 +534,21 @@ class TestBookkeepingRecovery:
 
     @staticmethod
     def _adapter(source_path, state, *, name="poison_test"):
-        from siftd.domain.source import Source
+        from conftest import make_conversation, make_test_adapter
 
-        from conftest import make_conversation
+        def parse(source):
+            if state.get("raise"):
+                raise ValueError(state["raise"])
+            yield make_conversation(
+                external_id=state["external_id"],
+                harness_name=name,
+                prompt_text=state["text"],
+                ended_at=state["ended_at"],
+            )
 
-        class _Adapter:
-            ADAPTER_INTERFACE_VERSION = 1
-            NAME = name
-            DEFAULT_LOCATIONS = []
-            DEDUP_STRATEGY = "file"
-            HARNESS_SOURCE = "test"
-            HARNESS_LOG_FORMAT = "jsonl"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                if state.get("raise"):
-                    raise ValueError(state["raise"])
-                yield make_conversation(
-                    external_id=state["external_id"],
-                    harness_name=name,
-                    prompt_text=state["text"],
-                    ended_at=state["ended_at"],
-                )
-
-            @staticmethod
-            def discover():
-                yield Source(kind="file", location=str(source_path))
-
-        return _Adapter
+        return make_test_adapter(
+            source_path, name=name, harness_log_format="jsonl", parse_fn=parse,
+        )
 
     @staticmethod
     def _copies_adapter(entries, *, name="poison_test"):
@@ -573,38 +561,20 @@ class TestBookkeepingRecovery:
         ``--path`` overlapping a default location, produces it with no
         concurrency at all.
         """
-        from siftd.domain.source import Source
+        from conftest import make_conversation, make_test_adapter
 
-        from conftest import make_conversation
+        def parse(source):
+            entry = entries[str(source.as_path)]
+            yield make_conversation(
+                external_id=entry["external_id"],
+                harness_name=name,
+                prompt_text=entry["text"],
+                ended_at=entry["ended_at"],
+            )
 
-        class _Adapter:
-            ADAPTER_INTERFACE_VERSION = 1
-            NAME = name
-            DEFAULT_LOCATIONS = []
-            DEDUP_STRATEGY = "file"
-            HARNESS_SOURCE = "test"
-            HARNESS_LOG_FORMAT = "jsonl"
-
-            @staticmethod
-            def can_handle(source):
-                return True
-
-            @staticmethod
-            def parse(source):
-                entry = entries[str(source.as_path)]
-                yield make_conversation(
-                    external_id=entry["external_id"],
-                    harness_name=name,
-                    prompt_text=entry["text"],
-                    ended_at=entry["ended_at"],
-                )
-
-            @staticmethod
-            def discover():
-                for path in entries:
-                    yield Source(kind="file", location=path)
-
-        return _Adapter
+        return make_test_adapter(
+            list(entries), name=name, harness_log_format="jsonl", parse_fn=parse,
+        )
 
     @staticmethod
     def _indexed(conn, needle):
@@ -622,21 +592,15 @@ class TestBookkeepingRecovery:
 
     @staticmethod
     def _conversation_id(conn, external_id):
-        row = conn.execute(
-            "SELECT id FROM conversations WHERE external_id = ?", (external_id,)
-        ).fetchone()
-        return row[0] if row else None
+        from conftest import conversation_id
+
+        return conversation_id(conn, external_id)
 
     @staticmethod
-    def _tag_names(conn, conversation_id):
-        return {
-            r[0]
-            for r in conn.execute(
-                "SELECT t.name FROM tag_assignments a JOIN tags t ON t.id = a.tag_id "
-                "WHERE a.target_kind = 'conversation' AND a.target_id = ?",
-                (conversation_id,),
-            )
-        }
+    def _tag_names(conn, conv_id):
+        from conftest import tag_names
+
+        return tag_names(conn, "conversation", conv_id)
 
     def _seed(self, tmp_path, state):
         """Ingest one transcript normally; return (conn, source, adapter)."""

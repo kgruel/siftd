@@ -300,6 +300,25 @@ def make_db(
     return path
 
 
+def conversation_id(conn, external_id):
+    """The stored id of a conversation, by the external id its adapter gave it.
+
+    Every ingest test needs this to get from what it wrote to what landed;
+    it was redefined in each of them.
+    """
+    row = conn.execute(
+        "SELECT id FROM conversations WHERE external_id = ?", (external_id,)
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def tag_names(conn, target_kind, target_id):
+    """Tag names assigned to one target — a read over storage.tags.get_tags_for."""
+    from siftd.storage.tags import get_tags_for
+
+    return {row["name"] for row in get_tags_for(conn, target_kind, target_id)}
+
+
 def text_block(text: str) -> str:
     """Create JSON content for a text block."""
     return json.dumps({"text": text})
@@ -360,24 +379,36 @@ def make_test_adapter(
     name="test_harness",
     dedup="file",
     harness_source="test",
+    harness_log_format=None,
+    supports_live_registration=False,
     can_handle_fn=None,
     parse_fn=None,
 ):
     """Factory for test adapters with configurable dedup strategy and parse function.
 
     Args:
-        dest: Path to the file the adapter will discover
+        dest: Path the adapter will discover, or a list of paths for the tests
+            that need one adapter over several sources (two copies of one
+            session, a parent transcript and its subagent).
         name: Adapter NAME attribute
         dedup: DEDUP_STRATEGY attribute ('file' or 'session')
         harness_source: HARNESS_SOURCE attribute (e.g., 'test', 'anthropic', 'openai')
+        harness_log_format: HARNESS_LOG_FORMAT attribute; omitted when None, so
+            callers that never set it keep the adapter surface they had.
+        supports_live_registration: SUPPORTS_LIVE_REGISTRATION attribute — the
+            flag that decides whether ingest drains queued session tags at all.
         can_handle_fn: Optional custom can_handle(source) function
         parse_fn: Optional custom parse(source) function
     """
+    locations = [str(d) for d in (dest if isinstance(dest, list) else [dest])]
 
     class _Adapter:
+        ADAPTER_INTERFACE_VERSION = 1
         NAME = name
+        DEFAULT_LOCATIONS = []
         DEDUP_STRATEGY = dedup
         HARNESS_SOURCE = harness_source
+        SUPPORTS_LIVE_REGISTRATION = supports_live_registration
 
         @staticmethod
         def can_handle(source):
@@ -393,8 +424,11 @@ def make_test_adapter(
 
         @staticmethod
         def discover():
-            yield Source(kind="file", location=dest)
+            for location in locations:
+                yield Source(kind="file", location=location)
 
+    if harness_log_format is not None:
+        _Adapter.HARNESS_LOG_FORMAT = harness_log_format
     return _Adapter
 
 

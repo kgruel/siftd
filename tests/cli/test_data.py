@@ -867,46 +867,45 @@ class TestDoctorFixPendingTagsRecovery:
     @pytest.fixture
     def pending_db(self, tmp_path):
         """A DB with ingested conversations and a queue of unapplied tags."""
+        from conftest import conversation_id, make_db
         from siftd.storage.sessions import queue_tag
-        from siftd.storage.sqlite import (
-            create_database,
-            get_or_create_harness,
-            get_or_create_model,
-            insert_conversation,
-            insert_prompt,
-            insert_response,
+        from siftd.storage.sqlite import open_database
+
+        db_path = make_db(
+            tmp_path / "pending.db",
+            harness_name="live_test",
+            conversations=[
+                # Parent + subagent rows for the same session: the tag must land
+                # on the parent, which is what the ingest drain would have done.
+                {"external_id": "live_test::SESSION-A",
+                 "started_at": "2024-01-15T10:00:00Z"},
+                {"external_id": "live_test::SESSION-A::agent::sub1",
+                 "started_at": "2024-01-15T10:05:00Z"},
+                # The session the late-bound markers resolve against. It has a
+                # prompt and a response but no tool call, which is what makes a
+                # queued `last_tool_call` target-pending rather than applicable.
+                {"external_id": "live_test::SESSION-B",
+                 "started_at": "2024-01-16T10:00:00Z"},
+                # A subagent-only session: nothing to tag at the parent level.
+                {"external_id": "live_test::SESSION-C::agent::sub9",
+                 "started_at": "2024-01-17T10:00:00Z"},
+            ],
         )
 
-        db_path = tmp_path / "pending.db"
-        conn = create_database(db_path)
-        harness_id = get_or_create_harness(conn, "live_test", source="test", log_format="jsonl")
-        model_id = get_or_create_model(conn, "claude-3-opus-20240229")
-
-        ids = {}
-        # Parent + subagent rows for the same session: the tag must land on
-        # the parent, which is what the ingest drain would have done.
-        ids["parent"] = insert_conversation(
-            conn, external_id="live_test::SESSION-A", harness_id=harness_id,
-            workspace_id=None, started_at="2024-01-15T10:00:00Z",
-        )
-        ids["subagent"] = insert_conversation(
-            conn, external_id="live_test::SESSION-A::agent::sub1", harness_id=harness_id,
-            workspace_id=None, started_at="2024-01-15T10:05:00Z",
-        )
-        # A session with events, for the late-bound marker path.
-        ids["marked"] = insert_conversation(
-            conn, external_id="live_test::SESSION-B", harness_id=harness_id,
-            workspace_id=None, started_at="2024-01-16T10:00:00Z",
-        )
-        prompt_id = insert_prompt(conn, ids["marked"], "p1", "2024-01-16T10:00:00Z")
-        ids["response"] = insert_response(
-            conn, ids["marked"], prompt_id, model_id, None, "r1", "2024-01-16T10:00:01Z",
-        )
-        # A subagent-only session: nothing to tag at the parent level.
-        ids["orphan_subagent"] = insert_conversation(
-            conn, external_id="live_test::SESSION-C::agent::sub9", harness_id=harness_id,
-            workspace_id=None, started_at="2024-01-17T10:00:00Z",
-        )
+        conn = open_database(db_path)
+        ids = {
+            key: conversation_id(conn, external_id)
+            for key, external_id in {
+                "parent": "live_test::SESSION-A",
+                "subagent": "live_test::SESSION-A::agent::sub1",
+                "marked": "live_test::SESSION-B",
+                "orphan_subagent": "live_test::SESSION-C::agent::sub9",
+            }.items()
+        }
+        ids["response"] = conn.execute(
+            "SELECT id FROM events WHERE conversation_id = ? AND kind = 'response'",
+            (ids["marked"],),
+        ).fetchone()["id"]
 
         queue_tag(conn, "SESSION-A", "keeper")
         queue_tag(conn, "SESSION-B", "on-last-response", last_marker="last_response")
@@ -920,7 +919,7 @@ class TestDoctorFixPendingTagsRecovery:
         return db_path, ids
 
     @staticmethod
-    def _assignments(db_path):
+    def _all_assignments(db_path):
         from siftd.storage.sqlite import open_database
 
         conn = open_database(db_path, read_only=True)
@@ -956,7 +955,7 @@ class TestDoctorFixPendingTagsRecovery:
         rc = main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
         assert rc == 0
 
-        assignments = self._assignments(db_path)
+        assignments = self._all_assignments(db_path)
         assert ("keeper", "conversation", ids["parent"]) in assignments
         assert ("keeper", "conversation", ids["subagent"]) not in assignments
         # Applied rows are consumed; nothing else is.
@@ -967,7 +966,7 @@ class TestDoctorFixPendingTagsRecovery:
         db_path, ids = pending_db
         main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
 
-        assignments = self._assignments(db_path)
+        assignments = self._all_assignments(db_path)
         assert ("on-last-response", "response", ids["response"]) in assignments
 
     def test_unresolvable_rows_are_kept_and_named(self, pending_db, capsys):
@@ -1094,7 +1093,7 @@ class TestDoctorFixPendingTagsRecovery:
         main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
 
         assert ("SESSION-A", "keeper") in self._queued(db_path)
-        assert ("keeper", "conversation", ids["parent"]) not in self._assignments(db_path)
+        assert ("keeper", "conversation", ids["parent"]) not in self._all_assignments(db_path)
 
     def test_prefixed_registration_shields_bare_queued_rows(self, pending_db, capsys):
         """A live session is protected whichever key form registered it.
@@ -1117,7 +1116,7 @@ class TestDoctorFixPendingTagsRecovery:
         main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
 
         assert ("SESSION-A", "keeper") in self._queued(db_path)
-        assert ("keeper", "conversation", ids["parent"]) not in self._assignments(db_path)
+        assert ("keeper", "conversation", ids["parent"]) not in self._all_assignments(db_path)
 
     def test_bare_registration_shields_prefixed_queued_rows(self, pending_db, capsys):
         """The same, the other way round: either side may carry the prefix."""
@@ -1134,7 +1133,7 @@ class TestDoctorFixPendingTagsRecovery:
         main(["--db", str(db_path), "doctor", "fix", "--pending-tags"])
 
         assert ("live_test::SESSION-A", "prefixed-row") in self._queued(db_path)
-        assert ("prefixed-row", "conversation", ids["parent"]) not in self._assignments(db_path)
+        assert ("prefixed-row", "conversation", ids["parent"]) not in self._all_assignments(db_path)
 
     def test_json_reports_unresolved_keys(self, pending_db, capsys):
         """The machine channel carries the full unresolved list, with reasons."""
