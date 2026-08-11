@@ -74,6 +74,7 @@ structural handling path is the *correct* behavior for them, not a bug:
 | Class | Module | Why it stays out |
 |-------|--------|------------------|
 | `MissingOpSpec` | `api/op_spec.py` | invariant violation (op registered without wire spec); also caught as delegation control flow |
+| `_FixNotApplied` | `cli/data.py` | control flow inside doctor fix's step runner: a step that declined to run is neither a failure nor a fix, and is reported as 'not applied' rather than raised at the user |
 | `EmbeddingError` | `embeddings/base.py` | domain grouping base, not a taxonomy member — EmbeddingTransientError subclasses it and must not transitively reach SiftdError (would break degrade-to-fts); EmbeddingConfigError joins DriftError directly instead |
 | `EmbeddingTransientError` | `embeddings/base.py` | degradable blip; search falls back to FTS |
 | `ServeRequest4xx` | `serve/client.py` | delegation control flow (structured 4xx surface) |

@@ -42,6 +42,7 @@ class IngestRunPayload:
     elapsed_ms: int
     adapter_tiers: dict[str, str]
     disabled_adapters: list[str]
+    skipped_locked: bool = False
     auto_index: AutoIndexPayload | None = None
 
 
@@ -87,6 +88,7 @@ def to_ingest_run_payload(result: Any) -> IngestRunPayload:
         auto_index=_to_auto_index_payload(auto_index) if auto_index is not None else None,
         adapter_tiers=dict(getattr(result, "adapter_tiers", {})),
         disabled_adapters=list(getattr(result, "disabled_adapters", [])),
+        skipped_locked=bool(getattr(result, "skipped_locked", False)),
     )
 
 

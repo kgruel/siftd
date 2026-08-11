@@ -20,6 +20,16 @@ the slow-lane checks that reconcile discovered files against the DB
 (`ingest-pending`, `adapter-stale`) walk each adapter's log directories once per
 run rather than once per check.
 
+Severity is a promise about actionability, because `--strict` is documented
+for CI: a `warning` must be something a fix can actually move, and anything
+kept deliberately (a queued tag whose target does not exist yet, a row only a
+destructive opt-in would clear) is `info`. A check that warns about a
+condition its own fix leaves untouched leaves `siftd doctor --strict` red
+forever with no non-destructive way out — so where a check and its fix
+classify the same rows, they should share the classifier rather than agree by
+inspection (`checks/pending_tags.py` and
+`storage.sessions.count_orphaned_pending_tags` are the worked example).
+
 `cost` is a lane, not a label: `runner.py` runs only `fast` checks under
 `--fast`, includes `deep` checks (the expensive DB-integrity walks) only when
 explicitly asked, and runs `fast` + `slow` by default. `view.py` renders
@@ -55,7 +65,7 @@ that only reads a cached count is `fast`; one that walks the filesystem is
 | `ingest-errors` | [checks/ingest_errors.py](checks/ingest_errors.py) | fast | Files that failed ingestion (recorded with error) |
 | `ingest-pending` | [checks/ingest_pending.py](checks/ingest_pending.py) | slow | Files discovered by adapters but not yet ingested |
 | `orphaned-chunks` | [checks/orphaned_chunks.py](checks/orphaned_chunks.py) | fast | Embedding chunks referencing deleted conversations |
-| `pending-tags` | [checks/pending_tags.py](checks/pending_tags.py) | fast | Pending tags for sessions that may never be ingested |
+| `pending-tags` | [checks/pending_tags.py](checks/pending_tags.py) | fast | Queued session tags waiting to be applied |
 | `pricing-provenance` | [checks/pricing_provenance.py](checks/pricing_provenance.py) | fast | Priced models lacking version-controlled reference provenance |
 | `schema-current` | [checks/schema_current.py](checks/schema_current.py) | fast | Database schema migrations are up to date |
 | `workspace-identity` | [checks/workspace_identity.py](checks/workspace_identity.py) | fast | Workspace identity via git remote (dedup detection) |

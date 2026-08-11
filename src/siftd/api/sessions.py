@@ -6,7 +6,9 @@ Exposes live session registration and pending tag operations to CLI.
 import sqlite3
 
 from siftd.storage.sessions import (
-    cleanup_stale_sessions as _cleanup_stale_sessions,
+    DISCARDABLE_KIND,
+    PendingTagRecovery,
+    UnresolvedKind,
 )
 from siftd.storage.sessions import (
     find_active_session as _find_active_session,
@@ -18,14 +20,20 @@ from siftd.storage.sessions import (
     queue_tag as _queue_tag,
 )
 from siftd.storage.sessions import (
+    recover_pending_tags as _recover_pending_tags,
+)
+from siftd.storage.sessions import (
     register_session as _register_session,
 )
 
 __all__ = [
-    "cleanup_stale_sessions",
+    "DISCARDABLE_KIND",
+    "PendingTagRecovery",
+    "UnresolvedKind",
     "find_active_session",
     "is_session_registered",
     "queue_tag",
+    "recover_pending_tags",
     "register_session",
 ]
 
@@ -85,14 +93,23 @@ def is_session_registered(
     return _is_session_registered(conn, harness_session_id)
 
 
-def cleanup_stale_sessions(
+def recover_pending_tags(
     conn: sqlite3.Connection,
-    max_age_hours: int = 48,
     *,
+    max_age_hours: int = 48,
+    discard_unresolved: bool = False,
     commit: bool = False,
-) -> tuple[int, int]:
-    """Delete sessions and pending tags older than max_age_hours.
+) -> PendingTagRecovery:
+    """Apply queued session tags whose session has already been ingested.
 
-    Returns (sessions_deleted, tags_deleted).
+    Prunes stale session registrations, applies every orphaned pending tag
+    that resolves to an ingested conversation (consuming its queue row), and
+    reports the ones that don't. Unresolved rows are kept unless
+    ``discard_unresolved`` is set.
     """
-    return _cleanup_stale_sessions(conn, max_age_hours, commit=commit)
+    return _recover_pending_tags(
+        conn,
+        max_age_hours=max_age_hours,
+        discard_unresolved=discard_unresolved,
+        commit=commit,
+    )

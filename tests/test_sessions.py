@@ -7,10 +7,8 @@ import pytest
 
 from siftd.storage.sessions import (
     PendingTag,
-    cleanup_stale_sessions,
-    consume_pending_tags,
     ensure_session_tables,
-    get_orphaned_pending_tags_count,
+    count_orphaned_pending_tags,
     get_pending_tags,
     get_session_info,
     get_stale_sessions_count,
@@ -160,93 +158,6 @@ class TestQueueTag:
         assert len(tags) == 1
 
 
-class TestConsumePendingTags:
-    """Tests for consume_pending_tags()."""
-
-    def test_consume_returns_and_deletes_tags(self, db):
-        """Consuming pending tags returns them and removes from DB."""
-        register_session(db, "session-123", "claude_code", commit=True)
-        queue_tag(db, "session-123", "tag1", commit=True)
-        queue_tag(db, "session-123", "tag2", commit=True)
-
-        tags = consume_pending_tags(db, "session-123", commit=True)
-
-        assert len(tags) == 2
-        assert {t.tag_name for t in tags} == {"tag1", "tag2"}
-
-        # Tags should be gone
-        remaining = get_pending_tags(db, "session-123")
-        assert len(remaining) == 0
-
-    def test_consume_preserves_entity_type_and_index(self, db):
-        """Consumed tags include entity_type and exchange_index."""
-        register_session(db, "session-123", "claude_code", commit=True)
-        queue_tag(db, "session-123", "conv-tag", commit=True)
-        queue_tag(db, "session-123", "exch-tag", entity_type="exchange", exchange_index=3, commit=True)
-
-        tags = consume_pending_tags(db, "session-123", commit=True)
-
-        conv_tag = next(t for t in tags if t.tag_name == "conv-tag")
-        exch_tag = next(t for t in tags if t.tag_name == "exch-tag")
-
-        assert conv_tag.entity_type == "conversation"
-        assert conv_tag.exchange_index is None
-        assert exch_tag.entity_type == "exchange"
-        assert exch_tag.exchange_index == 3
-
-    def test_consume_empty_returns_empty_list(self, db):
-        """Consuming from a session with no tags returns empty list."""
-        tags = consume_pending_tags(db, "session-999", commit=True)
-
-        assert tags == []
-
-
-class TestCleanupStaleSessions:
-    """Tests for cleanup_stale_sessions()."""
-
-    def test_cleanup_deletes_old_sessions(self, db):
-        """Sessions older than max_age_hours are deleted."""
-        # Insert a session with old started_at and last_seen_at
-        old_time = (datetime.now() - timedelta(hours=72)).isoformat()
-        db.execute(
-            "INSERT INTO active_sessions (harness_session_id, adapter_name, started_at, last_seen_at) VALUES (?, ?, ?, ?)",
-            ("old-session", "claude_code", old_time, old_time),
-        )
-        db.commit()
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        assert sessions_deleted == 1
-        assert not is_session_registered(db, "old-session")
-
-    def test_cleanup_preserves_recent_sessions(self, db):
-        """Sessions younger than max_age_hours are preserved."""
-        register_session(db, "new-session", "claude_code", commit=True)
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        assert sessions_deleted == 0
-        assert is_session_registered(db, "new-session")
-
-    def test_cleanup_deletes_orphaned_tags(self, db):
-        """Tags for sessions not in active_sessions are deleted if old."""
-        # Queue tags for a session that was never registered
-        old_time = (datetime.now() - timedelta(hours=72)).isoformat()
-        db.execute(
-            "INSERT INTO pending_tags (id, harness_session_id, tag_name, entity_type, created_at) VALUES (?, ?, ?, ?, ?)",
-            ("tag-1", "orphan-session", "orphan-tag", "conversation", old_time),
-        )
-        db.commit()
-
-        sessions_deleted, tags_deleted = cleanup_stale_sessions(db, max_age_hours=48, commit=True)
-
-        # Should delete the orphaned tag
-        assert tags_deleted == 1
-
-        count = db.execute("SELECT COUNT(*) FROM pending_tags").fetchone()[0]
-        assert count == 0
-
-
 class TestQueueTagLastMarker:
     """Phase 3: queue_tag accepts last_marker for late-binding."""
 
@@ -362,19 +273,20 @@ class TestPendingTagsSchemaUpgrade:
 
 
 class TestOrphanedAndStaleCounts:
-    """Tests for get_orphaned_pending_tags_count() and get_stale_sessions_count()."""
+    """Tests for count_orphaned_pending_tags() and get_stale_sessions_count()."""
 
-    def test_orphaned_count(self, db):
-        """Count tags for sessions not in active_sessions."""
-        # Register one session with a tag
+    def test_orphaned_count_splits_by_resolvability(self, db):
+        """Only sessions absent from active_sessions count, split by whether
+        the fix could ever apply them."""
+        # Register one session with a tag — not orphaned, so not counted.
         register_session(db, "registered", "claude_code", commit=True)
         queue_tag(db, "registered", "tag1", commit=True)
 
-        # Add tag for unregistered session
+        # Orphaned, and no conversation was ever ingested for it.
         queue_tag(db, "unregistered", "tag2", commit=True)
 
-        count = get_orphaned_pending_tags_count(db)
-        assert count == 1
+        counts = count_orphaned_pending_tags(db)
+        assert (counts.recoverable, counts.target_pending, counts.session_unresolvable) == (0, 0, 1)
 
     def test_stale_sessions_count(self, db):
         """Count sessions older than max_age_hours (uses last_seen_at)."""
@@ -394,3 +306,129 @@ class TestOrphanedAndStaleCounts:
         assert count == 1
 
 
+
+
+# The keys the coverage rule has to get right. Enumerated as a vocabulary and
+# crossed with itself rather than hand-picked as pairs, so the SQL and the
+# Python form are pinned to each other over every combination — including the
+# ones nobody thought to write down.
+_KEY_VOCABULARY = [
+    "abc",
+    "claude_code::abc",
+    "a::b::c",
+    "b::c",
+    "c",
+    "a::b",
+    "bc",
+    "x::a%c",
+    "a%c",
+    "x::a_c",
+    "a_c",
+    "%",
+    "_",
+    "",
+    "::abc",
+    "claude_code::abcdef",
+]
+
+
+class TestSessionKeyCoverage:
+    """The `<adapter>::` prefix rule is written twice; it must mean one thing.
+
+    `_covers_sql` is what the orphan scope and conversation lookup run inside
+    SQLite; `_covered_keys` is what the set-wise resolver runs in Python. A
+    silent divergence between them re-opens exactly the bug this rule exists
+    to close, and no single behavioral test would catch it — so cross the
+    whole vocabulary and assert they agree everywhere.
+    """
+
+    @pytest.mark.parametrize("outer", _KEY_VOCABULARY)
+    def test_sql_and_python_forms_agree(self, db, outer):
+        from siftd.storage.sessions import _covered_keys, _covers_sql
+
+        covered = set(_covered_keys(outer))
+        for inner in _KEY_VOCABULARY:
+            matched = db.execute(
+                f"SELECT {_covers_sql(':outer', ':inner')}",
+                {"outer": outer, "inner": inner},
+            ).fetchone()[0]
+            assert bool(matched) is (inner in covered), (outer, inner)
+
+    def test_wildcards_are_literal(self, db):
+        """The rule is a suffix comparison, not a LIKE — `%`/`_` match nothing."""
+        from siftd.storage.sessions import _covered_keys
+
+        assert "a%c" in _covered_keys("x::a%c")
+        assert "%" not in _covered_keys("x::abc")
+        assert "a_c" not in _covered_keys("x::abc")
+
+
+class TestSetWiseSessionResolution:
+    """The set-wise resolver must answer exactly what the per-key one does."""
+
+    @pytest.fixture
+    def conversations(self, db):
+        from siftd.storage.sqlite import get_or_create_harness, insert_conversation
+
+        harness_id = get_or_create_harness(db, "live_test", source="test", log_format="jsonl")
+        ids = {}
+        for external_id, started_at in [
+            ("live_test::SESSION-A", "2024-01-15T10:00:00Z"),
+            ("live_test::SESSION-A::agent::sub1", "2024-01-15T10:05:00Z"),
+            ("SESSION-B", "2024-01-16T10:00:00Z"),
+            ("a::b::c", "2024-01-17T10:00:00Z"),
+        ]:
+            ids[external_id] = insert_conversation(
+                db, external_id=external_id, harness_id=harness_id,
+                workspace_id=None, started_at=started_at,
+            )
+        db.commit()
+        return ids
+
+    def test_matches_the_per_key_resolver(self, db, conversations):
+        from siftd.storage.sessions import (
+            resolve_session_conversation,
+            resolve_session_conversations,
+        )
+
+        keys = [*_KEY_VOCABULARY, "SESSION-A", "SESSION-B", "live_test::SESSION-A", "b::c"]
+        batch = resolve_session_conversations(db, keys)
+        assert {key: batch.get(key) for key in keys} == {
+            key: resolve_session_conversation(db, key) for key in keys
+        }
+
+    def test_newest_conversation_wins_per_key(self, db, conversations):
+        """Re-ingest under several ids leaves duplicates; the newest is the live one."""
+        from siftd.storage.sessions import resolve_session_conversations
+        from siftd.storage.sqlite import get_or_create_harness, insert_conversation
+
+        harness_id = get_or_create_harness(db, "other", source="test", log_format="jsonl")
+        newer = insert_conversation(
+            db, external_id="other::SESSION-B", harness_id=harness_id,
+            workspace_id=None, started_at="2024-06-01T10:00:00Z",
+        )
+        db.commit()
+        assert resolve_session_conversations(db, ["SESSION-B"])["SESSION-B"] == newer
+
+    def test_one_conversations_scan_regardless_of_key_count(self, db, conversations):
+        """The `pending-tags` check runs in doctor's fast lane, so its cost is a contract.
+
+        Resolving key by key full-scans `conversations` per key (the suffix
+        match is unindexable), which made the check O(sessions x
+        conversations). Pin the scan count instead of the wall clock: one pass,
+        however many sessions are queued.
+        """
+        from siftd.storage.sessions import count_orphaned_pending_tags
+
+        for n in range(12):
+            queue_tag(db, f"session-{n}", f"tag-{n}", commit=True)
+
+        statements = []
+        db.set_trace_callback(statements.append)
+        try:
+            count_orphaned_pending_tags(db)
+        finally:
+            db.set_trace_callback(None)
+
+        scans = [s for s in statements if "FROM conversations" in s]
+        assert len(scans) == 1, scans

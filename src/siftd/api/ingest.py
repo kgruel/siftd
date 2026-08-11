@@ -5,7 +5,9 @@ Provides API-level write primitives for ingestion and FTS rebuild operations.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -16,6 +18,8 @@ from siftd.api.database import create_database
 from siftd.api.search import rebuild_fts_index
 from siftd.errors import UserInputError
 from siftd.ingestion import IngestEvent, IngestStats, ingest_all
+
+logger = logging.getLogger(__name__)
 
 
 class AdapterSelectionError(UserInputError):
@@ -75,6 +79,10 @@ class IngestRunResult:
     auto_index: AutoIndexReport | None = None
     adapter_tiers: dict[str, str] = field(default_factory=dict)  # name -> SUPPORT_TIER
     disabled_adapters: list[str] = field(default_factory=list)  # skipped via config knob
+    # True when another process already holds this database's ingest lock, so
+    # this run did nothing. Not an error: an ingest of the same sources is
+    # already in flight. ``stats`` is None in that case.
+    skipped_locked: bool = False
 
 
 __all__ = [
@@ -84,6 +92,70 @@ __all__ = [
     "run_ingest",
     "run_rebuild_fts",
 ]
+
+
+@contextmanager
+def _ingest_lock(db_path: Path) -> Iterator[bool]:
+    """Hold an exclusive, non-blocking advisory lock on ``db_path``'s ingest.
+
+    Yields True when this process owns the lock (or when locking is
+    unavailable, see below) and False when another process already holds it.
+
+    Two concurrent ingests of the same sources both parse the same changed
+    transcript and both insert the same conversation; the loser hits
+    UNIQUE(harness_id, external_id) and used to discard the winner's pointer,
+    freezing that file forever (kgruel/siftd#29). Serializing removes the race
+    at the source. The lock is a sibling ``.ingest.lock`` file rather than the
+    database, so it survives the DB being replaced and so a lock-out never has
+    to open — or create — the database at all. It is keyed on the *resolved*
+    path so two spellings of one database contend and two different databases
+    do not.
+
+    ``flock`` is POSIX-only, and even on POSIX a filesystem may refuse it
+    (some NFS mounts). Both degrade to running unlocked — the pre-0.12.1
+    behavior — because refusing to ingest would be a worse failure than the
+    race this prevents. The refusal is logged at WARNING: degrading silently
+    would leave a user who upgraded for the lock believing they are serialized
+    when they are not.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover — non-POSIX (Windows)
+        yield True
+        return
+
+    lock_path = Path(str(Path(db_path).resolve()) + ".ingest.lock")
+    handle = None
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("w")
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Held by another ingest. BlockingIOError is an OSError subclass, so
+        # this branch must precede the degrade branch below.
+        if handle is not None:
+            handle.close()
+        yield False
+        return
+    except OSError as exc:
+        # Degrading is deliberate, but silence is not: an ingest that is not
+        # serialized is one that can still lose the UNIQUE race, and a user who
+        # upgraded for the lock has no other way to learn it is not in effect.
+        logger.warning(
+            f"Ingest is running unserialized: could not lock {lock_path} "
+            f"({exc.strerror or exc}). Concurrent ingests of this database can "
+            "still collide (kgruel/siftd#29)."
+        )
+        if handle is not None:
+            handle.close()
+        yield True
+        return
+
+    try:
+        yield True
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def _resolve_adapters(
@@ -137,10 +209,73 @@ def run_ingest(
     pending-disclosure auto-indexing is skipped (``skipped_reason="notice"``, disclosure on
     ``result.auto_index.notice``) until any surface has shown the notice — interactive
     ingest, or the first explicit ``siftd embed``.
+
+    The *database* phase runs under an exclusive advisory lock on the database: a second
+    concurrent invocation does nothing and returns ``skipped_locked=True`` (stats None).
+    This is the single funnel into :func:`~siftd.ingestion.ingest_all` — the CLI ``ingest``
+    command and ``doctor fix --ingest`` are its only callers — so the lock belongs here, not
+    in either surface.
+
+    The lock is released before the post-ingest auto-index. Embedding a stale set against a
+    rate-limited remote backend can take minutes *after* every database write has landed, and
+    holding the lock across it turned that window into silently skipped ingests: an
+    overlapping run — a cron tick, a scoped ``--path`` request — got ``skipped_locked`` and,
+    under the auto-quiet that fires on any non-TTY, said nothing about it. The embedding step
+    opens its own connections and needs nothing the lock protects; before 0.12.1 there was no
+    lock at all, so releasing here restores exactly the concurrency exposure auto-indexing
+    already had while keeping database ingestion serialized. Strictly better for ingest,
+    no worse than 0.12.0 for embedding.
     """
     path = Path(db_path)
-    db_created = not path.exists()
     started = perf_counter()
+
+    with _ingest_lock(path) as acquired:
+        if not acquired:
+            return IngestRunResult(
+                db_path=path,
+                db_created=False,
+                mode="ingest",
+                adapters=[],
+                scan_paths=list(scan_paths or []),
+                stats=None,
+                elapsed_ms=int((perf_counter() - started) * 1000),
+                skipped_locked=True,
+            )
+        result = _run_ingest_locked(
+            path=path,
+            adapter_names=adapter_names,
+            scan_paths=scan_paths,
+            filter_binary=filter_binary,
+            on_event=on_event,
+        )
+
+    # Steady-state auto-index, outside the lock. Belt-and-suspenders: the hook already
+    # isolates embedding failures onto the report, but a completed ingest must never be
+    # undone by a bug in the gating logic itself either.
+    try:
+        result.auto_index = _maybe_auto_index(path, on_notice=on_notice)
+    except Exception:
+        result.auto_index = None
+
+    result.elapsed_ms = int((perf_counter() - started) * 1000)
+    return result
+
+
+def _run_ingest_locked(
+    *,
+    path: Path,
+    adapter_names: list[str] | None,
+    scan_paths: list[str] | None,
+    filter_binary: bool | None,
+    on_event: Callable[[IngestEvent], None] | None,
+) -> IngestRunResult:
+    """The database phase of :func:`run_ingest`, with the ingest lock held.
+
+    Returns a result its caller still completes: ``auto_index`` and ``elapsed_ms`` are
+    filled in after the lock is released, because the embedding step deliberately runs
+    unserialized.
+    """
+    db_created = not path.exists()
 
     dropin_failures: list[tuple[Path, str]] = []
     disabled_adapters: list[str] = []
@@ -170,15 +305,6 @@ def run_ingest(
     except Exception:
         pass
 
-    # Steady-state auto-index. Belt-and-suspenders: the hook already isolates embedding
-    # failures onto the report, but a completed ingest must never be undone by a bug in the
-    # gating logic itself either.
-    try:
-        auto_index = _maybe_auto_index(path, on_notice=on_notice)
-    except Exception:
-        auto_index = None
-
-    elapsed_ms = int((perf_counter() - started) * 1000)
     return IngestRunResult(
         db_path=path,
         db_created=db_created,
@@ -186,9 +312,8 @@ def run_ingest(
         adapters=selected_names,
         scan_paths=list(scan_paths or []),
         stats=stats,
-        elapsed_ms=elapsed_ms,
+        elapsed_ms=0,  # the caller sets this once the auto-index has finished
         dropin_failures=dropin_failures,
-        auto_index=auto_index,
         adapter_tiers=adapter_tiers,
         disabled_adapters=disabled_adapters,
     )

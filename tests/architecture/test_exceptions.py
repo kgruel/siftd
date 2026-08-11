@@ -64,6 +64,9 @@ PERMANENT_CARVEOUTS = {
     "also caught as delegation control flow",
     ("serve/client.py", "ServeUnavailable"): "delegation control flow (fall back to local)",
     ("serve/client.py", "ServeRequest4xx"): "delegation control flow (structured 4xx surface)",
+    ("cli/data.py", "_FixNotApplied"): "control flow inside doctor fix's step runner: "
+    "a step that declined to run is neither a failure nor a fix, and is reported as "
+    "'not applied' rather than raised at the user",
 }
 
 # Pre-taxonomy stragglers, keyed the same way, valued by the slice that

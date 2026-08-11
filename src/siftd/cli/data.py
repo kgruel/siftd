@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -454,6 +455,25 @@ def cmd_ingest(args) -> int:
         else:
             status.error(message)
         return 1
+
+    if result.skipped_locked:
+        # Another ingest holds the lock. Skipping is the correct outcome, not a
+        # failure: the same sources are already being processed. Exit 0 so a
+        # cron/wrapper pair that overlaps stays quiet instead of alarming.
+        message = "Another ingest is already running — skipped."
+        # The lock is per-database, never per-adapter or per-path, so a run that
+        # asked for specific work did none of it. Auto-quiet (any non-TTY, which
+        # is every scripted `siftd ingest --path … && siftd search …`) must not
+        # swallow that; only an explicit --quiet does.
+        scoped = bool(args.path or args.adapter)
+        if json_mode:
+            renderer._emit({"type": "skipped", "reason": "locked", "message": message})
+        elif not quiet_explicit and (scoped or not auto_quiet):
+            status.info(
+                message
+                + (" The requested paths/adapters were not ingested." if scoped else "")
+            )
+        return 0
 
     stats = result.stats
     if stats is None:
@@ -1006,8 +1026,15 @@ def cmd_copy(args) -> int:
 
 
 def _doctor_fix_pending_tags(args) -> int:
-    """Clean up stale sessions and orphaned pending tags."""
-    from siftd.api.sessions import cleanup_stale_sessions
+    """Apply queued session tags to their ingested conversations.
+
+    The queue only drains at ingest, and a settled session never re-ingests,
+    so this is the only recovery path for tags that were queued while the
+    drain was broken. It applies; it does not clean up. Rows that resolve to
+    no conversation are reported and kept — discarding them needs
+    ``--discard-unresolved``.
+    """
+    from siftd.api.sessions import recover_pending_tags
 
     db = resolve_db(args)
 
@@ -1015,24 +1042,115 @@ def _doctor_fix_pending_tags(args) -> int:
         status.db_missing(db)
         return 1
 
+    discard = getattr(args, "discard_unresolved", False)
     conn = open_database(db)
-
-    sessions_deleted, tags_deleted = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
+    result = recover_pending_tags(conn, max_age_hours=48, discard_unresolved=discard, commit=True)
+    conn.close()
 
     if args.json:
-        out = {
-            "sessions_deleted": sessions_deleted,
-            "tags_deleted": tags_deleted,
-        }
-        print(json.dumps(out, indent=2))
-    else:
-        if sessions_deleted or tags_deleted:
-            status.confirm(f"Cleaned up {sessions_deleted} stale session(s) and {tags_deleted} orphaned tag(s)")
-        else:
-            status.info("No stale sessions or orphaned tags to clean up")
+        print(json.dumps(
+            {
+                "applied": [
+                    {
+                        "session": a.harness_session_id,
+                        "tag": a.tag_name,
+                        "target_kind": a.target_kind,
+                        "target_id": a.target_id,
+                        "already_present": a.already_present,
+                    }
+                    for a in result.applied
+                ],
+                "unresolved": [_pending_entry(u) for u in result.unresolved],
+                # A list, not a count, and disjoint from `unresolved`: a
+                # consumer reading both must never see a deleted row described
+                # as one that was kept, and a delete is the outcome most worth
+                # being able to name afterwards.
+                "discarded": [_pending_entry(u) for u in result.discarded],
+                "stale_sessions_pruned": result.stale_sessions_pruned,
+            },
+            indent=2,
+        ))
+        return 0
 
-    conn.close()
+    if result.applied:
+        already = result.already_present
+        detail = f" ({already} already applied by hand)" if already else ""
+        status.confirm(f"Applied {len(result.applied)} queued tag(s) to their conversations{detail}")
+    if result.stale_sessions_pruned:
+        status.info(f"Pruned {result.stale_sessions_pruned} stale session registration(s)")
+
+    if result.discarded:
+        status.warning(
+            f"Discarded {len(result.discarded)} pending tag(s) that resolve to no conversation"
+        )
+        _print_pending_sample(result.discarded)
+    # Show the keys, not just a count: the session ids are what a user needs
+    # to chase these down (or to recognize a mistyped id). Reported even
+    # alongside a discard, since --discard-unresolved no longer sweeps the
+    # target-pending bucket, so rows can survive it — and `unresolved` now
+    # holds only what survived, so nothing is listed under both headings.
+    _print_unresolved_pending(result.unresolved)
+    if not (
+        result.applied or result.stale_sessions_pruned or result.discarded or result.unresolved
+    ):
+        status.info("No pending tags to apply")
+
     return 0
+
+
+def _pending_entry(entry) -> dict:
+    """One queued-tag row, as the machine channel reports it."""
+    return {
+        "session": entry.harness_session_id,
+        "tag": entry.tag_name,
+        "reason": entry.reason,
+        "kind": entry.kind,
+    }
+
+
+def _print_pending_sample(rows: list, sample: int = 10) -> None:
+    """List the session keys behind a count, capped."""
+    for u in rows[:sample]:
+        print(f"    {u.harness_session_id}  {u.tag_name}  ({u.reason})")
+    if len(rows) > sample:
+        print(f"    ... {len(rows) - sample} more")
+
+
+def _print_unresolved_pending(unresolved: list, sample: int = 10) -> None:
+    """Report kept pending tags, split by what is blocking each.
+
+    Same buckets the `pending-tags` check reports, and for the same reason:
+    a row whose session never ingested needs a decision (chase it down, or
+    `--discard-unresolved`), while a row still waiting on a target only needs
+    another ingest — collapsing the two mislabels each as the other.
+    """
+    from siftd.api.sessions import DISCARDABLE_KIND
+
+    by_kind: dict[str, list] = defaultdict(list)
+    for u in unresolved:
+        by_kind[u.kind].append(u)
+
+    stranded = by_kind.pop(DISCARDABLE_KIND, [])
+    if stranded:
+        status.warning(
+            f"{len(stranded)} pending tag(s) match no ingested conversation — kept, not deleted",
+            hint=(
+                "Run 'siftd ingest' if those sessions are new, then re-run this fix. "
+                "Use '--discard-unresolved' to drop them, or '--json' for the full list."
+            ),
+        )
+        _print_pending_sample(stranded, sample)
+
+    # Whatever is left is queued behind a target that does not exist yet.
+    # Drained by what remains rather than by name, so a kind added to
+    # UnresolvedKind is reported here instead of silently dropped.
+    waiting = [u for rows in by_kind.values() for u in rows]
+    if waiting:
+        status.info(
+            f"{len(waiting)} pending tag(s) name a target the transcript does not hold "
+            "yet — kept queued; a later ingest may still land them",
+        )
+        _print_pending_sample(waiting, sample)
 
 
 def _doctor_list(args) -> int:
@@ -1057,8 +1175,20 @@ def _doctor_list(args) -> int:
     return 0
 
 
-def _run_fix_steps(steps: list, conn, db) -> int:
-    """Run ``(label, fn)`` fix steps as a live spinner step-log; return error count.
+class _FixNotApplied(Exception):
+    """A fix step declined to run. Not a failure, and not a fix either.
+
+    Raised by a step that could not do its work for a benign reason (an ingest
+    already holds the lock). It has to be distinguishable from success: a ``✓``
+    plus "All fixes applied." over work that never happened is a lie the caller
+    then acts on — and the findings cache would be cleared as if it were fixed.
+    """
+
+
+def _run_fix_steps(steps: list, conn, db) -> tuple[int, int]:
+    """Run ``(label, fn)`` fix steps as a live spinner step-log.
+
+    Returns ``(errors, not_applied)``.
 
     The two hand-rolled ``\\r``-overwrite spinners dissolve onto the generic
     ``ProgressConsumer(shape="steps")`` — each step feeds a pending spinner that
@@ -1073,6 +1203,7 @@ def _run_fix_steps(steps: list, conn, db) -> int:
 
     plain_icons = current_icons() if supports_unicode() else ASCII_ICONS
     errors = 0
+    not_applied = 0
 
     consumer = ProgressConsumer(shape="steps")
     with consumer:
@@ -1084,6 +1215,9 @@ def _run_fix_steps(steps: list, conn, db) -> int:
             try:
                 result = fn(conn, db)
                 outcome, text = "done", f"{label}: {result}"
+            except _FixNotApplied as e:
+                outcome, text = "error", f"{label}: not applied — {e}"
+                not_applied += 1
             except Exception as e:  # noqa: BLE001 — fix failures are reported, not raised
                 outcome, text = "error", f"{label}: {e}"
                 errors += 1
@@ -1093,7 +1227,7 @@ def _run_fix_steps(steps: list, conn, db) -> int:
             else:
                 mark = plain_icons.ok if outcome == "done" else plain_icons.error
                 print(f"  {mark} {text}")
-    return errors
+    return errors, not_applied
 
 
 def _doctor_fix(args) -> int:
@@ -1123,15 +1257,25 @@ def _doctor_fix(args) -> int:
     print(f"Applying {fmt_count(len(actionable))} fix(es):\n")
 
     steps = [_FIX_REGISTRY[entry["fix_command"]] for entry in actionable]
-    errors = _run_fix_steps(steps, conn, db)
+    errors, not_applied = _run_fix_steps(steps, conn, db)
 
     conn.close()
-    clear_findings_cache()
+    # A fix that declined to run is still pending, so the cache it came from
+    # stays: clearing it would drop the finding on the floor unfixed. The fixes
+    # that did run are idempotent, so re-running the batch is safe.
+    if not not_applied:
+        clear_findings_cache()
 
     print()
     if errors:
         status.error(f"Done with {errors} error(s).", hint="Run 'siftd doctor' to verify.")
         return 1
+    if not_applied:
+        status.warning(
+            f"{fmt_count(not_applied)} fix(es) not applied.",
+            hint="Re-run 'siftd doctor fix' once the blocking condition clears.",
+        )
+        return 0
     status.confirm("All fixes applied.", hint="Run 'siftd doctor' to verify.")
     return 0
 
@@ -1144,7 +1288,7 @@ def _doctor_fix_flagged(args, fix_command: str) -> int:
         return 1
 
     conn = open_database(db)
-    errors = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
+    errors, _not_applied = _run_fix_steps([_FIX_REGISTRY[fix_command]], conn, db)
     conn.close()
     return 1 if errors else 0
 
@@ -1156,7 +1300,10 @@ def _fix_ingest(conn, db_path):
     # Surface the remote first-egress disclosure live, BEFORE content leaves the machine —
     # auto-index only emits it through on_notice (else it lands on a discarded result).
     # Matches the ingest command's on_notice → status.info in its plain-text mode.
-    stats = run_ingest(db_path=db_path, on_notice=status.info).stats
+    result = run_ingest(db_path=db_path, on_notice=status.info)
+    if result.skipped_locked:
+        raise _FixNotApplied("another ingest is already running")
+    stats = result.stats
     if stats is None:
         return "0 file(s) ingested, 0 skipped"
     return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"
@@ -1191,10 +1338,20 @@ def _fix_backfill_git_remote(conn, db_path):
 
 
 def _fix_pending_tags(conn, db_path):
-    from siftd.api.sessions import cleanup_stale_sessions
+    # Never discards: this is the batch path (`siftd doctor fix`), where the
+    # user has not opted into deleting anything. Unresolved rows are counted
+    # and kept; `siftd doctor fix --pending-tags` reports them in detail.
+    from siftd.api.sessions import DISCARDABLE_KIND, recover_pending_tags
 
-    sessions, tags = cleanup_stale_sessions(conn, max_age_hours=48, commit=True)
-    return f"{sessions} session(s), {tags} tag(s) cleaned up"
+    result = recover_pending_tags(conn, max_age_hours=48, commit=True)
+    kept = Counter(u.kind for u in result.unresolved)
+    stranded = kept.pop(DISCARDABLE_KIND, 0)
+    return (
+        f"{len(result.applied)} tag(s) applied, "
+        f"{sum(kept.values())} awaiting a target (kept), "
+        f"{stranded} matching no conversation (kept), "
+        f"{result.stale_sessions_pruned} stale session(s) pruned"
+    )
 
 
 def _fix_blob_refcount(conn, db_path):
@@ -1228,7 +1385,7 @@ _FIX_REGISTRY = {
     "siftd embed": ("Indexing embeddings", _fix_embed),
     "siftd embed --rebuild": ("Rebuilding embeddings index", _fix_embed_rebuild),
     "siftd backfill --git-remote": ("Backfilling git remote URLs", _fix_backfill_git_remote),
-    "siftd doctor fix --pending-tags": ("Cleaning up stale sessions", _fix_pending_tags),
+    "siftd doctor fix --pending-tags": ("Applying queued session tags", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),
     "siftd doctor fix --triggers": ("Recreating blob ref-count triggers", _fix_blob_triggers),
 }
@@ -1448,6 +1605,7 @@ def cmd_doctor(args) -> int:
     if action != "fix":
         for flag, name in (
             ("pending_tags", "--pending-tags"),
+            ("discard_unresolved", "--discard-unresolved"),
             ("blob_refcount", "--blob-refcount"),
             ("triggers", "--triggers"),
         ):
@@ -1466,6 +1624,10 @@ def cmd_doctor(args) -> int:
     if action == "fix":
         if getattr(args, "pending_tags", False):
             return _doctor_fix_pending_tags(args)
+        # --discard-unresolved only means anything to the pending-tags fix;
+        # say so rather than silently ignoring a destructive-sounding flag.
+        if getattr(args, "discard_unresolved", False):
+            status.info("--discard-unresolved ignored without '--pending-tags'")
         if getattr(args, "blob_refcount", False):
             return _doctor_fix_flagged(args, "siftd doctor fix --blob-refcount")
         if getattr(args, "triggers", False):
@@ -1613,7 +1775,9 @@ def build_data_parser(subparsers) -> None:
   siftd doctor run ingest-pending       # run specific check
   siftd doctor run check1 check2        # run multiple checks
   siftd doctor fix                      # show fix commands for issues
-  siftd doctor fix --pending-tags       # clean up stale sessions/tags
+  siftd doctor fix --pending-tags       # apply queued session tags to their conversations
+  siftd doctor fix --pending-tags --discard-unresolved
+                                        # ...and delete the ones that match nothing
   siftd doctor --json                   # output as JSON
   siftd doctor --strict                 # exit 1 on warnings (for CI)
 
@@ -1629,7 +1793,13 @@ exit codes:
     p_doctor.add_argument("subcommand", nargs="*", help="list | run [checks...] | fix | <check-name>")
     p_doctor.add_argument("--json", action="store_true", help="Output as JSON")
     p_doctor.add_argument("--strict", action="store_true", help="Exit 1 on warnings (not just errors). Useful for CI.")
-    p_doctor.add_argument("--pending-tags", action="store_true", help="Clean up stale sessions and orphaned pending tags (use with 'fix')")
+    p_doctor.add_argument("--pending-tags", action="store_true", help="Apply queued session tags to their ingested conversations (use with 'fix')")
+    p_doctor.add_argument(
+        "--discard-unresolved",
+        action="store_true",
+        dest="discard_unresolved",
+        help="Also delete pending tags that match no conversation (use with 'fix --pending-tags'). Destructive.",
+    )
     p_doctor.add_argument("--deep", action="store_true", help="Include deep integrity checks (slower).")
     p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")

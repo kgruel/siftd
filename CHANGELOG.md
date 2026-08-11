@@ -5,6 +5,192 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **Ingest stops full-scanning `ingested_files` on every replace.** A new
+  `idx_ingested_files_conversation` index backs the "does another path point
+  at this conversation?" question ingest now asks before replacing anything,
+  and the `ON DELETE CASCADE` that fires on every conversation delete — both
+  were table scans. Existing databases pick the index up on open; there is no
+  migration to run.
+
+### Removed
+
+- **`cleanup_stale_sessions`**, which deleted stale session registrations
+  *and* discarded their queued tags. It was never part of `siftd.api`'s
+  documented surface, and it lost its last caller when
+  `doctor fix --pending-tags` stopped treating deletion as a repair.
+  `prune_stale_sessions` does the registration half without the data loss.
+
+### Fixed
+
+- **Pending session tags are applied again.** `siftd tag --session <id>`
+  queues under the bare harness session id, but ingest drained the queue
+  by the adapter-namespaced `external_id` (`claude_code::<uuid>`), so for
+  Claude Code the queue never drained and every queued tag was silently
+  lost. Ingest now falls back to the bare id (adapter-name prefix
+  stripped, parent uuid for `::agent::` subagent transcripts), which also
+  rescues queues stranded by earlier versions. The same mismatch left
+  live sessions registered forever; ingest now unregisters the bare key
+  too. Both key forms drain in one pass rather than only the first with
+  rows: an agent tagging via `--current` queues under the prefixed id the
+  session-start hook registered, while `siftd tag --session <uuid>` queues
+  under the bare one, and a session routinely has both.
+- **Ingest no longer discards a queued tag it could not apply.** The drain
+  deleted every row for the session up front and only then resolved
+  targets, so a `--last-tool-call` queued before any tool ran, or an
+  `--exchange N` past the end of a still-growing transcript, was destroyed
+  with nothing left for `doctor` to see. Rows are now consumed only once
+  they have actually been applied; the rest stay queued for the next
+  ingest or for `siftd doctor fix --pending-tags`. Ingest and recovery now
+  share one target resolver, so they can no longer disagree.
+- **Session tags stay with the session, not a subagent.** A subagent
+  transcript shares its session's queue keys with the parent, so an ingest
+  that reached the subagent first — routinely, when the parent is
+  byte-stable while the Agent is still writing — took the tag and left
+  `siftd query -l` pointing at a sidecar transcript. The drain now agrees
+  with the recovery path (which already skipped subagent rows) and leaves
+  those rows queued for the parent — and leaves the parent's session
+  *registration* in place while it does. Unregistering every key form on a
+  subagent's ingest told the recovery path the parent's queued rows were
+  orphaned, so `doctor fix --pending-tags` would apply a `--last-*` marker
+  against a parent transcript that was still being written. Ingest now
+  unregisters exactly the keys it drained.
+- **Conversation *and* element tags survive re-ingest, on every adapter.**
+  When a transcript changes, ingest replaces the conversation row, and the
+  polymorphic cleanup triggers took its `tag_assignments` with it — so
+  tagging a live session lost the tag on the next ingest. Assignments are
+  now snapshotted before the delete and re-pointed at the replacement rows
+  (`applied_at` preserved) inside the same transaction: the conversation
+  by its `external_id`, and prompt / response / tool-call / exchange tags
+  by their event's `(kind, external_id)`, so a `--last-response` or a
+  hand-applied element tag stays on the same turn instead of being
+  destroyed by the next ingest. This now covers the session-dedup
+  strategy (`gemini_cli`, `opencode`, `antigravity_cli`) as well as the
+  file-dedup one, where the previous release note over-claimed. A
+  replacement whose transcript no longer parses to a conversation has
+  nothing to carry the tags to; it now says what was dropped instead of
+  dropping it silently, and names every kind of loss it is holding — a
+  conversation tagged only at block level skipped the warning entirely,
+  because assignments that could never be re-pointed were not counted as
+  "anything to report". Remaining limitations, deferred to 0.13.0:
+  block-level tags (the trace-block surface) are not re-pointed, and
+  `doctor fix --pending-tags` still resolves late-bound markers against
+  whatever the transcript holds at that moment — now only a risk for a
+  still-running session whose registration has lapsed, since a registered
+  one is out of the fix's scope entirely.
+- **`siftd doctor fix --pending-tags` repairs instead of deleting.** It ran
+  `cleanup_stale_sessions`, so the remedy doctor advertised for stranded
+  queued tags destroyed exactly the data that was recoverable. It now
+  resolves each queued tag to the conversation its session became
+  (matching the bare session id against the adapter-prefixed `external_id`,
+  skipping subagent transcripts), applies it there — reusing the ingest
+  drain's own resolution for `--last-*` and `--exchange` targets — and
+  consumes the queue row. Rows that match no conversation are reported
+  with their session key and **kept**; deleting them now takes the explicit
+  `--discard-unresolved`. Recovery is scoped to sessions that are no longer
+  registered, and "registered" now allows for either key form: the
+  session-start hook registers `claude_code::<uuid>` while `tag --session`
+  queues the bare uuid, so an exact-key scope called a *live* session's rows
+  abandoned and resolved their `--last-*` markers against a half-written
+  transcript, pinning the tag to a non-final turn. Stale session
+  registrations are still pruned, but their queued tags are no longer
+  pruned with them. This is the only
+  recovery path for tags queued before the drain was fixed: a settled
+  session never re-ingests. The `--json` output changes shape accordingly
+  (`applied` / `unresolved` / `discarded` / `stale_sessions_pruned`,
+  replacing `sessions_deleted` / `tags_deleted`), and the doctor check's
+  wording no longer describes deletion as a fix. `unresolved` and
+  `discarded` partition what was not applied — a row appears in exactly one,
+  and `discarded` carries each deleted row's session key and reason rather
+  than a bare count, so neither channel can present a deleted row as one
+  that was kept.
+- **`siftd doctor --strict` can reach green again.** Queued rows that the
+  fix cannot apply are kept by design, but they were still counted as an
+  actionable warning — so `--strict` (documented for CI) exited 1 forever
+  and `doctor fix` kept advertising a fix that changed nothing. The check
+  now reports three buckets, classified by the same resolvers the fix runs:
+  rows whose session *and* target resolve stay a warning; rows waiting on a
+  target the transcript does not hold yet (a `--last-*` marker with no such
+  event, an `--exchange` past the end) become an `info` finding that says a
+  later ingest may still land them; and rows whose session was never
+  ingested become an `info` finding naming `--discard-unresolved`. That flag
+  is scoped to the last bucket — a row still waiting on a target is one
+  ingest away from landing, so discarding it would lose a live tag. The
+  check also resolves the whole queue in a single pass over `conversations`
+  instead of one full scan per queued session, which is what it takes to
+  belong in doctor's fast lane on a real-sized database.
+- **Concurrent ingests no longer poison a file forever.** Two overlapping
+  `siftd ingest` runs (a cron entry plus a wrapper script on the same
+  minute, or an event-driven ingest crossing a scheduled one) both parse the
+  same changed transcript and both insert the same conversation; the loser
+  hit `UNIQUE constraint failed: conversations.harness_id,
+  conversations.external_id` and *discarded the winner's pointer*, leaving
+  `ingested_files.conversation_id` NULL beside an orphaned conversation.
+  That state is a fixed point — the NULL made the next re-ingest skip its
+  delete, so it collided again — and a single process then reproduced the
+  failure indefinitely: the transcript froze at whatever the first run
+  captured, and search silently returned a stub. One reporter's host
+  accumulated 415 such rows over eight days. Three changes: ingest's
+  *database phase* now runs under a per-database advisory lock, so a second
+  invocation reports briefly and exits 0 instead of racing (skipping is
+  correct when an ingest is already writing). The lock is released before
+  the post-ingest auto-index: embedding a stale set against a rate-limited
+  remote backend can run for minutes after every write has landed, and
+  holding the lock across that turned the window into silently skipped
+  ingests — a cron tick or a scoped `--path` request getting `skipped` long
+  after the conflicting writes finished. A duplicate-conversation collision
+  now re-points the bookkeeping row at the conversation that already exists
+  rather than clearing it, turning a lost race into a no-op. And the
+  re-ingest path resolves the conversation by `(harness_id, external_id)`
+  instead of trusting a NULL pointer, so rows already poisoned in the field heal
+  themselves on the next ingest — including the ones whose transcript has
+  since gone quiet, which is most of them: a row carrying an error is now
+  re-examined whatever its stat says, because the failure write stamped the
+  file's own hash and mtime and so hid it behind the unchanged-file skip
+  forever. A row whose file is gone cannot be re-derived and keeps its
+  marker; the conversation it produced stays indexed and searchable. The
+  self-heal snapshots the orphan's tags and re-points them at the
+  replacement, using the same machinery as a normal replacement — without
+  that, the first ingest after upgrading would have destroyed the tags on
+  every affected conversation at once. Thanks to the reporter whose
+  cross-host analysis isolated this. (kgruel/siftd#29)
+- **Ingest bookkeeping never asserts content it did not ingest.** Follow-up
+  hardening on the above, from an adversarial review of the fix itself.
+  The collision repair recorded the file's *current* hash and mtime while
+  linking the conversation some *other* read had produced, so the next run's
+  unchanged-file skip matched and the delta was never indexed — with the
+  error cleared, the only signal was gone too. It now leaves the row's
+  hash/stat at whatever was actually ingested, so the next run re-hashes and
+  converges. Three related repairs: a failure after a successful ingest no
+  longer NULLs the conversation pointer (the rollback has resurrected that
+  conversation, so it is live, not stale — a transient `database is locked`
+  used to orphan it permanently); the re-ingest path no longer deletes a
+  conversation another path's bookkeeping row points at, which cascaded that
+  row away and replaced a live transcript with a stale copy's content; and
+  two paths carrying one session (a restored backup, an overlapping
+  `--path`) settle on one conversation with a warning naming the duplicate,
+  instead of taking turns replacing each other every run. That settlement
+  now holds on the ordinary replace path too, which was the one delete site
+  with no such guard: a content change on either copy deleted the shared
+  conversation and cascaded the other copy's bookkeeping row and events
+  away. A changed duplicate is linked, named, and left settled — its change
+  is not ingested, because only the path holding the session's slot can
+  write that conversation.
+- **A locked-out ingest no longer looks like a successful one.** The lock is
+  per-database, so `siftd ingest --path … --adapter …` blocked by a
+  concurrent run did none of the work it was asked for — and said nothing,
+  because output auto-quiets whenever stdout is not a TTY (every script and
+  cron chain). A scoped run now reports the skip unless `--quiet` was passed
+  explicitly. `siftd doctor fix` reported the same lock-out as an applied
+  fix, printed "All fixes applied.", and cleared the finding from its cache;
+  it now marks the step not applied and keeps the finding pending. When the
+  advisory lock cannot be taken at all (an NFS mount that refuses `flock`),
+  ingest still runs — refusing would be the worse failure — but now logs a
+  warning instead of degrading silently.
+
 ## [0.12.0] - 2026-07-18
 
 > The stewardship release. Adapters gain an explicit support contract —

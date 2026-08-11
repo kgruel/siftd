@@ -1,15 +1,15 @@
 """Tests for ingestion orchestration utility functions."""
 
 from datetime import UTC
+from types import SimpleNamespace
 
 import pytest
 
 from siftd.adapters.sdk import AdapterParseError
+from siftd.storage.events import get_last_event_id, get_prompt_by_index
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
-    _get_last_event_id,
-    _get_prompt_by_index,
     _get_single_conversation,
     _normalize_status,
     _parse_timestamp,
@@ -188,41 +188,35 @@ class TestSummarizeConversation:
 
 
 class TestGetPromptByIndex:
-    def test_zero_raises_value_error(self, tmp_path):
-        """_get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+    """Index validation happens before any lookup, so an empty DB is enough."""
+
+    @pytest.fixture
+    def conn(self, tmp_path):
         from siftd.storage.sqlite import open_database
 
         conn = open_database(tmp_path / "t.db")
         try:
-            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                _get_prompt_by_index(conn, "any-conv-id", 0)
+            yield conn
         finally:
             conn.close()
 
-    def test_negative_raises_value_error(self, tmp_path):
-        """_get_prompt_by_index rejects negative exchange_index."""
-        from siftd.storage.sqlite import open_database
+    def test_zero_raises_value_error(self, conn):
+        """get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            get_prompt_by_index(conn, "any-conv-id", 0)
 
-        conn = open_database(tmp_path / "t.db")
-        try:
-            with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-                _get_prompt_by_index(conn, "any-conv-id", -1)
-        finally:
-            conn.close()
+    def test_negative_raises_value_error(self, conn):
+        """get_prompt_by_index rejects negative exchange_index."""
+        with pytest.raises(ValueError, match="exchange_index must be >= 1"):
+            get_prompt_by_index(conn, "any-conv-id", -1)
 
-    def test_none_returns_none(self, tmp_path):
-        """_get_prompt_by_index returns None when exchange_index is None."""
-        from siftd.storage.sqlite import open_database
-
-        conn = open_database(tmp_path / "t.db")
-        try:
-            assert _get_prompt_by_index(conn, "any-conv-id", None) is None
-        finally:
-            conn.close()
+    def test_none_returns_none(self, conn):
+        """get_prompt_by_index returns None when exchange_index is None."""
+        assert get_prompt_by_index(conn, "any-conv-id", None) is None
 
 
 class TestGetLastEventId:
-    """_get_last_event_id picks the most-recent event of `kind`."""
+    """get_last_event_id picks the most-recent event of `kind`."""
 
     def _seed(self, tmp_path):
         from siftd.storage.sqlite import (
@@ -248,29 +242,39 @@ class TestGetLastEventId:
         tc2 = insert_tool_call(conn, r2, c, t, "tc2", "{}", "{}", "success",
                                "2024-01-15T11:00:01Z")
         conn.commit()
-        return conn, c, p1, p2, r1, r2, tc1, tc2
+        # Named rather than positional: every test wants two or three of these
+        # and unpacking the rest into throwaways obscured which ones.
+        return SimpleNamespace(
+            conn=conn, conversation=c,
+            prompts=(p1, p2), responses=(r1, r2), tool_calls=(tc1, tc2),
+        )
 
     def test_last_prompt(self, tmp_path):
-        conn, c, _p1, p2, *_ = self._seed(tmp_path)
+        seeded = self._seed(tmp_path)
         try:
-            assert _get_last_event_id(conn, c, "prompt") == p2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "prompt") == (
+                seeded.prompts[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_last_response(self, tmp_path):
-        conn, c, _p1, _p2, _r1, r2, *_ = self._seed(tmp_path)
+        seeded = self._seed(tmp_path)
         try:
-            assert _get_last_event_id(conn, c, "response") == r2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "response") == (
+                seeded.responses[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_last_tool_call(self, tmp_path):
-        conn, c, *_, tc1, tc2 = self._seed(tmp_path)
-        del tc1
+        seeded = self._seed(tmp_path)
         try:
-            assert _get_last_event_id(conn, c, "tool_call") == tc2
+            assert get_last_event_id(seeded.conn, seeded.conversation, "tool_call") == (
+                seeded.tool_calls[-1]
+            )
         finally:
-            conn.close()
+            seeded.conn.close()
 
     def test_empty_returns_none(self, tmp_path):
         from siftd.storage.sqlite import (
@@ -284,7 +288,7 @@ class TestGetLastEventId:
         c = insert_conversation(conn, external_id="c", harness_id=h,
                                 workspace_id=ws, started_at="2024-01-15T10:00:00Z")
         try:
-            assert _get_last_event_id(conn, c, "response") is None
+            assert get_last_event_id(conn, c, "response") is None
         finally:
             conn.close()
 
@@ -468,3 +472,660 @@ class TestApplyPendingTagsLastMarkers:
         ).fetchone()
         assert row is None
         conn.close()
+
+
+class TestSessionKeyCandidates:
+    """Key forms a pending tag / registered session may be stored under."""
+
+    class _ClaudeCode:
+        NAME = "claude_code"
+
+    def test_prefixed_conversation_falls_back_to_bare(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        assert _session_key_candidates(self._ClaudeCode(), "claude_code::abc") == [
+            "claude_code::abc",
+            "abc",
+        ]
+
+    def test_subagent_tries_bare_parent_not_bare_subagent(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        # `<uuid>::agent::<id>` is not a key any write path produces, so it must
+        # not appear: the queue only ever holds the bare parent uuid.
+        assert _session_key_candidates(
+            self._ClaudeCode(), "claude_code::abc::agent::a1"
+        ) == ["claude_code::abc::agent::a1", "claude_code::abc", "abc"]
+
+    def test_bare_external_id_is_its_own_only_candidate(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        assert _session_key_candidates(self._ClaudeCode(), "abc") == ["abc"]
+
+    def test_other_adapters_prefix_is_left_alone(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        class _Other:
+            NAME = "other"
+
+        # `::` that isn't this adapter's name prefix is not stripped.
+        assert _session_key_candidates(_Other(), "claude_code::abc") == ["claude_code::abc"]
+
+    def test_adapter_without_name_attribute(self):
+        from siftd.ingestion.orchestration import _session_key_candidates
+
+        class _Nameless:
+            pass
+
+        assert _session_key_candidates(_Nameless(), "::abc") == ["::abc"]
+
+
+class TestBookkeepingRecovery:
+    """The ingested_files row must never lose a valid conversation pointer.
+
+    Two concurrent ingests both parse the same changed transcript and both
+    insert the same conversation; the loser hits
+    ``UNIQUE(harness_id, external_id)``. Discarding the winner's pointer there
+    (the pre-0.12.1 behavior) is a fixed point: the NULL makes the next
+    re-ingest skip its delete, so it collides again, forever
+    (kgruel/siftd#29). These tests pin both halves — never write the NULL, and
+    self-heal a row already carrying one.
+    """
+
+    @staticmethod
+    def _adapter(source_path, state, *, name="poison_test"):
+        from conftest import make_conversation, make_test_adapter
+
+        def parse(source):
+            if state.get("raise"):
+                raise ValueError(state["raise"])
+            yield make_conversation(
+                external_id=state["external_id"],
+                harness_name=name,
+                prompt_text=state["text"],
+                ended_at=state["ended_at"],
+            )
+
+        return make_test_adapter(
+            source_path, name=name, harness_log_format="jsonl", parse_fn=parse,
+        )
+
+    @staticmethod
+    def _copies_adapter(entries, *, name="poison_test"):
+        """Adapter over several paths that all parse to ONE external_id.
+
+        Two paths carrying one session is not exotic: ``external_id`` is derived
+        from the transcript's own session id, not its path, and the
+        duplicate-collision repair itself links a second path at an existing
+        conversation. A restored backup under a second scanned root, or a
+        ``--path`` overlapping a default location, produces it with no
+        concurrency at all.
+        """
+        from conftest import make_conversation, make_test_adapter
+
+        def parse(source):
+            entry = entries[str(source.as_path)]
+            yield make_conversation(
+                external_id=entry["external_id"],
+                harness_name=name,
+                prompt_text=entry["text"],
+                ended_at=entry["ended_at"],
+            )
+
+        return make_test_adapter(
+            list(entries), name=name, harness_log_format="jsonl", parse_fn=parse,
+        )
+
+    @staticmethod
+    def _indexed(conn, needle):
+        return conn.execute(
+            "SELECT COUNT(*) FROM content_fts WHERE text_content LIKE ?",
+            (f"%{needle}%",),
+        ).fetchone()[0]
+
+    @staticmethod
+    def _orphans(conn):
+        return conn.execute(
+            "SELECT COUNT(*) FROM conversations c WHERE NOT EXISTS "
+            "(SELECT 1 FROM ingested_files f WHERE f.conversation_id = c.id)"
+        ).fetchone()[0]
+
+    @staticmethod
+    def _conversation_id(conn, external_id):
+        from conftest import conversation_id
+
+        return conversation_id(conn, external_id)
+
+    @staticmethod
+    def _tag_names(conn, conv_id):
+        from conftest import tag_names
+
+        return tag_names(conn, "conversation", conv_id)
+
+    def _seed(self, tmp_path, state):
+        """Ingest one transcript normally; return (conn, source, adapter)."""
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database
+
+        conn = create_database(tmp_path / "recovery.db")
+        source = tmp_path / "session.jsonl"
+        source.write_text("{}")
+        adapter = self._adapter(source, state)
+        ingest_all(conn, [adapter])
+        return conn, source, adapter
+
+    def test_null_pointer_row_self_heals_and_carries_tags(self, tmp_path):
+        """The report's regression recipe: a field-poisoned row re-ingests cleanly.
+
+        The tags live on the ORPHAN here, not on anything the bookkeeping
+        knows about — so a fix that deletes the orphan without snapshotting
+        would mass-destroy tags on the first ingest after upgrade.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import get_ingested_file_info
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        state = {
+            "external_id": "poison_test::S1",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+
+        orphan_id = self._conversation_id(conn, state["external_id"])
+        assert orphan_id is not None
+        apply_tag(conn, "conversation", orphan_id, get_or_create_tag(conn, "keeper"), commit=True)
+
+        # The poisoned steady state: pointer discarded, conversation left behind.
+        conn.execute(
+            "UPDATE ingested_files SET conversation_id = NULL, error = ? WHERE path = ?",
+            ("UNIQUE constraint failed: conversations.harness_id, conversations.external_id",
+             str(source)),
+        )
+        conn.commit()
+        assert self._orphans(conn) == 1
+
+        # The session keeps growing, so the hash changes and the file is
+        # eligible for re-ingest again.
+        source.write_text('{"more": 1}')
+        state["text"] = "second"
+        state["ended_at"] = "2024-01-15T12:00:00Z"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        assert stats.files_replaced == 1
+
+        info = get_ingested_file_info(conn, str(source))
+        assert info["error"] is None
+        new_id = self._conversation_id(conn, state["external_id"])
+        assert new_id is not None and new_id != orphan_id
+        assert info["conversation_id"] == new_id, "bookkeeping still points at nothing"
+        assert self._orphans(conn) == 0
+
+        # New content is indexed...
+        indexed = conn.execute(
+            "SELECT COUNT(*) FROM content_fts WHERE conversation_id = ? "
+            "AND text_content LIKE '%second%'",
+            (new_id,),
+        ).fetchone()[0]
+        assert indexed == 1
+        # ...and the orphan's tags rode across.
+        assert "keeper" in self._tag_names(conn, new_id)
+
+    def test_lost_race_keeps_the_pointer_and_leaves_no_orphan(self, tmp_path, monkeypatch):
+        """The race loser repairs bookkeeping instead of NULLing it.
+
+        Simulates the winner-committed state: the conversation and a correct
+        ingested_files row already exist, and this run's insert collides. The
+        rollback resurrects the row the re-ingest branch had deleted, so the
+        handler must UPSERT rather than insert.
+        """
+        import sqlite3
+
+        from siftd.ingestion import ingest_all, orchestration
+        from siftd.storage.sqlite import compute_file_hash, get_ingested_file_info
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        state = {
+            "external_id": "poison_test::S2",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+        winner_id = self._conversation_id(conn, state["external_id"])
+        apply_tag(conn, "conversation", winner_id, get_or_create_tag(conn, "keeper"), commit=True)
+
+        real_store = orchestration.store_conversation
+        calls = {"n": 0}
+
+        def _colliding_store(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.IntegrityError(
+                    "UNIQUE constraint failed: conversations.harness_id, "
+                    "conversations.external_id"
+                )
+            return real_store(*args, **kwargs)
+
+        monkeypatch.setattr(orchestration, "store_conversation", _colliding_store)
+
+        source.write_text('{"more": 1}')
+        state["text"] = "second"
+        stats = ingest_all(conn, [adapter])
+
+        assert calls["n"] == 1, "the collision path must not re-store the conversation"
+        assert stats.files_skipped == 1
+        assert stats.files_errored == 0
+
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == winner_id
+        assert info["error"] is None
+        assert self._orphans(conn) == 0
+        # A lost race is a no-op: the winner's conversation and its tags stand.
+        assert "keeper" in self._tag_names(conn, winner_id)
+        # ...but the row must NOT claim the bytes this run hashed were ingested.
+        # The winner stored some other read of them; stamping the current hash
+        # here is what froze the transcript silently and forever.
+        assert info["file_hash"] != compute_file_hash(source)
+
+        # So the next run re-hashes, takes the re-ingest branch (the pointer is
+        # non-NULL now, so the delete actually runs) and converges on the
+        # current content — carrying the tags across, as any replacement must.
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        assert stats.files_replaced == 1
+        assert self._indexed(conn, "second") == 1
+        converged_id = self._conversation_id(conn, state["external_id"])
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == converged_id
+        assert info["file_hash"] == compute_file_hash(source)
+        assert self._orphans(conn) == 0
+        assert "keeper" in self._tag_names(conn, converged_id)
+
+    def test_poisoned_row_heals_without_the_file_changing(self, tmp_path):
+        """A finished transcript heals too — the population that had gone quiet.
+
+        The self-heal is only reachable through the re-ingest branch, which sits
+        behind two skips keyed on stat and hash. ``_record_file_error`` stamps
+        the failing file's own stat, so a poisoned row whose transcript has
+        stopped growing matched both skips on every later run and never healed —
+        and that is most of the field damage, not a corner of it. A row carrying
+        an error is therefore re-examined whatever its stat says.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import get_ingested_file_info
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        state = {
+            "external_id": "poison_test::S5",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+        orphan_id = self._conversation_id(conn, state["external_id"])
+        apply_tag(conn, "conversation", orphan_id, get_or_create_tag(conn, "keeper"), commit=True)
+
+        # Exactly what an older siftd left behind, stat included: the file is
+        # never touched again from here.
+        conn.execute(
+            "UPDATE ingested_files SET conversation_id = NULL, error = ? WHERE path = ?",
+            ("UNIQUE constraint failed: conversations.harness_id, conversations.external_id",
+             str(source)),
+        )
+        conn.commit()
+        assert self._orphans(conn) == 1
+
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        info = get_ingested_file_info(conn, str(source))
+        assert info["error"] is None
+        healed_id = self._conversation_id(conn, state["external_id"])
+        assert info["conversation_id"] == healed_id
+        assert self._orphans(conn) == 0
+        assert "keeper" in self._tag_names(conn, healed_id)
+
+    def test_a_second_copy_never_deletes_the_tracked_conversation(self, tmp_path):
+        """A NULL pointer on one path is not proof the conversation is unowned.
+
+        ``ingested_files.conversation_id`` is ON DELETE CASCADE and carries no
+        uniqueness constraint, so deleting a conversation another path owns
+        destroys its events *and* that path's bookkeeping row — silently, with
+        the run reporting success.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database, get_ingested_file_info
+
+        live = tmp_path / "live.jsonl"
+        stale = tmp_path / "stale-copy.jsonl"
+        live.write_text("{}")
+        stale.write_text("{}")
+        entries = {
+            str(live): {"external_id": "poison_test::S6", "text": "live-content",
+                        "ended_at": "2024-01-15T12:00:00Z"},
+            str(stale): {"external_id": "poison_test::S6", "text": "stale-content",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "copies.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S6")
+        assert get_ingested_file_info(conn, str(live))["conversation_id"] == conv_id
+
+        # The copy's row loses its pointer (any failure path used to write this)
+        # and its bytes then change, which is what arms the destructive delete.
+        conn.execute(
+            "UPDATE ingested_files SET conversation_id = NULL WHERE path = ?", (str(stale),)
+        )
+        conn.commit()
+        stale.write_text('{"more": 1}')
+
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        # The live conversation, its events, and its bookkeeping all survive.
+        assert self._conversation_id(conn, "poison_test::S6") == conv_id
+        assert self._indexed(conn, "live-content") == 1
+        assert self._indexed(conn, "stale-content") == 0
+        assert get_ingested_file_info(conn, str(live))["conversation_id"] == conv_id
+        # ...and the copy is linked at it rather than left pointing at nothing.
+        assert get_ingested_file_info(conn, str(stale))["conversation_id"] == conv_id
+        assert self._orphans(conn) == 0
+
+    def test_two_copies_of_one_session_settle_instead_of_churning(self, tmp_path):
+        """Only one path can hold a session's slot, so the loser settles quietly.
+
+        Repeated ingests must not have the copies take turns replacing each
+        other's conversation — that would delete and re-mint events every run.
+        The collision repair stamps the duplicate's own hash for exactly this
+        case (and only this case), so it stops re-entering.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database
+
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        first.write_text("{}")
+        second.write_text("{}")
+        entries = {
+            str(first): {"external_id": "poison_test::S7", "text": "from-a",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+            str(second): {"external_id": "poison_test::S7", "text": "from-b",
+                          "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "settle.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S7")
+
+        for _ in range(3):
+            stats = ingest_all(conn, [adapter])
+            assert stats.files_errored == 0
+            assert stats.files_replaced == 0
+            assert self._conversation_id(conn, "poison_test::S7") == conv_id
+        assert self._orphans(conn) == 0
+
+    def test_changed_duplicate_does_not_replace_the_shared_conversation(self, tmp_path):
+        """The main replace path must ask who else holds the conversation.
+
+        The collision repair and the self-heal both check before deleting, but
+        the ordinary hash-changed branch did not — so once two paths shared a
+        conversation (a state the repair itself creates), the first content
+        change on either of them deleted it, and ON DELETE CASCADE took the
+        other path's bookkeeping row and every event with it.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database, get_ingested_file_info
+
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        first.write_text("{}")
+        second.write_text("{}")
+        entries = {
+            str(first): {"external_id": "poison_test::S9", "text": "from-a",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+            str(second): {"external_id": "poison_test::S9", "text": "from-b",
+                          "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "shared.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S9")
+        # The sharing state is reached through the collision repair, not by
+        # hand: both rows now point at the one conversation.
+        assert get_ingested_file_info(conn, str(first))["conversation_id"] == conv_id
+        assert get_ingested_file_info(conn, str(second))["conversation_id"] == conv_id
+
+        # The loser's bytes change. Its row's pointer is non-NULL, so the
+        # hash-changed branch would snapshot-and-delete the shared row.
+        second.write_text('{"more": 1}')
+        entries[str(second)]["text"] = "from-b-v2"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        assert self._conversation_id(conn, "poison_test::S9") == conv_id
+        # The path that holds the slot keeps its row and its content.
+        assert get_ingested_file_info(conn, str(first))["conversation_id"] == conv_id
+        assert self._indexed(conn, "from-a") == 1
+        # The change was not ingested as authoritative — that is the whole
+        # point of settling rather than replacing.
+        assert self._indexed(conn, "from-b-v2") == 0
+        assert self._orphans(conn) == 0
+
+    def test_settled_duplicate_stops_re_entering(self, tmp_path, caplog):
+        """Settling means settled: the copy names its freeze once, then skips.
+
+        Warning on every run would be noise, and leaving the row's hash stale
+        would re-enter the replace branch forever. The row records the bytes it
+        has, so the next run stat-skips — the same reason the collision repair
+        stamps its loser's hash.
+        """
+        import logging
+
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database
+
+        first = tmp_path / "a.jsonl"
+        second = tmp_path / "b.jsonl"
+        first.write_text("{}")
+        second.write_text("{}")
+        entries = {
+            str(first): {"external_id": "poison_test::S10", "text": "from-a",
+                         "ended_at": "2024-01-15T11:00:00Z"},
+            str(second): {"external_id": "poison_test::S10", "text": "from-b",
+                          "ended_at": "2024-01-15T11:00:00Z"},
+        }
+        adapter = self._copies_adapter(entries)
+
+        conn = create_database(tmp_path / "settled.db")
+        ingest_all(conn, [adapter])
+        conv_id = self._conversation_id(conn, "poison_test::S10")
+
+        second.write_text('{"more": 1}')
+        # The seeding ingest above already warned once, from the collision
+        # repair; only the replace path's own warning is under test here.
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="siftd.ingestion.orchestration"):
+            ingest_all(conn, [adapter])
+        named = [r for r in caplog.records if str(second) in r.message]
+        assert len(named) == 1, [r.message for r in caplog.records]
+        assert "its change was not ingested" in named[0].message
+
+        caplog.clear()
+        with caplog.at_level(logging.WARNING, logger="siftd.ingestion.orchestration"):
+            for _ in range(3):
+                stats = ingest_all(conn, [adapter])
+                assert stats.files_errored == 0
+                assert stats.files_replaced == 0
+        assert [r.message for r in caplog.records] == []
+        assert self._conversation_id(conn, "poison_test::S10") == conv_id
+        assert self._orphans(conn) == 0
+
+    def test_failed_repair_leaves_the_bookkeeping_untouched(self, tmp_path, monkeypatch):
+        """The collision path must never reach the pointer-clearing writer.
+
+        If the repair itself fails — the transcript was truncated or rotated
+        between the store attempt and the re-parse — the run is reported as an
+        error and the row is left exactly as it was. Writing NULL here would
+        re-create the #29 fixed point the whole branch exists to prevent.
+        """
+        import sqlite3
+
+        from siftd.ingestion import ingest_all, orchestration
+        from siftd.storage.sqlite import get_ingested_file_info
+
+        state = {
+            "external_id": "poison_test::S8",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+        winner_id = self._conversation_id(conn, state["external_id"])
+
+        real_store = orchestration.store_conversation
+
+        def _colliding_store(*args, **kwargs):
+            raise sqlite3.IntegrityError(
+                "UNIQUE constraint failed: conversations.harness_id, "
+                "conversations.external_id"
+            )
+
+        monkeypatch.setattr(orchestration, "store_conversation", _colliding_store)
+        # The repair's own re-parse is the second parse of this run; fail that
+        # one, so the collision is reached and the repair is not.
+        state["parses"] = 0
+        real_parse = adapter.parse
+
+        def _parse(source_arg):
+            state["parses"] += 1
+            if state["parses"] == 2:
+                raise ValueError("transcript rotated mid-repair")
+            yield from real_parse(source_arg)
+
+        monkeypatch.setattr(adapter, "parse", staticmethod(_parse))
+
+        source.write_text('{"more": 1}')
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == winner_id, "the pointer was discarded"
+        assert info["error"] is None, "the row was rewritten"
+        assert self._orphans(conn) == 0
+        assert real_store is not orchestration.store_conversation
+
+    def test_session_strategy_marker_is_never_repointed(self, tmp_path, monkeypatch):
+        """A session marker is conversation_id=NULL by design; the repair skips it.
+
+        One file, many sessions: pointing its marker at a single conversation
+        would give the whole file's bookkeeping that conversation's ON DELETE
+        CASCADE, so replacing that one session would silently drop the marker
+        for every other session in the file.
+        """
+        import sqlite3
+
+        from siftd.ingestion import ingest_all, orchestration
+        from siftd.storage.sqlite import get_ingested_file_info
+
+        state = {
+            "external_id": "poison_test::S9",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        from siftd.storage.sqlite import create_database
+
+        conn = create_database(tmp_path / "session.db")
+        source = tmp_path / "sessions.db"
+        source.write_text("{}")
+        adapter = self._adapter(source, state, name="session_test")
+        adapter.DEDUP_STRATEGY = "session"
+
+        ingest_all(conn, [adapter])
+        assert get_ingested_file_info(conn, str(source))["conversation_id"] is None
+
+        def _colliding_store(*args, **kwargs):
+            raise sqlite3.IntegrityError(
+                "UNIQUE constraint failed: conversations.harness_id, "
+                "conversations.external_id"
+            )
+
+        monkeypatch.setattr(orchestration, "store_conversation", _colliding_store)
+        source.write_text('{"more": 1}')
+        state["ended_at"] = "2024-01-15T12:00:00Z"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] is None, "a session marker was re-pointed"
+        assert "UNIQUE constraint failed" in info["error"]
+
+    def test_parse_failure_still_records_null_and_error(self, tmp_path):
+        """Unchanged for genuine failures: nothing parsed, so nothing to point at."""
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database, get_ingested_file_info
+
+        from siftd.domain.source import Source  # noqa: F401  (adapter factory uses it)
+
+        conn = create_database(tmp_path / "failure.db")
+        source = tmp_path / "broken.jsonl"
+        source.write_text("{}")
+        state = {
+            "external_id": "poison_test::S3",
+            "text": "first",
+            "ended_at": None,
+            "raise": "malformed transcript",
+        }
+        adapter = self._adapter(source, state)
+
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] is None
+        assert "malformed transcript" in info["error"]
+
+    def test_parse_failure_after_success_keeps_the_live_pointer(self, tmp_path):
+        """A failure after a success does not strand what the file produced.
+
+        The re-ingest branch deletes before it parses, so the handler's
+        ``conn.rollback()`` has resurrected that conversation by the time the
+        error is recorded: a valid conversation *does* belong to this path, and
+        NULLing the pointer would orphan it — the corruption, not the report.
+        The error is still recorded, which is what makes the file eligible for
+        another attempt next run.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import get_ingested_file_info
+
+        state = {
+            "external_id": "poison_test::S4",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+        conv_id = self._conversation_id(conn, state["external_id"])
+
+        source.write_text('{"more": 1}')
+        state["raise"] = "malformed transcript"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == conv_id
+        assert "malformed transcript" in info["error"]
+        assert self._orphans(conn) == 0
+
+        # The recorded error keeps the file eligible: once it parses again the
+        # row heals on its own, with no further change to the file.
+        del state["raise"]
+        state["text"] = "second"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        info = get_ingested_file_info(conn, str(source))
+        assert info["error"] is None
+        assert self._indexed(conn, "second") == 1
