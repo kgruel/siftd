@@ -157,6 +157,10 @@ _STORED_SHAPES = (
     # that a microsecond-precision bound silently excluded, because `+` sorts
     # below the `.` it lined up against.
     "{sec}+00:00",
+    # aider, which writes its header's bare local wall time. Carries no suffix
+    # at all, so it meets a second-precision bound by equality rather than by
+    # being a longer string — the tightest case the prefix property has.
+    "{sec}",
 )
 
 
