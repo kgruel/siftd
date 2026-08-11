@@ -166,12 +166,35 @@ git branch -d fix/<short-slug>
 git push origin --delete fix/<short-slug>
 ```
 
-Confirm the PR and issue closed:
+Confirm the PR and issue closed, **and that CI on the push went green**:
 
 ```bash
 gh pr view <PR> --repo kgruel/siftd --json state --jq .state
 gh issue view <N> --repo kgruel/siftd --json state --jq .state
+gh run list --branch main --limit 1
 ```
+
+Local green is not CI green: CI runs a Python matrix (3.12/3.13/3.14) your
+venv doesn't, and it runs on cold caches and different timing. A local `./dev
+check` passing three times in a row does not tell you the push was clean.
+
+If CI failed, identify the test before assuming either flake or regression:
+
+```bash
+gh run view <run-id> --repo kgruel/siftd --log-failed | grep -E "FAILED|assert " | grep -v PASSED
+```
+
+Then check `git log --oneline -3 -- <that test's file>` — if the file predates
+your arc and the failure is timing- or randomness-shaped, it's a pre-existing
+flake, not your regression. Known ones: `tests/cli/test_upgrade.py` (real
+clock) and ULID prefix collisions in ID-resolution tests (a 12-char `short_id`
+carries only ~10 bits beyond the millisecond, so same-millisecond IDs collide
+~1/1024). Report it and file it; don't silently rerun past it, and don't
+rework code that isn't yours.
+
+**Never chain the check into the push.** `./dev check | grep -E "All checks|failed"`
+followed by `&& git push` will push on failure, because grep *succeeds* when
+it matches the word "failed". Run the check, read it, then push.
 
 ## 8. File what you deferred
 
