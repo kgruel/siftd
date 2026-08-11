@@ -5,7 +5,8 @@ Provides API-level write primitives for ingestion and FTS rebuild operations.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from time import perf_counter
@@ -75,6 +76,10 @@ class IngestRunResult:
     auto_index: AutoIndexReport | None = None
     adapter_tiers: dict[str, str] = field(default_factory=dict)  # name -> SUPPORT_TIER
     disabled_adapters: list[str] = field(default_factory=list)  # skipped via config knob
+    # True when another process already holds this database's ingest lock, so
+    # this run did nothing. Not an error: an ingest of the same sources is
+    # already in flight. ``stats`` is None in that case.
+    skipped_locked: bool = False
 
 
 __all__ = [
@@ -84,6 +89,60 @@ __all__ = [
     "run_ingest",
     "run_rebuild_fts",
 ]
+
+
+@contextmanager
+def _ingest_lock(db_path: Path) -> Iterator[bool]:
+    """Hold an exclusive, non-blocking advisory lock on ``db_path``'s ingest.
+
+    Yields True when this process owns the lock (or when locking is
+    unavailable, see below) and False when another process already holds it.
+
+    Two concurrent ingests of the same sources both parse the same changed
+    transcript and both insert the same conversation; the loser hits
+    UNIQUE(harness_id, external_id) and used to discard the winner's pointer,
+    freezing that file forever (kgruel/siftd#29). Serializing removes the race
+    at the source. The lock is a sibling ``.ingest.lock`` file rather than the
+    database, so it survives the DB being replaced and so a lock-out never has
+    to open — or create — the database at all. It is keyed on the *resolved*
+    path so two spellings of one database contend and two different databases
+    do not.
+
+    ``flock`` is POSIX-only, and even on POSIX a filesystem may refuse it
+    (some NFS mounts). Both degrade to running unlocked — the pre-0.12.1
+    behavior — because refusing to ingest would be a worse failure than the
+    race this prevents.
+    """
+    try:
+        import fcntl
+    except ImportError:  # pragma: no cover — non-POSIX (Windows)
+        yield True
+        return
+
+    lock_path = Path(str(Path(db_path).resolve()) + ".ingest.lock")
+    handle = None
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = lock_path.open("w")
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        # Held by another ingest. BlockingIOError is an OSError subclass, so
+        # this branch must precede the degrade branch below.
+        if handle is not None:
+            handle.close()
+        yield False
+        return
+    except OSError:  # pragma: no cover — unlockable filesystem / unwritable dir
+        if handle is not None:
+            handle.close()
+        yield True
+        return
+
+    try:
+        yield True
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
 
 
 def _resolve_adapters(
@@ -137,10 +196,50 @@ def run_ingest(
     pending-disclosure auto-indexing is skipped (``skipped_reason="notice"``, disclosure on
     ``result.auto_index.notice``) until any surface has shown the notice — interactive
     ingest, or the first explicit ``siftd embed``.
+
+    Runs under an exclusive advisory lock on the database: a second concurrent invocation
+    does nothing and returns ``skipped_locked=True`` (stats None). This is the single funnel
+    into :func:`~siftd.ingestion.ingest_all` — the CLI ``ingest`` command and ``doctor fix
+    --ingest`` are its only callers — so the lock belongs here, not in either surface.
     """
     path = Path(db_path)
-    db_created = not path.exists()
     started = perf_counter()
+
+    with _ingest_lock(path) as acquired:
+        if not acquired:
+            return IngestRunResult(
+                db_path=path,
+                db_created=False,
+                mode="ingest",
+                adapters=[],
+                scan_paths=list(scan_paths or []),
+                stats=None,
+                elapsed_ms=int((perf_counter() - started) * 1000),
+                skipped_locked=True,
+            )
+        return _run_ingest_locked(
+            path=path,
+            started=started,
+            adapter_names=adapter_names,
+            scan_paths=scan_paths,
+            filter_binary=filter_binary,
+            on_event=on_event,
+            on_notice=on_notice,
+        )
+
+
+def _run_ingest_locked(
+    *,
+    path: Path,
+    started: float,
+    adapter_names: list[str] | None,
+    scan_paths: list[str] | None,
+    filter_binary: bool | None,
+    on_event: Callable[[IngestEvent], None] | None,
+    on_notice: Callable[[str], None] | None,
+) -> IngestRunResult:
+    """The body of :func:`run_ingest`, with the ingest lock already held."""
+    db_created = not path.exists()
 
     dropin_failures: list[tuple[Path, str]] = []
     disabled_adapters: list[str] = []

@@ -96,6 +96,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   check also resolves the whole queue in a single pass over `conversations`
   instead of one full scan per queued session, which is what it takes to
   belong in doctor's fast lane on a real-sized database.
+- **Concurrent ingests no longer poison a file forever.** Two overlapping
+  `siftd ingest` runs (a cron entry plus a wrapper script on the same
+  minute, or an event-driven ingest crossing a scheduled one) both parse the
+  same changed transcript and both insert the same conversation; the loser
+  hit `UNIQUE constraint failed: conversations.harness_id,
+  conversations.external_id` and *discarded the winner's pointer*, leaving
+  `ingested_files.conversation_id` NULL beside an orphaned conversation.
+  That state is a fixed point — the NULL made the next re-ingest skip its
+  delete, so it collided again — and a single process then reproduced the
+  failure indefinitely: the transcript froze at whatever the first run
+  captured, and search silently returned a stub. One reporter's host
+  accumulated 415 such rows over eight days. Three changes: ingest now runs
+  under a per-database advisory lock, so a second invocation reports briefly
+  and exits 0 instead of racing (skipping is correct when an ingest is
+  already running); a duplicate-conversation collision now re-points the
+  bookkeeping row at the conversation that already exists rather than
+  clearing it, turning a lost race into a no-op; and the re-ingest path
+  resolves the conversation by `(harness_id, external_id)` instead of
+  trusting a NULL pointer, so rows already poisoned in the field heal
+  themselves on the next ingest. The self-heal snapshots the orphan's tags
+  and re-points them at the replacement, using the same machinery as a
+  normal replacement — without that, the first ingest after upgrading would
+  have destroyed the tags on every affected conversation at once. Clearing
+  the pointer is still correct for a genuine parse failure, and still
+  happens there. Thanks to the reporter whose cross-host analysis isolated
+  this. (kgruel/siftd#29)
 
 ## [0.12.0] - 2026-07-18
 

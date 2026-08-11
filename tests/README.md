@@ -94,10 +94,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3208 |
+| `tests/` | 185 | 3217 |
 | `tests/adapters/` | 19 | 161 |
 | `tests/architecture/` | 5 | 50 |
-| `tests/cli/` | 28 | 623 |
+| `tests/cli/` | 28 | 626 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -112,7 +112,7 @@ docstring so its row is meaningful.
 | [test_api_doctor.py](test_api_doctor.py) | 6 | Tests for siftd.api.doctor — wrapper re-exports from siftd.doctor. |
 | [test_api_events.py](test_api_events.py) | 22 | Phase 4: tests for the event detail surface. |
 | [test_api_export_edges.py](test_api_export_edges.py) | 1 | — |
-| [test_api_ingest.py](test_api_ingest.py) | 6 | Tests for siftd.api.ingest. |
+| [test_api_ingest.py](test_api_ingest.py) | 11 | Tests for siftd.api.ingest. |
 | [test_api_init_edges.py](test_api_init_edges.py) | 1 | — |
 | [test_api_merge_edges.py](test_api_merge_edges.py) | 1 | — |
 | [test_api_migrations_edges.py](test_api_migrations_edges.py) | 2 | — |
@@ -179,7 +179,7 @@ docstring so its row is meaningful.
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 4 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 44 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 48 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
@@ -333,7 +333,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
-| [cli/test_data.py](cli/test_data.py) | 101 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
+| [cli/test_data.py](cli/test_data.py) | 104 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 50 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |

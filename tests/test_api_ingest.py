@@ -184,3 +184,96 @@ def test_run_rebuild_fts_returns_result(tmp_path, monkeypatch):
     assert result.stats is None
     assert calls == ["rebuilt"]
     assert conn.closed is True
+
+
+class TestIngestLock:
+    """Concurrent ingests corrupt each other's bookkeeping, so they serialize.
+
+    Two processes that both parse the same changed transcript both insert the
+    same conversation; one loses the UNIQUE race (kgruel/siftd#29). The lock
+    removes the race at the source, and a locked-out run is a quiet no-op —
+    skipping is correct when an ingest of the same sources is already running.
+    """
+
+    @staticmethod
+    def _wire(monkeypatch, stats):
+        """Make run_ingest's body cheap: fake connection, one fake adapter."""
+        conn = _FakeConn()
+        monkeypatch.setattr(ingest_api, "create_database", lambda path: conn)
+        monkeypatch.setattr(
+            ingest_api,
+            "load_all_adapters",
+            lambda **_kw: [SimpleNamespace(name="claude_code", module="mod:claude")],
+        )
+        monkeypatch.setattr(
+            ingest_api,
+            "ingest_all",
+            lambda _conn, adapters, on_event=None, filter_binary=None: stats,
+        )
+        return conn
+
+    def test_second_invocation_skips_quietly(self, tmp_path, monkeypatch):
+        db = tmp_path / "locked.db"
+        self._wire(monkeypatch, IngestStats(files_found=1))
+
+        # flock conflicts across file descriptors, so an in-process holder is
+        # indistinguishable from another process here.
+        with ingest_api._ingest_lock(db) as held:
+            assert held is True
+            result = ingest_api.run_ingest(db_path=db)
+
+        assert result.skipped_locked is True
+        assert result.stats is None
+        assert result.db_created is False
+        assert not db.exists(), "a locked-out run must not create the database"
+
+    def test_lock_is_released_for_the_next_run(self, tmp_path, monkeypatch):
+        db = tmp_path / "locked.db"
+        stats = IngestStats(files_found=1)
+        self._wire(monkeypatch, stats)
+
+        with ingest_api._ingest_lock(db) as held:
+            assert held is True
+        result = ingest_api.run_ingest(db_path=db)
+
+        assert result.skipped_locked is False
+        assert result.stats is stats
+
+    def test_different_databases_do_not_block_each_other(self, tmp_path, monkeypatch):
+        stats = IngestStats(files_found=1)
+        self._wire(monkeypatch, stats)
+
+        with ingest_api._ingest_lock(tmp_path / "one.db") as held:
+            assert held is True
+            result = ingest_api.run_ingest(db_path=tmp_path / "two.db")
+
+        assert result.skipped_locked is False
+        assert result.stats is stats
+
+    def test_same_database_spelled_differently_contends(self, tmp_path):
+        db = tmp_path / "sub" / "same.db"
+        db.parent.mkdir()
+        alias = tmp_path / "sub" / ".." / "sub" / "same.db"
+
+        with ingest_api._ingest_lock(db) as held:
+            assert held is True
+            with ingest_api._ingest_lock(alias) as second:
+                assert second is False
+
+    def test_missing_fcntl_degrades_to_unlocked(self, tmp_path, monkeypatch):
+        """No advisory lock on a platform without flock — never a hard failure."""
+        import builtins
+
+        real_import = builtins.__import__
+
+        def _no_fcntl(name, *args, **kwargs):
+            if name == "fcntl":
+                raise ImportError("no fcntl here")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_fcntl)
+
+        with ingest_api._ingest_lock(tmp_path / "x.db") as held:
+            assert held is True
+            with ingest_api._ingest_lock(tmp_path / "x.db") as second:
+                assert second is True

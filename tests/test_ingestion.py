@@ -513,3 +513,244 @@ class TestSessionKeyCandidates:
             pass
 
         assert _session_key_candidates(_Nameless(), "::abc") == ["::abc"]
+
+
+class TestBookkeepingRecovery:
+    """The ingested_files row must never lose a valid conversation pointer.
+
+    Two concurrent ingests both parse the same changed transcript and both
+    insert the same conversation; the loser hits
+    ``UNIQUE(harness_id, external_id)``. Discarding the winner's pointer there
+    (the pre-0.12.1 behavior) is a fixed point: the NULL makes the next
+    re-ingest skip its delete, so it collides again, forever
+    (kgruel/siftd#29). These tests pin both halves — never write the NULL, and
+    self-heal a row already carrying one.
+    """
+
+    @staticmethod
+    def _adapter(source_path, state, *, name="poison_test"):
+        from siftd.domain.source import Source
+
+        from conftest import make_conversation
+
+        class _Adapter:
+            ADAPTER_INTERFACE_VERSION = 1
+            NAME = name
+            DEFAULT_LOCATIONS = []
+            DEDUP_STRATEGY = "file"
+            HARNESS_SOURCE = "test"
+            HARNESS_LOG_FORMAT = "jsonl"
+
+            @staticmethod
+            def can_handle(source):
+                return True
+
+            @staticmethod
+            def parse(source):
+                if state.get("raise"):
+                    raise ValueError(state["raise"])
+                yield make_conversation(
+                    external_id=state["external_id"],
+                    harness_name=name,
+                    prompt_text=state["text"],
+                    ended_at=state["ended_at"],
+                )
+
+            @staticmethod
+            def discover():
+                yield Source(kind="file", location=str(source_path))
+
+        return _Adapter
+
+    @staticmethod
+    def _orphans(conn):
+        return conn.execute(
+            "SELECT COUNT(*) FROM conversations c WHERE NOT EXISTS "
+            "(SELECT 1 FROM ingested_files f WHERE f.conversation_id = c.id)"
+        ).fetchone()[0]
+
+    @staticmethod
+    def _conversation_id(conn, external_id):
+        row = conn.execute(
+            "SELECT id FROM conversations WHERE external_id = ?", (external_id,)
+        ).fetchone()
+        return row[0] if row else None
+
+    @staticmethod
+    def _tag_names(conn, conversation_id):
+        return {
+            r[0]
+            for r in conn.execute(
+                "SELECT t.name FROM tag_assignments a JOIN tags t ON t.id = a.tag_id "
+                "WHERE a.target_kind = 'conversation' AND a.target_id = ?",
+                (conversation_id,),
+            )
+        }
+
+    def _seed(self, tmp_path, state):
+        """Ingest one transcript normally; return (conn, source, adapter)."""
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database
+
+        conn = create_database(tmp_path / "recovery.db")
+        source = tmp_path / "session.jsonl"
+        source.write_text("{}")
+        adapter = self._adapter(source, state)
+        ingest_all(conn, [adapter])
+        return conn, source, adapter
+
+    def test_null_pointer_row_self_heals_and_carries_tags(self, tmp_path):
+        """The report's regression recipe: a field-poisoned row re-ingests cleanly.
+
+        The tags live on the ORPHAN here, not on anything the bookkeeping
+        knows about — so a fix that deletes the orphan without snapshotting
+        would mass-destroy tags on the first ingest after upgrade.
+        """
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import get_ingested_file_info
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        state = {
+            "external_id": "poison_test::S1",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+
+        orphan_id = self._conversation_id(conn, state["external_id"])
+        assert orphan_id is not None
+        apply_tag(conn, "conversation", orphan_id, get_or_create_tag(conn, "keeper"), commit=True)
+
+        # The poisoned steady state: pointer discarded, conversation left behind.
+        conn.execute(
+            "UPDATE ingested_files SET conversation_id = NULL, error = ? WHERE path = ?",
+            ("UNIQUE constraint failed: conversations.harness_id, conversations.external_id",
+             str(source)),
+        )
+        conn.commit()
+        assert self._orphans(conn) == 1
+
+        # The session keeps growing, so the hash changes and the file is
+        # eligible for re-ingest again.
+        source.write_text('{"more": 1}')
+        state["text"] = "second"
+        state["ended_at"] = "2024-01-15T12:00:00Z"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 0
+        assert stats.files_replaced == 1
+
+        info = get_ingested_file_info(conn, str(source))
+        assert info["error"] is None
+        new_id = self._conversation_id(conn, state["external_id"])
+        assert new_id is not None and new_id != orphan_id
+        assert info["conversation_id"] == new_id, "bookkeeping still points at nothing"
+        assert self._orphans(conn) == 0
+
+        # New content is indexed...
+        indexed = conn.execute(
+            "SELECT COUNT(*) FROM content_fts WHERE conversation_id = ? "
+            "AND text_content LIKE '%second%'",
+            (new_id,),
+        ).fetchone()[0]
+        assert indexed == 1
+        # ...and the orphan's tags rode across.
+        assert "keeper" in self._tag_names(conn, new_id)
+
+    def test_lost_race_keeps_the_pointer_and_leaves_no_orphan(self, tmp_path, monkeypatch):
+        """The race loser repairs bookkeeping instead of NULLing it.
+
+        Simulates the winner-committed state: the conversation and a correct
+        ingested_files row already exist, and this run's insert collides. The
+        rollback resurrects the row the re-ingest branch had deleted, so the
+        handler must UPSERT rather than insert.
+        """
+        import sqlite3
+
+        from siftd.ingestion import ingest_all, orchestration
+        from siftd.storage.sqlite import get_ingested_file_info
+        from siftd.storage.tags import apply_tag, get_or_create_tag
+
+        state = {
+            "external_id": "poison_test::S2",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+        winner_id = self._conversation_id(conn, state["external_id"])
+        apply_tag(conn, "conversation", winner_id, get_or_create_tag(conn, "keeper"), commit=True)
+
+        real_store = orchestration.store_conversation
+        calls = {"n": 0}
+
+        def _colliding_store(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise sqlite3.IntegrityError(
+                    "UNIQUE constraint failed: conversations.harness_id, "
+                    "conversations.external_id"
+                )
+            return real_store(*args, **kwargs)
+
+        monkeypatch.setattr(orchestration, "store_conversation", _colliding_store)
+
+        source.write_text('{"more": 1}')
+        state["text"] = "second"
+        stats = ingest_all(conn, [adapter])
+
+        assert calls["n"] == 1, "the collision path must not re-store the conversation"
+        assert stats.files_skipped == 1
+        assert stats.files_errored == 0
+
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == winner_id
+        assert info["error"] is None
+        assert self._orphans(conn) == 0
+        # A lost race is a no-op: the winner's conversation and its tags stand.
+        assert "keeper" in self._tag_names(conn, winner_id)
+
+    def test_parse_failure_still_records_null_and_error(self, tmp_path):
+        """Unchanged for genuine failures: nothing parsed, so nothing to point at."""
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import create_database, get_ingested_file_info
+
+        from siftd.domain.source import Source  # noqa: F401  (adapter factory uses it)
+
+        conn = create_database(tmp_path / "failure.db")
+        source = tmp_path / "broken.jsonl"
+        source.write_text("{}")
+        state = {
+            "external_id": "poison_test::S3",
+            "text": "first",
+            "ended_at": None,
+            "raise": "malformed transcript",
+        }
+        adapter = self._adapter(source, state)
+
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] is None
+        assert "malformed transcript" in info["error"]
+
+    def test_parse_failure_after_success_clears_the_stale_link(self, tmp_path):
+        """Also unchanged: a file that stops parsing loses its stale pointer."""
+        from siftd.ingestion import ingest_all
+        from siftd.storage.sqlite import get_ingested_file_info
+
+        state = {
+            "external_id": "poison_test::S4",
+            "text": "first",
+            "ended_at": "2024-01-15T11:00:00Z",
+        }
+        conn, source, adapter = self._seed(tmp_path, state)
+
+        source.write_text('{"more": 1}')
+        state["raise"] = "malformed transcript"
+        stats = ingest_all(conn, [adapter])
+
+        assert stats.files_errored == 1
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] is None
+        assert "malformed transcript" in info["error"]

@@ -456,6 +456,17 @@ def cmd_ingest(args) -> int:
             status.error(message)
         return 1
 
+    if result.skipped_locked:
+        # Another ingest holds the lock. Skipping is the correct outcome, not a
+        # failure: the same sources are already being processed. Exit 0 so a
+        # cron/wrapper pair that overlaps stays quiet instead of alarming.
+        message = "Another ingest is already running — skipped."
+        if json_mode:
+            renderer._emit({"type": "skipped", "reason": "locked", "message": message})
+        elif not quiet:
+            status.info(message)
+        return 0
+
     stats = result.stats
     if stats is None:
         return 0
@@ -1238,7 +1249,10 @@ def _fix_ingest(conn, db_path):
     # Surface the remote first-egress disclosure live, BEFORE content leaves the machine —
     # auto-index only emits it through on_notice (else it lands on a discarded result).
     # Matches the ingest command's on_notice → status.info in its plain-text mode.
-    stats = run_ingest(db_path=db_path, on_notice=status.info).stats
+    result = run_ingest(db_path=db_path, on_notice=status.info)
+    if result.skipped_locked:
+        return "skipped — another ingest is already running"
+    stats = result.stats
     if stats is None:
         return "0 file(s) ingested, 0 skipped"
     return f"{stats.files_ingested} file(s) ingested, {stats.files_skipped} skipped"

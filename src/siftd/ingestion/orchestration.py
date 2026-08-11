@@ -39,6 +39,7 @@ from siftd.storage.sqlite import (
     find_conversation_by_external_id,
     get_ingested_file_info,
     get_or_create_harness,
+    link_ingested_file,
     record_empty_file,
     record_failed_file,
     record_ingested_file,
@@ -177,6 +178,22 @@ def _parse_source_conversations(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
     return list(adapter.parse(source))
+
+
+def _harness_id_for_conversation(conn: sqlite3.Connection, conversation) -> str:
+    """Resolve (creating if needed) the harness row a parsed conversation names.
+
+    One home for the optional-field dance every caller that needs to look a
+    conversation up by ``(harness_id, external_id)`` was repeating.
+    """
+    harness_kwargs = {}
+    if conversation.harness.source:
+        harness_kwargs["source"] = conversation.harness.source
+    if conversation.harness.log_format:
+        harness_kwargs["log_format"] = conversation.harness.log_format
+    if conversation.harness.display_name:
+        harness_kwargs["display_name"] = conversation.harness.display_name
+    return get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
 
 
 def _normalize_status(status: str) -> tuple[str, str | None]:
@@ -417,7 +434,11 @@ def ingest_all(
                         )
                         delete_conversation(conn, existing_info["conversation_id"])
                     else:
-                        # No conversation (empty or errored file) — remove old record
+                        # No conversation recorded (empty file, errored file, or
+                        # a row whose pointer was discarded by an older siftd).
+                        # Remove the stale record; _reingest_file resolves the
+                        # real state from the parsed conversation rather than
+                        # trusting this NULL. See its orphan handling.
                         clear_ingested_file_error(conn, file_path)
 
                     # Re-ingest and update the record
@@ -425,6 +446,7 @@ def ingest_all(
                         conn, source, adapter, file_path, current_hash, st, stats, filter_binary,
                         _workspace_cache=_workspace_cache,
                         tag_snapshot=tag_snapshot,
+                        resolve_orphan=not existing_info["conversation_id"],
                     )
                     if on_file:
                         on_file(source, "updated")
@@ -493,14 +515,7 @@ def ingest_all(
                 last_conversation = None
 
                 for conversation in conversations:
-                    harness_kwargs = {}
-                    if conversation.harness.source:
-                        harness_kwargs["source"] = conversation.harness.source
-                    if conversation.harness.log_format:
-                        harness_kwargs["log_format"] = conversation.harness.log_format
-                    if conversation.harness.display_name:
-                        harness_kwargs["display_name"] = conversation.harness.display_name
-                    harness_id = get_or_create_harness(conn, conversation.harness.name, **harness_kwargs)
+                    harness_id = _harness_id_for_conversation(conn, conversation)
                     file_harness_id = harness_id
 
                     existing = find_conversation_by_external_id(
@@ -571,33 +586,60 @@ def ingest_all(
                 "UNIQUE constraint failed: conversations.harness_id" in error_msg
                 or "conversations.external_id" in error_msg
             )
-            if is_duplicate_conversation:
-                # Race condition: conversation was inserted between our check and store
+            # The repair only makes sense for file-strategy sources: a
+            # session-strategy marker is conversation_id=NULL by design (one
+            # file, many sessions), so pointing it at a single conversation
+            # would corrupt it. Those fall through to the error path unchanged.
+            if is_duplicate_conversation and dedup_strategy == "file":
+                # We lost a race (or are recovering from a poisoned row): the
+                # conversation this file describes already exists. That is not a
+                # failure — it is a no-op plus a bookkeeping repair. Whatever
+                # happens below, this path must never reach _record_file_error,
+                # which NULLs the conversation pointer: discarding the only link
+                # to the winner's conversation is exactly the corruption that
+                # made this file un-ingestable forever (kgruel/siftd#29).
                 try:
                     conv = _parse_source_conversation(source, adapter, file_path)
+                    existing = None
                     if conv is not None:
-                        harness_kwargs = {}
-                        if conv.harness.source:
-                            harness_kwargs["source"] = conv.harness.source
-                        if conv.harness.log_format:
-                            harness_kwargs["log_format"] = conv.harness.log_format
-                        if conv.harness.display_name:
-                            harness_kwargs["display_name"] = conv.harness.display_name
-                        h_id = get_or_create_harness(conn, conv.harness.name, **harness_kwargs)
+                        h_id = _harness_id_for_conversation(conn, conv)
                         existing = find_conversation_by_external_id(conn, h_id, conv.external_id)
-                        if existing and not get_ingested_file_info(conn, file_path):
-                            location = source.as_path
-                            st = location.stat()
-                            fh = compute_file_hash(location)
-                            record_ingested_file(conn, file_path, fh, existing["id"], file_mtime=st.st_mtime, file_size=st.st_size)
-                            conn.commit()
-                            stats.files_skipped += 1
-                            if on_file:
-                                on_file(source, "skipped (duplicate)")
-                            emit_event("skipped (duplicate)")
-                            continue
-                except Exception:
-                    pass
+                    if existing:
+                        location = source.as_path
+                        st = location.stat()
+                        fh = compute_file_hash(location)
+                        # Upsert, not insert: the conn.rollback() above has
+                        # resurrected any ingested_files row this file's
+                        # transaction had deleted (the re-ingest branch DELETEs
+                        # the old row before re-storing), so a row is normally
+                        # present here — carrying a stale hash and possibly a
+                        # stale error. Re-point it either way.
+                        link_ingested_file(
+                            conn, file_path, fh, existing["id"],
+                            file_mtime=st.st_mtime, file_size=st.st_size,
+                        )
+                        conn.commit()
+                        stats.files_skipped += 1
+                        if on_file:
+                            on_file(source, "skipped (duplicate)")
+                        emit_event("skipped (duplicate)")
+                        continue
+                    logger.warning(
+                        f"Duplicate-conversation collision on {file_path} but the "
+                        "conversation could not be resolved; leaving bookkeeping untouched"
+                    )
+                except Exception as repair_error:  # noqa: BLE001 — reported, never re-raised
+                    conn.rollback()
+                    logger.warning(
+                        f"Could not repair duplicate-conversation collision on "
+                        f"{file_path}: {repair_error}"
+                    )
+                # Count the run as errored without touching the row: the
+                # pointer we could not confirm is worth more than the marker.
+                _count_file_error(
+                    source, adapter, error_msg, stats, on_file, emit_event
+                )
+                continue
             # Other IntegrityError (not duplicate conversation) — record as error
             _record_file_error(
                 conn, source, adapter, file_path, error_msg, stats, on_file, emit_event
@@ -640,6 +682,12 @@ def _record_file_error(
     If the file was previously recorded as a success, update the row to
     reflect the new error state so the failure is queryable and the stale
     conversation link is cleared.
+
+    Clearing the link is right for a genuine failure — nothing parsed, so no
+    conversation belongs to this path — and wrong when the store failed
+    *because* the conversation already exists. The duplicate-conversation
+    branch in :func:`ingest_all` therefore never routes here; it repairs the
+    pointer and reports through :func:`_count_file_error` instead.
     """
     try:
         existing = get_ingested_file_info(conn, file_path)
@@ -665,6 +713,22 @@ def _record_file_error(
             conn.commit()
     except Exception:
         pass  # Don't fail the whole ingest because we couldn't record the error
+    _count_file_error(source, adapter, error, stats, on_file, emit_event)
+
+
+def _count_file_error(
+    source: Source,
+    adapter: AdapterModule,
+    error: str,
+    stats: IngestStats,
+    on_file: Callable[[Source, str], None] | None,
+    emit_event: Callable[[str, object | None], None] | None,
+) -> None:
+    """Report a failed file (stats + callbacks) without writing bookkeeping.
+
+    The reporting half of :func:`_record_file_error`, split out for the caller
+    that must surface a failure but must NOT touch the ingested_files row.
+    """
     stats.files_errored += 1
     if adapter.NAME in stats.by_harness:
         harness_counts = stats.by_harness[adapter.NAME]
@@ -728,11 +792,19 @@ def _reingest_file(
     *,
     _workspace_cache: dict | None = None,
     tag_snapshot: ConversationTagSnapshot | None = None,
+    resolve_orphan: bool = False,
 ) -> object | None:
     """Re-ingest a file that has changed (file-based dedup strategy).
 
     Unlike _ingest_file, the old conversation has already been deleted
     and the file hash is already computed.
+
+    ``resolve_orphan`` says the caller found no conversation pointer on the
+    bookkeeping row, so it deleted nothing. A NULL pointer is not proof that no
+    conversation exists — older releases discarded the pointer whenever a
+    concurrent ingest lost the UNIQUE(harness_id, external_id) race — so this
+    path re-derives the truth from the parsed conversation instead of trusting
+    the row, which makes it idempotent whatever state the bookkeeping is in.
 
     Note: delete_conversation also deletes the ingested_files record,
     so we create a new record rather than updating.
@@ -769,6 +841,20 @@ def _reingest_file(
         stats.files_replaced += 1
         stats.by_harness[harness_name]["replaced"] += 1
         return None
+
+    if resolve_orphan:
+        # The bookkeeping claimed no conversation. If one exists under this
+        # (harness, external_id) it is an orphan the bookkeeping lost track of,
+        # and storing over it would raise UNIQUE — the state that froze these
+        # files permanently (kgruel/siftd#29). Replace it exactly like the
+        # normal path does, snapshot first: the orphan is where the tags live,
+        # so deleting it unsnapshotted would destroy every affected
+        # conversation's tags on the first ingest after upgrade.
+        harness_id = _harness_id_for_conversation(conn, conversation)
+        orphan = find_conversation_by_external_id(conn, harness_id, conversation.external_id)
+        if orphan:
+            tag_snapshot = _snapshot_tags_for_replacement(conn, orphan["id"])
+            delete_conversation(conn, orphan["id"])
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 

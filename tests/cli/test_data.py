@@ -475,6 +475,61 @@ class TestCmdIngest:
         assert "quieted" in err
 
 
+class TestCmdIngestAlreadyRunning:
+    """A second concurrent ingest skips: correct outcome, not an error.
+
+    Cron schedules that fire two ingests on the same minute are what corrupted
+    the bookkeeping in the first place (kgruel/siftd#29), so the overlap must
+    stay quiet enough that nobody silences the job to make noise stop.
+    """
+
+    @staticmethod
+    def _args(db_path, extra):
+        return ["--db", str(db_path), "ingest", "--adapter", "claude_code",
+                "--path", "/nonexistent/path", *extra]
+
+    def test_reports_and_exits_zero(self, tmp_path, capsys, monkeypatch):
+        from siftd.api import ingest as ingest_api
+
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+        db_path = tmp_path / "test.db"
+        with ingest_api._ingest_lock(db_path) as held:
+            assert held is True
+            rc = main(self._args(db_path, []))
+
+        assert rc == 0
+        assert "Another ingest is already running" in capsys.readouterr().err
+
+    def test_quiet_says_nothing(self, tmp_path, capsys, monkeypatch):
+        from siftd.api import ingest as ingest_api
+
+        monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+        db_path = tmp_path / "test.db"
+        with ingest_api._ingest_lock(db_path):
+            rc = main(self._args(db_path, ["--quiet"]))
+
+        assert rc == 0
+        out, err = capsys.readouterr()
+        assert "already running" not in out + err
+
+    def test_json_mode_emits_a_skipped_event(self, tmp_path, capsys, monkeypatch):
+        from siftd.api import ingest as ingest_api
+
+        db_path = tmp_path / "test.db"
+        with ingest_api._ingest_lock(db_path):
+            rc = main(self._args(db_path, ["--json"]))
+
+        assert rc == 0
+        events = [
+            json.loads(line)
+            for line in capsys.readouterr().out.strip().split("\n")
+            if line.strip()
+        ]
+        assert {"type": "skipped", "reason": "locked"}.items() <= next(
+            e.items() for e in events if e["type"] == "skipped"
+        )
+
+
 # ---------------------------------------------------------------------------
 # cmd_ingest — TTY / auto-quiet behavior
 # ---------------------------------------------------------------------------
@@ -1228,7 +1283,8 @@ class TestDataDirectBranches:
         monkeypatch.setattr(
             "siftd.api.run_ingest",
             lambda db_path, on_notice=None: SimpleNamespace(
-                stats=SimpleNamespace(files_ingested=1, files_skipped=2)
+                skipped_locked=False,
+                stats=SimpleNamespace(files_ingested=1, files_skipped=2),
             ),
         )
         assert "1 file" in data_cli._fix_ingest(object(), Path("/d"))
@@ -1303,7 +1359,10 @@ class TestDataDirectBranches:
             captured["on_notice"] = on_notice
             if on_notice is not None:
                 on_notice("Uploading conversation content to remote:openai for the first time.")
-            return SimpleNamespace(stats=SimpleNamespace(files_ingested=0, files_skipped=0))
+            return SimpleNamespace(
+                skipped_locked=False,
+                stats=SimpleNamespace(files_ingested=0, files_skipped=0),
+            )
 
         monkeypatch.setattr("siftd.api.run_ingest", fake_run_ingest)
         data_cli._fix_ingest(object(), Path("/d"))

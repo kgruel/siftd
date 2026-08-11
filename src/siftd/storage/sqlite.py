@@ -2981,6 +2981,56 @@ def record_ingested_file(
     return ulid
 
 
+def link_ingested_file(
+    conn: sqlite3.Connection,
+    path: str,
+    file_hash: str,
+    conversation_id: str,
+    *,
+    file_mtime: float | None = None,
+    file_size: int | None = None,
+    commit: bool = False,
+) -> str:
+    """Point a path's bookkeeping row at an existing conversation. Returns the record id.
+
+    Same shape as :func:`record_ingested_file` but idempotent on ``path``: it
+    upserts instead of inserting, so it can repair a row that already exists
+    (stale hash, NULL conversation_id, recorded error) as well as create one.
+    Kept separate because the plain INSERT in ``record_ingested_file`` is what
+    the normal ingest paths rely on to catch a double-record bug; this one is
+    for the recovery path, where a row may or may not be there and either way
+    must end up pointing at ``conversation_id`` with no error.
+    """
+    from datetime import UTC, datetime
+
+    row = conn.execute(
+        "SELECT harness_id FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Conversation not found: {conversation_id}")
+    harness_id = row[0]
+
+    ingested_at = datetime.now(UTC).isoformat()
+    conn.execute(
+        """INSERT INTO ingested_files
+               (id, path, file_hash, harness_id, conversation_id, ingested_at, error, file_mtime, file_size)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)
+           ON CONFLICT(path) DO UPDATE SET
+               file_hash=excluded.file_hash,
+               harness_id=excluded.harness_id,
+               conversation_id=excluded.conversation_id,
+               ingested_at=excluded.ingested_at,
+               error=NULL,
+               file_mtime=excluded.file_mtime,
+               file_size=excluded.file_size""",
+        (_ulid(), path, file_hash, harness_id, conversation_id, ingested_at, file_mtime, file_size),
+    )
+    if commit:
+        conn.commit()
+    row = conn.execute("SELECT id FROM ingested_files WHERE path = ?", (path,)).fetchone()
+    return row[0]
+
+
 def record_empty_file(
     conn: sqlite3.Connection,
     path: str,
