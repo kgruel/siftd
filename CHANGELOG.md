@@ -12,8 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **A push that replaces a conversation cleans up after itself by the schema's
   own rules.** Merge's delete closure was a hand-written second copy of what the
   tables already declare, and going stale once broke `siftd db pull`/`push`
-  outright (#20); it is now the declared cascade. Replacement-heavy merges are
-  ~10% slower; ordinary ones are unchanged.
+  outright (#20); it is now the declared cascade. A merge that replaces every
+  conversation it carries is ~15-20% slower; one that only adds is unchanged.
+  A `--dry-run` merge now reports foreign-key violations instead of predicting
+  success.
   ([#51](https://github.com/kgruel/siftd/issues/51))
 
 - **Tags survive a push that replaces the conversation you tagged.** Receiving a

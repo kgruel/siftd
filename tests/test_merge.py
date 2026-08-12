@@ -4,6 +4,7 @@ import re
 import sqlite3
 
 import pytest
+from conftest import conversation_id, tag_names
 from conftest import make_db as _make_db
 
 from siftd.api.merge import merge_database
@@ -422,6 +423,7 @@ def test_replace_leaves_no_trace_of_the_old_conversation(tmp_path):
     import time
 
     from siftd.ids import ulid as _ulid
+    from siftd.storage.fts import rebuild_fts_index
     from siftd.storage.sqlite import open_database as _open
 
     target = _make_db(
@@ -430,6 +432,12 @@ def test_replace_leaves_no_trace_of_the_old_conversation(tmp_path):
                         "tool_name": "sh", "tags": ["review"]}],
     )
     tgt = _open(target)
+    # `make_db` does not index, and `content_fts` is the one child no cascade
+    # or trigger reaches — so without this the sweep below has nothing to find
+    # there and passes with the explicit delete removed. Verified by mutation:
+    # that is exactly what happened before this line existed.
+    rebuild_fts_index(tgt)
+    assert tgt.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0] > 0
     old_conv = tgt.execute("SELECT id FROM conversations").fetchone()["id"]
     old_ids = {old_conv} | {
         r[0] for r in tgt.execute("SELECT id FROM events WHERE conversation_id = ?", (old_conv,))
@@ -893,14 +901,9 @@ def test_replace_cascades_children(tmp_path):
     # asserted `== "research"` off a bare fetchone() until #77 — which read as
     # "the source wins" but was really "the target's tag was destroyed", and
     # could not have distinguished the two.
-    tag_names = {
-        row[0] for row in conn.execute("""
-            SELECT t.name FROM tag_assignments ta
-            JOIN tags t ON t.id = ta.tag_id
-            WHERE ta.target_kind = 'conversation'
-        """)
+    assert tag_names(conn, "conversation", conversation_id(conn, "conv-1")) == {
+        "research", "review"
     }
-    assert tag_names == {"research", "review"}
 
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
@@ -1111,13 +1114,7 @@ def test_replace_carries_tags_and_ownership(tmp_path):
     new_prompt = conn.execute("SELECT id FROM events WHERE kind='prompt'").fetchone()["id"]
     assert new_conv != old_conv, "the replacement should be a different row"
 
-    conv_tags = {
-        r[0] for r in conn.execute(
-            "SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id"
-            " WHERE ta.target_kind = 'conversation' AND ta.target_id = ?", (new_conv,)
-        )
-    }
-    assert "decision:auth" in conv_tags
+    assert "decision:auth" in tag_names(conn, "conversation", new_conv)
 
     assert len(get_tag_assignments(conn, "prompt", new_prompt)) == 1, (
         "the element tag was not re-pointed onto the replacement's event"

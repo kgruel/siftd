@@ -16,11 +16,11 @@ from pathlib import Path
 from siftd.storage.fts import rebuild_fts_index
 from siftd.storage.replacement import (
     ConversationCarryover,
-    restore_conversation,
+    restore_and_report,
     snapshot_conversation,
 )
 from siftd.storage.sql_helpers import has_conversation_owners_table
-from siftd.storage.sqlite import open_database
+from siftd.storage.sqlite import delete_conversations, open_database
 
 logger = logging.getLogger(__name__)
 
@@ -171,16 +171,24 @@ def merge_database(
                 """).fetchall()
             ])
 
-        # Validate FK integrity before committing (so failures are atomic)
-        if not dry_run:
-            violations = conn.execute("PRAGMA foreign_key_check").fetchall()
-            if violations:
+        # Validate FK integrity before committing (so failures are atomic), on
+        # the dry run too. A dry run's whole job is to say what the real run
+        # would do, and this is the check the real run can *fail* on — skipping
+        # it made the one prediction worth having the one it could not make.
+        # It was skipped because with foreign keys off both paths were equally
+        # blind; now that the real path checks, parity is one condition.
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            if dry_run:
+                conn.execute("ROLLBACK TO merge_dry_run")
+                conn.execute("RELEASE merge_dry_run")
+            else:
                 conn.rollback()
-                tables = {v[0] for v in violations}
-                raise RuntimeError(
-                    f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
-                    "This may indicate a schema mismatch — please report this bug."
-                )
+            tables = {v[0] for v in violations}
+            raise RuntimeError(
+                f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
+                "This may indicate a schema mismatch — please report this bug."
+            )
 
         if before_commit and not dry_run:
             before_commit(conn, stats)
@@ -482,17 +490,16 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
     # is eligible either way — as the pusher's own row before, as an unowned row
     # now, which is the branch the comment at `_eligible_convs` already
     # describes for every other source conversation.
-    replacement_unmatched = 0
+    #
+    # The ordering this depends on is not only asserted here:
+    # `test_replace_carries_tags_and_ownership` re-points an element tag onto
+    # the replacement's event, which can only pass if events have landed.
     for source_conv_id, carryover in carryovers.items():
-        unmatched = restore_conversation(conn, source_conv_id, carryover)
-        replacement_unmatched += unmatched + carryover.dropped
-        if unmatched or carryover.dropped:
-            logger.warning(
-                f"{unmatched + carryover.dropped} tag(s) on the conversation "
-                f"replaced by {source_conv_id} could not be carried across the "
-                "merge (the event is no longer in the source, is synthetic, or "
-                "is a block-level assignment)"
-            )
+        restore_and_report(
+            conn, source_conv_id, carryover,
+            subject=f"the conversation replaced by {source_conv_id}",
+            operation="the merge",
+        )
 
     # --- Step 5: content_blobs ref_count ---
 
@@ -590,9 +597,6 @@ def _replace_stale_conversations(
     if not stale_rows:
         return 0, [], {}
 
-    stale_ids = [r[0] for r in stale_rows]
-    replacement_ids = [r[1] for r in stale_rows]
-
     # Take everything the delete below would destroy that no source row puts
     # back — tags and ownership, through the same primitive ingest's replacement
     # door uses (`storage/replacement.py`). Keyed by the *source* id, because
@@ -607,43 +611,27 @@ def _replace_stale_conversations(
     # (`_stale_to_source` / `_replaced_owner_map`) that hand-rolled half of what
     # this primitive does — the mirror image of #54, which carried the other
     # half and dropped this one.
+    #
+    # Keying the dict by source id loses nothing: `conversations` is UNIQUE on
+    # (harness_id, external_id), which is what the match above joins on, so
+    # stale target and replacement source are in bijection.
     carryovers = {
         source_id: snapshot_conversation(conn, target_id)
         for target_id, source_id in stale_rows
     }
 
-    # Build a temp table for efficient joins
-    conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
-    conn.executemany("INSERT INTO _stale_convs VALUES (?)", [(cid,) for cid in stale_ids])
+    # One delete, expressed once. This used to be 12 statements re-deriving the
+    # closure `delete_conversations` already expresses — kept in sync with it by
+    # nothing at all, which is how the v9 derived-tier tables came to be added
+    # without merge learning about them, and every replacing merge then failed
+    # its own `foreign_key_check` permanently (#20, #51). Merge now holds no
+    # opinion about what a conversation's children are, nor about `content_fts`
+    # being the one child no cascade can reach; `storage/sqlite.py` holds both,
+    # and `tests/architecture/test_replacement_carry.py` holds *it* to the
+    # tables a delete actually reaches.
+    delete_conversations(conn, [target_id for target_id, _ in stale_rows])
 
-    # content_fts before the conversations, because it is the one child the
-    # delete below cannot reach: a virtual table has no foreign key to cascade
-    # from, no trigger, and is invisible to `foreign_key_check` — so nothing
-    # would ever report its rows as orphaned. Still load-bearing after #49,
-    # which writes the index for the *replacements'* ids and so never touches
-    # these.
-    conn.execute("DELETE FROM content_fts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-
-    # Everything else is the closure the schema already declares, and this used
-    # to be a second copy of it — 11 further statements, kept in sync with
-    # `storage/sqlite.py::delete_conversation` by nothing at all. It went stale
-    # exactly once and that was enough: the v9 derived-tier tables were added,
-    # merge was not updated, and `foreign_key_check` rolled every replacing
-    # merge back permanently (#20).
-    #
-    # Deferred foreign keys (see `merge_database`) let the declared cascade run
-    # instead: events, event_content, event_response, event_tool_call,
-    # ingested_files, conversation_owners, usage_by_conv_model and
-    # conversation_stats by `ON DELETE CASCADE`, and the polymorphic pair
-    # (`attributes`, `tag_assignments`, which have no FK on `target_id`) by the
-    # `tr_polymorphic_*_cleanup` triggers, for conversation-, event- and
-    # block-kind targets alike. `tests/architecture/test_replacement_carry.py`
-    # is what holds that closure to the tables a delete actually reaches.
-    conn.execute("DELETE FROM conversations WHERE id IN (SELECT id FROM _stale_convs)")
-
-    conn.execute("DROP TABLE _stale_convs")
-
-    return len(stale_ids), replacement_ids, carryovers
+    return len(stale_rows), list(carryovers), carryovers
 
 
 def _map_vocabulary(conn, table: str, natural_key: str) -> None:

@@ -13,7 +13,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from siftd.domain import Conversation
@@ -3109,27 +3109,68 @@ def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
     return row["id"] if row else None
 
 
-def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
-    """Delete a conversation and all related data.
+def delete_conversations(conn: sqlite3.Connection, conversation_ids: Sequence[str]) -> None:
+    """Delete conversations and all related data.
 
     Explicitly deletes:
     - content_fts (virtual table, no FK/trigger support)
 
     Conversation FK CASCADE handles: events, event_content, event_response,
-    event_tool_call, ingested_files, content_blobs (via tr_event_tool_call_* trigger).
+    event_tool_call, ingested_files, conversation_owners, usage_by_conv_model,
+    conversation_stats, content_blobs (via tr_event_tool_call_* trigger).
 
     tr_polymorphic_*_cleanup triggers handle tag_assignments and attributes for
-    conversations, events, and workspaces — no explicit cleanup needed here.
-    """
-    # Clean up FTS index entries (virtual tables don't support CASCADE or triggers)
-    conn.execute(
-        "DELETE FROM content_fts WHERE conversation_id = ?", (conversation_id,)
-    )
+    conversations, events, and content blocks — no explicit cleanup needed here.
 
-    # Delete conversation - CASCADE handles events and all event_* children;
-    # tr_polymorphic_conversations_cleanup cleans tag_assignments/attributes for the
-    # conversation row, and tr_polymorphic_events_cleanup fires for each cascaded event row.
-    conn.execute("DELETE FROM conversations WHERE id = ?", (conversation_id,))
+    This is the only expression of that closure. It reads as a small thing to
+    have made set-shaped for one extra caller, and it is not: `api/merge.py`
+    kept its own copy of this, and the copy going stale when the v9 derived
+    tier was added broke `siftd db pull`/`push` permanently (#20, #51). The
+    closure is a fact about the schema, so it gets one home — and the
+    `content_fts` exception, the one table no cascade or trigger can reach,
+    gets one home with it.
+
+    The caller must hold `foreign_keys = ON`, which is how `open_database`
+    leaves a connection. Merge additionally defers them, which does not change
+    what this reaches.
+    """
+    if not conversation_ids:
+        return
+    ids = [(cid,) for cid in conversation_ids]
+
+    # One temp table, and each DELETE below runs exactly once against it. Both
+    # halves of that matter. It sidesteps SQLITE_MAX_VARIABLE_NUMBER (a
+    # replacing merge can carry thousands of ids against a historical floor of
+    # 999), and — the expensive half — it keeps the `content_fts` delete to a
+    # single pass. `content_fts.conversation_id` is FTS5 UNINDEXED, so any
+    # predicate on it scans the whole index; chunking the ids would multiply
+    # that scan by the number of chunks rather than dividing the work. #49
+    # measured that exact mistake at 34 passes ≈ 6-10s against one pass ≈ 0.2s,
+    # and the first cut of this function reproduced it.
+    conn.execute("CREATE TEMP TABLE IF NOT EXISTS _deleting_convs (id TEXT PRIMARY KEY)")
+    conn.execute("DELETE FROM _deleting_convs")
+    conn.executemany("INSERT OR IGNORE INTO _deleting_convs VALUES (?)", ids)
+    try:
+        # FTS index entries first: a virtual table supports neither CASCADE nor
+        # triggers, and is invisible to `PRAGMA foreign_key_check`, so nothing
+        # would ever report these rows as orphaned.
+        conn.execute(
+            "DELETE FROM content_fts"
+            " WHERE conversation_id IN (SELECT id FROM _deleting_convs)"
+        )
+        # CASCADE handles events and all event_* children;
+        # tr_polymorphic_conversations_cleanup cleans tag_assignments/attributes for the
+        # conversation row, and tr_polymorphic_events_cleanup fires for each cascaded event row.
+        conn.execute(
+            "DELETE FROM conversations WHERE id IN (SELECT id FROM _deleting_convs)"
+        )
+    finally:
+        conn.execute("DROP TABLE _deleting_convs")
+
+
+def delete_conversation(conn: sqlite3.Connection, conversation_id: str) -> None:
+    """Delete one conversation and all related data — see :func:`delete_conversations`."""
+    delete_conversations(conn, [conversation_id])
 
 
 # =============================================================================

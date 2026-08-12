@@ -102,9 +102,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3288 |
+| `tests/` | 186 | 3289 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 12 | 66 |
+| `tests/architecture/` | 12 | 67 |
 | `tests/cli/` | 28 | 632 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -122,7 +122,7 @@ docstring so its row is meaningful.
 | [test_api_export_edges.py](test_api_export_edges.py) | 1 | — |
 | [test_api_ingest.py](test_api_ingest.py) | 15 | Tests for siftd.api.ingest. |
 | [test_api_init_edges.py](test_api_init_edges.py) | 1 | — |
-| [test_api_merge_edges.py](test_api_merge_edges.py) | 1 | — |
+| [test_api_merge_edges.py](test_api_merge_edges.py) | 2 | — |
 | [test_api_migrations_edges.py](test_api_migrations_edges.py) | 2 | — |
 | [test_api_search_capture.py](test_api_search_capture.py) | 7 | Search-log capture at the api/search.py::search_view Operation (S2). |
 | [test_api_search_edges.py](test_api_search_edges.py) | 11 | — |
@@ -335,7 +335,7 @@ docstring so its row is meaningful.
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
-| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 4 | A conversation replacement is answerable to one list of what it must carry. |
+| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 5 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
