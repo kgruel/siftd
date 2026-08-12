@@ -9,11 +9,9 @@ docstring that argues for it.
 
 What lives here is only the part that carries no invariant: where the source
 tree is, how to enumerate it, and how to read the static text out of a string
-node. Those had accreted to eight copies across seven modules — five when #45
-was filed, seven by the time it was picked up — which is the tell that
-self-containment does not hold this class of thing on its own. `Path(__file__)`
-appears in exactly one place in this directory now, and
-`test_shared_mechanics.py` is what keeps it that way.
+node. `Path(__file__)` appears in exactly one place in this directory now, and
+`test_shared_mechanics.py` is what keeps it that way — its docstring carries
+the count that made the case (#45).
 
 Import it as a top-level package (`tests/` is on `pythonpath`, and this
 directory has an `__init__.py`)::
@@ -30,15 +28,14 @@ from pathlib import Path
 # (`storage/sqlite.py`), one a developer has to go open reads better relative
 # to the repo (`src/siftd/storage/sqlite.py`). Which root a ratchet displays is
 # its own choice; deriving them is not.
-SRC = Path(__file__).parent.parent.parent / "src" / "siftd"
-REPO_ROOT = SRC.parent.parent
+REPO_ROOT = Path(__file__).parent.parent.parent
+SRC = REPO_ROOT / "src" / "siftd"
 
 
 def source_files(root: Path = SRC) -> list[Path]:
     """Every Python source under `root`, sorted, `__pycache__` excluded.
 
-    The filter is inert today — `__pycache__` holds `.pyc`, which `*.py` never
-    matches — and is kept because it is free and states the intent. Sorting is
+    The `__pycache__` filter is inert today and kept for intent. Sorting is
     not cosmetic: several ratchets report offenders in file order, and an
     unsorted `rglob` makes those messages differ run to run.
     """

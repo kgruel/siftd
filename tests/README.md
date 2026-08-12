@@ -81,10 +81,10 @@ subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
   mechanics.** Each module in `tests/architecture/` keeps its own property,
   shrink-only allowlist, and the docstring arguing for both — that is what makes
   it reviewable alone. The neutral parts (`SRC`, `REPO_ROOT`, `source_files`,
-  `literal_text`) live in `architecture/support.py` and are imported, because
-  the alternative was measured: the source-root derivation reached eight copies
-  across seven modules before anyone noticed. `test_shared_mechanics.py` holds
-  the line so this bullet does not have to.
+  `literal_text`) live in `architecture/support.py` and are imported.
+  `test_shared_mechanics.py` holds the line so this bullet does not have to —
+  its docstring carries the measurement that settled it
+  ([#45](https://github.com/kgruel/siftd/issues/45)).
 - **Exercise the real edge.** CLI tests should go through argparse, not call the
   command function directly; route tests that must catch wire-contract drift use
   Litestar's `TestClient` end-to-end rather than calling handlers via `.fn()` —

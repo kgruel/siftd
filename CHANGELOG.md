@@ -74,7 +74,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - The architecture ratchets share one definition of where the source tree is
   (`tests/architecture/support.py`), and a ratchet keeps it that way — the
-  three-`.parent` walk had reached eight copies across seven modules.
+  three-`.parent` walk had reached eight sites across seven modules.
   ([#45](https://github.com/kgruel/siftd/issues/45))
 
 - An architecture ratchet enumerates every read-only open that asserts

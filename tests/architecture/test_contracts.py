@@ -186,7 +186,6 @@ class TestCommandReferences:
     def test_command_references_are_valid(self):
         """All 'siftd <subcommand>' references must be valid CLI commands."""
         import re
-        from pathlib import Path
 
         # Get valid subcommands by parsing --help output. Pin COLUMNS so the
         # 'Advanced (hidden): …' line never wraps — its continuation would drop
@@ -224,7 +223,7 @@ class TestCommandReferences:
 
         invalid_references = []
 
-        for py_file in source_files(SRC):
+        for py_file in source_files():
             content = py_file.read_text()
             rel_path = str(py_file.relative_to(REPO_ROOT))
 
