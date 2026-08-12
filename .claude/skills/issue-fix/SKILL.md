@@ -6,9 +6,9 @@ description: Take a GitHub issue from triage to merged PR — verify it against 
 # siftd Issue → PR
 
 The flow is: **triage → branch → fix → `/simplify` → `codex review` → merge →
-file the deferrals.** Each stage has caught something the previous one missed.
-Don't skip the external review because the internal one came back clean; they
-find different classes of thing.
+file the deferrals → name what's next.** Each stage has caught something the
+previous one missed. Don't skip the external review because the internal one
+came back clean; they find different classes of thing.
 
 Two things are templates rather than prose, and each step points at its own:
 `references/bodies.md` (PR and issue bodies) and
@@ -58,7 +58,29 @@ against history, and testing it is cheaper than investigating the wrong
 subsystem. Where a report says "X started failing when we changed Y", the
 first move is to find out whether X was already failing without Y.
 
+**Re-measure every number the report states.** An issue's enumeration was true
+the day it was written; the arcs that landed since are what make it stale, and
+a stale count reads exactly like a fresh one. #39 named four duplicated
+read-only opens — #42 had already rewired three. #48 cited "12 `sqlite3.connect`
+call sites, 8 of them legitimate" against a real 8 and 5, and I carried 12/8
+into a ratchet docstring before a reviewer re-ran the grep. That is the same
+sampling error as §2's, arriving through the front door: inheriting a
+measurement is not making one. Re-run the count in the body, and if it moved,
+say so in the PR — a corrected count changes the carve-outs, and sometimes the
+design.
+
 If it turns out invalid or already fixed, say that and stop. Don't build.
+
+**"Already fixed" is rarely all-or-nothing, and the partial case has its own
+move.** An issue whose substance a sibling arc dissolved often leaves *residue*
+— a comment, a test exemption, a docstring — that still argues from the
+mechanism that is gone. Filing a new issue for it is noise, leaving it open is
+false, and rebuilding it is waste. Close it inside the PR that removes the
+residue's reason, with `Fixes #N` and a Scope paragraph stating plainly what
+shipped where. On #39 every artifact it named was gone with #42, and what
+survived was two sites arguing from the vocabulary-cache side effect that #47
+was in the middle of removing — including an exemption permitting a
+`sqlite3.connect` call that no longer existed.
 
 ## 2. Branch and fix
 
@@ -110,6 +132,23 @@ versions behind a test that asserted `--since` was *carried* onto the wire with
 the value `"2024-01"`, itself a string the parser rejects. If the round trip
 crosses a CLI boundary, exercise the real parser (`from siftd.cli import
 _build_parser`), not the underlying function ([[cli-argparse-test-gap]]).
+
+**Then falsify it — and back the file up with `cp`, never `git checkout`.**
+Falsifying means deliberately breaking code you have not committed, so the undo
+has to restore your *working* state. `git checkout <path>` restores **HEAD**,
+which silently discards everything uncommitted in that file:
+
+```bash
+cp src/siftd/storage/sqlite.py "$SCRATCH/sqlite.keep"   # before mutating
+# ...mutate, run the test, confirm it reddens...
+cp "$SCRATCH/sqlite.keep" src/siftd/storage/sqlite.py   # restore
+```
+
+On #48 I wrote `git checkout tests/architecture/test_readonly_opens.py || <fallback>`
+to undo one mutation. The checkout **succeeded**, wiping a full ratchet rewrite,
+and the `||` fallback never fired because nothing had failed. The green run that
+followed was the *old* ratchet passing. Same hazard as §5's shared-tree writes,
+one directory closer: the destructive command is yours.
 
 ## 3. Changelog
 
@@ -262,6 +301,16 @@ The scope was still right; the reason was wrong. Fix the comment to say plainly
 that it is a scoping decision, and file the coherent end state — otherwise the
 next reader inherits an argument for never doing it.
 
+**Then hold the replacement rationale to the same test.** Rewriting a rationale
+you just criticized is where the sin recurs, because the new wording arrives
+feeling earned. On #47 I replaced doctor's workaround note with a reason — *a
+diagnostic must not migrate the database it inspects* — that
+`open_database(auto_upgrade=False)` already answers, and which six call sites
+already use. I had reproduced the exact shape the PR existed to delete. The
+check is one question: **is there an existing flag, parameter, or helper that
+already settles the reason I just wrote?** If so it is not the reason; keep
+looking until the surviving one is the one nothing else covers.
+
 ## 6. `codex review` (external)
 
 ```bash
@@ -380,3 +429,41 @@ And ask whether any established invariant can become an enumerable-property
 ratchet with a shrink-only allowlist, in the shape of
 `tests/architecture/test_imports.py` — invariants that live only in review
 vigilance drift.
+
+## 9. Name what's next
+
+Last thing every run. Rank the open issues and say which comes next, with the
+reason:
+
+```bash
+gh issue list --repo kgruel/siftd --state open --limit 40 \
+  --json number,title,createdAt --jq '.[] | [.number,(.createdAt|split("T")[0]),.title] | @tsv' | sort -rn
+```
+
+Rank by **who is currently getting a wrong answer**, not by what is interesting
+to build:
+
+1. A silent wrong result reaching a user — no error, no signal.
+2. A broken user-facing capability, weighted by whether it is live on the
+   homelab (a receive-only server makes merge/push/search gaps real today).
+3. A safety net that isn't catching anything — a vacuous fitness function is
+   worse than none, because green is read as evidence.
+4. Internal coherence.
+
+Substrate that dissolves several open issues outranks its own instances, the
+same rule as step 8's decomposition.
+
+Two constraints override the ranking, and say which you applied: a **sequencing**
+note recorded in the roadmap node or a memory ("#63 before #59, or the scaffold
+lands on an ownership that then moves"), and **context heat** — an issue adjacent
+to what you just touched is cheapest now and most expensive after a compaction.
+
+Apply §1's re-measure rule to the issues you are *ranking*, not only to the one
+you fix. A severity number in a body is a claim from the day it was filed, and
+severity is what the ranking turns on. #33 states "~1/1000" collisions for
+12-char ULID prefixes, which looks absurd — 12 base32 chars is 60 bits, so 12k
+conversations collide at ~10⁻¹¹. It is defensible only because the first 10
+chars of a ULID are the *timestamp*: the prefix carries ~10 bits of real
+randomness, so the collision is confined to events created in the same
+millisecond, which is exactly what bulk ingest produces. Right number, and the
+reason changes the fix from prefix *length* to prefix *composition*.
