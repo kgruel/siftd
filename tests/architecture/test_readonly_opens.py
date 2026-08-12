@@ -71,7 +71,7 @@ pass-through-adapter limit:
 import ast
 from collections import Counter
 
-from architecture.support import SRC, literal_text, source_files
+from architecture.support import SRC, docstring_ids, literal_text, source_files
 
 MARKERS = ("mode=ro", "immutable=1")
 
@@ -98,26 +98,6 @@ PERMANENT_CARVEOUTS: dict[tuple[str, str, str], int] = {
 }
 
 
-def _docstring_ids(tree: ast.Module) -> set[int]:
-    """Node ids of every docstring — prose about the property, not a use of it.
-
-    Five of the eight marker literals under `src/siftd/` are docstrings, and one
-    of them sits in a *different* function than the open it describes
-    (`_ensure_cache_loaded`), so skipping them is what keeps the enumeration
-    honest rather than merely tidy.
-    """
-    ids = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
-            continue
-        if ast.get_docstring(node, clean=False) is None:
-            continue
-        first = node.body[0]
-        if isinstance(first, ast.Expr):
-            ids.add(id(first.value))
-    return ids
-
-
 def _sites() -> Counter[tuple[str, str, str]]:
     """Occurrences per (relative path, enclosing function, marker).
 
@@ -127,7 +107,7 @@ def _sites() -> Counter[tuple[str, str, str]]:
     found: Counter[tuple[str, str, str]] = Counter()
     for path in source_files():
         tree = ast.parse(path.read_text())
-        skip = _docstring_ids(tree)
+        skip = docstring_ids(tree)
         rel = path.relative_to(SRC).as_posix()
 
         def visit(node: ast.AST, scope: str) -> None:

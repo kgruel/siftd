@@ -123,23 +123,6 @@ def _not_found_message(path: str) -> str:
     return "conversation not found"
 
 
-def ambiguous_prefix_body(exc: Any) -> dict[str, Any]:
-    """Wire body for an ``AmbiguousPrefix``, so an HTTP agent can pick a longer
-    prefix programmatically — mirrors ``siftd id --json``.
-
-    One definition, two entry points: ``_dispatch``'s inline catch (which never
-    reaches the app-level handler) and ``app.py``'s handler for the routes that
-    resolve outside ``_dispatch``, e.g. ``event_detail_route``.
-    """
-    return {
-        "error": str(exc),
-        "kind": "ambiguous_prefix",
-        "prefix": exc.prefix,
-        "matched_ids": exc.matched_ids,
-        "total": exc.total,
-    }
-
-
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
@@ -220,8 +203,12 @@ def _dispatch(
         )
         return Response(content={"error": "resource not found"}, status_code=404)
     except AmbiguousPrefix as e:
-        # Must precede the generic ValueError branch.
-        return Response(content=ambiguous_prefix_body(e), status_code=400)
+        # Must precede the `except SiftdError` backstop below, which would
+        # otherwise flatten this to a bare {"error": str(e)}. (Not the
+        # ValueError branch — AmbiguousPrefix is a UserInputError, not a
+        # ValueError.) The same catch is why app.py's handler cannot simply
+        # subsume this one: nothing raised inside _dispatch reaches it.
+        return Response(content=e.to_dict(), status_code=e.http_status)
     except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except SchemaUpgradeRequiredError:

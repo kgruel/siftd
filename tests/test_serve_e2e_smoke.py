@@ -826,6 +826,64 @@ class TestSearchModeWireContract:
         assert results[0]["event_id"] == rid
         assert results[0]["tags"] == ["docs:thing"]
 
+    def test_search_bad_mode_returns_400(self, tmp_path):
+        """An unrecognised mode value must return HTTP 400, not silently fall through."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "bogus"},
+            )
+        assert resp.status_code == 400, resp.text
+        body = resp.json()
+        assert "error" in body, f"400 response must include an 'error' key; got: {body}"
+
+    @pytest.mark.embeddings
+    def test_search_mode_hybrid_accepted(self, tmp_path):
+        """mode=hybrid is accepted by the route (backward-compat check)."""
+        _init_empty_embed_db()
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "hybrid", "n": "5"},
+            )
+        assert resp.status_code == 200, resp.text
+
+    @pytest.mark.embeddings
+    def test_search_mode_semantic_accepted(self, tmp_path):
+        """mode=semantic is accepted by the route (backward-compat check)."""
+        _init_empty_embed_db()
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "semantic", "n": "5"},
+            )
+        assert resp.status_code == 200, resp.text
+
+    def test_mode_fts_returns_200_without_embeddings(self, tmp_path):
+        """mode=fts executes keyword search and returns 200 in a no-embed env."""
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app) as client:
+            resp = client.get(
+                "/api/v1/search",
+                params={"q": "alpha", "mode": "fts"},
+            )
+        assert resp.status_code == 200, (
+            f"mode=fts must return 200 without embeddings; got {resp.status_code}: {resp.text}"
+        )
+
+
+class TestEventDetailRoute:
+    """`GET /api/v1/events/{id}` — it resolves outside `_dispatch`, so its
+    tags enrichment and its error bodies are pinned here rather than inherited
+    from the dispatched routes."""
+
     def test_event_detail_route_surfaces_element_tags(self, tmp_path):
         """GET /api/v1/events/{id} carries the element's tags (WS7 read-back)."""
         from siftd.api.tags import apply_tags
@@ -880,57 +938,6 @@ class TestSearchModeWireContract:
         assert sorted(body["matched_ids"]) == sorted(ids)
         assert body["total"] == 2
 
-    def test_search_bad_mode_returns_400(self, tmp_path):
-        """An unrecognised mode value must return HTTP 400, not silently fall through."""
-        db, _ = _make_multi_turn_db(tmp_path / "team.db")
-        app = create_app(db_path=db, auth_config=None)
-        with TestClient(app, raise_server_exceptions=False) as client:
-            resp = client.get(
-                "/api/v1/search",
-                params={"q": "alpha", "mode": "bogus"},
-            )
-        assert resp.status_code == 400, resp.text
-        body = resp.json()
-        assert "error" in body, f"400 response must include an 'error' key; got: {body}"
-
-    @pytest.mark.embeddings
-    def test_search_mode_hybrid_accepted(self, tmp_path):
-        """mode=hybrid is accepted by the route (backward-compat check)."""
-        _init_empty_embed_db()
-        db, _ = _make_multi_turn_db(tmp_path / "team.db")
-        app = create_app(db_path=db, auth_config=None)
-        with TestClient(app) as client:
-            resp = client.get(
-                "/api/v1/search",
-                params={"q": "alpha", "mode": "hybrid", "n": "5"},
-            )
-        assert resp.status_code == 200, resp.text
-
-    @pytest.mark.embeddings
-    def test_search_mode_semantic_accepted(self, tmp_path):
-        """mode=semantic is accepted by the route (backward-compat check)."""
-        _init_empty_embed_db()
-        db, _ = _make_multi_turn_db(tmp_path / "team.db")
-        app = create_app(db_path=db, auth_config=None)
-        with TestClient(app) as client:
-            resp = client.get(
-                "/api/v1/search",
-                params={"q": "alpha", "mode": "semantic", "n": "5"},
-            )
-        assert resp.status_code == 200, resp.text
-
-    def test_mode_fts_returns_200_without_embeddings(self, tmp_path):
-        """mode=fts executes keyword search and returns 200 in a no-embed env."""
-        db, _ = _make_multi_turn_db(tmp_path / "team.db")
-        app = create_app(db_path=db, auth_config=None)
-        with TestClient(app) as client:
-            resp = client.get(
-                "/api/v1/search",
-                params={"q": "alpha", "mode": "fts"},
-            )
-        assert resp.status_code == 200, (
-            f"mode=fts must return 200 without embeddings; got {resp.status_code}: {resp.text}"
-        )
 
 
 class TestSearchLogWebClickLinkage:

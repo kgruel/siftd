@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   already did — ~1.8% of events in a million-event database share the 12-char
   prefix siftd prints. ([#33](https://github.com/kgruel/siftd/issues/33))
 
+- **Looking a conversation, event, or content block up by ID prefix is ~100x
+  faster on a large database** — the lookup now uses the primary-key index
+  instead of scanning it. ([#33](https://github.com/kgruel/siftd/issues/33))
+
 - **`siftd db pull`/`push` no longer skips conversations that started in the
   same second as its last sync.** Skipped rows are picked up on the next sync.
   ([#32](https://github.com/kgruel/siftd/issues/32))

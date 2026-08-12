@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 
 import pytest
-from conftest import unambiguous_prefix
+from conftest import (
+    COLLIDING_IDS,
+    COLLIDING_PREFIX,
+    insert_colliding_events,
+    unambiguous_prefix,
+)
 
 from siftd.cli import main
 from siftd.storage.sqlite import (
@@ -55,39 +60,25 @@ def id_test_db(tmp_path):
     return db_path, c, p, r, tc
 
 
-# 12 chars, the width `short_id` prints. A ULID's first 10 chars are its
-# millisecond timestamp, so ids minted in one ingest millisecond agree on all
-# of them and differ only in the 10 random bits chars 11-12 carry — these are
-# hand-picked rather than minted so the collision is certain, not ~1/1024 (#33).
-COLLIDING_PREFIX = "01ZZZZZZZZAB"
-
-
 @pytest.fixture
 def collide_db(tmp_path):
     """One conversation and two events all sharing ``COLLIDING_PREFIX``.
 
-    The conversation shares one char *more* with the first event, so a
-    13-char prefix isolates the cross-kind (conversation vs event) collision
-    from the within-events one.
+    The conversation takes the id that shares one char *more* with the first
+    event, so a 13-char prefix isolates the cross-kind (conversation vs event)
+    collision from the within-events one.
     """
     db_path = tmp_path / "collide.db"
     conn = create_database(db_path)
     h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
     ws = get_or_create_workspace(conn, "/code/test", "2024-01-01T00:00:00Z")
 
-    conv = COLLIDING_PREFIX + "C" + "0123456789ABC"
-    events = [COLLIDING_PREFIX + "C" + "DEFGHJKMNPQRS", COLLIDING_PREFIX + "Q" + "TVWXYZ0123456"]
-    assert len({len(i) for i in (conv, *events)}) == 1 and len(conv) == 26
-
+    conv = COLLIDING_IDS[0]
     conn.execute(
         "INSERT INTO conversations (id, external_id, harness_id, workspace_id, started_at)"
         " VALUES (?, 'c1', ?, ?, '2024-01-15T10:00:00Z')", (conv, h, ws),
     )
-    for i, event_id in enumerate(events):
-        conn.execute(
-            "INSERT INTO events (id, conversation_id, kind, external_id, timestamp)"
-            " VALUES (?, ?, 'prompt', ?, '2024-01-15T10:00:00Z')", (event_id, conv, f"p{i}"),
-        )
+    events = insert_colliding_events(conn, conv)
     conn.commit()
     conn.close()
     return db_path, conv, events
@@ -236,6 +227,25 @@ class TestIdClassification:
         assert "longer prefix" in err
         for event_id in events:
             assert event_id in err
+
+    def test_prefix_matching_one_conversation_and_several_events(self, collide_db, capsys):
+        """Mixed collision: the events arm raises first and the conversation
+        candidate is not reported.
+
+        Pinned as the behavior that ships, not as the behavior that is right.
+        `_resolve_and_classify` resolves the two arms independently, so
+        whichever raises first owns the message; the union `TargetRef.
+        _resolve_cross_kind` already computes would name all of them (#71).
+        """
+        db, conv, events = collide_db
+        assert conv.startswith(COLLIDING_PREFIX)
+
+        rc = main(["--db", str(db), "id", COLLIDING_PREFIX])
+        assert rc == 2
+
+        err = capsys.readouterr().err
+        assert f"{COLLIDING_PREFIX!r} matches 2 events" in err
+        assert conv not in err
 
     def test_prefix_matching_one_conversation_and_one_event(self, collide_db, capsys):
         """The cross-kind branch: exactly one conversation and one event."""

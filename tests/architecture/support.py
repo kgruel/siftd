@@ -64,3 +64,30 @@ def literal_text(node: ast.AST) -> str | None:
             if isinstance(part, ast.Constant) and isinstance(part.value, str)
         )
     return None
+
+
+def docstring_ids(tree: ast.Module) -> set[int]:
+    """Node ids of every docstring in `tree` — prose about a property, not a use.
+
+    Only the string-hunting ratchets need this, and they all need the same
+    definition: `test_readonly_opens.py` skips docstrings that quote the URI
+    markers it counts, and `test_prefix_resolution.py` skips the two that quote
+    the SQL predicate it forbids. A call-hunting ratchet reads the tree and
+    gets prose-immunity for free (`test_shared_mechanics.py` argues that at
+    length) — which is why this is a helper here rather than folded into
+    :func:`literal_text`.
+
+    A *docstring* is the first statement of a module, class, or function. Any
+    other bare string statement is left visible: it is unreachable prose only
+    by convention, and no ratchet has needed the wider skip.
+    """
+    ids = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        if ast.get_docstring(node, clean=False) is None:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr):
+            ids.add(id(first.value))
+    return ids

@@ -254,8 +254,8 @@ def _resolve_cross_kind(
     candidates: list[tuple[str, str]] = []  # (kind, id)
     exact_counts: list[Callable[[], int]] = []
 
-    conv_where = ["(c.id = ? OR c.id LIKE ?)"]
-    conv_params: list[object] = [raw, f"{raw}%"]
+    conv_where: list[str] = []
+    conv_params: list[object] = []
     include_conversations = True
     if owner:
         if has_conversation_owners_table(conn):
@@ -265,7 +265,8 @@ def _resolve_cross_kind(
             include_conversations = False
     if include_conversations:
         rows, exact_count = prefix_candidates(
-            conn, from_sql="conversations c", id_expr="c.id", where=conv_where, params=conv_params
+            conn, from_sql="conversations c", id_expr="c.id", prefix=raw,
+            where=conv_where, params=conv_params,
         )
         candidates.extend(("conversation", row["id"]) for row in rows)
         exact_counts.append(exact_count)
@@ -276,8 +277,8 @@ def _resolve_cross_kind(
     # absent but an owner is demanded (same stance as the conversations arm).
     include_events = not (owner and not has_conversation_owners_table(conn))
     if include_events:
-        evt_where = ["(e.id = ? OR e.id LIKE ?)"]
-        evt_params: list[object] = [raw, f"{raw}%"]
+        evt_where: list[str] = []
+        evt_params: list[object] = []
         if owner:
             evt_where.append(owner_predicate("e.conversation_id"))
             evt_params.append(owner)
@@ -285,6 +286,7 @@ def _resolve_cross_kind(
             conn,
             from_sql="events e",
             id_expr="e.id",
+            prefix=raw,
             where=evt_where,
             params=evt_params,
             extra_columns=["e.kind AS kind"],
@@ -296,15 +298,16 @@ def _resolve_cross_kind(
     # with the SAME owner predicate, mirroring the events arm's stance.
     include_blocks = not (owner and not has_conversation_owners_table(conn))
     if include_blocks:
-        blk_where = ["(ec.id = ? OR ec.id LIKE ?)"]
-        blk_params: list[object] = [raw, f"{raw}%"]
+        blk_where: list[str] = []
+        blk_params: list[object] = []
         blk_from = "event_content ec"
         if owner:
             blk_from = "event_content ec JOIN events e2 ON e2.id = ec.event_id"
             blk_where.append(owner_predicate("e2.conversation_id"))
             blk_params.append(owner)
         rows, exact_count = prefix_candidates(
-            conn, from_sql=blk_from, id_expr="ec.id", where=blk_where, params=blk_params
+            conn, from_sql=blk_from, id_expr="ec.id", prefix=raw,
+            where=blk_where, params=blk_params,
         )
         candidates.extend(("block", row["id"]) for row in rows)
         exact_counts.append(exact_count)

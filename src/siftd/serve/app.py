@@ -38,7 +38,6 @@ from siftd.serve.html_routes import (
     ui_workspaces,
 )
 from siftd.serve.routes import (
-    ambiguous_prefix_body,
     conversation_detail,
     conversation_list,
     event_detail_route,
@@ -259,8 +258,11 @@ def create_app(
         status, but a bare `{"error": ...}` that an HTTP agent can't use to pick
         a longer prefix.
         """
-        return Response(content=ambiguous_prefix_body(exc), status_code=exc.http_status)
+        return Response(content=exc.to_dict(), status_code=exc.http_status)
 
+    # `exc` stays unannotated in both handlers: Litestar types the mapping's
+    # values invariantly, so narrowing the parameter to the class it is keyed
+    # by is a type error, not documentation.
     return Litestar(
         route_handlers=route_handlers,
         exception_handlers={

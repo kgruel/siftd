@@ -31,8 +31,7 @@ def cmd_id(args) -> int:
     except _AmbiguousPrefix as exc:
         conn.close()
         if args.json:
-            out = {"kind": "ambiguous_prefix", "prefix": exc.prefix, "matched_ids": exc.matched_ids, "total": exc.total}
-            print(_json.dumps(out, indent=2))
+            print(_json.dumps(exc.to_dict(), indent=2))
             return 2
         _print_ambiguous_error(exc)
         return 2
