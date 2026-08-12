@@ -19,6 +19,8 @@ example of converting from monkeypatch-stdout to callback collection.
 import json
 import os
 import random
+import shutil
+import sqlite3
 import string
 import sys
 import time
@@ -1071,3 +1073,153 @@ def cli_db(tmp_path, test_db):
         external_id=row["external_id"],
         args=["--db", str(test_db)],
     )
+
+
+@pytest.fixture
+def readonly_media(tmp_path):
+    """A directory made unwritable, restored on teardown.
+
+    The distinction that matters: chmod of the *file* still leaves the parent
+    writable, so SQLite can create the `-shm` sidecar and a plain `mode=ro` open
+    succeeds. Only an unwritable *directory* blocks the sidecar, which is what
+    makes it the only form of "read-only media" a test can reproduce — and
+    therefore the only way to exercise the `immutable=1` fallback in
+    `storage.sqlite.connect_read_only`.
+
+    Yields the directory. Seed the database into it before making it read-only:
+
+        db = readonly_media.seed("t.db", lambda conn: conn.execute(...))
+    """
+    import stat as _stat
+    from types import SimpleNamespace
+
+    media = tmp_path / "media"
+    media.mkdir()
+
+    def _freeze() -> None:
+        for entry in media.iterdir():
+            os.chmod(entry, _stat.S_IRUSR)
+        os.chmod(media, _stat.S_IRUSR | _stat.S_IXUSR)
+
+    def seed(name: str, populate=None) -> Path:
+        db = media / name
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            if populate is not None:
+                populate(conn)
+            conn.commit()
+            # Leave no sidecars: the fallback is only reachable when SQLite has
+            # to create the -shm itself.
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        for leftover in media.glob(f"{name}-*"):
+            leftover.unlink()
+        _freeze()
+        return db
+
+    def seed_with_unreplayed_wal(name: str, populate=None) -> Path:
+        """Freeze a database whose `-wal` still holds a committed transaction.
+
+        Copying a database onto read-only media alongside its sidecars is the
+        ordinary way to reach this, and it is the case where "the medium cannot
+        be written" stops implying "the main file is the whole database". Built
+        in a scratch directory and copied *while the writer is still open*,
+        because closing a connection checkpoints the WAL away.
+        """
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(exist_ok=True)
+        source = scratch / name
+        conn = sqlite3.connect(source)
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA wal_autocheckpoint = 0")
+            if populate is not None:
+                populate(conn)
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("CREATE TABLE only_in_wal (x INTEGER)")
+            conn.commit()
+
+            wal = scratch / f"{name}-wal"
+            assert wal.stat().st_size > 32, "commit was checkpointed away"
+            shutil.copy2(source, media / name)
+            shutil.copy2(wal, media / f"{name}-wal")
+        finally:
+            conn.close()
+        _freeze()
+        return media / name
+
+    def seed_with_persist_journal(name: str, populate=None) -> Path:
+        """Freeze a database carrying a retired `journal_mode=PERSIST` journal.
+
+        The counterpart to `seed_with_unreplayed_wal`: a `-journal` that is
+        present and multi-kilobyte but *not* hot, because SQLite zeroes its
+        magic signature to retire it. Anything that refuses based on the
+        sidecar's size rather than its header rejects this database wrongly.
+        """
+        db = media / name
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("PRAGMA journal_mode = PERSIST")
+            if populate is not None:
+                populate(conn)
+            conn.execute("INSERT INTO t VALUES (1)")
+            conn.commit()
+        finally:
+            conn.close()
+        assert (media / f"{name}-journal").stat().st_size > 0, "no journal was left"
+        _freeze()
+        return db
+
+    try:
+        yield SimpleNamespace(
+            path=media,
+            seed=seed,
+            seed_with_unreplayed_wal=seed_with_unreplayed_wal,
+            seed_with_persist_journal=seed_with_persist_journal,
+        )
+    finally:
+        os.chmod(media, _stat.S_IRWXU)
+        for entry in media.iterdir():
+            os.chmod(entry, _stat.S_IRUSR | _stat.S_IWUSR)
+
+
+@pytest.fixture
+def wal_writer():
+    """Open a writer holding a commit in the `-wal`, un-checkpointed.
+
+    The setup a derived-immutability test needs at every read-only open: an
+    immutable reader ignores the `-wal` outright, so a commit that is still
+    only in the WAL is exactly the data such a reader cannot see. Yields a
+    factory; the writer stays open (and the WAL un-checkpointed) until teardown.
+
+        writer = wal_writer(db)
+        writer.commit_to_wal("INSERT INTO t VALUES (1)")
+    """
+    from types import SimpleNamespace
+
+    opened = []
+
+    def factory(db_path):
+        conn = sqlite3.connect(db_path)
+        opened.append(conn)
+        conn.execute("PRAGMA journal_mode = WAL")
+
+        def commit_to_wal(*statements):
+            for sql in statements:
+                conn.execute(sql)
+            conn.commit()
+            wal = Path(f"{db_path}-wal")
+            assert wal.exists() and wal.stat().st_size > 0, (
+                "commit was checkpointed away — the test would be vacuous"
+            )
+
+        return SimpleNamespace(conn=conn, commit_to_wal=commit_to_wal)
+
+    try:
+        yield factory
+    finally:
+        for conn in opened:
+            conn.close()

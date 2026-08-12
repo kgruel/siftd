@@ -1,13 +1,19 @@
 """Tests for read-only database mode."""
 
 import os
+import sqlite3
 import stat
-from pathlib import Path
 
 import pytest
 
 from conftest import skip_if_root
-from siftd.storage.sqlite import open_database
+from siftd.errors import DriftError
+from siftd.storage.sqlite import (
+    SCHEMA_PATH,
+    SCHEMA_VERSION,
+    connect_read_only,
+    open_database,
+)
 
 
 class TestReadOnlyMode:
@@ -153,68 +159,195 @@ class TestReadOnlyMode:
         finally:
             conn.close()
 
-    def test_read_only_uses_uri_mode(self, tmp_path):
-        """read_only=True uses URI mode with immutable flag."""
+    def test_read_only_sees_commits_a_writer_has_not_checkpointed(self, tmp_path, wal_writer):
+        """The read path is not pinned to the last-checkpointed snapshot.
+
+        This is what `mode=ro&immutable=1` cost: an immutable reader ignores the
+        `-wal` file outright, so against a database a live `serve` or concurrent
+        `ingest` has committed to but not checkpointed, `query`/`search`/`show`
+        answered from a stale snapshot and reported it as current. Deterministic,
+        not racy — no checkpoint, no visibility, ever. (#42)
+        """
         db_path = tmp_path / "test.db"
+        open_database(db_path).close()
 
-        # Create DB
-        conn = open_database(db_path)
-        conn.close()
+        writer = wal_writer(db_path)
+        writer.commit_to_wal(
+            "INSERT INTO harnesses (id, name) VALUES ('h-wal', 'wal_probe')"
+        )
 
-        # Open read-only and verify no WAL/SHM files created
         conn = open_database(db_path, read_only=True)
-        conn.execute("SELECT 1")
-        conn.close()
+        try:
+            names = {r[0] for r in conn.execute("SELECT name FROM harnesses").fetchall()}
+            assert "wal_probe" in names
+        finally:
+            conn.close()
 
-        # WAL and SHM files should not exist
-        wal_path = tmp_path / "test.db-wal"
-        shm_path = tmp_path / "test.db-shm"
-        assert not wal_path.exists(), "WAL file should not be created in read-only mode"
-        assert not shm_path.exists(), "SHM file should not be created in read-only mode"
+    @skip_if_root
+    def test_read_only_falls_back_to_immutable_on_read_only_media(self, readonly_media):
+        """Immutability is derived from the medium, not asserted by the caller.
+
+        The plain `mode=ro` open needs to create a `-shm` sidecar, which fails
+        only where no writer could reach the file either — so the failure is the
+        signal, and the `immutable=1` fallback is then true rather than assumed.
+        """
+        db_path = readonly_media.seed(
+            "frozen.db",
+            lambda conn: (
+                conn.executescript(SCHEMA_PATH.read_text()),
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}"),
+            ),
+        )
+
+        # Positive control: without the fallback there is nothing to read.
+        plain = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro", uri=True)
+        with pytest.raises(sqlite3.OperationalError):
+            plain.execute("SELECT count(*) FROM conversations")
+        plain.close()
+
+        conn = open_database(db_path, read_only=True)
+        try:
+            assert conn.execute("SELECT count(*) FROM conversations").fetchone()[0] == 0
+        finally:
+            conn.close()
+        assert not (readonly_media.path / "frozen.db-shm").exists(), (
+            "probe left a sidecar behind"
+        )
+
+
+class TestConnectReadOnly:
+    """The derived-immutability helper every read-only open routes through."""
+
+    def test_locked_database_propagates_rather_than_going_immutable(self, tmp_path):
+        """SQLITE_BUSY must not fall back — a lock means a writer is active.
+
+        The fallback is only correct where nothing can write. A locked database
+        is the opposite: it is exactly the case where `immutable=1` gives the
+        undefined results #42 removed, so degrading to it here would reinstate
+        the defect at its worst. Only the READONLY/CANTOPEN families fall back;
+        everything else propagates.
+
+        `timeout=0` is what makes this cheap enough to test — the discrimination
+        was measured but left untested in #38 because provoking SQLITE_BUSY cost
+        SQLite's five-second default wait.
+        """
+        db_path = tmp_path / "locked.db"
+        open_database(db_path).close()
+
+        blocker = sqlite3.connect(db_path)
+        try:
+            blocker.execute("PRAGMA journal_mode = DELETE")
+            blocker.execute("BEGIN EXCLUSIVE")
+            blocker.execute(
+                "INSERT INTO harnesses (id, name) VALUES ('h-lock', 'locker')"
+            )
+
+            with pytest.raises(sqlite3.OperationalError) as excinfo:
+                connect_read_only(db_path, timeout=0)
+            assert excinfo.value.sqlite_errorname == "SQLITE_BUSY"
+        finally:
+            blocker.rollback()
+            blocker.close()
+
+    @skip_if_root
+    def test_read_only_media_takes_the_fallback(self, readonly_media):
+        """The one case where `immutable=1` is true rather than asserted."""
+        db_path = readonly_media.seed(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+
+        conn = connect_read_only(db_path)
+        try:
+            assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 0
+        finally:
+            conn.close()
+        assert not (readonly_media.path / "frozen.db-shm").exists()
+
+    @skip_if_root
+    def test_unreplayed_wal_on_read_only_media_errors_rather_than_lying(
+        self, readonly_media
+    ):
+        """An unwritable medium does not make the main file the whole database.
+
+        The fallback's premise is that nothing can change the file. That is true
+        going forward, but a `-wal` copied alongside the database already holds
+        committed transactions, and `immutable=1` reads only the main file — so
+        falling back here would silently drop them, which is the exact defect
+        this helper removes. Replaying a WAL is a write, so no read-only
+        connection can answer correctly; the honest outcome is an error.
+
+        Found by external review of #42, reproduced before it was fixed: the
+        helper returned the pre-WAL row set with no indication anything was
+        missing.
+        """
+        db_path = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            connect_read_only(db_path)
+
+    @skip_if_root
+    def test_persist_journal_is_not_mistaken_for_a_hot_one(self, readonly_media):
+        """A retired rollback journal must not trigger the refusal.
+
+        `journal_mode=PERSIST` leaves a multi-kilobyte `-journal` between
+        transactions with its 8-byte magic zeroed — present, large, and not hot.
+        A size-based test would refuse this database; the magic signature
+        distinguishes it exactly. (Raised by external review of #42.)
+        """
+        db_path = readonly_media.seed_with_persist_journal(
+            "persist.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+        journal = readonly_media.path / "persist.db-journal"
+        assert journal.stat().st_size > 0, "fixture did not leave a journal behind"
+
+        conn = connect_read_only(db_path)
+        try:
+            assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 1
+        finally:
+            conn.close()
 
 
 class TestSearchReadOnlyMode:
     """Tests for read-only database access in search code paths."""
 
-    def test_filter_conversations_no_wal(self, tmp_path):
-        """filter_conversations() should not create WAL/SHM files."""
+    @skip_if_root
+    def test_filter_conversations_works_on_readonly_media(self, readonly_media):
+        """filter_conversations() works where the sidecar cannot be created.
+
+        Replaces a no-WAL-sidecar assertion. That was a mechanism standing in
+        for this goal, and the mechanism changed in #42 — the derived open takes
+        WAL read marks on writable media (and so does leave sidecars) precisely
+        so it can see a concurrent writer's commits. What has to keep working is
+        the read itself on media no writer can reach.
+        """
         from siftd.search import filter_conversations
 
-        db_path = tmp_path / "test.db"
+        db_path = readonly_media.seed(
+            "test.db",
+            lambda conn: (
+                conn.executescript(SCHEMA_PATH.read_text()),
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}"),
+            ),
+        )
 
-        # Create DB with schema
-        conn = open_database(db_path)
-        conn.close()
+        assert filter_conversations(db_path, workspace="test") == set()
 
-        # Call filter_conversations (triggers read-only open)
-        result = filter_conversations(db_path, workspace="test")
-        assert result is not None or result == set()
-
-        # WAL and SHM files should not exist
-        wal_path = tmp_path / "test.db-wal"
-        shm_path = tmp_path / "test.db-shm"
-        assert not wal_path.exists(), "WAL file should not be created by filter_conversations"
-        assert not shm_path.exists(), "SHM file should not be created by filter_conversations"
-
-    def test_get_active_conversation_ids_no_wal(self, tmp_path):
-        """get_active_conversation_ids() should not create WAL/SHM files."""
+    @skip_if_root
+    def test_get_active_conversation_ids_works_on_readonly_media(self, readonly_media):
+        """get_active_conversation_ids() works where the sidecar cannot be created."""
         from siftd.search import get_active_conversation_ids
 
-        db_path = tmp_path / "test.db"
+        db_path = readonly_media.seed(
+            "test.db",
+            lambda conn: (
+                conn.executescript(SCHEMA_PATH.read_text()),
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}"),
+            ),
+        )
 
-        # Create DB with schema
-        conn = open_database(db_path)
-        conn.close()
-
-        # Call get_active_conversation_ids (triggers read-only open if sessions found)
-        result = get_active_conversation_ids(db_path)
-        assert isinstance(result, set)
-
-        # WAL and SHM files should not exist
-        wal_path = tmp_path / "test.db-wal"
-        shm_path = tmp_path / "test.db-shm"
-        assert not wal_path.exists(), "WAL file should not be created by get_active_conversation_ids"
-        assert not shm_path.exists(), "SHM file should not be created by get_active_conversation_ids"
+        assert isinstance(get_active_conversation_ids(db_path), set)
 
     @skip_if_root
     def test_filter_conversations_works_on_readonly_file(self, tmp_path):

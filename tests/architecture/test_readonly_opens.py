@@ -1,25 +1,22 @@
 """A read-only open derives immutability from the medium. It does not assert it.
 
-`mode=ro&immutable=1` tells SQLite the file cannot change, so it omits all
-locking and change detection. siftd cannot honour that: `ingest`, `serve`, and
-any second CLI invocation write the same file from another process. SQLite
-calls the result undefined, and #38 measured it reaching users two ways, both
-silent — an immutable reader ignores the `-wal` outright and answers from the
-last checkpoint, and a concurrent checkpoint rewrites main-file pages under a
-reader with no change detection, producing truncated scans and
-`integrity_check` corruption reports against a healthy database.
+Why asserting it is wrong, what it cost, and how the derived open works are all
+documented once, at the mechanism: see `storage.sqlite.connect_read_only`. This
+file is only the enforcement.
 
-The property reached five sites because each new read-only open copied the
-nearest URI. That is a copy-paste failure mode, so this is the enumerable-
-property form of the invariant rather than review attention: every literal
-`immutable=1` under `src/siftd/` is enumerated and must be a known site.
+What it enforces is a *copy-paste* failure mode. The property reached five
+sites because each new read-only open copied the nearest URI — no site was
+reasoned about independently, which is why review attention could never have
+held the line. So the enforceable form is an enumeration of producers: every
+literal `immutable=1` under `src/siftd/` must be a known site.
 
-ALLOWLIST is shrink-only, and it is the completion signal for #42: one entry
-comes out per read-only open rewired through the derived helper, and the issue
-is done when the list is empty. The one legitimate assertion —
-`_connect_read_only`'s fallback, reached only *after* a plain `mode=ro` probe
-has proved the medium unwritable — is tracked separately as DERIVED_FALLBACK
-so that emptiness stays meaningful.
+ALLOWLIST is shrink-only, and it was the completion signal for #42: one entry
+came out per read-only open rewired through the derived helper. **It is now
+empty, and must stay that way** — every read-only open in siftd routes through
+`storage.sqlite.connect_read_only`. The one legitimate assertion is that
+helper's own fallback, reached only *after* a plain `mode=ro` probe has proved
+the medium unwritable; it is tracked separately as DERIVED_FALLBACK so that
+emptiness stays meaningful.
 
 Both lists carry an occurrence *count*, not just a site. Keying on the site
 alone would let a second copied URI land inside an already-listed function
@@ -57,18 +54,14 @@ MARKER = "immutable=1"
 # (path relative to src/siftd, enclosing function) → occurrence count.
 # Shrink-only — an entry is removed when #42 rewires that site, and there is no
 # legitimate reason to add one, so an addition is the conversation.
-ALLOWLIST: dict[tuple[str, str], int] = {
-    ("storage/sqlite.py", "_peek_user_version"): 1,
-    ("storage/sqlite.py", "open_database"): 1,
-    ("storage/embeddings.py", "open_embeddings_db"): 1,
-}
+ALLOWLIST: dict[tuple[str, str], int] = {}
 
 # The one permanent use: the fallback taken only when the plain `mode=ro` probe
 # raises SQLITE_READONLY/SQLITE_CANTOPEN, i.e. on a medium no writer can reach,
 # where `immutable=1` is true rather than assumed. Deliberately not an ALLOWLIST
 # row — "ALLOWLIST is empty" has to remain #42's completion test.
 DERIVED_FALLBACK: dict[tuple[str, str], int] = {
-    ("doctor/checks/__init__.py", "_connect_read_only"): 1,
+    ("storage/sqlite.py", "connect_read_only"): 1,
 }
 
 

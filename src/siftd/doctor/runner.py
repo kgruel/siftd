@@ -45,7 +45,7 @@ def run_checks(
     read-only connection, because a shared one produced wrong query results
     rather than errors when a check opened a write connection to the same file.
     Those connections do change detection, so checks see committed data while a
-    writer is active — see doctor.checks._connect_read_only.
+    writer is active — see siftd.storage.sqlite.connect_read_only.
 
     Args:
         checks: Specific check names to run, or None for all.

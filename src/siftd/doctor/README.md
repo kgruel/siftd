@@ -32,7 +32,8 @@ access opens its own connection and must assume it is racing the read
 connections of every other check.
 
 Those read connections see a **live** database, not a frozen snapshot. They are
-opened with change detection on (`_connect_read_only`), falling back to
+opened with change detection on (`storage.sqlite.connect_read_only`, shared
+with every other read-only open in siftd), falling back to
 `immutable=1` only when the medium genuinely cannot be written — so a check
 reads whatever is committed at the moment each of its statements runs, and two
 statements in one `run()` can disagree if a writer lands between them. Where

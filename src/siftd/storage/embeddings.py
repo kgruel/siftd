@@ -15,15 +15,10 @@ import numpy as np
 from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.storage.sql_helpers import batched_execute
+from siftd.storage.sqlite import connect_read_only
 
 
-class EmbeddingsConnection(sqlite3.Connection):
-    """Connection subclass that tracks whether it was opened as immutable."""
-
-    siftd_immutable: bool = False
-
-
-def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsConnection:
+def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> sqlite3.Connection:
     """Open embeddings database.
 
     Args:
@@ -38,14 +33,9 @@ def open_embeddings_db(db_path: Path, *, read_only: bool = False) -> EmbeddingsC
         db_path.parent.mkdir(parents=True, exist_ok=True)
 
     if read_only:
-        # Use immutable=1 to avoid creating WAL/SHM sidecars when the DB lives on
-        # read-only media (or in sandboxed environments).
-        uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True, factory=EmbeddingsConnection)
-        conn.siftd_immutable = True
+        conn = connect_read_only(db_path)
     else:
-        conn = sqlite3.connect(db_path, factory=EmbeddingsConnection)
-        conn.siftd_immutable = False
+        conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     if not read_only:
         conn.execute("PRAGMA journal_mode=WAL")
@@ -390,26 +380,24 @@ class _EmbeddingCache:
 _embedding_cache = _EmbeddingCache()
 
 
-def _ensure_cache_loaded(conn: sqlite3.Connection) -> str:
+def _ensure_cache_loaded(conn: sqlite3.Connection) -> None:
     """Load (or reuse) the in-memory embedding cache for ``conn``'s DB.
 
-    Returns the DB path hint used as the cache key. Immutable connections
-    (``mode=ro&immutable=1``) are pinned to their open-time snapshot, so a stale
-    cache is reloaded through a fresh connection rather than the caller's.
+    The caller's connection is always the one read from: read-only opens
+    now derive immutability rather
+    than asserting it, and neither outcome leaves a connection that could serve
+    a stale snapshot. A plain ``mode=ro`` connection takes WAL read marks and
+    sees every commit; the ``immutable=1`` fallback is reached only when the
+    ``-shm`` sidecar cannot be created, which is a medium no writer can reach —
+    so its pinned snapshot cannot go out of date in the first place.
+
+    Reloading through a second connection was the workaround for the case that
+    no longer exists: an immutable open over a *writable* file.
     """
     db_path_hint = conn.execute("PRAGMA database_list").fetchone()[2] or ""
     cache = _embedding_cache
     if not cache.is_valid(db_path_hint):
-        is_immutable = getattr(conn, "siftd_immutable", False)
-        if is_immutable and db_path_hint:
-            reload_conn = open_embeddings_db(Path(db_path_hint), read_only=True)
-            try:
-                cache.load(reload_conn, db_path_hint)
-            finally:
-                reload_conn.close()
-        else:
-            cache.load(conn, db_path_hint)
-    return db_path_hint
+        cache.load(conn, db_path_hint)
 
 
 def search_similar(

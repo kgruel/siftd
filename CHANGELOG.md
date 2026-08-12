@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd query`, `search`, and `show` no longer read a snapshot older than
+  the database.** #38 fixed this for `doctor` and left the cause standing
+  everywhere else. Every read-only open built `mode=ro&immutable=1`, telling
+  SQLite the file cannot change so it omits all locking and change detection —
+  a promise siftd cannot keep, since `ingest`, a running `serve`, or a second
+  CLI invocation writes the same file. An immutable reader ignores the `-wal`
+  outright, so against a database with un-checkpointed commits every read
+  answered from the last checkpoint and said nothing; and a writer checkpointing
+  mid-read rewrote main-file pages under a reader with no change detection,
+  truncating scans and reporting `integrity_check` corruption in a healthy
+  database. All read-only opens now route through one helper that derives
+  immutability from the medium — plain `mode=ro` first, falling back to
+  `immutable=1` only when the `-shm` sidecar cannot be created, which is a
+  medium no writer can reach — and refusing even that when a `-wal` or hot
+  `-journal` next to the file holds state an immutable read would drop, which
+  otherwise reintroduced the same silent staleness for databases copied onto
+  read-only media alongside their sidecars.
+  ([#42](https://github.com/kgruel/siftd/issues/42))
+
+  **The trade, stated plainly:** the 0.8.0 note below promising that "read-only
+  commands no longer create surprise WAL/SHM sidecars" is retired for
+  `query`/`search`/`show`. A plain `mode=ro` reader takes WAL read marks, so it
+  creates `-wal`/`-shm` next to the database and cannot remove them on close.
+  Any write to the database creates them anyway; the visible change is that a
+  read alone now does too. Reads on genuinely read-only media are unaffected —
+  that is the case the fallback exists for. This was an announced trade, not an
+  oversight: a reader that cannot see committed data is worse than a sidecar.
+
 - **`siftd doctor` no longer reports on a snapshot older than the database.**
   Its read connections were opened `mode=ro&immutable=1`, which tells SQLite
   the file cannot change and to omit locking and change detection — a promise
@@ -72,9 +100,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `immutable=1` instead of deriving it, against a shrink-only allowlist
   (`tests/architecture/test_readonly_opens.py`). The property reached five
   sites because each new read-only open copied the nearest URI, and #38 added a
-  second pattern to copy from — so the list is seeded with today's three
-  remaining sites to block a fourth while #42 rewires them, and empties as they
-  go. ([#43](https://github.com/kgruel/siftd/issues/43))
+  second pattern to copy from. The allowlist is now **empty** — #42 rewired the
+  last of them — so the ratchet holds the invariant rather than tracking
+  progress toward it. ([#43](https://github.com/kgruel/siftd/issues/43))
+
+- `storage.embeddings.EmbeddingsConnection` and its `siftd_immutable` flag are
+  gone, along with the second-connection cache-reload path they existed to
+  support: with immutability derived, neither a plain `mode=ro` connection nor
+  the read-only-media fallback can serve a stale snapshot. The explicit
+  `PRAGMA wal_checkpoint(TRUNCATE)` after a read-only auto-upgrade is likewise
+  removed — it existed only because the following open was blind to the WAL.
+  ([#42](https://github.com/kgruel/siftd/issues/42))
 
 - CI installs uv via `astral-sh/setup-uv@v7`. `v4` declares `runs.using:
   node20`, which GitHub force-runs on Node 24; that mismatch surfaced as an
