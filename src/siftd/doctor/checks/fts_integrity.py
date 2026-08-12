@@ -14,7 +14,7 @@ class FtsIntegrityCheck:
     cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.storage.sqlite import SCHEMA_VERSION, _peek_user_version, open_database
+        from siftd.storage.sqlite import SCHEMA_VERSION, open_database
 
         conn = ctx.get_db_conn()
         cur = conn.execute(
@@ -29,7 +29,12 @@ class FtsIntegrityCheck:
         # run migrations as a side effect (and take a write lock that blocks a
         # concurrent serve/ingest). Skip instead and let an ordinary command do
         # the upgrade.
-        if _peek_user_version(ctx.db_path) < SCHEMA_VERSION:
+        #
+        # The version comes off the context's own read-only connection, which is
+        # what keeps that constraint true while asking the question:
+        # get_db_conn() routes through connect_read_only, never open_database,
+        # so it cannot trigger the auto-upgrade this check exists to avoid.
+        if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
             return [
                 Finding(
                     check=self.name,

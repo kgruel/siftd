@@ -159,6 +159,65 @@ class TestReadOnlyMode:
         finally:
             conn.close()
 
+    def test_read_only_open_leaves_vocabulary_caches_alone(self, tmp_path):
+        """A read cannot invalidate a name → id mapping, so it must not clear one.
+
+        The caches are process-global: clearing them on a read discards every
+        other subsystem's warm entries on behalf of an operation that wrote
+        nothing. Only a write can create an id, so only a write open clears (#47).
+        """
+        from siftd.storage import sqlite as sq
+
+        db_path = tmp_path / "test.db"
+        write_conn = open_database(db_path)
+        try:
+            model_id = sq.get_or_create_model(write_conn, "claude-opus-5")
+            write_conn.commit()
+        finally:
+            write_conn.close()
+        assert sq._model_cache, "precondition: the write populated the cache"
+
+        ro = open_database(db_path, read_only=True)
+        try:
+            assert sq._model_cache.get("claude-opus-5") == model_id
+        finally:
+            ro.close()
+
+        # ...and the write path still clears, which is what makes skipping it
+        # safe: a second database opened in-process cannot inherit these ids.
+        open_database(tmp_path / "other.db").close()
+        assert not sq._model_cache
+
+    def test_read_only_open_of_current_schema_opens_one_connection(self, tmp_path):
+        """The common read path does not open a connection it throws away.
+
+        The stale-schema check used to run against a transient connection opened
+        and closed before the real one, so every read of an up-to-date database
+        paid for two opens to learn nothing (#47).
+        """
+        from siftd.storage import sqlite as sq
+
+        db_path = tmp_path / "test.db"
+        open_database(db_path).close()
+
+        opens = []
+        real = sq.connect_read_only
+
+        def counting(path, **kwargs):
+            opens.append(path)
+            return real(path, **kwargs)
+
+        sq.connect_read_only = counting
+        try:
+            conn = open_database(db_path, read_only=True)
+        finally:
+            sq.connect_read_only = real
+        try:
+            assert len(opens) == 1, f"expected one read-only open, got {len(opens)}"
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        finally:
+            conn.close()
+
     def test_read_only_sees_commits_a_writer_has_not_checkpointed(self, tmp_path, wal_writer):
         """The read path is not pinned to the last-checkpointed snapshot.
 
