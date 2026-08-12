@@ -22,7 +22,6 @@ from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
 
 _EVENT_KINDS = ("prompt", "response", "tool_call")
-_ULID_LEN = 26
 
 
 @dataclass
@@ -79,9 +78,20 @@ class EventDetail:
 def resolve_event_row(
     conn: sqlite3.Connection, event_id: str, owner: str | None = None,
 ) -> sqlite3.Row | None:
-    """Resolve a possibly-prefix event ID to its full row, or None.
+    """Resolve a full or prefix event ID to its row, or None.
 
-    Skips prefix-LIKE entirely when the input is a full 26-char ULID.
+    A prefix can name more than one event, so this routes through
+    :func:`prefix_candidates` / :func:`resolve_unique_row`, the same
+    resolve-or-raise every other prefix arm uses, and raises
+    ``AmbiguousPrefix`` rather than first-matching. A ULID's first 10 chars are
+    its millisecond timestamp, so a 12-char prefix carries only 10 random bits
+    and events minted in one ingest millisecond collide at ~1/1024; on the
+    author's 1.36M-event database 25,039 rows share a 12-char prefix with
+    another event.
+
+    A full 26-char ULID needs no special case: it is a prefix of exactly
+    itself, ``prefix_candidates`` bounds it to a one-row range, and
+    ``resolve_unique_row`` cannot find a second match to raise on.
 
     When ``owner`` is set, the match is scoped to events whose conversation is
     owned by that identity — so a cross-owner ULID resolves to None (the caller
@@ -89,37 +99,30 @@ def resolve_event_row(
     every other read path applies; without it, event lookup is a multi-tenant
     read IDOR.
 
-    Known future concern: the prefix path uses fetchone() and silently returns
-    the first matching row when multiple events share a prefix. This mirrors
-    the conversation-resolver bug killed in the id-resolution refactor. At
-    current DB scale event-level 8-char collisions are rare (random ULID
-    portion), but rerun a prefix-collision census on the events table when
-    the DB exceeds ~50k events and extend AmbiguousPrefix detection here if
-    collisions are confirmed.
+    Raises:
+        AmbiguousPrefix: the prefix matches more than one (in-scope) event.
     """
+    from siftd.api.conversations import prefix_candidates, resolve_unique_row
     from siftd.storage.sql_helpers import has_conversation_owners_table, owner_predicate
 
-    owner_clause = ""
-    owner_params: tuple[str, ...] = ()
-    if owner is not None:
-        if not has_conversation_owners_table(conn):
-            return None
-        owner_clause = " AND " + owner_predicate("conversation_id")
-        owner_params = (owner,)
+    if owner is not None and not has_conversation_owners_table(conn):
+        return None
+    where = [owner_predicate("e.conversation_id")] if owner is not None else []
+    params: list[object] = [owner] if owner is not None else []
 
-    cols = (
-        "SELECT id, kind, conversation_id, parent_id, external_id, timestamp"
-        " FROM events"
+    rows, exact_count = prefix_candidates(
+        conn,
+        from_sql="events e",
+        id_expr="e.id",
+        prefix=event_id,
+        where=where,
+        params=params,
+        extra_columns=["e.kind", "e.conversation_id", "e.parent_id",
+                       "e.external_id", "e.timestamp"],
     )
-    if len(event_id) == _ULID_LEN:
-        return conn.execute(
-            f"{cols} WHERE id = ?{owner_clause}",
-            (event_id, *owner_params),
-        ).fetchone()
-    return conn.execute(
-        f"{cols} WHERE id LIKE ?{owner_clause} ORDER BY id LIMIT 1",
-        (f"{event_id}%", *owner_params),
-    ).fetchone()
+    return resolve_unique_row(
+        event_id, rows, exact_count, noun="events", kind_column="kind",
+    )
 
 
 def _fetch_content_blocks(conn: sqlite3.Connection, event_id: str) -> list[dict[str, Any]]:
@@ -324,6 +327,8 @@ def get_event(
 
     Raises:
         FileNotFoundError: If the database does not exist.
+        AmbiguousPrefix: If ``id`` is a prefix naming more than one event.
+            A ``UserInputError`` — CLI exit 2, serve HTTP 400.
     """
     if conn is None:
         db = db_path or default_db_path()

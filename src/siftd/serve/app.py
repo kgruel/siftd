@@ -13,6 +13,7 @@ from litestar.middleware import ASGIMiddleware
 from litestar.response import Response
 from litestar.static_files import create_static_files_router
 
+from siftd.api.conversations import AmbiguousPrefix
 from siftd.errors import UserInputError
 from siftd.serve.html_routes import (
     ui_auth_config,
@@ -247,9 +248,27 @@ def create_app(
         """
         return Response(content={"error": str(exc)}, status_code=exc.http_status)
 
+    def _ambiguous_prefix_error(_request, exc) -> Response:
+        """Give routes that resolve outside `_dispatch` the same structured
+        ambiguous-prefix body `_dispatch` returns.
+
+        `event_detail_route` resolves through `api.events.get_event`, which
+        raises `AmbiguousPrefix` (#33) without passing through `_dispatch`'s
+        inline catch. Without this, it would fall to `_user_input_error` — right
+        status, but a bare `{"error": ...}` that an HTTP agent can't use to pick
+        a longer prefix.
+        """
+        return Response(content=exc.to_dict(), status_code=exc.http_status)
+
+    # `exc` stays unannotated in both handlers: Litestar types the mapping's
+    # values invariantly, so narrowing the parameter to the class it is keyed
+    # by is a type error, not documentation.
     return Litestar(
         route_handlers=route_handlers,
-        exception_handlers={UserInputError: _user_input_error},
+        exception_handlers={
+            UserInputError: _user_input_error,
+            AmbiguousPrefix: _ambiguous_prefix_error,
+        },
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),

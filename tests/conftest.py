@@ -369,6 +369,53 @@ def text_block(text: str) -> str:
     return json.dumps({"text": text})
 
 
+def unambiguous_prefix(target: str, others) -> str:
+    """Shortest prefix of ``target`` that none of ``others`` share.
+
+    A ULID's first 10 chars are its millisecond timestamp, so every id a
+    fixture mints in one tight insert loop shares them, and chars 11-12 carry
+    only 10 bits — a hardcoded ``id[:12]`` collides at ~1/1024 per pair (#33).
+    That makes the slice a coin flip, not a stricter assertion. Derive the
+    prefix from the population instead, so "this prefix names exactly one row"
+    is true by construction on every run.
+    """
+    shared = max(
+        (len(os.path.commonprefix([target, other])) for other in others if other != target),
+        default=0,
+    )
+    assert shared < len(target), f"{target} is a prefix of another id"
+    return target[: shared + 1]
+
+
+# 12 chars, the width `short_id` prints — the ids below share exactly that
+# many. Hand-picked rather than minted: a real collision is ~1/1024 per
+# same-millisecond pair, which is common enough to flake CI and far too rare
+# for a test to summon (#33).
+COLLIDING_PREFIX = "01ZZZZZZZZAB"
+COLLIDING_IDS = (
+    COLLIDING_PREFIX + "C" + "0123456789ABC",
+    COLLIDING_PREFIX + "C" + "DEFGHJKMNPQRS",
+    COLLIDING_PREFIX + "Q" + "TVWXYZ0123456",
+)
+
+
+def insert_colliding_events(conn, conversation_id, ids=COLLIDING_IDS[1:]):
+    """Insert bare prompt events with the given ids. Does not commit.
+
+    The ids are literal so the collision is certain; the caller picks how many
+    it wants from :data:`COLLIDING_IDS` (the first shares one char more with
+    the others, which is what isolates a cross-kind collision from a
+    within-events one).
+    """
+    for event_id in ids:
+        conn.execute(
+            "INSERT INTO events (id, conversation_id, kind, external_id, timestamp)"
+            " VALUES (?, ?, 'prompt', ?, '2024-01-15T10:00:00Z')",
+            (event_id, conversation_id, event_id[-4:]),
+        )
+    return list(ids)
+
+
 def make_conversation(
     external_id="test-conv-1",
     workspace_path="/test/project",

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from conftest import COLLIDING_IDS, COLLIDING_PREFIX, insert_colliding_events, unambiguous_prefix
 
 from siftd.api import get_event
-from siftd.api.conversations import resolve_entity_id
+from siftd.api.conversations import AmbiguousPrefix, resolve_entity_id
 from siftd.serialization.events import serialize_event_detail
 from siftd.storage.sqlite import (
     create_database,
@@ -88,10 +89,11 @@ class TestGetEventOwnerScoping:
         assert get_event(r1, db_path=db, owner="bob") is None
 
     def test_prefix_lookup_is_also_scoped(self, db_with_events):
-        db, c, _p1, _p2, r1, *_ = db_with_events
+        db, c, p1, p2, r1, r2, tc1 = db_with_events
         self._assign_owner(db, c, "alice")
-        assert get_event(r1[:10], db_path=db, owner="bob") is None
-        assert get_event(r1[:10], db_path=db, owner="alice") is not None
+        prefix = unambiguous_prefix(r1, (p1, p2, r2, tc1))
+        assert get_event(prefix, db_path=db, owner="bob") is None
+        assert get_event(prefix, db_path=db, owner="alice") is not None
 
     def test_no_owner_arg_is_unscoped(self, db_with_events):
         db, c, _p1, _p2, r1, *_ = db_with_events
@@ -149,17 +151,18 @@ class TestGetEventByKind:
 
 class TestGetEventPrefixMatch:
     def test_prefix_resolves(self, db_with_events):
-        db, _c, _p1, _p2, r1, _r2, _tc1 = db_with_events
-        prefix = r1[:12]
+        db, _c, p1, p2, r1, r2, tc1 = db_with_events
+        prefix = unambiguous_prefix(r1, (p1, p2, r2, tc1))
         detail = get_event(prefix, db_path=db)
         assert detail is not None
         assert detail.id == r1
 
     def test_resolve_entity_id_prompt_prefix(self, db_with_events):
-        db, _c, p1, *_ = db_with_events
+        db, _c, p1, p2, *_ = db_with_events
         conn = open_database(db, read_only=True)
         try:
-            resolved = resolve_entity_id(conn, "prompt", p1[:12])
+            # Kind-narrowed: only the other prompt can collide.
+            resolved = resolve_entity_id(conn, "prompt", unambiguous_prefix(p1, (p2,)))
             assert resolved == p1
         finally:
             conn.close()
@@ -168,10 +171,43 @@ class TestGetEventPrefixMatch:
         db, *_, tc1 = db_with_events
         conn = open_database(db, read_only=True)
         try:
+            # Kind-narrowed and the fixture's only tool_call: any prefix resolves.
             resolved = resolve_entity_id(conn, "tool_call", tc1[:12])
             assert resolved == tc1
         finally:
             conn.close()
+
+    def test_colliding_prefix_raises_instead_of_first_matching(self, tmp_path):
+        """#33: a prefix naming two events must not silently resolve to one."""
+        db = tmp_path / "collide.db"
+        conn = create_database(db)
+        h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+        ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+        c = insert_conversation(conn, external_id="c1", harness_id=h,
+                                workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+        ids = insert_colliding_events(conn, c)
+        conn.commit()
+        conn.close()
+
+        with pytest.raises(AmbiguousPrefix) as exc_info:
+            get_event(COLLIDING_PREFIX, db_path=db)
+        exc = exc_info.value
+        assert exc.total == 2
+        assert set(exc.matched_ids) == set(ids)
+        assert exc.noun == "events"
+        assert exc.candidate_kinds == ["prompt", "prompt"]
+
+        # Either full ULID still resolves exactly — the fix narrows nothing.
+        assert get_event(ids[0], db_path=db).id == ids[0]
+        # ...and so does a prefix one char longer, which names only one.
+        assert get_event(ids[0][:13], db_path=db).id == ids[0]
+
+    def test_lowercase_prefix_resolves(self, db_with_events):
+        """Prefix matching is case-insensitive on input — ids are uppercase."""
+        db, _c, p1, p2, r1, r2, tc1 = db_with_events
+        prefix = unambiguous_prefix(r1, (p1, p2, r2, tc1))
+        assert get_event(prefix.lower(), db_path=db).id == r1
+        assert get_event(r1.lower(), db_path=db).id == r1
 
 
 class TestEventDetailContent:

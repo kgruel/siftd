@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import unambiguous_prefix
 
 from siftd.cli import main
 from siftd.storage.sqlite import (
@@ -70,8 +71,9 @@ class TestSmartRouting:
         assert d["kind"] == "response"
 
     def test_event_id_prefix_routes_to_event_detail(self, event_db, capsys):
-        db, _c, _p, r, _tc = event_db
-        rc = main(["--db", str(db), "show", r[:12], "--json"])
+        db, c, p, r, tc = event_db
+        prefix = unambiguous_prefix(r, (c, p, tc))
+        rc = main(["--db", str(db), "show", prefix, "--json"])
         assert rc == 0
         d = json.loads(capsys.readouterr().out.strip())
         assert d["id"] == r

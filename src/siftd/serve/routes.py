@@ -203,19 +203,12 @@ def _dispatch(
         )
         return Response(content={"error": "resource not found"}, status_code=404)
     except AmbiguousPrefix as e:
-        # Preserve the structured shape so an HTTP agent can programmatically
-        # pick a longer prefix — mirrors `siftd id --json`. Must precede the
-        # generic ValueError branch.
-        return Response(
-            content={
-                "error": str(e),
-                "kind": "ambiguous_prefix",
-                "prefix": e.prefix,
-                "matched_ids": e.matched_ids,
-                "total": e.total,
-            },
-            status_code=400,
-        )
+        # Must precede the `except SiftdError` backstop below, which would
+        # otherwise flatten this to a bare {"error": str(e)}. (Not the
+        # ValueError branch — AmbiguousPrefix is a UserInputError, not a
+        # ValueError.) The same catch is why app.py's handler cannot simply
+        # subsume this one: nothing raised inside _dispatch reaches it.
+        return Response(content=e.to_dict(), status_code=e.http_status)
     except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except SchemaUpgradeRequiredError:

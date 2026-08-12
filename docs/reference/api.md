@@ -1727,6 +1727,7 @@ def get_event(id: str, *, db_path: pathlib.Path | None = ..., conn: sqlite3.Conn
 **Raises:**
 
 - `FileNotFoundError`: If the database does not exist.
+- `AmbiguousPrefix`: If ``id`` is a prefix naming more than one event. A ``UserInputError`` — CLI exit 2, serve HTTP 400.
 
 ### sanitize_fts5_query
 
