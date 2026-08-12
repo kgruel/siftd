@@ -9,128 +9,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **`siftd db pull`/`push` no longer fails outright once the other side
-  re-ingests a conversation you already have.** Replacing a stale conversation
-  deleted its raw children but left its derived-tier rows —
-  `usage_by_conv_model` and `conversation_stats` both declare `ON DELETE
-  CASCADE`, which the merge's `foreign_keys = OFF` disables — so the pre-commit
-  `PRAGMA foreign_key_check` found them dangling and rolled the entire merge
-  back with "Foreign key violations after merge (tables: conversation_stats)".
-  Every subsequent pull in that direction failed identically, leaving the pair
-  permanently unable to sync. The same delete also left `content_fts` rows
-  behind: a virtual table has no cascade and is invisible to
-  `foreign_key_check`, so on the push path (`receive`/`sync` pass
-  `rebuild_fts=False`) the replaced conversation kept answering searches from
-  text that no longer existed. Both are now deleted with the conversation.
+- **`siftd db pull`/`push` no longer fails permanently once the other side
+  re-ingests a conversation you already have.** The replaced conversation also
+  stops answering searches from its deleted text.
   ([#20](https://github.com/kgruel/siftd/issues/20))
 
 - **`siftd query`, `search`, and `show` no longer read a snapshot older than
-  the database.** #38 fixed this for `doctor` and left the cause standing
-  everywhere else. Every read-only open built `mode=ro&immutable=1`, telling
-  SQLite the file cannot change so it omits all locking and change detection —
-  a promise siftd cannot keep, since `ingest`, a running `serve`, or a second
-  CLI invocation writes the same file. An immutable reader ignores the `-wal`
-  outright, so against a database with un-checkpointed commits every read
-  answered from the last checkpoint and said nothing; and a writer checkpointing
-  mid-read rewrote main-file pages under a reader with no change detection,
-  truncating scans and reporting `integrity_check` corruption in a healthy
-  database. All read-only opens now route through one helper that derives
-  immutability from the medium — plain `mode=ro` first, falling back to
-  `immutable=1` only when the `-shm` sidecar cannot be created, which is a
-  medium no writer can reach — and refusing even that when a `-wal` or hot
-  `-journal` next to the file holds state an immutable read would drop, which
-  otherwise reintroduced the same silent staleness for databases copied onto
-  read-only media alongside their sidecars.
-  ([#42](https://github.com/kgruel/siftd/issues/42))
+  the database** while `ingest` or `serve` holds un-checkpointed commits, and
+  no longer report corruption in a healthy database when a writer checkpoints
+  mid-read. ([#42](https://github.com/kgruel/siftd/issues/42))
 
   **The trade, stated plainly:** the 0.8.0 note below promising that "read-only
   commands no longer create surprise WAL/SHM sidecars" is retired for
-  `query`/`search`/`show`. A plain `mode=ro` reader takes WAL read marks, so it
-  creates `-wal`/`-shm` next to the database and cannot remove them on close.
-  Any write to the database creates them anyway; the visible change is that a
-  read alone now does too. Reads on genuinely read-only media are unaffected —
-  that is the case the fallback exists for. This was an announced trade, not an
-  oversight: a reader that cannot see committed data is worse than a sidecar.
+  `query`/`search`/`show`, and for `doctor` below. Seeing committed data
+  requires a plain `mode=ro` reader, which takes WAL read marks and so creates
+  `-wal`/`-shm` it cannot remove on close. Any write to the database creates
+  them anyway; the change is that a read alone now does too. Reads on genuinely
+  read-only media are unaffected.
 
 - **`siftd doctor` no longer reports on a snapshot older than the database.**
-  Its read connections were opened `mode=ro&immutable=1`, which tells SQLite
-  the file cannot change and to omit locking and change detection — a promise
-  doctor cannot keep, since `fts-integrity` opens a write connection mid-run
-  and an external `ingest` or `serve` writes the same file. An immutable
-  reader ignores the `-wal` file outright, so against a database with
-  un-checkpointed commits — what a running `serve` leaves behind — every check
-  silently answered from the last checkpoint; and when a writer checkpointed
-  mid-run, scans truncated early, counts disagreed with the rows they counted,
-  and `integrity_check` reported corruption in a healthy database. Doctor now
-  opens a plain `mode=ro` connection and falls back to `immutable=1` only when
-  the sidecar it needs cannot be created, so read-only media still works and
-  immutability is derived from the medium rather than asserted over it. The
-  trade: `siftd doctor` now leaves `-wal`/`-shm` sidecars next to the database,
-  which a read-only connection cannot clean up on close. Any write to the
-  database creates them anyway, so this is visible only if doctor is the first
-  thing to touch a freshly-checkpointed file.
+  Same cause as #42 above, found first here.
   ([#38](https://github.com/kgruel/siftd/issues/38))
 
-- **Every default `db pull` after the first one works again.** Sync stores its
-  pull cursor as a full ISO 8601 timestamp, then hands that string back to
-  `siftd db send --since` on the remote — where `parse_date` accepted only
-  `YYYY-MM-DD`, `Nd`, `Nw`, `today`, and `yesterday`, and rejected it. SSH
-  pulls aborted with a usage error until the user passed an explicit `--since`
-  or `--all`. `--since`/`--before` now accept ISO 8601 timestamps anywhere the
-  date vocabulary is accepted, normalizing them to UTC at second precision so
-  the bound is a prefix of every spelling adapters write into `started_at`.
+- **Every default `db pull` after the first one works again.** `--since` and
+  `--before` now accept ISO 8601 timestamps — which is what sync's own stored
+  cursor is — anywhere the date vocabulary is accepted.
   ([#21](https://github.com/kgruel/siftd/issues/21))
 
-- **`siftd db send`/`push`/`pull` explain a bad `--since` again.** They passed
-  `parse_date` to argparse as a bare `type=`, which swallows its message and
-  prints `invalid parse_date value` instead of naming the formats it accepts.
+- **`siftd db send`/`push`/`pull` explain a bad `--since` again**, instead of
+  printing `invalid parse_date value`.
 
-- **Aider conversations no longer disappear from delta sync.** The adapter
-  wrote each session header's local wall-clock time straight into
-  `conversations.started_at`, which every other adapter fills with UTC. Since
-  `--since` reaches SQL as a plain string compared against that column, aider
-  rows on a host west of UTC sorted below a UTC cursor by the size of the
-  offset, and delta pulls skipped them — silently, and permanently, because
-  the cursor only moves forward. The header is now resolved against the host's
-  zone at parse time and stored as UTC. `external_id` still keys on the raw
-  header string, so nothing is re-keyed or duplicated; existing aider rows keep
-  their local-time value until their history file changes and is re-ingested.
-  ([#31](https://github.com/kgruel/siftd/issues/31))
+- **Aider conversations no longer disappear from delta sync**, which skipped
+  them silently and permanently on any host west of UTC. Existing aider rows
+  keep their local-time `started_at` until their history file changes and is
+  re-ingested. ([#31](https://github.com/kgruel/siftd/issues/31))
 
-- **`siftd doctor` no longer reports health it did not measure.** The runner
-  fans its checks out over a thread pool, and every DB-reading check shared one
-  `sqlite3` connection. Concurrent use of one connection is not safe — the
-  prepared-statement cache is shared state — and `fts-integrity` opens its own
-  *write* connection to the same file mid-run, which turned the overlap into
-  wrong query results rather than an error: roughly one run in seven reported a
-  healthy FTS index for a database whose index was in fact empty. Each thread
-  now gets its own read-only connection — which also makes the run faster, since
-  SQLite's per-connection mutex had been serializing the checks the thread pool
-  was supposed to overlap (~18% on a 4.8 GB database).
-  ([#34](https://github.com/kgruel/siftd/issues/34))
+- **`siftd doctor` no longer reports health it did not measure** — roughly one
+  run in seven called an empty FTS index healthy — and runs ~18% faster on a
+  4.8 GB database. ([#34](https://github.com/kgruel/siftd/issues/34))
 
 ### Internal
 
 - An architecture ratchet enumerates every read-only open that asserts
-  `immutable=1` instead of deriving it, against a shrink-only allowlist
-  (`tests/architecture/test_readonly_opens.py`). The property reached five
-  sites because each new read-only open copied the nearest URI, and #38 added a
-  second pattern to copy from. The allowlist is now **empty** — #42 rewired the
-  last of them — so the ratchet holds the invariant rather than tracking
-  progress toward it. ([#43](https://github.com/kgruel/siftd/issues/43))
+  `immutable=1` instead of deriving it, against a now-empty, shrink-only
+  allowlist (`tests/architecture/test_readonly_opens.py`).
+  ([#43](https://github.com/kgruel/siftd/issues/43))
 
-- `storage.embeddings.EmbeddingsConnection` and its `siftd_immutable` flag are
-  gone, along with the second-connection cache-reload path they existed to
-  support: with immutability derived, neither a plain `mode=ro` connection nor
-  the read-only-media fallback can serve a stale snapshot. The explicit
-  `PRAGMA wal_checkpoint(TRUNCATE)` after a read-only auto-upgrade is likewise
-  removed — it existed only because the following open was blind to the WAL.
+- `storage.embeddings.EmbeddingsConnection`, its `siftd_immutable` flag, and
+  the `PRAGMA wal_checkpoint(TRUNCATE)` after a read-only auto-upgrade are gone
+  — all three existed only because an open could be blind to the WAL.
   ([#42](https://github.com/kgruel/siftd/issues/42))
 
-- CI installs uv via `astral-sh/setup-uv@v7`. `v4` declares `runs.using:
-  node20`, which GitHub force-runs on Node 24; that mismatch surfaced as an
-  intermittent `self-signed certificate` failure in `Install uv`. `v7` is the
-  newest moving major tag and the first declaring `node24`. ([#34](https://github.com/kgruel/siftd/issues/34))
+- CI installs uv via `astral-sh/setup-uv@v7`; `v4` declares `node20`, which
+  GitHub force-runs on Node 24, surfacing as an intermittent `self-signed
+  certificate` failure. ([#34](https://github.com/kgruel/siftd/issues/34))
 
 ## [0.12.1] - 2026-08-11
 
