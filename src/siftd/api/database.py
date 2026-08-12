@@ -63,8 +63,9 @@ def run_preflight(path: Path, label: str = "source") -> None:
     is always included so inbox errors are traceable.
 
     Warnings are logged; info findings are ignored.
-    Invariant: path must be a closed file (not held open by another connection).
-    CheckContext opens it with ?mode=ro&immutable=1.
+    Expects a quiescent file: CheckContext opens it read-only with change
+    detection on, so a concurrent writer no longer yields undefined results,
+    but the findings still describe the instant they were sampled at.
     """
     import logging
 

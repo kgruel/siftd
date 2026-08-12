@@ -44,6 +44,10 @@ def run_checks(
     but not its SQLite connections: the context hands each thread its own
     read-only connection, because a shared one produced wrong query results
     rather than errors when a check opened a write connection to the same file.
+    Those connections read a locked, change-detecting snapshot rather than an
+    immutable one, so a concurrent writer — fts-integrity's own write
+    connection, or an external ingest/serve — cannot make a check answer from
+    stale or half-rewritten pages. See doctor.checks._connect_read_only.
 
     Args:
         checks: Specific check names to run, or None for all.

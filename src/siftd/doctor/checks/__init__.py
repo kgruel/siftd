@@ -53,6 +53,48 @@ class CheckInfo:
     cost: CheckCost
 
 
+def _connect_read_only(db_path: Path) -> sqlite3.Connection:
+    """Open a read-only connection, deriving immutability instead of asserting it.
+
+    `mode=ro&immutable=1` tells SQLite the file cannot change, so it omits all
+    locking and change detection. Doctor cannot honour that: `fts-integrity`
+    opens its own write connection mid-run, and a concurrent `siftd ingest` or
+    a running `serve` writes the same file from another process. SQLite calls
+    the result undefined, and it is reachable two ways, both silent:
+
+      - An immutable reader ignores the `-wal` file entirely. Against a
+        database with un-checkpointed WAL content — which is what a live
+        `serve` leaves — every check reads a snapshot missing every commit
+        since the last checkpoint, and reports on it without complaint.
+      - When a writer checkpoints mid-run, main-file pages are rewritten under
+        a reader that has no change detection. Scans then truncate early,
+        counts disagree with the rows they counted, and `integrity_check`
+        reports corruption in a database that is fine.
+
+    So the plain `mode=ro` open is tried first: it takes WAL read marks and
+    sees a consistent snapshot no matter who else is writing. It needs to
+    create the `-shm` sidecar, which fails on genuinely read-only media — and
+    that failure is the signal we actually want, because a medium no writer
+    can reach is a medium where `immutable=1` is *true* rather than assumed.
+    Hence the fallback: immutability becomes a property discovered from the
+    file, not a promise the caller makes on its behalf.
+
+    The probe has to run a statement. `sqlite3.connect` succeeds against
+    read-only media; the sidecar is only created when the first read
+    transaction opens, so that is where the error surfaces.
+    """
+    uri = f"file:{db_path.as_posix()}?mode=ro"
+    conn = None
+    try:
+        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+        conn.execute("PRAGMA schema_version")
+        return conn
+    except sqlite3.OperationalError:
+        if conn is not None:
+            conn.close()
+        return sqlite3.connect(f"{uri}&immutable=1", uri=True, check_same_thread=False)
+
+
 @dataclass
 class CheckContext:
     """Context passed to all checks."""
@@ -99,19 +141,18 @@ class CheckContext:
         rather than true by accident. The dict is per-run and pool-sized, so
         holding Thread references costs nothing.
 
-        immutable=1 keeps the open sidecar-free (no WAL/SHM created) and works
-        on read-only media — the same URI storage.open_database uses for its
-        read-only opens. Not routed through open_database despite the overlap:
-        it clears the process-global vocabulary caches on every open, which a
-        per-thread open would do repeatedly mid-run, on other subsystems'
-        behalf. A diagnostic reads; it should not reach into shared state.
+        Immutability is derived from the medium by _connect_read_only, not
+        asserted — see its docstring. Not routed through open_database despite
+        the overlap: it clears the process-global vocabulary caches on every
+        open, which a per-thread open would do repeatedly mid-run, on other
+        subsystems' behalf. A diagnostic reads; it should not reach into
+        shared state.
         """
         key = (threading.current_thread(), str(db_path))
         with self._lock:
             conn = self._conns.get(key)
             if conn is None:
-                uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-                conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                conn = _connect_read_only(db_path)
                 conn.row_factory = sqlite3.Row
                 if foreign_keys:
                     conn.execute("PRAGMA foreign_keys = ON")
