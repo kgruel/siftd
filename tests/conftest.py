@@ -1151,9 +1151,34 @@ def readonly_media(tmp_path):
         _freeze()
         return media / name
 
+    def seed_with_persist_journal(name: str, populate=None) -> Path:
+        """Freeze a database carrying a retired `journal_mode=PERSIST` journal.
+
+        The counterpart to `seed_with_unreplayed_wal`: a `-journal` that is
+        present and multi-kilobyte but *not* hot, because SQLite zeroes its
+        magic signature to retire it. Anything that refuses based on the
+        sidecar's size rather than its header rejects this database wrongly.
+        """
+        db = media / name
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("PRAGMA journal_mode = PERSIST")
+            if populate is not None:
+                populate(conn)
+            conn.execute("INSERT INTO t VALUES (1)")
+            conn.commit()
+        finally:
+            conn.close()
+        assert (media / f"{name}-journal").stat().st_size > 0, "no journal was left"
+        _freeze()
+        return db
+
     try:
         yield SimpleNamespace(
-            path=media, seed=seed, seed_with_unreplayed_wal=seed_with_unreplayed_wal
+            path=media,
+            seed=seed,
+            seed_with_unreplayed_wal=seed_with_unreplayed_wal,
+            seed_with_persist_journal=seed_with_persist_journal,
         )
     finally:
         os.chmod(media, _stat.S_IRWXU)

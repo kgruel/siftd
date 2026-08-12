@@ -22,7 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   database. All read-only opens now route through one helper that derives
   immutability from the medium — plain `mode=ro` first, falling back to
   `immutable=1` only when the `-shm` sidecar cannot be created, which is a
-  medium no writer can reach.
+  medium no writer can reach — and refusing even that when a `-wal` or hot
+  `-journal` next to the file holds state an immutable read would drop, which
+  otherwise reintroduced the same silent staleness for databases copied onto
+  read-only media alongside their sidecars.
   ([#42](https://github.com/kgruel/siftd/issues/42))
 
   **The trade, stated plainly:** the 0.8.0 note below promising that "read-only

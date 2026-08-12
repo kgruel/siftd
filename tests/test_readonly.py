@@ -287,6 +287,27 @@ class TestConnectReadOnly:
         with pytest.raises(DriftError, match="read-only media"):
             connect_read_only(db_path)
 
+    @skip_if_root
+    def test_persist_journal_is_not_mistaken_for_a_hot_one(self, readonly_media):
+        """A retired rollback journal must not trigger the refusal.
+
+        `journal_mode=PERSIST` leaves a multi-kilobyte `-journal` between
+        transactions with its 8-byte magic zeroed — present, large, and not hot.
+        A size-based test would refuse this database; the magic signature
+        distinguishes it exactly. (Raised by external review of #42.)
+        """
+        db_path = readonly_media.seed_with_persist_journal(
+            "persist.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+        journal = readonly_media.path / "persist.db-journal"
+        assert journal.stat().st_size > 0, "fixture did not leave a journal behind"
+
+        conn = connect_read_only(db_path)
+        try:
+            assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 1
+        finally:
+            conn.close()
+
 
 class TestSearchReadOnlyMode:
     """Tests for read-only database access in search code paths."""

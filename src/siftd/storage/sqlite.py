@@ -133,10 +133,38 @@ def connect_read_only(
     return conn
 
 
-# A WAL file is a 32-byte header followed by frames. At exactly the header size
-# (or below) it carries no committed pages, which is what a checkpointed-and-
-# truncated `-wal` looks like.
+# A WAL file is a 32-byte header followed by frames. At or below the header size
+# it carries no pages at all, which is what a checkpointed-and-truncated `-wal`
+# looks like.
 _WAL_HEADER_BYTES = 32
+
+# The 8-byte signature at the head of a rollback journal. SQLite zeroes it to
+# retire the journal, which is what a `journal_mode=PERSIST` file looks like
+# between transactions — present and multi-kilobyte, but not hot.
+_JOURNAL_MAGIC = b"\xd9\xd5\x05\xf9\x20\xa1\x63\xd7"
+
+
+def _sidecar_state(db_path: Path) -> str | None:
+    """Describe un-replayed sidecar content, or None if there is none to lose.
+
+    `immutable=1` reads only the main database file. These are the two ways the
+    rest of the database can be sitting next to it.
+    """
+    wal = db_path.with_name(f"{db_path.name}-wal")
+    try:
+        if wal.stat().st_size > _WAL_HEADER_BYTES:
+            return f"{wal.name} holding transactions that may never have been checkpointed"
+    except OSError:
+        pass
+
+    journal = db_path.with_name(f"{db_path.name}-journal")
+    try:
+        with journal.open("rb") as fh:
+            if fh.read(len(_JOURNAL_MAGIC)) == _JOURNAL_MAGIC:
+                return f"{journal.name} recording a transaction that needs rolling back"
+    except OSError:
+        pass
+    return None
 
 
 def _refuse_immutable_over_unreplayed_sidecars(
@@ -145,34 +173,39 @@ def _refuse_immutable_over_unreplayed_sidecars(
     """Reject the `immutable=1` fallback when sidecars still hold real state.
 
     An unwritable medium proves nothing can change the database *from now on*.
-    It does not prove the main file is the whole database — and `immutable=1`
-    reads only the main file. A `-wal` carrying committed frames, or a hot
-    `-journal` recording a transaction that needs rolling back, is content the
-    fallback would silently drop, which is exactly the stale-snapshot defect
-    this helper exists to remove. Copying a database onto read-only media
-    alongside its sidecars is the ordinary way to reach it.
+    It does not prove the main file is the whole database, and `immutable=1`
+    reads only the main file — so a `-wal` carrying frames, or a hot `-journal`,
+    is content the fallback would silently drop. That is precisely the
+    stale-snapshot defect this helper exists to remove, and copying a database
+    onto read-only media alongside its sidecars is the ordinary way to reach it.
 
-    Neither can be replayed read-only: replay is a write. So there is no
-    connection that answers correctly, and the honest outcome is an error
-    naming the remedy rather than a plausible wrong answer.
+    Neither can be replayed without writing, so no read-only connection reports
+    the truth. An error naming the remedy beats a plausible wrong answer.
+
+    **The WAL test is deliberately conservative, and will sometimes refuse a
+    database that would have read correctly.** Whether a WAL's frames have
+    already been copied into the main file is recorded in the `-shm`, which is
+    absent by construction here — it is the file we just failed to create. A
+    `wal_checkpoint(FULL)` backfills every frame without shrinking the WAL, so a
+    fully-current database copied from a still-open writer is indistinguishable,
+    from the bytes alone, from one missing every commit. SQLite resolves the
+    same ambiguity the same way, refusing with SQLITE_CANTOPEN rather than
+    guessing. Guessing wrong in the permissive direction is silent; guessing
+    wrong in this direction is an error message with a remedy in it.
+
+    The `-journal` test has no such ambiguity: a retired journal is zeroed, so
+    the magic signature distinguishes a hot journal from a `PERSIST` one exactly.
     """
-    for suffix, threshold, what in (
-        ("-wal", _WAL_HEADER_BYTES, "committed transactions that were never checkpointed"),
-        ("-journal", 0, "a transaction that needs rolling back"),
-    ):
-        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
-        try:
-            carries_state = sidecar.stat().st_size > threshold
-        except OSError:
-            continue
-        if carries_state:
-            raise DriftError(
-                f"{db_path} sits on read-only media next to a {sidecar.name} holding "
-                f"{what}. Replaying it requires writing, so no read-only connection can "
-                f"report the database's true contents. Copy the database and its "
-                f"sidecars somewhere writable, or checkpoint it before making the "
-                f"medium read-only."
-            ) from cause
+    state = _sidecar_state(db_path)
+    if state is None:
+        return
+    raise DriftError(
+        f"{db_path} sits on read-only media next to {state}. Replaying it requires "
+        f"writing, so no read-only connection can report the database's true "
+        f"contents. Copy the database and its sidecars somewhere writable, or take "
+        f"the copy from a cleanly closed database — SQLite removes the sidecars on "
+        f"the last connection's close."
+    ) from cause
 
 
 def _peek_user_version(db_path: Path) -> int:
