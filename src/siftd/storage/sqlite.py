@@ -149,7 +149,17 @@ def _sidecar_state(db_path: Path) -> str | None:
 
     `immutable=1` reads only the main database file. These are the two ways the
     rest of the database can be sitting next to it.
+
+    The path is resolved first, because SQLite derives the `-wal` and `-journal`
+    names from the file it actually opened, not from the name it was handed. A
+    symlink pointing at a database on read-only media would otherwise be checked
+    for sidecars in the *symlink's* directory, find none, and let the caller fall
+    back to `immutable=1` over a database whose WAL still holds committed
+    transactions — reproduced: the fallback opened, and the table created in that
+    WAL was simply absent, with `backup_database` happily copying the result.
+    Looking where SQLite looks is what makes the check mean what it says.
     """
+    db_path = db_path.resolve()
     wal = db_path.with_name(f"{db_path.name}-wal")
     try:
         if wal.stat().st_size > _WAL_HEADER_BYTES:
@@ -486,14 +496,20 @@ def backup_database(source_path: Path, target_path: Path) -> None:
         source_path: Path to the source database.
         target_path: Path to write the backup. Parent directory is created if needed.
 
-    The source is opened by `connect_read_only` rather than a hand-rolled
-    `mode=ro` URI (#48). A backup is exactly the operation that must not read a
-    stale snapshot: if the source sits on read-only media next to a `-wal` that
-    was never checkpointed, the helper refuses with a remedy instead of quietly
-    copying a main file that is missing every commit in it.
+    The source routes through `connect_read_only` (#48) rather than a hand-rolled
+    `mode=ro` URI, which is a capability change as much as a routing one. The raw
+    open could not read genuinely read-only media at all — it failed with
+    "attempt to write a readonly database", because a plain `mode=ro` open still
+    needs to create the `-shm`. Backing up from such media now works, through the
+    same derived fallback every other read uses. The sidecar refusal is what
+    keeps that new reach honest: where a `-wal` beside the source still holds
+    commits the fallback cannot see, this raises instead of writing a backup that
+    would look complete and not be.
 
     Raises:
         FileNotFoundError: If source database does not exist.
+        DriftError: If the source sits on read-only media beside sidecar state
+            that no read-only connection can replay.
     """
     if not source_path.exists():
         raise FileNotFoundError(f"Database not found: {source_path}")

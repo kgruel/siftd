@@ -1524,6 +1524,7 @@ def backup_database(source_path: Path, target_path: Path) -> None
 **Raises:**
 
 - `FileNotFoundError`: If source database does not exist.
+- `DriftError`: If the source sits on read-only media beside a `-wal` or hot `-journal` holding transactions no read-only connection can replay, which a backup would otherwise omit without saying so.
 
 ### create_database
 

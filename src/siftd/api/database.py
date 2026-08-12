@@ -126,17 +126,22 @@ def open_database(
 def backup_database(source_path: Path, target_path: Path) -> None:
     """Create a consistent online backup using sqlite3.Connection.backup().
 
+    The source is read through the derived read-only open, so a database on
+    read-only media can be backed up.
+
     Args:
         source_path: Path to the source database.
         target_path: Path to write the backup. Parent directory is created if needed.
 
     Raises:
         FileNotFoundError: If source database does not exist.
+        DriftError: If the source sits on read-only media beside a `-wal` or hot
+            `-journal` holding transactions no read-only connection can replay,
+            which a backup would otherwise omit without saying so.
     """
     from siftd.storage.sqlite import backup_database as _backup
 
-    path = source_path or _db_path()
-    _backup(path, target_path)
+    _backup(source_path, target_path)
 
 
 def recreate_blob_triggers(conn: sqlite3.Connection) -> None:

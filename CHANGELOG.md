@@ -70,16 +70,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run in seven called an empty FTS index healthy — and runs ~18% faster on a
   4.8 GB database. ([#34](https://github.com/kgruel/siftd/issues/34))
 
-- **`siftd db backup` refuses a source it cannot read completely** rather than
-  writing a backup that silently omits every transaction still sitting in an
-  un-replayed `-wal`. ([#48](https://github.com/kgruel/siftd/issues/48))
+- **`siftd db backup` can now read a database on read-only media**, where it
+  previously failed outright — and refuses, rather than writing a
+  complete-looking backup, when sidecar state beside the source holds
+  transactions it could not include.
+  ([#48](https://github.com/kgruel/siftd/issues/48))
 
 ### Internal
 
-- The read-only-open ratchet enforces routing through `connect_read_only`
-  rather than absence of the `immutable=1` literal, which a hand-rolled
-  `mode=ro` open could satisfy while still forking the read contract.
-  ([#48](https://github.com/kgruel/siftd/issues/48))
+- An architecture ratchet enumerates every read-only open under `src/siftd/`
+  and requires each to route through `connect_read_only`
+  (`tests/architecture/test_readonly_opens.py`).
+  ([#43](https://github.com/kgruel/siftd/issues/43),
+  [#48](https://github.com/kgruel/siftd/issues/48))
 
 - A read-only database open no longer clears the process-global vocabulary
   caches or opens a throwaway connection to check the schema version, so a read
@@ -90,11 +93,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`tests/architecture/support.py`), and a ratchet keeps it that way — the
   three-`.parent` walk had reached eight sites across seven modules.
   ([#45](https://github.com/kgruel/siftd/issues/45))
-
-- An architecture ratchet enumerates every read-only open that asserts
-  `immutable=1` instead of deriving it, against a now-empty, shrink-only
-  allowlist (`tests/architecture/test_readonly_opens.py`).
-  ([#43](https://github.com/kgruel/siftd/issues/43))
 
 - `storage.embeddings.EmbeddingsConnection`, its `siftd_immutable` flag, and
   the `PRAGMA wal_checkpoint(TRUNCATE)` after a read-only auto-upgrade are gone

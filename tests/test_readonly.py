@@ -11,6 +11,7 @@ from siftd.errors import DriftError
 from siftd.storage.sqlite import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
+    backup_database,
     connect_read_only,
     open_database,
 )
@@ -345,20 +346,42 @@ class TestConnectReadOnly:
             connect_read_only(db_path)
 
     @skip_if_root
+    def test_sidecar_check_follows_a_symlink_to_the_real_database(
+        self, readonly_media, tmp_path
+    ):
+        """The refusal looks where SQLite looks, not where the caller pointed.
+
+        SQLite derives `-wal`/`-journal` names from the file it actually opened.
+        A symlink in a writable directory pointing at a frozen database therefore
+        had its sidecars looked for beside the *link* — none there, so the guard
+        passed and the `immutable=1` fallback opened a database missing every
+        transaction still in its WAL. Found by external review of #48 and
+        reproduced before fixing: the open succeeded and `only_in_wal` was simply
+        absent, with `backup_database` copying that result without complaint.
+        """
+        real = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+        link = tmp_path / "link.db"
+        link.symlink_to(real)
+        assert not (tmp_path / "link.db-wal").exists(), (
+            "precondition: no sidecar beside the link, so a path-literal check finds nothing"
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            connect_read_only(link)
+        with pytest.raises(DriftError, match="read-only media"):
+            backup_database(link, tmp_path / "backup.db")
+
+    @skip_if_root
     def test_backup_refuses_a_source_whose_wal_it_cannot_replay(
         self, readonly_media, tmp_path
     ):
-        """A backup is the read that must never copy a stale snapshot (#48).
+        """`backup_database` routes its source open through the helper (#48).
 
-        `backup_database` used to build its own `mode=ro` source URI, so it was
-        invisible to the routing ratchet and got none of the helper's sidecar
-        protection. Against a source on read-only media beside an un-replayed
-        `-wal`, the honest outcome is the same refusal `connect_read_only`
-        gives — a backup that silently omits every committed transaction in
-        that WAL is worse than no backup, because it looks like one.
+        So it inherits the sidecar refusal above, rather than reaching read-only
+        media by a path with no such guard.
         """
-        from siftd.storage.sqlite import backup_database
-
         db_path = readonly_media.seed_with_unreplayed_wal(
             "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
         )
