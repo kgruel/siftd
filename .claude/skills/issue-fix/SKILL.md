@@ -33,6 +33,27 @@ Reporters diagnose from reading source and often get the mechanism subtly
 wrong even when the symptom is real. Say so plainly in the PR — a corrected
 mechanism changes what the right fix is.
 
+**When a report blames a change, check whether the symptom predates it.** This
+is one query and it can redirect the whole arc. #34 argued that bumping
+`setup-uv` broke two doctor tests — "two different tests failing across two
+runs is a changed environment, not two coincidental flakes," which reads as
+sound reasoning. One look at CI history showed the same test failing with the
+identical assertion on `main` *before* the bump, under the old version. The
+report had a real defect and a real infrastructure fix in it, wired to each
+other by an inference that a single query dissolved:
+
+```bash
+gh run list --repo kgruel/siftd --branch main --limit 40 \
+  --json databaseId,conclusion,headSha,displayTitle \
+  --jq '.[] | [.databaseId,.conclusion,.displayTitle] | @tsv'
+gh run view <run-id> --repo kgruel/siftd --log-failed | grep -E "FAILED|assert "
+```
+
+The general form: a correlation offered as a cause is a claim you can test
+against history, and testing it is cheaper than investigating the wrong
+subsystem. Where a report says "X started failing when we changed Y", the
+first move is to find out whether X was already failing without Y.
+
 If it turns out invalid or already fixed, say that and stop. Don't build.
 
 ## 2. Branch and fix
@@ -117,10 +138,39 @@ an explicit **Out of scope** section.
 Run it. Four parallel agents review reuse / simplification / efficiency /
 altitude, then you apply what survives.
 
+**Commit first, then launch every review agent with `isolation: "worktree"`.**
+A "read-only" review agent is not read-only in practice: to answer *is this
+slower?* or *does this finding reproduce?* the honest move is to run the code,
+and running it means A/B-swapping files, reverting the fix, or checking out the
+base revision. On #34 two of the four agents wrote to the shared tree — one
+restored the pre-fix file to reproduce the bug and left it there, the other
+copied `main`'s version over the working copy to benchmark, then restored it —
+and their windows overlapped with each other and with my own edits. The fix
+survived only because a later read happened to show the reverted file; a
+`git commit -a` in that window would have shipped the pre-fix code under a
+message describing the fix.
+
+Isolation is the structural fix, not "tell the agents not to write" — the
+writes are legitimate, the shared target isn't. Consequences to know:
+
+- A worktree carries **committed** state only, so the review sees your last
+  commit, not your working tree. That is why the commit comes first. It also
+  matches how `/simplify` picks its scope (`git diff main...HEAD`).
+- Findings come back as text and you apply them in the real tree. Anything an
+  agent "fixed" in its worktree is discarded — which is what you want from a
+  reviewer.
+- Cite an agent's measurements only after reproducing them yourself. On #34 the
+  efficiency agent reported a 4× speedup from the same change that measured
+  ~18% when I ran it; its numbers were contaminated by warm-cache effects and
+  by the file-swapping above.
+
 It reliably finds adjacent defects, not just style — on #21 it caught that
 `db send/push/pull` passed `parse_date` to argparse as a bare `type=`, which
 swallows the exception message, so the vocabulary hint the fix had just widened
-never reached users on the three subcommands the fix was about.
+never reached users on the three subcommands the fix was about. On #34 it found
+that the fix left its own residue unswept: `open_database` still carried the
+`check_same_thread` knob whose docstring recommended the pattern the fix had
+just disproved, citing doctor — the caller that had stopped using it.
 
 Skip findings that need changes well outside the diff, but **record them** —
 they become issues in step 8. A same-name-different-contract collision is worth
@@ -186,11 +236,23 @@ gh run view <run-id> --repo kgruel/siftd --log-failed | grep -E "FAILED|assert "
 
 Then check `git log --oneline -3 -- <that test's file>` — if the file predates
 your arc and the failure is timing- or randomness-shaped, it's a pre-existing
-flake, not your regression. Known ones: `tests/cli/test_upgrade.py` (real
-clock) and ULID prefix collisions in ID-resolution tests (a 12-char `short_id`
+flake, not your regression. Known ones: `tests/cli/test_upgrade.py` (see below)
+and ULID prefix collisions in ID-resolution tests (a 12-char `short_id`
 carries only ~10 bits beyond the millisecond, so same-millisecond IDs collide
-~1/1024). Report it and file it; don't silently rerun past it, and don't
-rework code that isn't yours.
+~1/1024).
+
+**"Pre-existing flake" is a routing decision, not a diagnosis.** Report it and
+file it; don't silently rerun past it, and don't rework code that isn't yours —
+but spend the five minutes to find the actual mechanism first, because the
+mechanism is often bigger than the flake. This skill listed
+`tests/cli/test_upgrade.py` as a *real-clock* flake for two arcs. It isn't. On
+#34, reading it properly showed `main()` spawns a live daemon update-check
+thread that hits PyPI, and `_write_cache` resolves `state_dir()` **at write
+time** — so the thread can land in an unrelated test's `tmp_path` long after
+its own test finished. The flaky assertion was the only one that happened to
+notice; the real finding is that the suite makes live network calls and one
+test can silently corrupt another's fixture (#40). A wrong label in this list
+is worse than no label, because it retires the question.
 
 **Never chain the check into the push.** `./dev check | grep -E "All checks|failed"`
 followed by `&& git push` will push on failure, because grep *succeeds* when
