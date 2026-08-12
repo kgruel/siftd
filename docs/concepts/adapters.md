@@ -146,10 +146,10 @@ See [Writing Adapters](../guides/writing-adapters.md) for the complete implement
 Adapters declare how they handle re-ingesting the same content:
 
 **File-based deduplication** (`DEDUP_STRATEGY = "file"`):
-One conversation per file. If the file hasn't changed, skip it. Most tools work this way — each session gets its own log file.
+One conversation per file. If the file hasn't changed, skip it; if it has, the conversation is replaced. Most tools work this way — each session gets its own log file. A parse that yields more than one conversation fails the source.
 
 **Session-based deduplication** (`DEDUP_STRATEGY = "session"`):
-Multiple files may contribute to the same conversation. Re-ingesting updates the existing record. Use this when a tool writes multiple files for one session, or when sessions can be appended to.
+Conversations are deduped independently by `external_id` rather than by the file that produced them. Use this when a source can hold several sessions or grow new ones over its life — a SQLite database of chats (OpenCode), or a markdown history file every session is appended to (aider) — and also when a source holds one conversation that is re-exported as it changes, so a re-parse should update rather than duplicate (Gemini CLI).
 
 The deduplication strategy ensures `siftd ingest` is idempotent — run it as often as you want without creating duplicate conversations.
 

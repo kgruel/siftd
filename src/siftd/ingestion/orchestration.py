@@ -1,15 +1,26 @@
 """Orchestration: coordinate ingestion pipeline.
 
-Design constraint: One source file → at most one conversation.
-----------------------------------------------------------
-The `ingested_files.path` column is UNIQUE, meaning each file can map to exactly
-one conversation. This is intentional: most adapters produce one conversation per
-file (JSONL session logs, markdown exports, etc.).
+Design constraint: cardinality is a property of the adapter's DEDUP_STRATEGY.
+----------------------------------------------------------------------------
+The `ingested_files.path` column is UNIQUE, so a row can name at most one
+conversation. Which of the two branches below a source takes decides what that
+row means:
 
-If an adapter's parse() yields multiple conversations from a single source, we
-fail that source explicitly. Supporting multi-conversation sources (e.g., SQLite
-DBs containing many sessions) would require schema changes to ingested_files —
-revisit if a real use case emerges.
+- `"file"`: one conversation per source (JSONL session logs, single-transcript
+  exports). The row points at it, and a content change replaces it outright.
+  A parse yielding more than one conversation is an adapter bug and fails the
+  source.
+- `"session"`: conversations are deduped by external_id rather than by the
+  file that produced them. That covers a source holding many at once (an
+  OpenCode SQLite DB, an aider history file accumulating every session for a
+  project) and a source holding one that is re-exported as it changes (a
+  Gemini CLI chat JSON). The row is a hash/mtime marker with
+  `conversation_id = NULL`, so replacing any one conversation does not
+  cascade the marker away.
+
+An adapter whose source grows new conversations over its life belongs on
+`"session"`, whatever its storage format. `aider` did not, and every history
+file with a second session failed permanently (#36).
 """
 
 from __future__ import annotations
@@ -129,18 +140,82 @@ def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
     return _parse_timestamp(new_ts) > _parse_timestamp(existing_ts)
 
 
-def _get_single_conversation(conversations: list, source_path: str):
-    """Enforce 0/1 conversation per source file.
+def _stat_unchanged(existing_info, st: os.stat_result) -> bool:
+    """Whether the cheap skip applies: same mtime and size, nothing unresolved.
+
+    Both dedup branches open with this and then with :func:`_hash_unchanged`,
+    so the rule they share lives here rather than in two copies that drift.
+    The shared half is the one that keeps costing us: **a row carrying an
+    error is re-examined every run, whatever its stat says.** The error write
+    stamps the *failing* file's own hash/mtime/size, so a source that stops
+    changing after a failure matches both skips forever — which is how rows
+    poisoned by the #29 race survived every later ingest, and how an aider
+    file poisoned by #36 would have survived the very upgrade that fixes it.
+    Re-examining is what makes self-healing reachable without the file having
+    to grow again.
+    """
+    if existing_info["error"] is not None:
+        return False
+    stored_mtime = existing_info["file_mtime"]
+    return (
+        stored_mtime is not None
+        and st.st_mtime == stored_mtime
+        and st.st_size == existing_info["file_size"]
+    )
+
+
+def _hash_unchanged(existing_info, current_hash: str) -> bool:
+    """Whether the content is byte-identical to what was ingested.
+
+    Reached when the stat moved but the bytes may not have. Carries the same
+    errored-row rule as :func:`_stat_unchanged` for the same reason.
+    """
+    return (
+        existing_info["error"] is None and current_hash == existing_info["file_hash"]
+    )
+
+
+def _session_should_replace(new_ended: str | None, existing_ended: str | None) -> bool:
+    """Whether a re-parsed session should replace the copy already stored.
+
+    `ended_at` is this branch's per-conversation change detector: a container
+    source re-parses every session it holds, and only the ones that actually
+    moved are worth the delete-then-insert (which costs new ULIDs, a tag
+    snapshot/restore, and the conversation's ownership rows).
+
+    A conversation reporting no `ended_at` is not "unchanged" — it is a
+    session with no detector at all, and `newer than` is false forever, which
+    is what froze every aider session at its first ingest (#36). We only reach
+    here because the file's content hash changed, so the honest reading of
+    "no detector" is that the re-parsed file wins.
+    """
+    if new_ended is None:
+        return True
+    return _compare_timestamps(new_ended, existing_ended)
+
+
+def _get_single_conversation(
+    conversations: list, source_path: str, adapter_name: str = "this adapter"
+):
+    """Enforce 0/1 conversation per source, for a file-strategy adapter.
 
     Returns None if the list is empty.
     Raises AdapterParseError when a source yields multiple conversations.
+
+    The message names the strategy, because the constraint belongs to it and
+    not to ingest. It used to read "ingest currently requires exactly one
+    conversation per source", which is a statement about a limitation rather
+    than about a choice the adapter made — and it sent diagnosis toward a
+    schema change for the whole life of the one built-in that tripped it. The
+    remedy is one attribute away and worth saying out loud (#36).
     """
     if not conversations:
         return None
     if len(conversations) > 1:
         raise AdapterParseError(
-            f"Source {source_path} yielded {len(conversations)} conversations; "
-            "ingest currently requires exactly one conversation per source"
+            f"Source {source_path} yielded {len(conversations)} conversations, but "
+            f"{adapter_name} declares DEDUP_STRATEGY = 'file'. A source that holds "
+            "or grows several conversations belongs on DEDUP_STRATEGY = 'session'."
         )
     return conversations[0]
 
@@ -159,7 +234,9 @@ def _parse_source_conversation(
         raise AdapterParseError(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
-    return _get_single_conversation(list(adapter.parse(source)), source_path)
+    return _get_single_conversation(
+        list(adapter.parse(source)), source_path, adapter.NAME
+    )
 
 
 def _parse_source_conversations(
@@ -170,9 +247,9 @@ def _parse_source_conversations(
     """Parse a session-strategy source into all of its conversations.
 
     Unlike :func:`_parse_source_conversation` (file strategy, 0/1), a session
-    source may legitimately yield many conversations — e.g. an OpenCode or
-    Gemini SQLite DB with one conversation per session. Each is stored and
-    deduped independently by external_id.
+    source may legitimately yield many conversations — e.g. an OpenCode
+    SQLite DB or an aider history file, each holding one per session. Each is
+    stored and deduped independently by external_id.
     """
     if not adapter.can_handle(source):
         raise AdapterParseError(
@@ -268,7 +345,8 @@ def ingest_all(
 
     Handles two dedup strategies:
     - "file": one conversation per file, skip if file already ingested
-    - "session": one conversation per session, replace if newer
+    - "session": a container of conversations, each replaced when it moves
+      (see `_session_should_replace`)
 
     Args:
         conn: Database connection
@@ -383,32 +461,15 @@ def ingest_all(
                     location = source.as_path
                     st = location.stat()
 
-                    # A row carrying an error is re-examined every run, whatever
-                    # its stat says. _record_file_error stamps the *failing*
-                    # file's own hash/mtime/size, so a transcript that stops
-                    # changing after a failure matches both skips below forever
-                    # — which is why rows poisoned by the #29 race survived
-                    # every later ingest instead of healing. Re-examining them
-                    # is what makes the recovery below reachable without the
-                    # file having to grow again.
-                    unresolved = existing_info["error"] is not None
-
                     # Fast path: stat-only skip (no file I/O for hashing)
-                    stored_mtime = existing_info["file_mtime"]
-                    stored_size = existing_info["file_size"]
-                    if (
-                        not unresolved
-                        and stored_mtime is not None
-                        and st.st_mtime == stored_mtime
-                        and st.st_size == stored_size
-                    ):
+                    if _stat_unchanged(existing_info, st):
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     # Slow path: mtime or size changed (or no stored stat), hash the file
                     current_hash = compute_file_hash(location)
 
-                    if not unresolved and current_hash == existing_info["file_hash"]:
+                    if _hash_unchanged(existing_info, current_hash):
                         # Content unchanged, mtime drifted — update stored stat
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
@@ -473,26 +534,22 @@ def ingest_all(
                 location = source.as_path
                 if existing_file_info:
                     st = location.stat()
-                    stored_mtime = existing_file_info["file_mtime"]
-                    stored_size = existing_file_info["file_size"]
-                    if (
-                        stored_mtime is not None
-                        and st.st_mtime == stored_mtime
-                        and st.st_size == stored_size
-                    ):
+
+                    if _stat_unchanged(existing_file_info, st):
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     current_hash = compute_file_hash(location)
-                    if current_hash == existing_file_info["file_hash"]:
+                    if _hash_unchanged(existing_file_info, current_hash):
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                 # A session source may yield MANY conversations (one per
-                # session in a DB). Store each independently, deduped by
-                # external_id; replace only when the parsed copy is newer. The
+                # session in a DB, or per header in an aider history). Store
+                # each independently, deduped by external_id; replace only the
+                # ones that moved, per _session_should_replace. The
                 # ingested_files row is a single per-file hash/mtime marker with
                 # conversation_id=NULL, so replacing any one session does not
                 # cascade-delete the marker (see record_session_file).
@@ -518,10 +575,12 @@ def ingest_all(
                         conn, harness_id, conversation.external_id
                     )
                     if existing:
-                        # Only a newer parsed copy triggers replacement; an
-                        # equal/older session is left untouched (preserving its
+                        # Only a moved session triggers replacement; an
+                        # equal/older one is left untouched (preserving its
                         # tags, ownership, and manual state).
-                        if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
+                        if _session_should_replace(
+                            conversation.ended_at, existing["ended_at"]
+                        ):
                             # Same delete-then-insert shape as the file branch,
                             # so it loses tags the same way and takes the same
                             # claim. A session marker is conversation_id=NULL by

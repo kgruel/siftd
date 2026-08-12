@@ -3264,9 +3264,9 @@ def record_session_file(
 ) -> str:
     """Record/refresh a per-file marker for a session-strategy source.
 
-    A session source (e.g. an OpenCode or Gemini SQLite DB) yields many
-    conversations from one file; each is stored and deduped independently by
-    external_id. This marker tracks the file's hash/mtime for the fast-path
+    A session source (e.g. an OpenCode SQLite DB, an aider history file) can
+    yield many conversations from one file; each is stored and deduped
+    independently by external_id. This marker tracks the file's hash/mtime for the fast-path
     skip with conversation_id=NULL, so replacing any single session's
     conversation does not cascade-delete the marker (the conversation_id FK is
     ON DELETE CASCADE). Upserts on the unique path. Returns the record id.

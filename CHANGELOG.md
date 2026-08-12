@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd ingest` now imports every session in an aider chat history, not just
+  the first.** Files already stuck on this recover on the next ingest without
+  having to change again. ([#36](https://github.com/kgruel/siftd/issues/36))
+
+- **Gemini CLI chats that record no `lastUpdated` now pick up later edits**
+  instead of freezing at whatever they held on first import.
+  ([#36](https://github.com/kgruel/siftd/issues/36))
+
 - **`siftd db pull`/`push` no longer fails permanently once the other side
   re-ingests a conversation you already have.** The replaced conversation also
   stops answering searches from its deleted text.

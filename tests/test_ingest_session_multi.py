@@ -200,6 +200,51 @@ def test_reingest_replaces_newer_session_and_keeps_file_marker(tmp_path):
     conn.close()
 
 
+def test_a_session_reporting_no_ended_at_is_not_frozen(tmp_path):
+    """`ended_at is None` means "no change detector", not "nothing changed".
+
+    The replacement gate compares `ended_at`, and `newer than None` is false
+    forever — so a session-strategy conversation whose adapter emits no
+    `ended_at` used to freeze at its first ingest, silently and permanently,
+    however much its source changed afterwards.
+
+    This is not hypothetical and not aider-specific: `gemini_cli` reads
+    `data.get("lastUpdated")` with no fallback (contrast `started_at`, which
+    guards with `or now_iso()` on the line above), so any chat JSON missing
+    that key lands here. Pinned at the strategy layer rather than through one
+    adapter, because the gate is shared by all of them.
+    """
+    conn = create_database(tmp_path / "db.sqlite")
+    db_file = tmp_path / "sessions.db"
+    db_file.write_text("v1")
+
+    def undated(text):
+        conv = make_conversation(external_id="sess-a", ended_at=None)
+        conv.prompts[0].content[0].content["text"] = text
+        return conv
+
+    ref = {"items": [undated("first version")]}
+    adapter = _session_adapter(db_file, ref)
+    ingest_all(conn, [adapter])
+
+    db_file.write_text("v2-with-more-bytes-so-size-changes")
+    ref["items"] = [undated("second version")]
+    ingest_all(conn, [adapter])
+
+    stored = [
+        row[0]
+        for row in conn.execute(
+            "SELECT ec.content FROM event_content ec "
+            "JOIN events e ON e.id = ec.event_id WHERE e.kind = 'prompt'"
+        )
+    ]
+    assert any("second version" in text for text in stored), (
+        f"the source changed but the stored conversation did not: {stored}"
+    )
+    assert _external_ids(conn) == ["sess-a"]  # replaced, not duplicated
+    conn.close()
+
+
 def test_real_opencode_db_with_two_sessions_ingests_both(tmp_path):
     """Report recommendation #2: a real multi-session opencode.db, full ingest_all.
 

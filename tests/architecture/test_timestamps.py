@@ -30,10 +30,8 @@ ALLOWLIST is shrink-only: it is empty, and an entry added to it is a diff a
 reviewer sees and questions.
 """
 
-import json
-
 import pytest
-from conftest import FIXTURES_DIR, _golden_cases
+from conftest import _golden_cases, load_golden_expected
 
 # Domain fields that land in a timestamp column and are therefore compared as
 # strings. Read from the collapsed fixtures, which omit defaulted fields — an
@@ -69,9 +67,7 @@ def test_adapter_timestamps_are_utc_anchored(adapter_name, case):
     if (adapter_name, case) in ALLOWLIST:
         pytest.skip(f"allowlisted: {adapter_name}/{case}")
 
-    expected = json.loads(
-        (FIXTURES_DIR / "adapters" / adapter_name / case / "expected.json").read_text()
-    )
+    expected = load_golden_expected(adapter_name, case)
     offenders = [
         (where, value)
         for where, value in _timestamps(expected)
