@@ -75,7 +75,10 @@ DEFAULT_LOCATIONS = ["~/.my_harness/logs"]
 #   "file"    — one conversation per source (most common); parse() must not
 #               yield more than one
 #   "session" — the source is a container of many conversations, each deduped
-#               by external_id and replaced when its ended_at moves
+#               by external_id and replaced when its ended_at moves. A session
+#               reporting no ended_at is read as still open and replaced on
+#               every content change, so emit one wherever your format can
+#               bound a session.
 DEDUP_STRATEGY = "file"
 
 # Provider/source name (e.g., "anthropic", "openai", "google", "multi")

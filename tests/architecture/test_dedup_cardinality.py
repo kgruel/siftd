@@ -32,10 +32,9 @@ reviewer sees and questions.
 """
 
 import importlib
-import json
 
 import pytest
-from conftest import FIXTURES_DIR, _golden_cases
+from conftest import _golden_cases, load_golden_expected
 
 # (adapter, case) pairs exempt from the check. Shrink-only — a file-strategy
 # adapter that yields many conversations belongs on `"session"`, so there is
@@ -52,9 +51,7 @@ def test_file_strategy_yields_at_most_one_conversation(adapter_name, case):
     if getattr(adapter, "DEDUP_STRATEGY", "file") != "file":
         pytest.skip(f"{adapter_name} is a session-strategy adapter")
 
-    expected = json.loads(
-        (FIXTURES_DIR / "adapters" / adapter_name / case / "expected.json").read_text()
-    )
+    expected = load_golden_expected(adapter_name, case)
     assert len(expected) <= 1, (
         f"{adapter_name} declares DEDUP_STRATEGY = 'file' but its {case} fixture "
         f"yields {len(expected)} conversations. Ingest fails such a source outright, "
