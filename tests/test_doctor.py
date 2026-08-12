@@ -1044,15 +1044,24 @@ class TestCheckContext:
         that thread's connection — which would make a distinctness assertion
         depend on the pool's scheduling rather than on the invariant.
 
+        All ``threads`` threads are held alive at the barrier while they call,
+        because the invariant is about *concurrently live* threads. Letting
+        them run to completion one after another would let a finished thread's
+        identity be recycled, and the assertion would then be measuring how
+        fast the machine is rather than what the cache keys on.
+
         Returns the per-thread connections so callers can assert on them.
         """
+        barrier = threading.Barrier(threads)
         pairs: list[tuple] = []
         lock = threading.Lock()
 
         def two_calls():
+            barrier.wait()
             pair = (getter(), getter())
             with lock:
                 pairs.append(pair)
+            barrier.wait()
 
         workers = [threading.Thread(target=two_calls) for _ in range(threads)]
         for w in workers:
@@ -1064,7 +1073,7 @@ class TestCheckContext:
             assert first is second, "repeat calls on one thread should reuse its connection"
         per_thread = [first for first, _ in pairs]
         assert len(set(per_thread)) == len(per_thread) == threads, (
-            "each thread must get its own connection"
+            "each concurrently live thread must get its own connection"
         )
         return per_thread
 
@@ -1108,6 +1117,40 @@ class TestCheckContext:
         )
 
         self._assert_one_conn_per_thread(ctx.get_embed_conn)
+        ctx.close()
+
+    def test_sequential_threads_do_not_inherit_a_dead_thread_conn(self, test_db, tmp_path):
+        """A finished thread's connection is never handed to its successor.
+
+        CPython recycles thread idents once a thread dies, so keying the cache
+        on ``threading.get_ident()`` gave a new thread whatever its dead
+        predecessor had opened. Harmless in itself — sequential use — but it
+        made "one connection per thread" true only by accident, and how often
+        it happened depended on how fast threads finished. Keyed on the Thread
+        object instead, so this holds by construction.
+        """
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+        seen = []
+
+        def once():
+            seen.append(ctx.get_db_conn())
+
+        # Strictly sequential: each thread is dead before the next one starts,
+        # which is exactly when ident recycling happens.
+        for _ in range(8):
+            w = threading.Thread(target=once)
+            w.start()
+            w.join()
+
+        assert len(set(seen)) == 8, "a new thread inherited a dead thread's connection"
+
         ctx.close()
 
     def test_two_databases_get_separate_conns_on_one_thread(self, test_db, tmp_path):

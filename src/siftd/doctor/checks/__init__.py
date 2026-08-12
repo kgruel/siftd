@@ -66,7 +66,7 @@ class CheckContext:
     # Read-only connections, keyed by (thread, database) and opened on demand.
     # Never one connection shared across the runner's thread pool: see the
     # per-thread rule in _get_conn.
-    _conns: dict[tuple[int, str], sqlite3.Connection] = field(
+    _conns: dict[tuple[threading.Thread, str], sqlite3.Connection] = field(
         default_factory=dict, repr=False, compare=False
     )
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
@@ -90,11 +90,14 @@ class CheckContext:
         fts-integrity opening its own *write* connection to the same file
         mid-run, the overlap produced wrong query results rather than errors.
 
-        Keying on the thread ident is sound because idents are unique among
-        *live* threads: a dead thread's successor inheriting its connection is
-        sequential use, which check_same_thread=False already permits (that
-        flag is here so close() can run from the caller's thread, not as a
-        concurrency claim).
+        Keyed on the Thread object, not threading.get_ident(): idents are
+        recycled once a thread dies, so an ident key silently hands a new
+        thread its dead predecessor's connection. That happens to be safe
+        (sequential use, which check_same_thread=False permits — that flag is
+        here so close() can run from the caller's thread, not as a concurrency
+        claim), but "one connection per thread" should be true as written
+        rather than true by accident. The dict is per-run and pool-sized, so
+        holding Thread references costs nothing.
 
         immutable=1 keeps the open sidecar-free (no WAL/SHM created) and works
         on read-only media — the same URI storage.open_database uses for its
@@ -103,7 +106,7 @@ class CheckContext:
         per-thread open would do repeatedly mid-run, on other subsystems'
         behalf. A diagnostic reads; it should not reach into shared state.
         """
-        key = (threading.get_ident(), str(db_path))
+        key = (threading.current_thread(), str(db_path))
         with self._lock:
             conn = self._conns.get(key)
             if conn is None:
