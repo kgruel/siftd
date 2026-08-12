@@ -129,21 +129,33 @@ git push -u origin fix/<short-slug>
 gh pr create --repo kgruel/siftd --base main --title "<conventional subject>" --body "..."
 ```
 
-PR body: **five fixed headings, ~400 words.** Same words every time — improvised
+PR body: **four fixed headings, ~400 words.** Same words every time — improvised
 headings invite improvised content, which is where the length comes from.
 
 ```markdown
 Fixes #N. <one line of context if the PR follows another.>
 
-## Defect        What broke and the verified mechanism. Point at the docstring
-                 for the full explanation; do not retell it.
-## Scope         What actually changed (corrected against the tree), what
-                 dissolved with it, and any user-visible trade, stated plainly.
-## Evidence      Falsification list, measurements, `./dev check` state. Tables
-                 and lists, not prose.
-## Changed by review   What /simplify and codex changed. Omit only if nothing did.
-## Deferred      Filed issue numbers, one line each.
+## Defect     What broke and the verified mechanism. Point at the docstring for
+              the full explanation; do not retell it.
+## Scope      What actually changed (corrected against the tree), what dissolved
+              with it, and any user-visible trade, stated plainly.
+## Evidence   Falsification list, measurements, `./dev check` state. Tables and
+              lists, not prose.
+## Deferred   Filed issue numbers, one line each.
 ```
+
+**The body describes the end state, not how it got there.** Review provenance —
+what `/simplify` and `codex` caught, which round, what you tried first — goes in
+a PR *comment*, where it is timestamped, append-only, and sits next to the review
+it came from. It is already durable in the fix commits besides.
+
+The split is not "move the section", and getting it wrong loses real content:
+when review changes the *design*, that change is a property of the fix and must
+be **integrated** into Defect/Scope/Evidence. Only the story of finding it
+becomes a comment. On #46, "the fallback silently dropped committed `-wal`
+content, so it now refuses" belongs in Scope; "codex found it on round one, and
+the guard that fixed it was too blunt until it tested the journal's magic" is a
+comment.
 
 The budget is real: PRs #41/#44/#46 ran 886–1399 words across 8–9 improvised
 sections, against issues that landed at ~450 words in 4–5 without effort. The
@@ -158,9 +170,9 @@ issue, the PR, the commit message, and the docstring — the /simplify pass on
 #42 flagged exactly that duplication *inside* the code while the same arc's
 prose was doing it across four artifacts. A merged PR body is write-only.
 
-Issues use four: **Defect** · **Scope** (with counts — sites, occurrences,
-callers) · **Why now** (or why deferred, if filed from a PR's Deferred section)
-· **Shape of the fix**. Same budget.
+Issues use the same four, one renamed: **Defect** · **Scope** (with counts —
+sites, occurrences, callers) · **Why now** (or why deferred, if filed from a
+PR's Deferred section) · **Shape of the fix**. Same budget.
 
 Note `gh pr create --body` bypasses `.github/PULL_REQUEST_TEMPLATE.md`
 entirely, so a template file would not constrain this path. This skill is the
@@ -240,8 +252,11 @@ Then, per finding:
 Stop when a pass returns only items you've dispositioned with evidence. Don't
 loop for a clean sheet; deferred-with-reasoning is a valid terminal state.
 
-**Re-sync the PR body.** If review changed the design, the body still argues
-for the design you removed. This is the step most easily forgotten.
+**Re-sync the PR body, then comment the provenance.** If review changed the
+design, the body still argues for the design you removed — rewrite Defect/Scope/
+Evidence to describe what now ships, and post what review caught as a comment.
+Re-syncing is the step most easily forgotten, and it stays easy to forget
+precisely because nothing fails when you skip it.
 
 ## 7. Merge
 
