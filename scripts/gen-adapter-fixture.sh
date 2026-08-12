@@ -33,6 +33,11 @@ main() {
 
     local out="${case_dir}/expected.json"
 
+    # Adapters that resolve a naive local timestamp against the host zone
+    # (aider) would otherwise bake the generating machine's offset into
+    # expected.json. test_golden pins the same zone when it compares.
+    export TZ=UTC
+
     # Python script: run adapter, serialize, idempotence-check, write output
     uv run python - "$adapter" "$case_name" "$out" << 'PYEOF'
 import importlib, json, sqlite3, sys, tempfile

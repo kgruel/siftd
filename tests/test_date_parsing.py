@@ -1,11 +1,13 @@
 """Tests for date and timestamp parsing in CLI filters."""
 
-from datetime import date
+from datetime import UTC, date
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 import pytest
+from conftest import pinned_tz
 
-from siftd.dateparse import parse_date
+from siftd.dateparse import local_to_utc, parse_date
 
 
 class TestParseDate:
@@ -157,9 +159,12 @@ _STORED_SHAPES = (
     # that a microsecond-precision bound silently excluded, because `+` sorts
     # below the `.` it lined up against.
     "{sec}+00:00",
-    # aider, which writes its header's bare local wall time. Carries no suffix
-    # at all, so it meets a second-precision bound by equality rather than by
-    # being a longer string — the tightest case the prefix property has.
+    # No designator at all — reachable from any adapter that passes its log's
+    # own timestamp through (claude_code, codex_cli, gemini_cli) when the log
+    # spells it this way. Meets a second-precision bound by equality rather
+    # than by being a longer string, the tightest case the prefix property has.
+    # aider used to land here too, until it stopped writing local wall time
+    # into a UTC column; see TestLocalToUtc.
     "{sec}",
 )
 
@@ -209,3 +214,69 @@ class TestTimestampLexicalOrdering:
         """The bare-date form keeps working against every shape."""
         assert shape.format(sec="2024-01-15T00:00:00") >= _DAY_BOUND
         assert shape.format(sec="2024-01-14T23:59:59") < _DAY_BOUND
+
+
+class TestLocalToUtc:
+    """`local_to_utc` resolves a naive wall-clock time to a UTC instant.
+
+    Adapters whose logs carry no offset (aider) must do this at parse time:
+    `started_at` is compared as a SQL string against UTC-anchored bounds, so a
+    naive local value sorts by the host's offset rather than by its instant.
+    """
+
+    CHICAGO = ZoneInfo("America/Chicago")  # UTC-5 in July, UTC-6 in January
+
+    def test_naive_value_is_read_in_the_given_zone(self):
+        assert (
+            local_to_utc("2025-07-15T14:32:01", tz=self.CHICAGO)
+            == "2025-07-15T19:32:01+00:00"
+        )
+
+    def test_offset_follows_the_zone_not_the_calendar(self):
+        """CST vs CDT — a fixed offset would get one of these wrong."""
+        assert (
+            local_to_utc("2025-01-15T14:32:01", tz=self.CHICAGO)
+            == "2025-01-15T20:32:01+00:00"
+        )
+
+    def test_space_separator_is_accepted(self):
+        """aider's header spells the separator as a space, not a `T`."""
+        assert (
+            local_to_utc("2025-07-15 14:32:01", tz=self.CHICAGO)
+            == "2025-07-15T19:32:01+00:00"
+        )
+
+    def test_aware_value_is_converted_not_reinterpreted(self):
+        """`tz` names the zone a *naive* value was written in, nothing more."""
+        assert (
+            local_to_utc("2025-07-15T14:32:01+02:00", tz=self.CHICAGO)
+            == "2025-07-15T12:32:01+00:00"
+        )
+
+    def test_utc_host_is_a_passthrough(self):
+        """The zone in which the old behavior and the new agree."""
+        assert local_to_utc("2025-07-15T14:32:01", tz=UTC) == "2025-07-15T14:32:01+00:00"
+
+    def test_ambiguous_fall_back_hour_takes_the_earlier_instant(self):
+        """01:30 happens twice on 2025-11-02 in Chicago; `fold=0` picks CDT."""
+        assert (
+            local_to_utc("2025-11-02T01:30:00", tz=self.CHICAGO)
+            == "2025-11-02T06:30:00+00:00"
+        )
+
+    def test_host_zone_is_the_default(self):
+        with pinned_tz("America/Chicago"):
+            assert local_to_utc("2025-07-15T14:32:01") == "2025-07-15T19:32:01+00:00"
+
+    def test_converted_value_is_not_skipped_by_a_cursor_at_its_own_instant(self):
+        """The defect, stated as the property that failed.
+
+        A cursor written the moment a session started must not sort above that
+        session's row. Before the conversion, the naive local spelling lost by
+        the size of the host's offset — five hours of conversations dropped
+        from every delta pull, silently and without self-healing.
+        """
+        stored = local_to_utc("2025-07-15T14:32:01", tz=self.CHICAGO)
+        cursor = _bound("2025-07-15T19:32:01.780749+00:00")
+        assert stored >= cursor
+        assert "2025-07-15T14:32:01" < cursor  # what the adapter used to write

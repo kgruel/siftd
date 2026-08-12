@@ -38,10 +38,10 @@
                 }
               }
             ],
-            "timestamp": "2025-07-15T14:32:01"
+            "timestamp": "2025-07-15T14:32:01+00:00"
           }
         ],
-        "timestamp": "2025-07-15T14:32:01"
+        "timestamp": "2025-07-15T14:32:01+00:00"
       },
       {
         "content": [
@@ -73,13 +73,13 @@
                 }
               }
             ],
-            "timestamp": "2025-07-15T14:32:01"
+            "timestamp": "2025-07-15T14:32:01+00:00"
           }
         ],
-        "timestamp": "2025-07-15T14:32:01"
+        "timestamp": "2025-07-15T14:32:01+00:00"
       }
     ],
-    "started_at": "2025-07-15T14:32:01",
+    "started_at": "2025-07-15T14:32:01+00:00",
     "workspace_path": "tests/fixtures/adapters/aider/multi_conversation"
   },
   {
@@ -121,13 +121,13 @@
                 }
               }
             ],
-            "timestamp": "2025-07-15T15:10:00"
+            "timestamp": "2025-07-15T15:10:00+00:00"
           }
         ],
-        "timestamp": "2025-07-15T15:10:00"
+        "timestamp": "2025-07-15T15:10:00+00:00"
       }
     ],
-    "started_at": "2025-07-15T15:10:00",
+    "started_at": "2025-07-15T15:10:00+00:00",
     "workspace_path": "tests/fixtures/adapters/aider/multi_conversation"
   }
 ]

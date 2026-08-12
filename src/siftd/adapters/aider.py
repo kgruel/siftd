@@ -7,6 +7,10 @@ becomes a separate Conversation.
 Discovery is opt-in via ``--path``. DEFAULT_LOCATIONS covers ``~/.aider``.
 Chat history files are scattered across project directories; the user
 supplies scan roots explicitly.
+
+Aider is the one supported log format that timestamps in local wall time
+with no offset, so this is the one adapter that has to resolve a zone
+rather than pass a timestamp through.
 """
 
 import hashlib
@@ -15,6 +19,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters.sdk import build_harness, yield_conversation
+from siftd.dateparse import local_to_utc
 from siftd.domain import (
     ContentBlock,
     Conversation,
@@ -94,9 +99,13 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
     sessions = _split_sessions(text)
 
     for timestamp, body in sessions:
+        # The header records local wall time with no offset, but `started_at`
+        # is a UTC column — resolve it against the host zone at parse time
+        # (see `local_to_utc`). `external_id` deliberately keeps the raw
+        # header string: it is the dedup key, and re-keying it would
+        # duplicate every already-ingested aider conversation.
         external_id = f"{NAME}::{path_hash}::{timestamp}"
-        # Normalize local datetime to ISO-ish format
-        started_at = timestamp.replace(" ", "T")
+        started_at = local_to_utc(timestamp)
 
         conversation = Conversation(
             external_id=external_id,

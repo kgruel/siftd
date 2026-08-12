@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 # The vocabulary `parse_date` accepts, phrased for `--help`. Every `--since`
 # and `--before` option interpolates this, so the flags and the parser cannot
@@ -64,6 +64,29 @@ def parse_date(value: str | None) -> str | None:
         f"invalid date format: '{value}' "
         f"(expected YYYY-MM-DD, an ISO 8601 timestamp, Nd, Nw, today, or yesterday)"
     )
+
+
+def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
+    """Render a wall-clock timestamp as an aware UTC ISO 8601 string.
+
+    For adapters whose logs record local time with no offset. `started_at` is
+    a UTC column compared as a SQL *string* against UTC-anchored bounds, so a
+    naive local value sorts by the size of the host's offset rather than by
+    the instant it names — far enough below a `--since` cursor that delta sync
+    skips it, silently and without self-healing.
+
+    `tz` is the zone the value was written in; None means the host's current
+    local zone, which is the only zone an adapter can infer. A value that
+    already carries an offset is converted, never reinterpreted.
+
+    Ambiguous local times — the repeated hour at a DST fall-back — resolve to
+    the earlier, pre-transition instant (`fold=0`, Python's default). The log
+    carries no information that could disambiguate them.
+    """
+    parsed = datetime.fromisoformat(value)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=tz) if tz is not None else parsed.astimezone()
+    return parsed.astimezone(UTC).isoformat()
 
 
 def _normalize_timestamp(value: str) -> str:

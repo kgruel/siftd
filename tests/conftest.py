@@ -17,12 +17,43 @@ example of converting from monkeypatch-stdout to callback collection.
 """
 
 import json
+import os
 import random
 import string
 import sys
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
+
+
+@contextmanager
+def pinned_tz(zone: str):
+    """Pin the process's local timezone for the duration of the block.
+
+    Anything that resolves a naive timestamp against the host zone (the aider
+    adapter) is otherwise host-dependent, and a golden fixture that encodes
+    such a value is only reproducible if the zone is stated. ``time.tzset()``
+    is what makes a changed ``TZ`` take effect for ``datetime.astimezone()``.
+
+    Restores ``TZ`` itself rather than leaning on ``monkeypatch``, because the
+    restore is only complete after a second ``tzset()`` and fixture teardown
+    order does not guarantee that ordering.
+
+    Safe under xdist: each worker is its own process and runs tests serially.
+    """
+    previous = os.environ.get("TZ")
+    os.environ["TZ"] = zone
+    time.tzset()
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = previous
+        time.tzset()
 
 
 def pytest_configure(config: pytest.Config) -> None:

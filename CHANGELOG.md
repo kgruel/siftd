@@ -23,6 +23,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parse_date` to argparse as a bare `type=`, which swallows its message and
   prints `invalid parse_date value` instead of naming the formats it accepts.
 
+- **Aider conversations no longer disappear from delta sync.** The adapter
+  wrote each session header's local wall-clock time straight into
+  `conversations.started_at`, which every other adapter fills with UTC. Since
+  `--since` reaches SQL as a plain string compared against that column, aider
+  rows on a host west of UTC sorted below a UTC cursor by the size of the
+  offset, and delta pulls skipped them — silently, and permanently, because
+  the cursor only moves forward. The header is now resolved against the host's
+  zone at parse time and stored as UTC. `external_id` still keys on the raw
+  header string, so nothing is re-keyed or duplicated; existing aider rows keep
+  their local-time value until their history file changes and is re-ingested.
+  ([#31](https://github.com/kgruel/siftd/issues/31))
+
 ## [0.12.1] - 2026-08-11
 
 ### Changed
