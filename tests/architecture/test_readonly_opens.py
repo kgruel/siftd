@@ -1,0 +1,173 @@
+"""A read-only open derives immutability from the medium. It does not assert it.
+
+`mode=ro&immutable=1` tells SQLite the file cannot change, so it omits all
+locking and change detection. siftd cannot honour that: `ingest`, `serve`, and
+any second CLI invocation write the same file from another process. SQLite
+calls the result undefined, and #38 measured it reaching users two ways, both
+silent — an immutable reader ignores the `-wal` outright and answers from the
+last checkpoint, and a concurrent checkpoint rewrites main-file pages under a
+reader with no change detection, producing truncated scans and
+`integrity_check` corruption reports against a healthy database.
+
+The property reached five sites because each new read-only open copied the
+nearest URI. That is a copy-paste failure mode, so this is the enumerable-
+property form of the invariant rather than review attention: every literal
+`immutable=1` under `src/siftd/` is enumerated and must be a known site.
+
+ALLOWLIST is shrink-only, and it is the completion signal for #42: one entry
+comes out per read-only open rewired through the derived helper, and the issue
+is done when the list is empty. The one legitimate assertion —
+`_connect_read_only`'s fallback, reached only *after* a plain `mode=ro` probe
+has proved the medium unwritable — is tracked separately as DERIVED_FALLBACK
+so that emptiness stays meaningful.
+
+Both lists carry an occurrence *count*, not just a site. Keying on the site
+alone would let a second copied URI land inside an already-listed function
+without changing anything the tests compare — measured: injecting a duplicate
+into `open_database` left both assertions green. Since the guarded failure mode
+is a URI being copied, and the most convenient place to copy one to is next to
+an existing one, the count is what makes the ratchet hold.
+
+Limits worth naming, in the shape `test_timestamps.py` names its
+pass-through-adapter limit:
+
+- It matches the literal string, so a URI built by concatenation at runtime, or
+  received as a parameter, is invisible here. Acceptable: the failure mode this
+  guards is literally copy-paste of the URI, and copy-paste carries the literal.
+- It reads string *constants* via AST, not the file's text, so the eight prose
+  mentions in docstrings and comments are correctly ignored — but a site whose
+  only trace is a comment is likewise invisible. There is no such site.
+- Sites are keyed by enclosing *function* name, so two same-named functions in
+  one module share a row and only their total is checked. Adding an occurrence
+  still fails; moving one between the two would not.
+- It covers `src/siftd/` only. A test or a drop-in adapter under
+  `~/.config/siftd/adapters/` opening its own immutable connection is out of
+  reach of any static check the repo can run.
+"""
+
+import ast
+from collections import Counter
+from pathlib import Path
+
+SRC_DIR = Path(__file__).parent.parent.parent / "src" / "siftd"
+
+MARKER = "immutable=1"
+
+# Read-only opens that assert immutability instead of deriving it, keyed by
+# (path relative to src/siftd, enclosing function) → occurrence count.
+# Shrink-only — an entry is removed when #42 rewires that site, and there is no
+# legitimate reason to add one, so an addition is the conversation.
+ALLOWLIST: dict[tuple[str, str], int] = {
+    ("storage/sqlite.py", "_peek_user_version"): 1,
+    ("storage/sqlite.py", "open_database"): 1,
+    ("storage/embeddings.py", "open_embeddings_db"): 1,
+}
+
+# The one permanent use: the fallback taken only when the plain `mode=ro` probe
+# raises SQLITE_READONLY/SQLITE_CANTOPEN, i.e. on a medium no writer can reach,
+# where `immutable=1` is true rather than assumed. Deliberately not an ALLOWLIST
+# row — "ALLOWLIST is empty" has to remain #42's completion test.
+DERIVED_FALLBACK: dict[tuple[str, str], int] = {
+    ("doctor/checks/__init__.py", "_connect_read_only"): 1,
+}
+
+
+def _literal_text(node: ast.AST) -> str | None:
+    """The static text of a string literal, or None if the node is not one.
+
+    An f-string contributes its constant segments, which is where a copied URI
+    keeps its query parameters — `f"file:{p}?mode=ro&immutable=1"` yields
+    `file:?mode=ro&immutable=1`.
+    """
+    if isinstance(node, ast.Constant):
+        return node.value if isinstance(node.value, str) else None
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value
+            for part in node.values
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        )
+    return None
+
+
+def _docstring_ids(tree: ast.Module) -> set[int]:
+    """Node ids of every docstring — prose about the property, not a use of it.
+
+    Five of the eight prose mentions are docstrings, and one of them sits in a
+    *different* function than the open it describes (`_ensure_cache_loaded`), so
+    skipping them is what keeps the enumeration honest rather than merely tidy.
+    """
+    ids = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if ast.get_docstring(node, clean=False) is None:
+            continue
+        first = node.body[0]
+        if isinstance(first, ast.Expr):
+            ids.add(id(first.value))
+    return ids
+
+
+def _sites() -> Counter[tuple[str, str]]:
+    """Immutable-URI occurrences per (relative path, enclosing function)."""
+    found: Counter[tuple[str, str]] = Counter()
+    for path in sorted(SRC_DIR.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        skip = _docstring_ids(tree)
+        rel = path.relative_to(SRC_DIR).as_posix()
+
+        def visit(node: ast.AST, scope: str) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    visit(child, child.name)
+                    continue
+                text = _literal_text(child) if id(child) not in skip else None
+                if text and MARKER in text:
+                    # Count the outermost matching literal and stop: an
+                    # f-string's constant segments each match again otherwise,
+                    # so one copied URI would score two.
+                    found[(rel, scope)] += 1
+                    continue
+                visit(child, scope)
+
+        visit(tree, "<module>")
+    return found
+
+
+def test_no_unlisted_immutable_opens():
+    """A new read-only open cannot assert immutability without this list changing."""
+    listed = ALLOWLIST | DERIVED_FALLBACK
+    added = {
+        site: (count, listed.get(site, 0))
+        for site, count in _sites().items()
+        if count > listed.get(site, 0)
+    }
+    assert not added, (
+        "Read-only open(s) asserting immutability instead of deriving it:\n"
+        + "\n".join(
+            f"  {path} :: {func} — {found} occurrence(s), {allowed} listed"
+            for (path, func), (found, allowed) in sorted(added.items())
+        )
+        + "\n\nUse the derived open (plain `mode=ro`, falling back to `immutable=1` "
+        "only when the probe proves the medium unwritable) rather than copying an "
+        "`immutable=1` URI — see the module docstring and issue #42."
+    )
+
+
+def test_allowlist_has_no_stale_entries():
+    """A rewired site leaves the list, so 'empty' means every site is derived."""
+    sites = _sites()
+    stale = {
+        site: (sites[site], count)
+        for site, count in (ALLOWLIST | DERIVED_FALLBACK).items()
+        if sites[site] < count
+    }
+    assert not stale, (
+        "Listed site(s) no longer build as many immutable URIs — shrink the "
+        "entries:\n"
+        + "\n".join(
+            f"  {path} :: {func} — {found} occurrence(s), {listed} listed"
+            for (path, func), (found, listed) in sorted(stale.items())
+        )
+    )

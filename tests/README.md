@@ -96,7 +96,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 185 | 3245 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 6 | 52 |
+| `tests/architecture/` | 7 | 54 |
 | `tests/cli/` | 28 | 630 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -323,6 +323,7 @@ docstring so its row is meaningful.
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
+| [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
 
 ### `tests/cli/`
