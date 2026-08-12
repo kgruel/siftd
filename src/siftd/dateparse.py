@@ -72,12 +72,10 @@ def parse_date(value: str | None) -> str | None:
         return (date.today() - timedelta(days=1)).isoformat()
 
     if match := re.fullmatch(r"(\d+)d", keyword):
-        days = int(match.group(1))
-        return (date.today() - timedelta(days=days)).isoformat()
+        return _relative(value, days=int(match.group(1)))
 
     if match := re.fullmatch(r"(\d+)w", keyword):
-        weeks = int(match.group(1))
-        return (date.today() - timedelta(weeks=weeks)).isoformat()
+        return _relative(value, weeks=int(match.group(1)))
 
     if re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
         # Validate the calendar date — a well-shaped but impossible date like
@@ -97,6 +95,24 @@ def parse_date(value: str | None) -> str | None:
         f"invalid date format: '{value}' "
         f"(expected YYYY-MM-DD, an ISO 8601 timestamp, Nd, Nw, today, or yesterday)"
     )
+
+
+def _relative(value: str, **delta: int) -> str:
+    """`Nd`/`Nw` as a date, with an offset too large for the calendar rejected.
+
+    `date.today() - timedelta(days=999999999)` raises **OverflowError**, not
+    ValueError, so every caller's `except ValueError` missed it: the CLI died
+    with a traceback and serve returned 500 for what is plainly a bad flag
+    value. Normalizing it here rather than widening the three catch sites is
+    what makes one fix reach argparse, the HTTP boundary, and the sync cursor
+    — and keeps `parse_date`'s stated contract ("raises ValueError") true.
+    """
+    try:
+        return (date.today() - timedelta(**delta)).isoformat()
+    except OverflowError as e:
+        raise ValueError(
+            f"invalid date: '{value}' is further back than the calendar reaches"
+        ) from e
 
 
 def to_utc(value: str) -> datetime:

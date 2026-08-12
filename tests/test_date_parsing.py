@@ -60,6 +60,16 @@ class TestParseDate:
         with pytest.raises(ValueError, match="invalid date format"):
             parse_date("2024")
 
+    @pytest.mark.parametrize("bad", ["999999999d", "9999999w", "3000000d"])
+    def test_relative_offset_past_the_calendar_raises_value_error(self, bad):
+        """`date.today() - timedelta(days=999999999)` raises OverflowError, and
+        every caller catches only ValueError — so this crashed the CLI with a
+        traceback and made serve answer 500 for a bad flag value. Normalized
+        in `parse_date` so argparse, the HTTP boundary, and the sync cursor
+        all inherit one fix."""
+        with pytest.raises(ValueError, match="further back than the calendar"):
+            parse_date(bad)
+
     def test_well_shaped_but_impossible_date_raises(self):
         """I09: a shaped-but-impossible calendar date must error, not pass through.
 

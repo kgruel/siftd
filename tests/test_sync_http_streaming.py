@@ -616,6 +616,14 @@ class TestDateParamsAreParsedAtTheBoundary:
         assert resp.status_code == 400
         assert "lastweek" in resp.json()["error"]
 
+    def test_a_relative_offset_past_the_calendar_is_400_not_500(self, client):
+        """`parse_date` raised OverflowError, not ValueError, for `999999999d`
+        — so the boundary's `except ValueError` missed it and the promised 400
+        came out as a 500. Fixed in `parse_date`, asserted here because this
+        boundary is where the taxonomy's HTTP status is the contract."""
+        resp = client.get("/api/v1/pull", params={"since": "999999999d"})
+        assert resp.status_code == 400
+
     def test_a_partial_iso_date_is_rejected_not_widened(self, client):
         """`2024-01` is the shape #21 found on the wire. `parse_date` rejects
         it; raw, it matched every row in January by prefix.
