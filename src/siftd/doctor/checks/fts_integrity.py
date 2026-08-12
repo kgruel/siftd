@@ -14,7 +14,7 @@ class FtsIntegrityCheck:
     cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.storage.sqlite import SCHEMA_VERSION, _peek_user_version, open_database
+        from siftd.storage.sqlite import SCHEMA_VERSION, open_database
 
         conn = ctx.get_db_conn()
         cur = conn.execute(
@@ -28,8 +28,9 @@ class FtsIntegrityCheck:
         # on-disk schema is stale, opening write mode would create a backup and
         # run migrations as a side effect (and take a write lock that blocks a
         # concurrent serve/ingest). Skip instead and let an ordinary command do
-        # the upgrade.
-        if _peek_user_version(ctx.db_path) < SCHEMA_VERSION:
+        # the upgrade. Asking the question cannot itself migrate: the version
+        # comes off ctx's own read-only connection (see CheckContext._get_conn).
+        if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
             return [
                 Finding(
                     check=self.name,

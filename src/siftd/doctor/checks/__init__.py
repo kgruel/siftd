@@ -102,11 +102,12 @@ class CheckContext:
         holding Thread references costs nothing.
 
         Immutability is derived from the medium by storage.connect_read_only,
-        not asserted — see its docstring. Not routed through open_database despite
-        the overlap: it clears the process-global vocabulary caches on every
-        open, which a per-thread open would do repeatedly mid-run, on other
-        subsystems' behalf. A diagnostic reads; it should not reach into
-        shared state.
+        not asserted — see its docstring. The leaf helper rather than
+        open_database for one reason only: it is the one that takes
+        check_same_thread=False, which close() needs when the runner tears this
+        pool down from a thread other than the opener, and which open_database
+        deliberately withholds (#37). The must-not-migrate half needs no
+        argument here — open_database(auto_upgrade=False) already answers it.
         """
         key = (threading.current_thread(), str(db_path))
         with self._lock:

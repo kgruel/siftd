@@ -275,13 +275,14 @@ def test_no_sqlite3_connect_outside_storage():
     violations = []
     storage_dir = SRC / "storage"
 
-    # adapters/sdk.py provides open_external_db() for reading third-party databases
+    # adapters/sdk.py provides open_external_db() for reading third-party
+    # databases. It stays hand-rolled rather than delegating to
+    # storage.connect_read_only: adapters never reach into the storage layer
+    # (src/siftd/adapters/README.md), and sdk.py is the authoring surface for
+    # drop-in adapters under ~/.config/siftd/adapters/, so routing it through
+    # storage would puncture that boundary for every third-party author. The
+    # databases it opens belong to other tools, not to siftd.
     adapter_sdk = SRC / "adapters" / "sdk.py"
-    # doctor/checks/__init__.py opens one read-only connection per (thread,
-    # database) rather than routing through storage.open_database, which clears
-    # the process-global vocabulary caches on every open — a side effect a
-    # diagnostic must not have. See CheckContext._get_conn.
-    doctor_checks_init = SRC / "doctor" / "checks" / "__init__.py"
 
     for py_file in source_files():
         # Allow sqlite3.connect() inside storage/
@@ -289,9 +290,6 @@ def test_no_sqlite3_connect_outside_storage():
             continue
         # Allow sqlite3.connect() in adapter SDK (external DB helper)
         if py_file == adapter_sdk:
-            continue
-        # Allow sqlite3.connect() in doctor CheckContext (thread-safe reads)
-        if py_file == doctor_checks_init:
             continue
 
         for line_num, call_text in find_sqlite3_connect_calls(py_file):

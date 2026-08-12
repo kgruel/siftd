@@ -208,46 +208,18 @@ def _refuse_immutable_over_unreplayed_sidecars(
     ) from cause
 
 
-def _peek_user_version(db_path: Path) -> int:
-    """Best-effort peek of PRAGMA user_version using a transient RO connection.
+def _migrate_stale_for_readonly(db_path: Path, version: int) -> None:
+    """Migrate a stale-schema DB in a transient write open, or explain why not.
 
-    Returns 0 on any sqlite error (garbage file, locked, etc.) — treated as
-    'no info, don't auto-upgrade'. A locked database reaches that same 0 through
-    connect_read_only, which propagates SQLITE_BUSY rather than degrading to an
-    immutable read: `sqlite3.Error` covers it, so a busy file still means
-    'no info' rather than a snapshot that predates the lock holder's commits.
-    """
-    try:
-        peek = connect_read_only(db_path)
-        try:
-            return peek.execute("PRAGMA user_version").fetchone()[0]
-        finally:
-            peek.close()
-    except sqlite3.Error:
-        return 0
-
-
-def _ensure_schema_for_readonly(db_path: Path) -> None:
-    """Auto-upgrade a stale-schema DB so a read-only open will not crash.
-
-    Called from open_database(read_only=True) before the RO connection is opened.
-    If the DB is at a known stale version (0 < v < SCHEMA_VERSION):
-      - file + parent dir writable: recurse into write-mode open_database to run
-        the migration once, then return so the RO open can proceed against the
-        upgraded file.
-      - otherwise: raise SchemaUpgradeRequiredError with a clear message.
-
-    Version == 0 is skipped — it means either an uninitialized/garbage file or
-    a pre-versioning DB (extremely rare). Either way we let the main RO open
-    fall through and surface its own error.
+    Called from open_database(read_only=True) once the connection it opened has
+    reported a stale version, so the RO open can be retried against the upgraded
+    file. If the file and its parent directory are writable the migration runs;
+    otherwise SchemaUpgradeRequiredError names the remedy.
 
     Without this, RO commands (query, doctor, peek, search) crashed with a
     cryptic 'no such table: events' on a stale DB. See
     docs/dev/plans/2026-05-03-events-polymorphic-followup.md finding #1.
     """
-    version = _peek_user_version(db_path)
-    if version == 0 or version >= SCHEMA_VERSION:
-        return
     file_writable = os.access(db_path, os.W_OK)
     dir_writable = os.access(db_path.parent, os.W_OK)
     if not (file_writable and dir_writable):
@@ -299,10 +271,12 @@ def open_database(
         db_path: Path to the database file.
         read_only: If True, open without running migrations/ensures that write.
             This enables read-only operations (status/query/search) against a DB that
-            lives on read-only media or in restricted environments. If the DB is
-            below SCHEMA_VERSION the migration is run in a transient write-mode
-            open before the RO connection is established (or
-            SchemaUpgradeRequiredError is raised if the file is not writable).
+            lives on read-only media or in restricted environments. The schema
+            version is read from the connection itself; only if it turns out
+            stale is a transient write-mode open made to migrate, after which
+            the RO connection is reopened (or SchemaUpgradeRequiredError is
+            raised if the file is not writable). The current-schema case — the
+            common one — therefore opens exactly one connection.
         auto_upgrade: When True (default) and read_only=True, a stale-schema DB
             is migrated up to SCHEMA_VERSION in a transient write-mode open.
             Set False for callers that need to *inspect* the on-disk schema
@@ -314,11 +288,22 @@ def open_database(
     if is_new and read_only:
         raise FileNotFoundError(f"Database not found: {db_path}")
 
-    if read_only and not is_new and auto_upgrade:
-        _ensure_schema_for_readonly(db_path)
-
     if read_only:
         conn = connect_read_only(db_path)
+        if auto_upgrade:
+            # Read the version off the connection being returned rather than a
+            # transient one (#47). The peek this replaces had to swallow every
+            # sqlite3.Error as "no info", because it was a *second* connection
+            # and could fail — locked, racing — where the real open succeeded;
+            # asking the connection already in hand removes that discrepancy
+            # instead of tolerating it. Version 0 is an uninitialized or
+            # pre-versioning file: no info, so leave it and let the caller's
+            # own first query surface the real error.
+            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            if 0 < version < SCHEMA_VERSION:
+                conn.close()
+                _migrate_stale_for_readonly(db_path, version)
+                conn = connect_read_only(db_path)
     else:
         conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
@@ -330,9 +315,25 @@ def open_database(
         conn.execute("PRAGMA mmap_size = 268435456")  # 256MB mmap
         conn.execute("PRAGMA temp_store = MEMORY")
 
-    # Clear in-process vocabulary caches when opening a new connection
-    # to prevent stale IDs from a previous connection
-    clear_vocabulary_caches()
+    # Reset the in-process vocabulary caches on a new *write* connection, so ids
+    # cached against one database are never served for another.
+    #
+    # Not on the read-only path (#47): clearing there discarded every other
+    # subsystem's warm entries on behalf of an operation that wrote nothing.
+    # What makes skipping it safe is *not* that a read cannot create an id —
+    # `tags.get_or_create_tag` populates its cache from a plain SELECT, before
+    # any insert. It is that **no read-only path consults these caches at all**:
+    # every consumer is a `get_or_create_*`, and every call site of those is a
+    # write path. That premise is load-bearing and nothing enforces it; the
+    # durable fix is to key the caches by database the way `_EmbeddingCache`
+    # already does (see #66), after which there is nothing to clear here and the
+    # premise stops mattering. Until then this branch is a way station.
+    #
+    # Note the call also resets `blobs._batch_timestamp`, which is neither a
+    # cache nor an id: one write session's blob batch is no longer split in two
+    # by an unrelated read open.
+    if not read_only:
+        clear_vocabulary_caches()
 
     try:
         if is_new:

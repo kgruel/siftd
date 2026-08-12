@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- A read-only database open no longer clears the process-global vocabulary
+  caches or opens a throwaway connection to check the schema version, so a read
+  costs one connection and leaves other subsystems' caches warm.
+  ([#47](https://github.com/kgruel/siftd/issues/47))
+
 - The architecture ratchets share one definition of where the source tree is
   (`tests/architecture/support.py`), and a ratchet keeps it that way — the
   three-`.parent` walk had reached eight sites across seven modules.
