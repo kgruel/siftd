@@ -68,6 +68,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- An architecture ratchet enumerates every read-only open that asserts
+  `immutable=1` instead of deriving it, against a shrink-only allowlist
+  (`tests/architecture/test_readonly_opens.py`). The property reached five
+  sites because each new read-only open copied the nearest URI, and #38 added a
+  second pattern to copy from — so the list is seeded with today's three
+  remaining sites to block a fourth while #42 rewires them, and empties as they
+  go. ([#43](https://github.com/kgruel/siftd/issues/43))
+
 - CI installs uv via `astral-sh/setup-uv@v7`. `v4` declares `runs.using:
   node20`, which GitHub force-runs on Node 24; that mismatch surfaced as an
   intermittent `self-signed certificate` failure in `Install uv`. `v7` is the
