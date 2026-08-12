@@ -208,3 +208,93 @@ class TestGetEventPrefixMatch:
         prefix = unambiguous_prefix(r1, (p1, p2, r2, tc1))
         assert get_event(prefix.lower(), db_path=db).id == r1
         assert get_event(r1.lower(), db_path=db).id == r1
+
+
+class TestEventDetailContent:
+    def test_includes_content_blocks_by_default(self, db_with_events):
+        db, _c, _p1, _p2, r1, *_ = db_with_events
+        detail = get_event(r1, db_path=db)
+        assert detail.content_blocks
+        types = [b["block_type"] for b in detail.content_blocks]
+        assert "text" in types and "tool_use" in types
+
+    def test_include_content_false_omits_blocks(self, db_with_events):
+        db, _c, _p1, _p2, r1, *_ = db_with_events
+        detail = get_event(r1, db_path=db, include_content=False)
+        assert detail.content_blocks == []
+
+
+class TestNeighbors:
+    def test_neighbors_default_off(self, db_with_events):
+        db, _c, _p1, _p2, r1, *_ = db_with_events
+        detail = get_event(r1, db_path=db)
+        assert detail.neighbors is None
+
+    def test_neighbors_chain(self, db_with_events):
+        db, _c, _p1, _p2, r1, r2, _tc1 = db_with_events
+        detail_r1 = get_event(r1, db_path=db, include_neighbors=True)
+        assert detail_r1.neighbors == {"prev_event_id": None, "next_event_id": r2}
+
+        detail_r2 = get_event(r2, db_path=db, include_neighbors=True)
+        assert detail_r2.neighbors == {"prev_event_id": r1, "next_event_id": None}
+
+    def test_neighbors_via_get_event(self, db_with_events):
+        db, _c, _p1, _p2, r1, r2, _tc1 = db_with_events
+        detail = get_event(r1, db_path=db, include_neighbors=True)
+        assert detail.neighbors == {"prev_event_id": None, "next_event_id": r2}
+
+
+class TestSerializeEventDetail:
+    def test_response_shape(self, db_with_events):
+        db, c, _p1, _p2, r1, _r2, tc1 = db_with_events
+        detail = get_event(r1, db_path=db)
+        d = serialize_event_detail(detail)
+        assert d["id"] == r1
+        assert d["kind"] == "response"
+        assert d["conversation_id"] == c
+        assert d["tags"] == ["review-me"]
+        assert d["conversation"]["id"] == c
+        # response kind splits kind_specific into "response" + "tool_calls"
+        assert "response" in d
+        assert d["response"]["model"] == "claude-3-opus"
+        assert d["response"]["input_tokens"] == 10
+        assert "tool_calls" in d
+        assert any(child["id"] == tc1 for child in d["tool_calls"])
+        assert "neighbors" not in d  # default off
+
+    def test_prompt_shape_omits_kind_specific(self, db_with_events):
+        db, _c, p1, *_ = db_with_events
+        detail = get_event(p1, db_path=db)
+        d = serialize_event_detail(detail)
+        # Prompt has no kind_specific top-level wrapper
+        assert "response" not in d
+        assert "tool_call" not in d
+
+    def test_tool_call_shape(self, db_with_events):
+        db, *_, tc1 = db_with_events
+        detail = get_event(tc1, db_path=db)
+        d = serialize_event_detail(detail)
+        assert d["kind"] == "tool_call"
+        assert "tool_call" in d
+        assert d["tool_call"]["tool_name"] == "shell.execute"
+
+    def test_neighbors_emitted_when_present(self, db_with_events):
+        db, _c, _p1, _p2, r1, r2, _tc1 = db_with_events
+        detail = get_event(r1, db_path=db, include_neighbors=True)
+        d = serialize_event_detail(detail)
+        assert d["neighbors"]["next_event_id"] == r2
+
+
+class TestPromptTagsIncludeExchangeTags:
+    def test_exchange_tag_surfaces_on_prompt(self, db_with_events):
+        db, _c, p1, *_ = db_with_events
+        # Apply an exchange tag (target_kind='exchange', anchor on prompt)
+        conn = open_database(db, read_only=False)
+        try:
+            tag_id = get_or_create_tag(conn, "exchange-tag")
+            apply_tag(conn, "exchange", p1, tag_id, commit=True)
+        finally:
+            conn.close()
+
+        detail = get_event(p1, db_path=db)
+        assert "exchange-tag" in detail.tags
