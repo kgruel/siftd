@@ -1503,12 +1503,12 @@ def _ago(epoch: float | None) -> str:
 
 
 def _iso_epoch(ts: str | None) -> float | None:
-    from datetime import datetime
+    from siftd.dateparse import to_utc
 
     if not ts:
         return None
     try:
-        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+        return to_utc(ts).timestamp()
     except (ValueError, TypeError):
         return None
 

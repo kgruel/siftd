@@ -566,8 +566,9 @@ def _ingest_status_caveats(op, result, ctx: ProducerContext) -> list[Finding]:
         ))
     else:
         from datetime import datetime
-        last_dt = datetime.fromisoformat(last).replace(tzinfo=UTC)
-        age_days = (datetime.now(UTC) - last_dt).days
+
+        from siftd.dateparse import to_utc
+        age_days = (datetime.now(UTC) - to_utc(last)).days
         if age_days > 7:
             findings.append(Finding(
                 check="ingest-stale",

@@ -17,8 +17,9 @@ from litestar import Request, get, post
 from litestar.params import Parameter
 from litestar.response import Redirect, Response
 
+from siftd.errors import UserInputError
 from siftd.output._id_format import short_id
-from siftd.serve.routes import _effective_owner
+from siftd.serve.routes import _date_param, _effective_owner
 
 # An event anchor is an events-table ULID; this charset also covers any adapter
 # id we might anchor on. Validating here keeps a malformed/hostile ``?event=``
@@ -1436,8 +1437,22 @@ def ui_query(
     workspace = workspace or None
     model = model or None
     tool = tool or None
-    since = since or None
-    before = before or None
+    # The one htmx handler where a date facet reaches a *filter* — via
+    # `_find_search_fragment` → `search_view` and via the browse Operation
+    # below. `ui_shell`/`ui_find`/`ui_meta` also take since/before, but only
+    # echo them back as URL-as-state so the strip prefills what the user
+    # typed; normalizing there would redisplay `7d` as a date.
+    try:
+        since = _date_param(since or None, "since")
+        before = _date_param(before or None, "before")
+    except UserInputError as exc:
+        from html import escape
+
+        return Response(
+            content=f'<div class="find__empty">error: {escape(str(exc))}</div>',
+            media_type="text/html",
+            status_code=400,
+        )
     owner_filter = owner or None  # the user-supplied owner FACET (before resolution)
     owner = _effective_owner(request, owner or None)
     tag = [t for t in (tag or []) if t] or None

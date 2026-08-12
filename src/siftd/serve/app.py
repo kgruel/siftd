@@ -10,8 +10,10 @@ from litestar.datastructures import MutableScopeHeaders
 from litestar.di import Provide
 from litestar.enums import ScopeType
 from litestar.middleware import ASGIMiddleware
+from litestar.response import Response
 from litestar.static_files import create_static_files_router
 
+from siftd.errors import UserInputError
 from siftd.serve.html_routes import (
     ui_auth_config,
     ui_dashboard,
@@ -229,8 +231,25 @@ def create_app(
     if allow_live_endpoints:
         route_handlers.append(ui_follow)
 
+    def _user_input_error(_request, exc) -> Response:
+        """Honor `UserInputError.http_status` for errors raised outside `_dispatch`.
+
+        Query params are parsed while *building* the arguments to `_dispatch`,
+        so a rejected `since`/`before` is raised before that helper's own
+        `except SiftdError` can see it, and `/api/v1/pull` never goes through
+        Registered for `UserInputError` alone, which is a **scoping decision,
+        not a principle**: `errors.py` declares `http_status` across the whole
+        taxonomy as a serve contract, so widening this to `SiftdError` and
+        dissolving `_dispatch`'s inline `except` into it is the coherent end
+        state. That would also re-status errors that currently reach the client
+        as 500s — correct per the taxonomy, but a wire change no part of #32
+        needs. Tracked separately.
+        """
+        return Response(content={"error": str(exc)}, status_code=exc.http_status)
+
     return Litestar(
         route_handlers=route_handlers,
+        exception_handlers={UserInputError: _user_input_error},
         dependencies={
             "db_path": Provide(provide_db_path),
             "fts_rebuild": Provide(provide_fts_rebuild),

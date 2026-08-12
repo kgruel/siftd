@@ -27,6 +27,7 @@ import asyncssh
 if TYPE_CHECKING:
     from siftd.domain.progress import ProgressSink
 
+from siftd.dateparse import parse_date
 from siftd.domain.sync import (
     SYNC_CAPABILITIES,  # noqa: F401 — re-exported for CLI
     SYNC_HEADER,
@@ -333,7 +334,41 @@ def _resolve_since(
     if current_filter_sig != (stored_sig or ""):
         return None  # filters changed → full sync
 
-    return cursor
+    return _normalized_cursor(cursor)
+
+
+def _normalized_cursor(cursor: str) -> str | None:
+    """Render a stored cursor as the bound `--since` would have produced.
+
+    An *explicit* `--since` reaches here already normalized, because argparse
+    ran `date_arg` on it. A stored cursor never passed through argparse, so
+    until this ran, one cursor resolved to as many bounds as there were
+    transports: `_pull_ssh` re-parses it as the remote's `--since` argument
+    and got the normalized form, while `_pull_local` and `_pull_http` put the
+    raw string straight into `started_at >= ?`.
+
+    Raw is not merely inconsistent, it drops rows. `cursor_ts = win_before or
+    now` stores a *conversation's own* `started_at`, so the cursor inherits
+    whichever spelling that adapter writes — and for claude_code's
+    `...T09:30:12Z`, the `Z` sorts above the `.` of every fractional row in
+    the same second (`0x5A > 0x2E`). Those rows fall below the bound, and the
+    cursor advances past them, so no later sync reconsiders them.
+
+    An unparseable cursor resolves to a full sync rather than an error. It can
+    only come from a hand-edited config, full sync is always correct and
+    merges idempotently, and it self-heals — the run rewrites the cursor in
+    the canonical form. That is the rule the filter-signature branch above
+    already applies to a cursor that has stopped meaning what it said.
+    """
+    try:
+        return parse_date(cursor)
+    except ValueError:
+        logger.warning(
+            "Ignoring unparseable sync cursor %r — syncing from the beginning; "
+            "the cursor is rewritten in a readable form when this run finishes.",
+            cursor,
+        )
+        return None
 
 
 def _filter_signature(filters: dict) -> str:
@@ -1184,7 +1219,7 @@ def _resolve_pull_since(
     if current_filter_sig != (remote.last_pull_filters or ""):
         return None  # filters changed → full sync
 
-    return cursor
+    return _normalized_cursor(cursor)
 
 
 async def _pull_ssh(

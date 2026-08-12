@@ -7,10 +7,10 @@ import time
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters
+from siftd.dateparse import to_utc
 from siftd.git import get_canonical_workspace_path, get_worktree_branch
 from siftd.peek.types import PeekScanResult, SessionInfo
 
@@ -209,9 +209,7 @@ def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
     last_activity = file_info.mtime
     if result.last_activity_at:
         try:
-            # Parse ISO timestamp to epoch
-            dt = datetime.fromisoformat(result.last_activity_at.replace("Z", "+00:00"))
-            last_activity = dt.timestamp()
+            last_activity = to_utc(result.last_activity_at).timestamp()
         except (ValueError, TypeError):
             pass
 

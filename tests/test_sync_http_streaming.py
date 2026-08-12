@@ -569,3 +569,103 @@ class TestBackgroundTaskCleanupResilience:
         assert any("Failed to clean up" in r.getMessage() for r in warning_records), (
             "Expected a WARNING log about cleanup failure"
         )
+
+
+# ---------------------------------------------------------------------------
+# Date-param parsing at the HTTP boundary (#32)
+# ---------------------------------------------------------------------------
+
+
+@contextmanager
+def _team_client(tmp_path=None):
+    """A TestClient over a one-conversation team DB."""
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as tmp:
+        base = tmp_path if tmp_path is not None else Path(tmp)
+        team_db = _make_team_db(base / "team.db", conversations=[{"external_id": "c1"}])
+        with TestClient(create_app(db_path=team_db, auth_config=None)) as c:
+            yield c
+
+
+class TestDateParamsAreParsedAtTheBoundary:
+    """serve is an input context and had no equivalent of argparse's `date_arg`.
+
+    Every `since`/`before` went into `started_at >= ?` exactly as typed. The
+    filter is a *string* comparison, so an unparseable value neither matched
+    nor complained — it silently degraded the request instead of rejecting it.
+    Invisible from siftd's own clients, which always send a parsed value.
+    """
+
+    ROUTES = (
+        "/api/v1/pull",
+        "/api/v1/conversations",
+        "/api/v1/tags",
+        "/api/v1/export",
+    )
+
+    @pytest.fixture
+    def client(self, tmp_path):
+        with _team_client(tmp_path) as c:
+            yield c
+
+    @pytest.mark.parametrize("route", ROUTES)
+    @pytest.mark.parametrize("param", ["since", "before"])
+    def test_an_unparseable_value_is_rejected(self, client, route, param):
+        resp = client.get(route, params={param: "lastweek"})
+        assert resp.status_code == 400
+        assert "lastweek" in resp.json()["error"]
+
+    def test_a_relative_offset_past_the_calendar_is_400_not_500(self, client):
+        """`parse_date` raised OverflowError, not ValueError, for `999999999d`
+        — so the boundary's `except ValueError` missed it and the promised 400
+        came out as a 500. Fixed in `parse_date`, asserted here because this
+        boundary is where the taxonomy's HTTP status is the contract."""
+        resp = client.get("/api/v1/pull", params={"since": "999999999d"})
+        assert resp.status_code == 400
+
+    def test_a_partial_iso_date_is_rejected_not_widened(self, client):
+        """`2024-01` is the shape #21 found on the wire. `parse_date` rejects
+        it; raw, it matched every row in January by prefix.
+
+        One route, not the sweep: the per-route parametrize above already
+        proves each handler is wired, and which *values* `parse_date` rejects
+        is its own tests' business."""
+        resp = client.get("/api/v1/pull", params={"since": "2024-01"})
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_the_vocabulary_the_cli_accepts_works_here_too(self, client, route):
+        """Both input contexts run `parse_date`, so relative forms resolve
+        rather than being compared as the literal string '7d'."""
+        assert client.get(route, params={"since": "7d"}).status_code == 200
+
+    def test_an_already_parsed_value_still_round_trips(self, client):
+        """siftd's own clients send `date_arg` output; `parse_date` accepts it."""
+        resp = client.get("/api/v1/pull", params={"since": "2024-01-15T09:30:12"})
+        assert resp.status_code == 200
+
+    def test_the_htmx_ui_is_the_third_input_context(self):
+        """`/query` filters too, and it is not a JSON route.
+
+        serve has two boundaries, not one: `routes.py` answers the JSON API
+        and `html_routes.py` answers the htmx UI, and `/query` passes its date
+        facets into `search_view` and a browse Operation without ever building
+        one of `routes.py`'s handlers. It answers in fragments, so it renders
+        the rejection as HTML rather than letting the app-level JSON handler
+        put an error envelope inside a pane.
+
+        `ui_shell`/`ui_find`/`ui_meta` take the same params and are *not*
+        checked here: they only echo them back as URL-as-state so the filter
+        strip prefills what the user typed. Parsing there would redisplay
+        `7d` as a date.
+        """
+        htmx = {"HX-Request": "true"}  # else _shell_redirect 303s to the shell
+        with _team_client() as client:
+            resp = client.get("/query", params={"since": "lastweek"}, headers=htmx)
+            assert resp.status_code == 400
+            assert "text/html" in resp.headers["content-type"]
+            assert "lastweek" in resp.text
+
+            ok = client.get("/query", params={"since": "7d"}, headers=htmx)
+            assert ok.status_code == 200

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from siftd.cli._common import _get_version
 from siftd.cli.install import METHOD_LABELS, detect_install_method
+from siftd.dateparse import to_utc
 from siftd.output import status
 from siftd.paths import state_dir
 
@@ -53,8 +54,7 @@ def _cache_is_fresh() -> bool:
     if cache is None:
         return False
     try:
-        checked = datetime.fromisoformat(cache["checked_at"])
-        age = (datetime.now(UTC) - checked).total_seconds()
+        age = (datetime.now(UTC) - to_utc(cache["checked_at"])).total_seconds()
         return age < _CHECK_INTERVAL_S
     except (ValueError, KeyError):
         return False

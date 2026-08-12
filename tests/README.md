@@ -94,9 +94,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3259 |
+| `tests/` | 186 | 3271 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 8 | 56 |
+| `tests/architecture/` | 9 | 58 |
 | `tests/cli/` | 28 | 630 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -138,7 +138,7 @@ docstring so its row is meaningful.
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
-| [test_date_parsing.py](test_date_parsing.py) | 20 | Tests for date and timestamp parsing in CLI filters. |
+| [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
@@ -180,7 +180,7 @@ docstring so its row is meaningful.
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 7 | Regression tests for #36: aider history files with more than one session. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 55 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
@@ -264,9 +264,9 @@ docstring so its row is meaningful.
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
 | [test_storage.py](test_storage.py) | 94 | Tests for siftd storage layer coverage. |
-| [test_sync.py](test_sync.py) | 92 | Tests for siftd.api.sync — sync protocol utilities. |
+| [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
-| [test_sync_http_streaming.py](test_sync_http_streaming.py) | 14 | Tests for Y3: HTTP streaming for sync push and pull. |
+| [test_sync_http_streaming.py](test_sync_http_streaming.py) | 20 | Tests for Y3: HTTP streaming for sync push and pull. |
 | [test_sync_progress.py](test_sync_progress.py) | 11 | Tests for push/pull progress emission (api/sync.py). |
 | [test_sync_transport.py](test_sync_transport.py) | 15 | Tests for SSH transport in siftd.api.sync using FakeSSH. |
 | [test_table.py](test_table.py) | 13 | Tests for siftd.output.table — the one width-budgeted painted table. |
@@ -326,6 +326,7 @@ docstring so its row is meaningful.
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
+| [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
 
 ### `tests/cli/`

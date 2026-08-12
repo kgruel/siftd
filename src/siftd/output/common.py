@@ -7,10 +7,11 @@ import os
 import re
 import shutil
 import sys
-from datetime import datetime, tzinfo
+from datetime import tzinfo
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from siftd.dateparse import to_utc
 from siftd.domain.search_types import MATCH_CLOSE, MATCH_OPEN
 
 if TYPE_CHECKING:
@@ -193,7 +194,13 @@ def fmt_timestamp(
     Returns:
         Formatted timestamp string, or empty string if input is None.
         For date-only strings (<16 chars), returns raw string if not time_only.
-        Naive timestamps are treated as already-local and are not shifted.
+
+    Every caller passes a value read out of a timestamp column — `started_at`,
+    a turn's `timestamp`, `last_ingest`, `last_activity` — so a naive one is
+    UTC that lost its designator and is shifted like any other (see `to_utc`).
+    It used to be rendered unshifted, on the reading that no designator meant
+    the writer had already localized it, which displayed those rows off by the
+    host's offset.
     """
     if not iso_timestamp:
         return ""
@@ -201,23 +208,14 @@ def fmt_timestamp(
         # Date-only or short string: return raw for full mode, empty for time_only
         return "" if time_only else iso_timestamp
 
-    normalized = iso_timestamp.strip()
-    if normalized.endswith("Z"):
-        normalized = normalized[:-1] + "+00:00"
-
     try:
-        dt = datetime.fromisoformat(normalized)
+        dt = to_utc(iso_timestamp.strip())
     except ValueError:
         if time_only:
             return iso_timestamp[11:16]
         return iso_timestamp[:16].replace("T", " ")
 
-    if dt.tzinfo is not None:
-        if local_tz is None:
-            dt = dt.astimezone()
-        else:
-            dt = dt.astimezone(local_tz)
-
+    dt = dt.astimezone() if local_tz is None else dt.astimezone(local_tz)
     return dt.strftime("%H:%M" if time_only else "%Y-%m-%d %H:%M")
 
 

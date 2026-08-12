@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd db pull`/`push` no longer skips conversations that started in the
+  same second as its last sync.** Skipped rows are picked up on the next sync.
+  ([#32](https://github.com/kgruel/siftd/issues/32))
+
+- **Timestamps with no timezone are read as UTC everywhere rather than as
+  local time**, correcting displayed times, `siftd peek` activity ordering, and
+  the "N hours ago" labels in HTML output for conversations whose tool wrote
+  its log that way. ([#32](https://github.com/kgruel/siftd/issues/32))
+
+- **`siftd serve` now rejects an unparseable `since`/`before` with a 400**
+  instead of silently applying a filter that matches nothing or too much; both
+  accept the same vocabulary as the CLI (`7d`, `today`, ISO timestamps).
+  ([#32](https://github.com/kgruel/siftd/issues/32))
+
 - **`siftd ingest` now imports every session in an aider chat history, not just
   the first.** Files already stuck on this recover on the next ingest without
   having to change again. ([#36](https://github.com/kgruel/siftd/issues/36))

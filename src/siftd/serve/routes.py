@@ -41,6 +41,50 @@ def _actor_identity(request: Request) -> str:
     return _effective_owner(request, None) or "anonymous"
 
 
+def _date_param(value: str | None, name: str) -> str | None:
+    """Parse one `since`/`before` query param into a comparable bound.
+
+    argparse is where the CLI does this, via `date_arg`. serve had no
+    equivalent, so every date param went into `started_at >= ?` exactly as
+    typed — and the filter is a string comparison, so it neither matched nor
+    complained. `since=lastweek` simply returned nothing, and `since=2024-01`
+    (a value `parse_date` rejects) silently matched the whole of January.
+
+    siftd's own clients always send an already-parsed value, which is why this
+    stayed invisible: `date_arg` ran first, and `parse_date` accepts its own
+    output. Any other client got the vacuous filter.
+
+    Most callers want `_date_bounds`, which does the pair.
+    """
+    # `is not None` is not enough: a handler called directly rather than
+    # through Litestar's binding — which several tests do — still holds the
+    # unbound `Parameter(...)` sentinel here. Only a real query string is a
+    # date; anything else passes through as the caller's own business.
+    if not isinstance(value, str):
+        return value
+    from siftd.dateparse import parse_date
+    from siftd.errors import UserInputError
+
+    try:
+        return parse_date(value)
+    except ValueError as e:
+        raise UserInputError(f"invalid {name}: {e}") from e
+
+
+def _date_bounds(
+    since: str | None, before: str | None,
+) -> tuple[str | None, str | None]:
+    """Parse both date params at once, for rebinding at the top of a handler.
+
+    The pair is what a handler actually has, and taking it as a pair is what
+    keeps the two from drifting: a per-param call also hand-writes the param's
+    own name for the error message, so a transposed pair reports the wrong
+    field and nothing catches it. It also means a route that grows a date
+    filter has one thing to remember rather than two.
+    """
+    return _date_param(since, "since"), _date_param(before, "before")
+
+
 def _client_ip(request: Request) -> str | None:
     """Resolve the real client IP, honoring X-Forwarded-For only from trusted proxies.
 
@@ -323,6 +367,7 @@ def tags_route(
     (see :func:`siftd.api.tags.list_tags`); omitted, the enrichment query is
     skipped.
     """
+    since, before = _date_bounds(since, before)
     from siftd.api.tags import list_tags
 
     owner = _effective_owner(request, None)
@@ -598,6 +643,7 @@ def export_route(
     - ``format`` absent: legacy behavior — returns
       ``{"conversations": [...]}`` of full conversation dicts.
     """
+    since, before = _date_bounds(since, before)
     from painted import Fidelity
 
     owner = _effective_owner(request, owner)
@@ -635,7 +681,8 @@ def export_route(
     )
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
-        {"fidelity": fidelity, "id": id, "workspace": workspace, "since": since,
+        {"fidelity": fidelity, "id": id, "workspace": workspace,
+         "since": since,
          "before": before, "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
          "n": n, "db_path": db_path, "owner": owner},
         "export", db_path,
@@ -760,6 +807,7 @@ def pull(
     dry_run: int = Parameter(query="dry_run", default=0),
 ) -> Response | File:
     """Slice and stream the team DB based on filters."""
+    since, before = _date_bounds(since, before)
     from siftd.api.sync import SYNC_HTTP_CHUNK_SIZE
 
     owner = _effective_owner(request, owner)
@@ -965,6 +1013,7 @@ def conversation_list(
     include_tool_content: bool = Parameter(query="include_tool_content", default=False),
 ) -> dict | Response:
     """List conversations with filtering."""
+    since, before = _date_bounds(since, before)
     from painted import Fidelity
 
     from siftd.api.conversations import list_conversations
@@ -1027,6 +1076,7 @@ def search_route(
     turns: str | None = Parameter(query="turns", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
+    since, before = _date_bounds(since, before)
     try:
         from siftd.api.search import (
             EmbeddingsRequiredError,
