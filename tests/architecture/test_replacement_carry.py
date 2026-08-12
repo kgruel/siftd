@@ -31,9 +31,14 @@ trigger-driven cleanup (``tr_polymorphic_*``) and the virtual table
 
 Scope and limits, stated so a future reader can judge what this does not catch:
 
-- The site count is scoped to `ingestion/orchestration.py`. `api/merge.py`
-  replaces conversations too, and carries its own ownership by hand — that
-  second door is #77, and this ratchet deliberately does not claim it.
+- The site count is over the *primitive*, not over ingest's wrapper. It was
+  scoped to `ingestion/orchestration.py` until #77, which is what that scoping
+  cost: `api/merge.py` was the second replacement door all along, carrying
+  ownership by hand and hard-deleting tags — the mirror of #54 — and a ratchet
+  keyed to `_take_conversation_for_replacement` could not see it, because merge
+  has its own delete and never calls that wrapper. Keying on
+  `snapshot_conversation`/`restore_conversation` names the population by what a
+  replacement *does*, so a third door is visible whatever it wraps itself in.
 - Counting sites guards *arity*, not *pairing*. A site that snapshots and never
   restores changes the count, but a path that drops the carryover on an early
   return does not.
@@ -45,15 +50,31 @@ import ast
 
 from architecture.support import REPO_ROOT
 
-# Call sites of `_take_conversation_for_replacement`, per enclosing function.
+# Call sites of the carry primitives, per (module, enclosing function).
 # Named rather than totalled: a bare count survives deleting one site and
 # adding another, and cannot say which one is new — the question the guard
 # exists to prompt. Mirrors `test_readonly_opens.py`'s per-(file, function)
 # keying.
 REPLACEMENT_SITES = {
+    ("ingestion/orchestration.py", "_take_conversation_for_replacement"): {
+        "snapshot_conversation": 1,
+    },
+    ("ingestion/orchestration.py", "_restore_carryover_after_replacement"): {
+        "restore_conversation": 1,
+    },
+    ("api/merge.py", "_replace_stale_conversations"): {"snapshot_conversation": 1},
+    ("api/merge.py", "_merge_attached"): {"restore_conversation": 1},
+}
+
+# Where ingest's own wrapper is called from. The wrapper is what makes "ask
+# before replacing" structural for ingest — merge answers that question with
+# its owner gate instead — so its arity is still worth pinning, one level down
+# from the primitive count above.
+INGEST_REPLACEMENT_DOORS = {
     "ingest_all": 2,
     "_reingest_file": 1,
 }
+CARRY_PRIMITIVES = ("snapshot_conversation", "restore_conversation")
 
 # What a conversation delete removes, and what a replacement does about it.
 # Shrink-only in the sense that an entry moving between them means
@@ -84,42 +105,86 @@ NOT_CARRIED = {
 }
 
 
-def _replacement_call_sites() -> dict[str, int]:
-    """`_take_conversation_for_replacement` calls, keyed by enclosing function."""
-    path = REPO_ROOT / "src" / "siftd" / "ingestion" / "orchestration.py"
-    tree = ast.parse(path.read_text())
-    sites: dict[str, int] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
-            continue
-        calls = sum(
-            1 for child in ast.walk(node)
-            if isinstance(child, ast.Call)
-            and isinstance(child.func, ast.Name)
-            and child.func.id == "_take_conversation_for_replacement"
-        )
-        if calls:
-            sites[node.name] = calls
+def _calls_by_function(names: tuple[str, ...]) -> dict[tuple[str, str], dict[str, int]]:
+    """Calls to `names` across `src/siftd`, keyed by (module, enclosing function).
+
+    Swept over the whole package rather than a named file — a ratchet that
+    reads one module can only ever confirm that module, which is what let
+    `api/merge.py` be a replacement door nothing here could see.
+    """
+    root = REPO_ROOT / "src" / "siftd"
+    sites: dict[tuple[str, str], dict[str, int]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            counts: dict[str, int] = {}
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Name)
+                    and child.func.id in names
+                ):
+                    counts[child.func.id] = counts.get(child.func.id, 0) + 1
+            if counts:
+                sites[(path.relative_to(root).as_posix(), node.name)] = counts
     return sites
 
 
+def _ingest_door_call_sites() -> dict[str, int]:
+    """`_take_conversation_for_replacement` calls, keyed by enclosing function."""
+    return {
+        function: counts["_take_conversation_for_replacement"]
+        for (module, function), counts in _calls_by_function(
+            ("_take_conversation_for_replacement",)
+        ).items()
+        if module == "ingestion/orchestration.py"
+    }
+
+
 def test_every_replacement_site_is_accounted_for():
-    """The trigger enumeration is hand-written; this is what guards it.
+    """Every site that snapshots or restores a carryover is named here.
 
     A replacement *trigger* is a condition, so it cannot be read off the source
-    the way `DEDUP_STRATEGY` can. What can be read is the doors: every
-    delete-then-insert in ingest goes through
-    `_take_conversation_for_replacement`, so a new one shows up here. That is
-    the signal to ask which trigger it introduces and whether
+    the way `DEDUP_STRATEGY` can. What can be read is the sites that take and
+    put back the carryover — and, since #77, they are read from the whole
+    package rather than from ingest alone. A new entry is the signal to ask
+    which trigger it introduces and whether
     `tests/test_live_tagging.py::_REPLACEMENT_TRIGGERS` still covers the
     population — the question nobody asked when #36 made a second trigger
     common.
+
+    A site that snapshots without restoring (or the reverse) shows up as a
+    lopsided entry rather than a silent one: that shape is #54 and #77 both.
     """
-    assert _replacement_call_sites() == REPLACEMENT_SITES, (
-        f"replacement sites moved: {_replacement_call_sites()} != {REPLACEMENT_SITES}. "
-        "Every one of them deletes a conversation and stores a new one, so every "
-        "one can lose what `storage/replacement.py` does not carry. Check "
+    found = _calls_by_function(CARRY_PRIMITIVES)
+    assert found == REPLACEMENT_SITES, (
+        f"replacement sites moved: {found} != {REPLACEMENT_SITES}. Every one of "
+        "them deletes a conversation and stores a new one, so every one can lose "
+        "what `storage/replacement.py` does not carry. A site that appears with "
+        "only a snapshot, or only a restore, is a half-carry. Check "
         "_REPLACEMENT_TRIGGERS still enumerates the conditions that reach them."
+    )
+    snapshots = sum(c.get("snapshot_conversation", 0) for c in found.values())
+    restores = sum(c.get("restore_conversation", 0) for c in found.values())
+    assert snapshots == restores, (
+        f"{snapshots} snapshot site(s) against {restores} restore site(s) — a "
+        "carryover that is taken and never put back is the loss itself."
+    )
+
+
+def test_every_ingest_replacement_door_is_accounted_for():
+    """Ingest's own wrapper still guards every delete-then-insert it owns.
+
+    Separate from the primitive count above because it answers a different
+    question: the wrapper is where ingest asks "may I replace this at all"
+    (`_conversation_claimed_elsewhere`), which merge answers with its owner gate
+    instead. A new call here is a new place that can refuse — or fail to.
+    """
+    assert _ingest_door_call_sites() == INGEST_REPLACEMENT_DOORS, (
+        f"ingest replacement doors moved: {_ingest_door_call_sites()} != "
+        f"{INGEST_REPLACEMENT_DOORS}."
     )
 
 

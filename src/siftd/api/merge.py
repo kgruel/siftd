@@ -8,13 +8,21 @@ INSERT OR IGNORE so UNIQUE constraints handle dedup naturally.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
 from siftd.storage.fts import rebuild_fts_index
+from siftd.storage.replacement import (
+    ConversationCarryover,
+    restore_conversation,
+    snapshot_conversation,
+)
 from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.sqlite import open_database
+
+logger = logging.getLogger(__name__)
 
 
 def merge_database(
@@ -228,9 +236,12 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
     # --- Step 1b: Replace stale conversations with newer source versions ---
     replaced_conversations = 0
     replaced_conversation_ids: list[str] = []
+    carryovers: dict[str, ConversationCarryover] = {}
     if replace:
-        replaced_conversations, replaced_conversation_ids = _replace_stale_conversations(
-            conn, user_id=user_id, owner_scoped=owner_scoped,
+        replaced_conversations, replaced_conversation_ids, carryovers = (
+            _replace_stale_conversations(
+                conn, user_id=user_id, owner_scoped=owner_scoped,
+            )
         )
 
     # --- Step 2: Core tables with FK remapping ---
@@ -263,19 +274,6 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
     new_conversation_ids = [r[0] for r in new_conv_id_rows]
     new_conversations = len(new_conversation_ids)
     conn.execute("DROP TABLE _pre_merge_conv_ids")
-
-    # If we replaced stale target conversations, preserve the prior owner by
-    # re-stamping the replacement source conversation IDs to the original owner.
-    if replace and conn.execute(
-        "SELECT 1 FROM sqlite_temp_master WHERE type='table' AND name='_replaced_owner_map'"
-    ).fetchone():
-        if has_conversation_owners_table(conn):
-            conn.execute(
-                "INSERT OR IGNORE INTO conversation_owners "
-                "(conversation_id, user_id, push_id, assigned_at) "
-                "SELECT conversation_id, user_id, push_id, assigned_at FROM _replaced_owner_map"
-            )
-        conn.execute("DROP TABLE _replaced_owner_map")
 
     src_conv_count = conn.execute("SELECT COUNT(*) FROM src.conversations").fetchone()[0]
     skipped_conversations = src_conv_count - new_conversations
@@ -434,6 +432,32 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
                  ))
         """)
 
+    # --- Step 4b: Re-attach what the replaced conversations carried ---
+    # Here, not beside the delete, because a carryover re-points onto rows that
+    # only exist once the source's conversations, events and tag vocabulary have
+    # landed — steps 2 through 4 above. Ownership needs no rejoin and could have
+    # gone earlier (it used to, as `_replaced_owner_map`), but splitting the two
+    # halves apart is how one of them comes to be dropped: that split is exactly
+    # what #77 was, in mirror image of #54.
+    #
+    # Deferring ownership past `_eligible_convs` does not widen the merge's
+    # owner gate. Under `owner_scoped` the stale match already confined itself
+    # to conversations the pusher owns or that are unowned, so the replacement
+    # is eligible either way — as the pusher's own row before, as an unowned row
+    # now, which is the branch the comment at `_eligible_convs` already
+    # describes for every other source conversation.
+    replacement_unmatched = 0
+    for source_conv_id, carryover in carryovers.items():
+        unmatched = restore_conversation(conn, source_conv_id, carryover)
+        replacement_unmatched += unmatched + carryover.dropped
+        if unmatched or carryover.dropped:
+            logger.warning(
+                f"{unmatched + carryover.dropped} tag(s) on the conversation "
+                f"replaced by {source_conv_id} could not be carried across the "
+                "merge (the event is no longer in the source, is synthetic, or "
+                "is a block-level assignment)"
+            )
+
     # --- Step 5: content_blobs ref_count ---
 
     conn.execute("""
@@ -481,7 +505,7 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
 
 def _replace_stale_conversations(
     conn, *, user_id: str | None = None, owner_scoped: bool = False,
-) -> tuple[int, list[str]]:
+) -> tuple[int, list[str], dict[str, ConversationCarryover]]:
     """Delete target conversations that have a newer version in source.
 
     A source conversation is "newer" when it shares the same
@@ -500,8 +524,10 @@ def _replace_stale_conversations(
     (and have the replacement re-stamped to that tenant) — the most reachable
     write-side multi-tenant IDOR, needing no knowledge of the victim's ULIDs.
 
-    Returns (count_replaced, replacement_source_ids) where replacement_source_ids
-    are the source conversation IDs that will replace the stale target versions.
+    Returns (count_replaced, replacement_source_ids, carryovers) where
+    replacement_source_ids are the source conversation IDs that will replace the
+    stale target versions, and carryovers maps each of those to what the target
+    version held that no source row reproduces — re-attached in step 4b.
     """
     # Find stale target conversations: same natural key, source ULID is newer.
     # ULIDs are lexicographically time-ordered, so id comparison works.
@@ -526,34 +552,29 @@ def _replace_stale_conversations(
     """, match_params).fetchall()
 
     if not stale_rows:
-        return 0, []
+        return 0, [], {}
 
     stale_ids = [r[0] for r in stale_rows]
     replacement_ids = [r[1] for r in stale_rows]
 
-    # Preserve ownership across replacement (target_id -> source_id) when the
-    # server-side conversation_owners table exists.
-    if has_conversation_owners_table(conn):
-        conn.execute("CREATE TEMP TABLE _stale_to_source (target_id TEXT PRIMARY KEY, source_id TEXT NOT NULL)")
-        conn.executemany(
-            "INSERT INTO _stale_to_source (target_id, source_id) VALUES (?, ?)",
-            [(t, s) for t, s in stale_rows],
-        )
-        conn.execute(
-            "CREATE TEMP TABLE IF NOT EXISTS _replaced_owner_map ("
-            "conversation_id TEXT PRIMARY KEY, "
-            "user_id TEXT NOT NULL, "
-            "push_id TEXT, "
-            "assigned_at TEXT NOT NULL"
-            ")"
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO _replaced_owner_map (conversation_id, user_id, push_id, assigned_at) "
-            "SELECT sts.source_id, co.user_id, co.push_id, co.assigned_at "
-            "FROM conversation_owners co "
-            "JOIN _stale_to_source sts ON sts.target_id = co.conversation_id"
-        )
-        conn.execute("DROP TABLE _stale_to_source")
+    # Take everything the delete below would destroy that no source row puts
+    # back — tags and ownership, through the same primitive ingest's replacement
+    # door uses (`storage/replacement.py`). Keyed by the *source* id, because
+    # that is the conversation the carryover re-attaches to: merge replaces on
+    # the natural key, so the replacement arrives under a different ULID.
+    #
+    # This has to happen here rather than after the delete, and it is not a
+    # matter of taste: the `tr_polymorphic_*_cleanup` triggers are AFTER DELETE
+    # triggers, so they fire on merge's top-level deletes whatever the
+    # foreign_keys pragma says. Once the delete has run there is nothing left to
+    # read. Ownership alone used to be carried here, by a pair of temp tables
+    # (`_stale_to_source` / `_replaced_owner_map`) that hand-rolled half of what
+    # this primitive does — the mirror image of #54, which carried the other
+    # half and dropped this one.
+    carryovers = {
+        source_id: snapshot_conversation(conn, target_id)
+        for target_id, source_id in stale_rows
+    }
 
     # Build a temp table for efficient joins
     conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
@@ -614,7 +635,7 @@ def _replace_stale_conversations(
 
     conn.execute("DROP TABLE _stale_convs")
 
-    return len(stale_ids), replacement_ids
+    return len(stale_ids), replacement_ids, carryovers
 
 
 def _map_vocabulary(conn, table: str, natural_key: str) -> None:

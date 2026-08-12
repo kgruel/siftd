@@ -20,18 +20,32 @@ Two such facts exist today, and the second was missing until #54:
 That asymmetry is why this is one snapshot object rather than two helpers: the
 mechanics differ per fact, but "take everything, delete, put everything back"
 is one operation, and splitting it is how a third site comes to carry only one
-of them. ``ingestion.orchestration._take_conversation_for_replacement`` is the
-single door **in ingest** — it guards, snapshots, and deletes together.
+of them — which is not hypothetical. Both replacement paths shipped a half of
+it: ingest carried tags and dropped ownership (#54), and `api/merge.py`, which
+replaces on the same natural key, hand-rolled ownership through a pair of temp
+tables while hard-deleting the target's tag assignments (#77). Each looked
+complete from inside, because neither had a list to be incomplete against.
 
-Scope, stated because the obvious wider claim is false: `api/merge.py` replaces
-conversations too, on the same natural key, and carries its own ownership by
-hand while hard-deleting the target's tag assignments — the mirror image of
-what #54 was. This module does not govern that path, and the ratchets do not
-claim it. That second door is #77.
+Two sites use this, and they differ only in how they get their ids:
+
+- ``ingestion.orchestration._take_conversation_for_replacement`` — the door in
+  ingest, which guards, snapshots and deletes together; the replacement keeps
+  the transcript's ``external_id`` under a fresh conversation ULID.
+- ``api.merge._replace_stale_conversations`` — the merge's stale sweep, which
+  snapshots the *target* conversation and restores against the *source* id,
+  because the replacement arrives from the other database under its own ULID.
+
+The snapshot must be taken before the delete in both, and that is structural
+rather than stylistic: the ``tr_polymorphic_*_cleanup`` triggers are AFTER
+DELETE triggers, so they fire whatever the ``foreign_keys`` pragma is set to,
+and a post-delete read finds nothing to carry.
 
 `tests/architecture/test_replacement_carry.py` holds this list to its
 population, asking the schema directly rather than trusting a registry (the
-one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones).
+one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones),
+and counts the sites above by their calls to the two functions here — not by
+ingest's wrapper, which merge does not use and which is therefore how a second
+door stayed invisible until #77.
 """
 
 from __future__ import annotations

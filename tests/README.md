@@ -102,9 +102,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3284 |
+| `tests/` | 186 | 3285 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 12 | 65 |
+| `tests/architecture/` | 12 | 66 |
 | `tests/cli/` | 28 | 632 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -195,7 +195,7 @@ docstring so its row is meaningful.
 | [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
-| [test_merge.py](test_merge.py) | 37 | Tests for siftd db merge — importing a slice into the main database. |
+| [test_merge.py](test_merge.py) | 38 | Tests for siftd db merge — importing a slice into the main database. |
 | [test_merge_blob_gc.py](test_merge_blob_gc.py) | 2 | D2 — orphan content_blob GC on merge. |
 | [test_merge_owner_scope.py](test_merge_owner_scope.py) | 3 | Multi-tenant write-IDOR guard for the merge path (S0/S1/D1). |
 | [test_migrations.py](test_migrations.py) | 67 | Tests for siftd storage migration paths. |
@@ -335,7 +335,7 @@ docstring so its row is meaningful.
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
-| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 3 | A conversation replacement is answerable to one list of what it must carry. |
+| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 4 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |

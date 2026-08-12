@@ -707,13 +707,18 @@ def test_replace_cascades_children(tmp_path):
     """).fetchone()[0]
     assert tool_name == "file.read"
 
-    # Tag should be from source
-    tag_name = conn.execute("""
-        SELECT t.name FROM tag_assignments ta
-        JOIN tags t ON t.id = ta.tag_id
-        WHERE ta.target_kind = 'conversation'
-    """).fetchone()[0]
-    assert tag_name == "research"
+    # Both tags: the source's, and the one the target already carried. This
+    # asserted `== "research"` off a bare fetchone() until #77 — which read as
+    # "the source wins" but was really "the target's tag was destroyed", and
+    # could not have distinguished the two.
+    tag_names = {
+        row[0] for row in conn.execute("""
+            SELECT t.name FROM tag_assignments ta
+            JOIN tags t ON t.id = ta.tag_id
+            WHERE ta.target_kind = 'conversation'
+        """)
+    }
+    assert tag_names == {"research", "review"}
 
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
@@ -798,8 +803,20 @@ def test_replace_cascades_grandchildren(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='prompt'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='response'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='tool_call'").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
+
+    # The tool_call *tag*, unlike the attributes beside it, is re-pointed onto
+    # the replacement's event rather than destroyed (#77). A person put it
+    # there; no re-parse of the source puts it back, which is the whole line
+    # `storage/replacement.py` draws. This asserted `== 0` before, making the
+    # loss look deliberate.
+    carried = conn.execute("""
+        SELECT ta.target_id, t.name FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        WHERE ta.target_kind = 'tool_call'
+    """).fetchall()
+    new_tc_id = conn.execute("SELECT id FROM events WHERE kind='tool_call'").fetchone()[0]
+    assert [(r[0], r[1]) for r in carried] == [(new_tc_id, "tc-tag")]
 
     # Content should be from source (event_content stores JSON blocks)
     import json
@@ -857,6 +874,79 @@ def test_replace_clears_derived_tier(tmp_path):
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
     assert violations == []
+
+
+def test_replace_carries_tags_and_ownership(tmp_path):
+    """A merge that replaces a conversation keeps what a person attached (#77).
+
+    The homelab shape: a reviewer tags a conversation on the server, the machine
+    that produced it appends one more turn, and the next push replaces it. Every
+    tag used to go with the old rows — while ownership, carried by a temp-table
+    special case right beside the delete, survived. This is the mirror of #54,
+    which carried tags and dropped ownership; both are now one snapshot.
+
+    Element tags are the discriminating half: a conversation tag only needs the
+    new conversation id, but an event tag has to be *re-pointed* by rejoining on
+    the identifier the replacement shares with its predecessor.
+    """
+    import time
+
+    from siftd.storage.sqlite import ensure_conversation_owners_table
+    from siftd.storage.sqlite import open_database as _open
+    from siftd.storage.tags import get_tag_assignments
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old", "tool_name": "sh"}],
+    )
+    tgt = _open(target)
+    ensure_conversation_owners_table(tgt)
+    old_conv = tgt.execute("SELECT id FROM conversations").fetchone()["id"]
+    old_prompt = tgt.execute("SELECT id FROM events WHERE kind='prompt'").fetchone()["id"]
+    apply_tag(tgt, "conversation", old_conv, get_or_create_tag(tgt, "decision:auth"))
+    apply_tag(tgt, "prompt", old_prompt, get_or_create_tag(tgt, "needs-followup"))
+    tgt.execute(
+        "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+        " VALUES (?, 'alice', NULL, ?)",
+        (old_conv, "2024-01-01T00:00:00Z"),
+    )
+    tgt.commit()
+    tgt.close()
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old and then more",
+                        "tool_name": "sh"}],
+    )
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+
+    conn = _open(target)
+    new_conv = conn.execute("SELECT id FROM conversations").fetchone()["id"]
+    new_prompt = conn.execute("SELECT id FROM events WHERE kind='prompt'").fetchone()["id"]
+    assert new_conv != old_conv, "the replacement should be a different row"
+
+    conv_tags = {
+        r[0] for r in conn.execute(
+            "SELECT t.name FROM tag_assignments ta JOIN tags t ON t.id = ta.tag_id"
+            " WHERE ta.target_kind = 'conversation' AND ta.target_id = ?", (new_conv,)
+        )
+    }
+    assert "decision:auth" in conv_tags
+
+    assert len(get_tag_assignments(conn, "prompt", new_prompt)) == 1, (
+        "the element tag was not re-pointed onto the replacement's event"
+    )
+    assert not get_tag_assignments(conn, "prompt", old_prompt)
+
+    assert conn.execute(
+        "SELECT user_id FROM conversation_owners WHERE conversation_id = ?", (new_conv,)
+    ).fetchone()[0] == "alice"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
 
 
 def test_cli_no_replace(tmp_path, capsys):
