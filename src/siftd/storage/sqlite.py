@@ -293,6 +293,25 @@ def open_database(
     return conn
 
 
+def remove_database(db_path: Path) -> None:
+    """Delete a database file and its SQLite sidecars.
+
+    A SQLite database is three files, not one, so unlinking just the ``.db``
+    orphans any ``-wal``/``-shm`` beside it. That matters most for the
+    ephemeral payloads sync and receive stage into temp directories: their
+    cleanup runs while the sidecars exist, and whatever it misses outlives the
+    payload.
+
+    Only for databases the caller *owns and is destroying*. Removing sidecars
+    from a database that stays in use is never safe — a live ``-shm`` carries
+    the locking state shared between processes, and replacing it out from under
+    an open connection costs coherence, not just tidiness.
+    """
+    for artifact in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
+        if artifact.exists():
+            artifact.unlink()
+
+
 def create_empty_database(db_path: Path) -> None:
     """Create a new database with the base schema only (no migrations).
 
@@ -301,9 +320,7 @@ def create_empty_database(db_path: Path) -> None:
     """
     # Slice/export paths may be reused within a single workflow; remove any
     # existing DB and SQLite sidecars so schema creation always starts clean.
-    for artifact in (db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")):
-        if artifact.exists():
-            artifact.unlink()
+    remove_database(db_path)
     conn = sqlite3.connect(str(db_path))
     try:
         schema = SCHEMA_PATH.read_text()

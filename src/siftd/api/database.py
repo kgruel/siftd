@@ -10,14 +10,15 @@ from siftd.errors import SiftdError
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import (
     SchemaUpgradeRequiredError,
+    remove_database,
 )
 from siftd.storage.sqlite import (
     open_database as _open_database,
 )
 
-# Re-exported via siftd.api so CLI can catch it without crossing the
-# cli → storage import boundary enforced by tests/architecture/test_imports.py.
-__all__ = ["SchemaUpgradeRequiredError"]
+# Re-exported via siftd.api so CLI and serve can reach these without crossing
+# the cli/serve → storage boundary enforced by tests/architecture/test_imports.py.
+__all__ = ["SchemaUpgradeRequiredError", "remove_database"]
 
 # Checks run as pre-flight gates before merge/receive.
 # db-blob-refcount-drift is intentionally excluded: sync slices copy ref_count
@@ -41,6 +42,14 @@ def audit_db_integrity(path: Path) -> list:
         FileNotFoundError: If ``path`` does not exist. Propagated from the
             doctor runner, which requires the DB for the structural checks.
 
+    Creates ``-wal``/``-shm`` beside ``path`` when it is a WAL database, and
+    cannot remove them: doctor's read connections do change detection, and a
+    read-only connection has no way to clean up on close. This function must
+    not do it either — it cannot know whether a writer is active, and unlinking
+    a live ``-shm`` costs the locking coherence SQLite shares through it. A
+    caller destroying an ephemeral payload calls ``remove_database`` instead,
+    which owns the file and takes all three.
+
     Note: embed_db_path defaults to the user's local embed DB, which is
     irrelevant for source preflight. Any future deep check that reads
     embed_db_path would need to be excluded from _PREFLIGHT_CHECKS or receive
@@ -63,8 +72,7 @@ def run_preflight(path: Path, label: str = "source") -> None:
     is always included so inbox errors are traceable.
 
     Warnings are logged; info findings are ignored.
-    Invariant: path must be a closed file (not held open by another connection).
-    CheckContext opens it with ?mode=ro&immutable=1.
+    Findings describe the instant the file was sampled at.
     """
     import logging
 

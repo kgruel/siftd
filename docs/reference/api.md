@@ -1506,7 +1506,7 @@ def audit_db_integrity(path: Path) -> list
 
 **Raises:**
 
-- `FileNotFoundError`: If ``path`` does not exist. Propagated from the doctor runner, which requires the DB for the structural checks.
+- `FileNotFoundError`: If ``path`` does not exist. Propagated from the doctor runner, which requires the DB for the structural checks. Creates ``-wal``/``-shm`` beside ``path`` when it is a WAL database, and cannot remove them: doctor's read connections do change detection, and a read-only connection has no way to clean up on close. This function must not do it either — it cannot know whether a writer is active, and unlinking a live ``-shm`` costs the locking coherence SQLite shares through it. A caller destroying an ephemeral payload calls ``remove_database`` instead, which owns the file and takes all three.
 - `Note`: embed_db_path defaults to the user's local embed DB, which is irrelevant for source preflight. Any future deep check that reads embed_db_path would need to be excluded from _PREFLIGHT_CHECKS or receive an alternate embed path here.
 
 ### backup_database
@@ -1554,6 +1554,14 @@ def open_database(db_path: pathlib.Path | None = ..., *, read_only: bool = ..., 
 
 - `FileNotFoundError`: If read_only=True and database doesn't exist.
 - `SchemaUpgradeRequiredError`: If read_only=True, schema is stale, and the file is not writable for an auto-upgrade.
+
+### remove_database
+
+Delete a database file and its SQLite sidecars.
+
+```python
+def remove_database(db_path: Path) -> None
+```
 
 ### run_preflight
 

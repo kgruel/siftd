@@ -1,7 +1,10 @@
 """Tests for the doctor module."""
 
+import os
 import sqlite3
+import stat
 import threading
+from contextlib import closing
 
 import pytest
 
@@ -30,7 +33,9 @@ from siftd.doctor.checks import (
     OrphanedChunksCheck,
     SchemaCurrentCheck,
     WorkspaceIdentityCheck,
+    _connect_read_only,
 )
+from conftest import skip_if_root
 
 
 @pytest.fixture
@@ -1169,6 +1174,70 @@ class TestCheckContext:
         assert len(ctx._conns) == 2
 
         ctx.close()
+
+    def test_read_conn_sees_commits_a_writer_has_not_checkpointed(self, check_context, test_db):
+        """Doctor's reads are not pinned to the last-checkpointed snapshot.
+
+        An immutable connection ignores the ``-wal`` file outright, so against a
+        database a live ``serve`` or concurrent ``ingest`` has committed to but
+        not checkpointed, checks answered from a stale snapshot and reported it
+        as current. Deterministic, not racy: no checkpoint, no visibility, ever.
+        """
+        with closing(sqlite3.connect(test_db)) as writer:
+            writer.execute("PRAGMA journal_mode = WAL")
+            writer.execute("CREATE TABLE wal_probe (x INTEGER)")
+            writer.commit()
+            writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+
+            conn = check_context.get_db_conn()
+            assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 0
+
+            writer.execute("INSERT INTO wal_probe VALUES (1)")
+            writer.commit()
+
+            # Guard against the test going vacuous: it only means anything
+            # while the commit is still in the WAL and nowhere else.
+            wal = test_db.parent / f"{test_db.name}-wal"
+            assert wal.exists() and wal.stat().st_size > 0, "commit was checkpointed away"
+
+            assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 1
+
+    @skip_if_root
+    def test_read_conn_falls_back_to_immutable_on_read_only_media(self, tmp_path):
+        """Immutability is derived from the medium, not asserted by the caller.
+
+        Simulated by making the database's *directory* unwritable, which is what
+        stops the ``-shm`` sidecar from being created — read-only media in the
+        only form the filesystem lets a test reproduce.
+        """
+        media = tmp_path / "media"
+        media.mkdir()
+        db = media / "frozen.db"
+        seed = sqlite3.connect(db)
+        seed.execute("PRAGMA journal_mode = WAL")
+        seed.execute("CREATE TABLE t (x INTEGER)")
+        seed.execute("INSERT INTO t VALUES (1)")
+        seed.commit()
+        seed.close()
+
+        os.chmod(db, stat.S_IRUSR)
+        os.chmod(media, stat.S_IRUSR | stat.S_IXUSR)
+        try:
+            # Positive control: without the fallback there is nothing to read.
+            plain = sqlite3.connect(f"file:{db.as_posix()}?mode=ro", uri=True)
+            with pytest.raises(sqlite3.OperationalError):
+                plain.execute("SELECT count(*) FROM t")
+            plain.close()
+
+            conn = _connect_read_only(db)
+            try:
+                assert conn.execute("SELECT count(*) FROM t").fetchone()[0] == 1
+            finally:
+                conn.close()
+            assert not (media / "frozen.db-shm").exists(), "probe left a sidecar behind"
+        finally:
+            os.chmod(media, stat.S_IRWXU)
+            os.chmod(db, stat.S_IRUSR | stat.S_IWUSR)
 
     def test_concurrent_run_reports_fts_drift_every_time(self, test_db):
         """A full concurrent doctor run reports the same FTS drift on every pass.

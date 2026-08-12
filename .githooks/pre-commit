@@ -10,8 +10,8 @@ cd "$(git rev-parse --show-toplevel)"
 # Regenerate docs/reference/ and the managed README spans. Only docs/reference/
 # is auto-staged: it is fully generated, so a whole-file add can never sweep in
 # unrelated edits. Managed READMEs mix authored prose with generated spans —
-# auto-adding them would override a developer's staged-hunk selection — so their
-# staleness is left to `./dev docs --check` (last step of ./dev check, and CI).
+# auto-adding them would override a developer's staged-hunk selection — so
+# staging them is left to `./dev docs --check` (last step of ./dev check, and CI).
 # Skipped before ./dev setup has run.
 if [ -d .venv ]; then
     ./dev docs

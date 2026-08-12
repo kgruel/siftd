@@ -29,7 +29,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 ./dev test           # Run base tests (excludes embeddings, serve, slow lanes)
 ./dev test-all       # Run all tests including embeddings
 ./dev docs           # Generate reference docs + README generated spans
-./dev docs --check   # Verify docs aren't stale (strict; last step of ./dev check)
+./dev docs --check   # Verify generated docs are staged (strict; last step of ./dev check)
 ./dev check          # Lint + test (CI equivalent, quiet by default)
 ./dev check --all    # ...plus the serve, embeddings, and slow lanes (also --serve/--embed/--slow)
 ./dev agent <template> <path>  # Launch agent with prompt template

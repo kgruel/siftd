@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3241 |
+| `tests/` | 185 | 3245 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 6 | 52 |
 | `tests/cli/` | 28 | 630 |
@@ -143,7 +143,7 @@ docstring so its row is meaningful.
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
-| [test_doctor.py](test_doctor.py) | 120 | Tests for the doctor module. |
+| [test_doctor.py](test_doctor.py) | 122 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
@@ -208,7 +208,7 @@ docstring so its row is meaningful.
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
-| [test_preflight.py](test_preflight.py) | 10 | Unit tests for siftd.api.database preflight functions. |
+| [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |

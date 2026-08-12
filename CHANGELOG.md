@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd doctor` no longer reports on a snapshot older than the database.**
+  Its read connections were opened `mode=ro&immutable=1`, which tells SQLite
+  the file cannot change and to omit locking and change detection — a promise
+  doctor cannot keep, since `fts-integrity` opens a write connection mid-run
+  and an external `ingest` or `serve` writes the same file. An immutable
+  reader ignores the `-wal` file outright, so against a database with
+  un-checkpointed commits — what a running `serve` leaves behind — every check
+  silently answered from the last checkpoint; and when a writer checkpointed
+  mid-run, scans truncated early, counts disagreed with the rows they counted,
+  and `integrity_check` reported corruption in a healthy database. Doctor now
+  opens a plain `mode=ro` connection and falls back to `immutable=1` only when
+  the sidecar it needs cannot be created, so read-only media still works and
+  immutability is derived from the medium rather than asserted over it. The
+  trade: `siftd doctor` now leaves `-wal`/`-shm` sidecars next to the database,
+  which a read-only connection cannot clean up on close. Any write to the
+  database creates them anyway, so this is visible only if doctor is the first
+  thing to touch a freshly-checkpointed file.
+  ([#38](https://github.com/kgruel/siftd/issues/38))
+
 - **Every default `db pull` after the first one works again.** Sync stores its
   pull cursor as a full ISO 8601 timestamp, then hands that string back to
   `siftd db send --since` on the remote — where `parse_date` accepted only

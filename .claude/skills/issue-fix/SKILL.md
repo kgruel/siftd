@@ -106,9 +106,9 @@ changelog describes the old design until you fix it.
 
 Gotchas that will cost you a cycle:
 
-- **`./dev docs --check` diffs against git**, so freshly regenerated docs read
-  as "stale" until committed. Run `./dev docs`, then commit the regenerated
-  files *with* the change.
+- **`./dev docs --check` regenerates before it diffs**, against the *index*. So
+  it fails on regenerated-but-unstaged docs, and re-running `./dev docs` can
+  never fix it — `git add` the files it lists, and commit them with the change.
 - **Changing any `--help` string** moves `docs/reference/cli.md` and the help
   snapshots. Regenerate all three interpreter lanes:
   ```bash
@@ -153,9 +153,19 @@ message describing the fix.
 Isolation is the structural fix, not "tell the agents not to write" — the
 writes are legitimate, the shared target isn't. Consequences to know:
 
-- A worktree carries **committed** state only, so the review sees your last
-  commit, not your working tree. That is why the commit comes first. It also
-  matches how `/simplify` picks its scope (`git diff main...HEAD`).
+- **The worktree is created at the base commit, not at your branch**, so
+  `git diff main...HEAD` inside it is *empty* and the agent reviews nothing.
+  On #38 all four agents burned their full budget on this and were killed by
+  the stall watchdog with zero findings. Push the branch first, then give every
+  agent the checkout as a literal instruction:
+  ```
+  git fetch origin
+  git checkout -B review-local origin/<your-branch>
+  git diff origin/main...HEAD
+  ```
+- Give them a time budget in the prompt ("finish well under 10 minutes, return
+  partial findings rather than nothing") — the watchdog kills a silent agent at
+  600s, and an agent told to benchmark will happily spend that on `./dev setup`.
 - Findings come back as text and you apply them in the real tree. Anything an
   agent "fixed" in its worktree is discarded — which is what you want from a
   reviewer.

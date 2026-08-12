@@ -43,6 +43,7 @@ from siftd.api.database import (
     backup_database,
     create_database,
     open_database,
+    remove_database,
     run_preflight,
 )
 from siftd.api.doctor import (
@@ -219,6 +220,7 @@ __all__ = [
     "backup_database",
     "create_database",
     "open_database",
+    "remove_database",
     "run_preflight",
     # tags
     "DERIVATIVE_TAG",

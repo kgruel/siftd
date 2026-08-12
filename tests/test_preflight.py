@@ -6,7 +6,7 @@ import pytest
 
 from siftd.api.database import PreflightError, audit_db_integrity, run_preflight
 from siftd.ids import ulid
-from siftd.storage.sqlite import create_empty_database
+from siftd.storage.sqlite import create_empty_database, remove_database
 
 
 def _make_clean_db(tmp_path, name="test.db"):
@@ -77,6 +77,37 @@ class TestAuditDbIntegrity:
         conn.close()
         findings = audit_db_integrity(p)
         assert not any(f.check == "db-blob-refcount-drift" for f in findings)
+
+
+class TestEphemeralPayloadCleanup:
+    def test_auditing_then_removing_a_payload_leaves_nothing(self, tmp_path):
+        """The whole point: audit a staged payload, drop it, leave no litter.
+
+        Doctor's read connections do change detection, so auditing a WAL
+        database creates ``-wal``/``-shm`` beside it and a read-only connection
+        cannot remove them on close. Callers that unlink only the ``.db``
+        orphaned a 32 KB ``-shm`` per `db receive`, per sync pull, per push.
+        """
+        p = _make_clean_db(tmp_path)
+        # WAL is the only journal mode with sidecars to leak, and it is what a
+        # real payload arrives in — create_empty_database leaves DELETE mode,
+        # under which this test would pass no matter what the code does.
+        writer = sqlite3.connect(p)
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("CREATE TABLE payload (x INTEGER)")
+        writer.commit()
+        writer.close()
+
+        audit_db_integrity(p)
+        assert (tmp_path / f"{p.name}-shm").exists(), "audit should have made sidecars"
+
+        remove_database(p)
+
+        assert list(tmp_path.iterdir()) == []
+
+    def test_remove_database_is_a_noop_on_a_missing_file(self, tmp_path):
+        """Callers run it in a finally block, before the payload may exist."""
+        remove_database(tmp_path / "never-created.db")
 
 
 class TestRunPreflight:
