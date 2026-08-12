@@ -93,9 +93,14 @@ def connect_read_only(
 
     The probe is a statement, not the open: `sqlite3.connect` succeeds against
     read-only media, and the sidecar is only created when the first read
-    transaction starts. It costs nothing measurable (~3 µs/connection) because
-    it is not extra work — it pulls forward the read transaction the caller's
-    own first query would open anyway.
+    transaction starts. Measured against a 19 MB WAL database, the probe adds
+    ~10 µs per connection when the `-shm` already exists and ~100 µs when
+    SQLite has to create it — the sidecar setup, not the pragma. It is not pure
+    overhead: it pulls forward the read transaction the caller's own first
+    query would open anyway.
+
+    (An earlier note here claimed ~3 µs, carried over from #38 without being
+    re-measured on this path. It was wrong in both regimes.)
 
     Only the sidecar's own failures fall back. A read-only directory raises
     SQLITE_READONLY_DIRECTORY, but a *locked* database raises SQLITE_BUSY — and
@@ -121,10 +126,53 @@ def connect_read_only(
         if not (e.sqlite_errorname or "").startswith(("SQLITE_READONLY", "SQLITE_CANTOPEN")):
             raise
         conn.close()
+        _refuse_immutable_over_unreplayed_sidecars(db_path, e)
         return sqlite3.connect(
             f"{uri}&immutable=1", uri=True, check_same_thread=check_same_thread, timeout=timeout
         )
     return conn
+
+
+# A WAL file is a 32-byte header followed by frames. At exactly the header size
+# (or below) it carries no committed pages, which is what a checkpointed-and-
+# truncated `-wal` looks like.
+_WAL_HEADER_BYTES = 32
+
+
+def _refuse_immutable_over_unreplayed_sidecars(
+    db_path: Path, cause: sqlite3.OperationalError
+) -> None:
+    """Reject the `immutable=1` fallback when sidecars still hold real state.
+
+    An unwritable medium proves nothing can change the database *from now on*.
+    It does not prove the main file is the whole database — and `immutable=1`
+    reads only the main file. A `-wal` carrying committed frames, or a hot
+    `-journal` recording a transaction that needs rolling back, is content the
+    fallback would silently drop, which is exactly the stale-snapshot defect
+    this helper exists to remove. Copying a database onto read-only media
+    alongside its sidecars is the ordinary way to reach it.
+
+    Neither can be replayed read-only: replay is a write. So there is no
+    connection that answers correctly, and the honest outcome is an error
+    naming the remedy rather than a plausible wrong answer.
+    """
+    for suffix, threshold, what in (
+        ("-wal", _WAL_HEADER_BYTES, "committed transactions that were never checkpointed"),
+        ("-journal", 0, "a transaction that needs rolling back"),
+    ):
+        sidecar = db_path.with_name(f"{db_path.name}{suffix}")
+        try:
+            carries_state = sidecar.stat().st_size > threshold
+        except OSError:
+            continue
+        if carries_state:
+            raise DriftError(
+                f"{db_path} sits on read-only media next to a {sidecar.name} holding "
+                f"{what}. Replaying it requires writing, so no read-only connection can "
+                f"report the database's true contents. Copy the database and its "
+                f"sidecars somewhere writable, or checkpoint it before making the "
+                f"medium read-only."
+            ) from cause
 
 
 def _peek_user_version(db_path: Path) -> int:
@@ -202,11 +250,17 @@ def open_database(
     """Open database connection, creating schema if needed.
 
     A connection belongs to the thread that opened it. There is deliberately no
-    `check_same_thread` knob: one connection read from several threads is not
-    safe even at threadsafety==3 (the prepared-statement cache is shared
-    state), and doctor — the one caller that used to ask for it — hit exactly
-    that, as silently wrong query results rather than errors. Concurrent
-    readers open one connection each.
+    `check_same_thread` knob *on this function*: one connection read from
+    several threads is not safe even at threadsafety==3 (the prepared-statement
+    cache is shared state), and doctor — the one caller that used to ask for it
+    — hit exactly that, as silently wrong query results rather than errors.
+    Concurrent readers open one connection each.
+
+    `connect_read_only`, which the read-only path below delegates to, does
+    expose the flag, and that is not a reversal: there it only permits `close()`
+    from a thread other than the opener, which is what doctor's per-thread
+    connection pool needs at teardown. It is not permission to read one
+    connection from two threads, which remains what went wrong.
 
     Args:
         db_path: Path to the database file.

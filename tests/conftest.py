@@ -19,6 +19,7 @@ example of converting from monkeypatch-stdout to callback collection.
 import json
 import os
 import random
+import shutil
 import sqlite3
 import string
 import sys
@@ -1094,7 +1095,11 @@ def readonly_media(tmp_path):
 
     media = tmp_path / "media"
     media.mkdir()
-    frozen: list[Path] = []
+
+    def _freeze() -> None:
+        for entry in media.iterdir():
+            os.chmod(entry, _stat.S_IRUSR)
+        os.chmod(media, _stat.S_IRUSR | _stat.S_IXUSR)
 
     def seed(name: str, populate=None) -> Path:
         db = media / name
@@ -1111,17 +1116,49 @@ def readonly_media(tmp_path):
             conn.close()
         for leftover in media.glob(f"{name}-*"):
             leftover.unlink()
-        os.chmod(db, _stat.S_IRUSR)
-        os.chmod(media, _stat.S_IRUSR | _stat.S_IXUSR)
-        frozen.append(db)
+        _freeze()
         return db
 
+    def seed_with_unreplayed_wal(name: str, populate=None) -> Path:
+        """Freeze a database whose `-wal` still holds a committed transaction.
+
+        Copying a database onto read-only media alongside its sidecars is the
+        ordinary way to reach this, and it is the case where "the medium cannot
+        be written" stops implying "the main file is the whole database". Built
+        in a scratch directory and copied *while the writer is still open*,
+        because closing a connection checkpoints the WAL away.
+        """
+        scratch = tmp_path / "scratch"
+        scratch.mkdir(exist_ok=True)
+        source = scratch / name
+        conn = sqlite3.connect(source)
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA wal_autocheckpoint = 0")
+            if populate is not None:
+                populate(conn)
+            conn.commit()
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+            conn.execute("CREATE TABLE only_in_wal (x INTEGER)")
+            conn.commit()
+
+            wal = scratch / f"{name}-wal"
+            assert wal.stat().st_size > 32, "commit was checkpointed away"
+            shutil.copy2(source, media / name)
+            shutil.copy2(wal, media / f"{name}-wal")
+        finally:
+            conn.close()
+        _freeze()
+        return media / name
+
     try:
-        yield SimpleNamespace(path=media, seed=seed)
+        yield SimpleNamespace(
+            path=media, seed=seed, seed_with_unreplayed_wal=seed_with_unreplayed_wal
+        )
     finally:
         os.chmod(media, _stat.S_IRWXU)
-        for db in frozen:
-            os.chmod(db, _stat.S_IRUSR | _stat.S_IWUSR)
+        for entry in media.iterdir():
+            os.chmod(entry, _stat.S_IRUSR | _stat.S_IWUSR)
 
 
 @pytest.fixture

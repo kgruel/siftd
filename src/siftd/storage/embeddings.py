@@ -380,11 +380,11 @@ class _EmbeddingCache:
 _embedding_cache = _EmbeddingCache()
 
 
-def _ensure_cache_loaded(conn: sqlite3.Connection) -> str:
+def _ensure_cache_loaded(conn: sqlite3.Connection) -> None:
     """Load (or reuse) the in-memory embedding cache for ``conn``'s DB.
 
-    Returns the DB path hint used as the cache key. The caller's connection is
-    always the one read from: read-only opens now derive immutability rather
+    The caller's connection is always the one read from: read-only opens
+    now derive immutability rather
     than asserting it, and neither outcome leaves a connection that could serve
     a stale snapshot. A plain ``mode=ro`` connection takes WAL read marks and
     sees every commit; the ``immutable=1`` fallback is reached only when the
@@ -398,7 +398,6 @@ def _ensure_cache_loaded(conn: sqlite3.Connection) -> str:
     cache = _embedding_cache
     if not cache.is_valid(db_path_hint):
         cache.load(conn, db_path_hint)
-    return db_path_hint
 
 
 def search_similar(

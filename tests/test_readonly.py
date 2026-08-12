@@ -7,6 +7,7 @@ import stat
 import pytest
 
 from conftest import skip_if_root
+from siftd.errors import DriftError
 from siftd.storage.sqlite import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
@@ -261,6 +262,30 @@ class TestConnectReadOnly:
         finally:
             conn.close()
         assert not (readonly_media.path / "frozen.db-shm").exists()
+
+    @skip_if_root
+    def test_unreplayed_wal_on_read_only_media_errors_rather_than_lying(
+        self, readonly_media
+    ):
+        """An unwritable medium does not make the main file the whole database.
+
+        The fallback's premise is that nothing can change the file. That is true
+        going forward, but a `-wal` copied alongside the database already holds
+        committed transactions, and `immutable=1` reads only the main file — so
+        falling back here would silently drop them, which is the exact defect
+        this helper removes. Replaying a WAL is a write, so no read-only
+        connection can answer correctly; the honest outcome is an error.
+
+        Found by external review of #42, reproduced before it was fixed: the
+        helper returned the pre-WAL row set with no indication anything was
+        missing.
+        """
+        db_path = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            connect_read_only(db_path)
 
 
 class TestSearchReadOnlyMode:
