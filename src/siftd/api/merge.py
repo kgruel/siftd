@@ -577,6 +577,13 @@ def _replace_stale_conversations(
     if has_conversation_owners_table(conn):
         conn.execute("DELETE FROM conversation_owners WHERE conversation_id IN (SELECT id FROM _stale_convs)")
 
+    # The derived tier is rebuilt post-commit, but foreign_key_check runs before that.
+    conn.execute("DELETE FROM usage_by_conv_model WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    conn.execute("DELETE FROM conversation_stats WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+    # content_fts is virtual: no FK, invisible to foreign_key_check, and the push
+    # path passes rebuild_fts=False, so nothing else would ever clear these rows.
+    conn.execute("DELETE FROM content_fts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
+
     # Delete the stale conversations themselves
     conn.execute("DELETE FROM conversations WHERE id IN (SELECT id FROM _stale_convs)")
 

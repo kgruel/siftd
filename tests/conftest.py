@@ -153,6 +153,7 @@ from siftd.storage.sqlite import (
     record_ingested_file,
 )
 from siftd.storage.tags import apply_tag, get_or_create_tag
+from siftd.storage.usage_rollup import rebuild_rollups
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -282,6 +283,10 @@ def make_db(
         external_id, prompt_text, response_text, started_at (optional),
         tags (optional list of tag names), tool_name (optional)
 
+    Ends by rebuilding the derived tier, as every real bulk raw-row writer does.
+    Without it usage_by_conv_model / conversation_stats are empty, and every
+    `PRAGMA foreign_key_check` assertion over them is vacuous.
+
     Returns the path for chaining.
     """
     conn = create_database(path)
@@ -332,6 +337,8 @@ def make_db(
         for tag_name in conv.get("tags", []):
             tag_id = get_or_create_tag(conn, tag_name)
             apply_tag(conn, "conversation", conv_id, tag_id)
+
+    rebuild_rollups(conn)
 
     conn.commit()
     conn.close()

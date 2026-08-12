@@ -101,3 +101,38 @@ def test_subsequent_push_rebuilds_fts(tmp_path):
     assert _fts_hit_count(target, anchor) >= 1, (
         "FTS should find the anchor phrase after subsequent push with rebuild_fts=True"
     )
+
+
+def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
+    """A push that replaces a conversation retires its old text, even with rebuild_fts=False.
+
+    siftd#20. content_fts is virtual — no FK, no cascade, invisible to
+    foreign_key_check — so the merge's stale-conversation delete has to clear it
+    explicitly. rebuild_fts=False is the only setting under which that matters,
+    and it is this function's default and what every sync caller passes.
+    """
+    import time
+
+    stale_anchor = "smoke-test-anchor-delta"
+    fresh_anchor = "smoke-test-anchor-epsilon"
+
+    target = make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "response_text": stale_anchor}],
+    )
+    rebuild_fts_index(sqlite3.connect(str(target)), commit=True)
+    assert _fts_hit_count(target, stale_anchor) == 1
+
+    # Later ULID for the same (harness, external_id) → the merge replaces it.
+    time.sleep(0.01)
+    sender = make_db(
+        tmp_path / "sender.db",
+        conversations=[{"external_id": "conv-1", "response_text": fresh_anchor}],
+    )
+
+    result = receive_database(sender, target, rebuild_fts=False, preflight=False)
+    assert result["replaced_conversations"] == 1
+
+    assert _fts_hit_count(target, stale_anchor) == 0, (
+        "the replaced conversation must stop answering searches from its deleted text"
+    )

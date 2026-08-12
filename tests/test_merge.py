@@ -779,6 +779,50 @@ def test_replace_cascades_grandchildren(tmp_path):
     assert violations == []
 
 
+def test_replace_clears_derived_tier(tmp_path):
+    """After a replace, the derived tier describes the replacement (siftd#20).
+
+    The tier's rows for the stale conversation used to survive the delete — both
+    tables declare ON DELETE CASCADE, which the merge's `foreign_keys = OFF`
+    disables — and foreign_key_check rolled the whole merge back.
+
+    That rollback is now caught by every foreign_key_check assertion in this
+    file, since `make_db` populates the tier. What this test adds is the
+    positive half: the surviving rows are keyed to the *new* conversation.
+    """
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Original"}],
+    )
+    time.sleep(0.01)
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Updated"}],
+    )
+
+    conn = sqlite3.connect(str(target))
+    old_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+    # Precondition, not setup: if the fixture ever stops rebuilding the tier,
+    # this test — and the file's foreign_key_check assertions — go vacuous.
+    assert conn.execute("SELECT COUNT(*) FROM usage_by_conv_model").fetchone()[0] > 0
+    conn.close()
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    new_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+    assert new_id != old_id
+    for table in ("usage_by_conv_model", "conversation_stats"):
+        ids = {r[0] for r in conn.execute(f"SELECT conversation_id FROM {table}")}
+        assert ids == {new_id}, table
+    violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+    conn.close()
+    assert violations == []
+
+
 def test_cli_no_replace(tmp_path, capsys):
     """CLI --no-replace flag is passed through."""
     import time

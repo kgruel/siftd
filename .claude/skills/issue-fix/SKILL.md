@@ -95,6 +95,36 @@ section is the release container and is never reconstructed at cut time. If the
 section doesn't exist (a release was just cut), create it above the newest
 version heading.
 
+**One line per change**, in the shape:
+
+```markdown
+- **What the user can now do (or stop hitting).** One clause of scope if the
+  blast radius isn't obvious from the first. ([#N](https://github.com/kgruel/siftd/issues/N))
+```
+
+The reader is deciding whether to upgrade, not learning the mechanism. Mechanism
+goes in the PR; provenance goes in the commits; both are one click from the
+issue link. This is the same rule as the PR word budget — **rationale belongs in
+the durable artifact, and the changelog is not it.** Prose here is worse than
+prose in a PR body, because it ships: a merged PR body is write-only, but a
+changelog entry is read by every user of every later version.
+
+Concretely, from #20:
+
+> ~~Replacing a stale conversation deleted its raw children but left its
+> derived-tier rows — `usage_by_conv_model` and `conversation_stats` both declare
+> `ON DELETE CASCADE`, which the merge's `foreign_keys = OFF` disables — so the
+> pre-commit `PRAGMA foreign_key_check` found them dangling and rolled the entire
+> merge back… (14 lines)~~
+>
+> **`siftd db pull`/`push` no longer fails permanently once the other side
+> re-ingests a conversation you already have.** The replaced conversation also
+> stops answering searches from its deleted text. (#20)
+
+If a change genuinely needs a paragraph — a breaking change, a stated trade, a
+migration the user must act on — write the paragraph. That is the exception the
+one-line rule exists to make visible, and it should read as one.
+
 Revisit it after review: if `codex review` changes what you shipped, the
 changelog describes the old design until you fix it.
 
