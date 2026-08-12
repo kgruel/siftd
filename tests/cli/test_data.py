@@ -802,18 +802,28 @@ class TestCmdDoctor:
         assert rc in (0, 1)
 
     def test_doctor_strict_mode(self, test_db, capsys):
-        """--strict exits 1 on warnings too."""
+        """--strict exits 1 on warnings too.
+
+        Each exit code is judged against the summary of *its own* run. Reading
+        the warning count from a separate non-strict invocation made the test
+        assert on data the strict run never saw, so any run-to-run difference
+        in findings surfaced as a bare `assert 0 == 1` with the findings
+        discarded — which is how the shared-connection race in CheckContext hid
+        behind this test for as long as it did.
+        """
         rc_normal = main(["--db", str(test_db), "doctor", "--json"])
-        data = json.loads(capsys.readouterr().out)
-        warning_count = data["summary"]["warning"]
+        normal = json.loads(capsys.readouterr().out)
 
         rc_strict = main(["--db", str(test_db), "doctor", "--json", "--strict"])
-        capsys.readouterr()  # consume output
+        strict = json.loads(capsys.readouterr().out)
 
-        if warning_count > 0 and data["summary"]["error"] == 0:
-            # Strict should fail on warnings, normal should pass
-            assert rc_normal == 0
-            assert rc_strict == 1
+        assert rc_normal == (1 if normal["summary"]["error"] else 0), normal["findings"]
+        expect_strict = 1 if strict["summary"]["error"] or strict["summary"]["warning"] else 0
+        assert rc_strict == expect_strict, strict["findings"]
+
+        # test_db has indexable content and an empty FTS index, so the run is
+        # not vacuous: there is a warning for --strict to act on.
+        assert strict["summary"]["warning"] > 0, strict["findings"]
 
     def test_doctor_pending_tags_warning_without_fix(self, test_db, capsys):
         """--pending-tags without 'fix' subcommand warns."""

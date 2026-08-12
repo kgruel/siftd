@@ -63,9 +63,12 @@ class CheckContext:
     formatters_dir: Path
     queries_dir: Path
 
-    # Lazy-loaded connections (populated on first access)
-    _db_conn: sqlite3.Connection | None = field(default=None, repr=False)
-    _embed_conn: sqlite3.Connection | None = field(default=None, repr=False)
+    # Read-only connections, keyed by (thread, database) and opened on demand.
+    # Never one connection shared across the runner's thread pool: see the
+    # per-thread rule in _get_conn.
+    _conns: dict[tuple[threading.Thread, str], sqlite3.Connection] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     # Lazy adapter discovery shared across checks (populated on first access).
@@ -78,24 +81,50 @@ class CheckContext:
         default_factory=threading.Lock, repr=False, compare=False
     )
 
-    def get_db_conn(self):
-        """Get main database connection (lazy-loaded, thread-safe for reads)."""
+    def _get_conn(self, db_path: Path, *, foreign_keys: bool) -> sqlite3.Connection:
+        """One read-only connection per (thread, database), opened on first use.
+
+        Per thread, never per run: checks run concurrently, and a single
+        sqlite3.Connection read from several threads is not safe even at
+        threadsafety==3 — the prepared-statement cache is shared state. With
+        fts-integrity opening its own *write* connection to the same file
+        mid-run, the overlap produced wrong query results rather than errors.
+
+        Keyed on the Thread object, not threading.get_ident(): idents are
+        recycled once a thread dies, so an ident key silently hands a new
+        thread its dead predecessor's connection. That happens to be safe
+        (sequential use, which check_same_thread=False permits — that flag is
+        here so close() can run from the caller's thread, not as a concurrency
+        claim), but "one connection per thread" should be true as written
+        rather than true by accident. The dict is per-run and pool-sized, so
+        holding Thread references costs nothing.
+
+        immutable=1 keeps the open sidecar-free (no WAL/SHM created) and works
+        on read-only media — the same URI storage.open_database uses for its
+        read-only opens. Not routed through open_database despite the overlap:
+        it clears the process-global vocabulary caches on every open, which a
+        per-thread open would do repeatedly mid-run, on other subsystems'
+        behalf. A diagnostic reads; it should not reach into shared state.
+        """
+        key = (threading.current_thread(), str(db_path))
         with self._lock:
-            if self._db_conn is None:
-                uri = f"file:{self.db_path.as_posix()}?mode=ro&immutable=1"
-                self._db_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-                self._db_conn.row_factory = sqlite3.Row
-                self._db_conn.execute("PRAGMA foreign_keys = ON")
-            return self._db_conn
+            conn = self._conns.get(key)
+            if conn is None:
+                uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+                conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                if foreign_keys:
+                    conn.execute("PRAGMA foreign_keys = ON")
+                self._conns[key] = conn
+        return conn
+
+    def get_db_conn(self):
+        """Get main database connection (lazy-loaded, one per calling thread)."""
+        return self._get_conn(self.db_path, foreign_keys=True)
 
     def get_embed_conn(self):
-        """Get embeddings database connection (lazy-loaded, thread-safe for reads)."""
-        with self._lock:
-            if self._embed_conn is None:
-                uri = f"file:{self.embed_db_path.as_posix()}?mode=ro&immutable=1"
-                self._embed_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-                self._embed_conn.row_factory = sqlite3.Row
-            return self._embed_conn
+        """Get embeddings database connection (lazy-loaded, one per calling thread)."""
+        return self._get_conn(self.embed_db_path, foreign_keys=False)
 
     def get_adapters(self) -> list:
         """Enabled adapter plugins, loaded once per run and shared across checks."""
@@ -130,13 +159,11 @@ class CheckContext:
         return outcome
 
     def close(self):
-        """Close any open connections."""
-        if (conn := self._db_conn) is not None:
+        """Close every connection this context opened, on any thread."""
+        with self._lock:
+            conns, self._conns = list(self._conns.values()), {}
+        for conn in conns:
             conn.close()
-            self._db_conn = None
-        if (embed_conn := self._embed_conn) is not None:
-            embed_conn.close()
-            self._embed_conn = None
 
 
 class Check(Protocol):

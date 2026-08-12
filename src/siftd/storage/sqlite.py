@@ -134,10 +134,16 @@ def open_database(
     db_path: Path,
     *,
     read_only: bool = False,
-    check_same_thread: bool = True,
     auto_upgrade: bool = True,
 ) -> sqlite3.Connection:
     """Open database connection, creating schema if needed.
+
+    A connection belongs to the thread that opened it. There is deliberately no
+    `check_same_thread` knob: one connection read from several threads is not
+    safe even at threadsafety==3 (the prepared-statement cache is shared
+    state), and doctor — the one caller that used to ask for it — hit exactly
+    that, as silently wrong query results rather than errors. Concurrent
+    readers open one connection each.
 
     Args:
         db_path: Path to the database file.
@@ -147,8 +153,6 @@ def open_database(
             below SCHEMA_VERSION the migration is run in a transient write-mode
             open before the RO connection is established (or
             SchemaUpgradeRequiredError is raised if the file is not writable).
-        check_same_thread: If False, allow the connection to be used from multiple
-            threads.  Useful for concurrent read-only access (e.g. doctor checks).
         auto_upgrade: When True (default) and read_only=True, a stale-schema DB
             is migrated up to SCHEMA_VERSION in a transient write-mode open.
             Set False for callers that need to *inspect* the on-disk schema
@@ -167,9 +171,9 @@ def open_database(
         # Use URI mode with mode=ro&immutable=1 to avoid creating WAL/SHM sidecars
         # and to work on read-only filesystems. Mirrors embeddings.py approach.
         uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread)
+        conn = sqlite3.connect(uri, uri=True)
     else:
-        conn = sqlite3.connect(db_path, check_same_thread=check_same_thread)
+        conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     if not read_only:

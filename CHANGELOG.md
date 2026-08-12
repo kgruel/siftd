@@ -35,6 +35,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their local-time value until their history file changes and is re-ingested.
   ([#31](https://github.com/kgruel/siftd/issues/31))
 
+- **`siftd doctor` no longer reports health it did not measure.** The runner
+  fans its checks out over a thread pool, and every DB-reading check shared one
+  `sqlite3` connection. Concurrent use of one connection is not safe — the
+  prepared-statement cache is shared state — and `fts-integrity` opens its own
+  *write* connection to the same file mid-run, which turned the overlap into
+  wrong query results rather than an error: roughly one run in seven reported a
+  healthy FTS index for a database whose index was in fact empty. Each thread
+  now gets its own read-only connection — which also makes the run faster, since
+  SQLite's per-connection mutex had been serializing the checks the thread pool
+  was supposed to overlap (~18% on a 4.8 GB database).
+  ([#34](https://github.com/kgruel/siftd/issues/34))
+
+### Internal
+
+- CI installs uv via `astral-sh/setup-uv@v7`. `v4` declares `runs.using:
+  node20`, which GitHub force-runs on Node 24; that mismatch surfaced as an
+  intermittent `self-signed certificate` failure in `Install uv`. `v7` is the
+  newest moving major tag and the first declaring `node24`. ([#34](https://github.com/kgruel/siftd/issues/34))
+
 ## [0.12.1] - 2026-08-11
 
 ### Changed

@@ -1,5 +1,7 @@
 """Tests for the doctor module."""
 
+import sqlite3
+import threading
 
 import pytest
 
@@ -1015,12 +1017,11 @@ class TestCheckContext:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-        assert ctx._db_conn is None
-        assert ctx._embed_conn is None
+        assert ctx._conns == {}
 
         conn = ctx.get_db_conn()
         assert conn is not None
-        assert ctx._db_conn is not None
+        assert list(ctx._conns.values()) == [conn]
 
         ctx.close()
 
@@ -1035,11 +1036,54 @@ class TestCheckContext:
         )
         ctx.close()
 
-    def test_thread_safe_db_conn_initialization(self, test_db, tmp_path):
-        """Concurrent get_db_conn() calls from multiple threads return the same connection."""
-        from concurrent.futures import ThreadPoolExecutor
-        import threading
+    def _assert_one_conn_per_thread(self, getter, threads=8):
+        """Assert ``getter`` returns one connection per thread, reused within it.
 
+        Dedicated threads rather than a pool: a pool is free to run several
+        tasks on one worker, and two tasks sharing a thread legitimately share
+        that thread's connection — which would make a distinctness assertion
+        depend on the pool's scheduling rather than on the invariant.
+
+        All ``threads`` threads are held alive at the barrier while they call,
+        because the invariant is about *concurrently live* threads. Letting
+        them run to completion one after another would let a finished thread's
+        identity be recycled, and the assertion would then be measuring how
+        fast the machine is rather than what the cache keys on.
+
+        Returns the per-thread connections so callers can assert on them.
+        """
+        barrier = threading.Barrier(threads)
+        pairs: list[tuple] = []
+        lock = threading.Lock()
+
+        def two_calls():
+            barrier.wait()
+            pair = (getter(), getter())
+            with lock:
+                pairs.append(pair)
+            barrier.wait()
+
+        workers = [threading.Thread(target=two_calls) for _ in range(threads)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join()
+
+        for first, second in pairs:
+            assert first is second, "repeat calls on one thread should reuse its connection"
+        per_thread = [first for first, _ in pairs]
+        assert len(set(per_thread)) == len(per_thread) == threads, (
+            "each concurrently live thread must get its own connection"
+        )
+        return per_thread
+
+    def test_db_conn_is_one_per_thread(self, test_db, tmp_path):
+        """Each thread gets its own connection, and close() releases them all.
+
+        A single sqlite3.Connection shared across the runner's thread pool
+        produced silently wrong query results — see
+        test_concurrent_run_reports_fts_drift_every_time.
+        """
         ctx = CheckContext(
             db_path=test_db,
             embed_db_path=tmp_path / "embed.db",
@@ -1048,38 +1092,21 @@ class TestCheckContext:
             queries_dir=tmp_path / "queries",
         )
 
-        results = []
-        lock = threading.Lock()
-
-        def get_conn():
-            conn = ctx.get_db_conn()
-            with lock:
-                results.append(conn)
-
-        # Spawn 8 threads, each calling get_db_conn()
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(get_conn) for _ in range(8)]
-            for future in futures:
-                future.result()
-
-        # All should be the same object (identity check)
-        assert len(results) == 8
-        first_conn = results[0]
-        for conn in results[1:]:
-            assert conn is first_conn, "Concurrent calls should return the same connection object"
+        per_thread = self._assert_one_conn_per_thread(ctx.get_db_conn)
+        assert set(ctx._conns.values()) == set(per_thread)
 
         ctx.close()
+        assert ctx._conns == {}
+        for conn in per_thread:
+            with pytest.raises(sqlite3.ProgrammingError):
+                conn.execute("SELECT 1")
 
-    def test_thread_safe_embed_conn_initialization(self, test_db, tmp_path):
-        """Concurrent get_embed_conn() calls from multiple threads return the same connection."""
-        from concurrent.futures import ThreadPoolExecutor
-        import threading
-        import sqlite3
-
+    def test_embed_conn_is_one_per_thread(self, test_db, tmp_path):
+        """get_embed_conn() follows the same per-thread rule as get_db_conn()."""
         # Create the embeddings DB first (get_embed_conn opens in read-only mode)
         embed_db = tmp_path / "embed.db"
-        conn = sqlite3.connect(embed_db)
-        conn.close()
+        seed = sqlite3.connect(embed_db)
+        seed.close()
 
         ctx = CheckContext(
             db_path=test_db,
@@ -1089,27 +1116,78 @@ class TestCheckContext:
             queries_dir=tmp_path / "queries",
         )
 
-        results = []
-        lock = threading.Lock()
+        self._assert_one_conn_per_thread(ctx.get_embed_conn)
+        ctx.close()
 
-        def get_conn():
-            conn = ctx.get_embed_conn()
-            with lock:
-                results.append(conn)
+    def test_sequential_threads_do_not_inherit_a_dead_thread_conn(self, test_db, tmp_path):
+        """A finished thread's connection is never handed to its successor.
 
-        # Spawn 8 threads, each calling get_embed_conn()
-        with ThreadPoolExecutor(max_workers=8) as executor:
-            futures = [executor.submit(get_conn) for _ in range(8)]
-            for future in futures:
-                future.result()
+        CPython recycles thread idents once a thread dies, so keying the cache
+        on ``threading.get_ident()`` gave a new thread whatever its dead
+        predecessor had opened. Harmless in itself — sequential use — but it
+        made "one connection per thread" true only by accident, and how often
+        it happened depended on how fast threads finished. Keyed on the Thread
+        object instead, so this holds by construction.
+        """
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=tmp_path / "embed.db",
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
 
-        # All should be the same object (identity check)
-        assert len(results) == 8
-        first_conn = results[0]
-        for conn in results[1:]:
-            assert conn is first_conn, "Concurrent calls should return the same connection object"
+        seen = []
+
+        def once():
+            seen.append(ctx.get_db_conn())
+
+        # Strictly sequential: each thread is dead before the next one starts,
+        # which is exactly when ident recycling happens.
+        for _ in range(8):
+            w = threading.Thread(target=once)
+            w.start()
+            w.join()
+
+        assert len(set(seen)) == 8, "a new thread inherited a dead thread's connection"
 
         ctx.close()
+
+    def test_two_databases_get_separate_conns_on_one_thread(self, test_db, tmp_path):
+        """The per-thread cache keys on the database too, not just the thread."""
+        embed_db = tmp_path / "embed.db"
+        sqlite3.connect(embed_db).close()
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=embed_db,
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+        assert ctx.get_db_conn() is not ctx.get_embed_conn()
+        assert len(ctx._conns) == 2
+
+        ctx.close()
+
+    def test_concurrent_run_reports_fts_drift_every_time(self, test_db):
+        """A full concurrent doctor run reports the same FTS drift on every pass.
+
+        Regression for the shared-connection race: the runner fans checks out
+        over a thread pool, and fts-integrity opens its own *write* connection
+        to the same file. With one shared read connection the fts-stale query
+        intermittently returned 0 missing rows instead of 4 — no error, just a
+        wrong answer, so `siftd doctor` silently reported a healthy index. The
+        loop is the instrument: a single pass passed even with the bug (the
+        observed miss rate was roughly one run in seven).
+        """
+        from siftd.api import run_checks
+
+        for i in range(30):
+            findings = run_checks(db_path=test_db)
+            missing = [f for f in findings if f.check == "fts-stale"]
+            assert missing, f"fts-stale finding vanished on pass {i}"
+            assert missing[0].context["missing_count"] == 4
 
 
 @pytest.mark.embeddings
@@ -1149,7 +1227,7 @@ class TestOrphanedChunksCheck:
         embed_conn.close()
 
         # Re-open via context so the check uses the populated DB
-        check_context._embed_conn = None
+        check_context.close()
         check = OrphanedChunksCheck()
         findings = check.run(check_context)
         assert findings == []
@@ -1169,7 +1247,7 @@ class TestOrphanedChunksCheck:
         )
         embed_conn.close()
 
-        check_context._embed_conn = None
+        check_context.close()
         check = OrphanedChunksCheck()
         findings = check.run(check_context)
 

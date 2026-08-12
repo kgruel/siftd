@@ -40,8 +40,10 @@ def run_checks(
 ) -> list[Finding]:
     """Run health checks and return findings.
 
-    Checks run concurrently using a thread pool. Each check gets a shared
-    read-only CheckContext (SQLite connections opened with check_same_thread=False).
+    Checks run concurrently using a thread pool. They share one CheckContext,
+    but not its SQLite connections: the context hands each thread its own
+    read-only connection, because a shared one produced wrong query results
+    rather than errors when a check opened a write connection to the same file.
 
     Args:
         checks: Specific check names to run, or None for all.

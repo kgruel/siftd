@@ -20,6 +20,17 @@ the slow-lane checks that reconcile discovered files against the DB
 (`ingest-pending`, `adapter-stale`) walk each adapter's log directories once per
 run rather than once per check.
 
+Checks run concurrently, so **`get_db_conn()` / `get_embed_conn()` return one
+connection per calling thread, not one per run** — a check must not hand its
+connection to another thread or cache it past its own `run()`. One shared
+`sqlite3.Connection` is not safe across threads even at `threadsafety == 3`
+(the prepared-statement cache is shared state), and this package contains a
+check that opens its own *write* connection to the same file: `fts-integrity`.
+That combination produced wrong query results rather than errors — `fts-stale`
+under-reported drift in roughly one run in seven. A check that needs write
+access opens its own connection and must assume it is racing the read
+connections of every other check.
+
 Severity is a promise about actionability, because `--strict` is documented
 for CI: a `warning` must be something a fix can actually move, and anything
 kept deliberately (a queued tag whose target does not exist yet, a row only a
