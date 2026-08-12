@@ -997,69 +997,52 @@ class TestSubagentDrainTargetsParent:
         ]
 
 
-# Every condition under which `_take_conversation_for_replacement` is reached,
-# as (id, first ended_at, second ended_at). Shrink-only: a new trigger is added
-# here and so asserted on, rather than covered by whichever one a test happened
-# to drive.
+# Every condition that reaches `_take_conversation_for_replacement`, as
+# (id, dedup strategy, first ended_at, second ended_at). Shrink-only: a new
+# trigger is added here and so asserted on, rather than covered by whichever
+# one a test happened to drive. Guarded by
+# `tests/architecture/test_replacement_carry.py`, which counts the sites.
+#
+# Pairs rather than a cross product, because the axes are not independent: the
+# file branch replaces on a changed content hash alone and never reads
+# `ended_at` (`orchestration.py`'s hash-changed path), so only the session
+# branch discriminates on it.
 #
 # The axis matters. The previous enumeration keyed on DEDUP_STRATEGY, but a
 # strategy is not what triggers a replacement — and both of its cases drove the
 # same trigger, a moving `ended_at`. So it asserted survival for one trigger
 # and read as though it covered all of them, which is how #54 shipped: every
-# combination below dropped the conversation's ownership rows, and nothing
-# failed.
+# case below dropped the conversation's ownership rows, and nothing failed.
 _REPLACEMENT_TRIGGERS = [
-    # The transcript's last timestamp moved — the original trigger.
-    ("ended_at_moved", "2024-01-15T11:00:00Z", "2024-01-15T12:00:00Z"),
-    # No `ended_at` at all, so content change alone replaces (since #36). The
-    # more frequent one in practice: it fires on every ingest while a file is
-    # still being appended to.
-    ("ended_at_absent", None, None),
+    # File strategy: the content hash changed. `ended_at` is not consulted.
+    ("hash_changed", "file", "2024-01-15T11:00:00Z", "2024-01-15T12:00:00Z"),
+    # Session strategy: the transcript's last timestamp moved.
+    ("ended_at_moved", "session", "2024-01-15T11:00:00Z", "2024-01-15T12:00:00Z"),
+    # Session strategy, no `ended_at` at all, so content change alone replaces
+    # (since #36). The more frequent one in practice: it fires on every ingest
+    # while a file is still being appended to.
+    ("ended_at_absent", "session", None, None),
 ]
-
-# What a conversation delete removes, split into what a replacement must carry
-# and what it need not. Derived, not declared — see
-# `test_every_cascade_child_is_carried_or_declared`, which deletes a
-# conversation and diffs row counts rather than trusting a registry (the one in
-# `storage/sqlite.py` still lists five pre-v4 tables and omits `events` and
-# `usage_by_conv_model`).
-_CARRIED_BY_REPLACEMENT = {
-    "tag_assignments": "re-pointed by rejoining on external_id",
-    "conversation_owners": "copied straight across; keys on conversation_id (#54)",
-}
-_NOT_CARRIED_BY_REPLACEMENT = {
-    "conversations": "the row being replaced",
-    "events": "the replacement's parse IS the new events",
-    "event_content": "ditto — content comes from the parse",
-    "event_response": "ditto",
-    "event_tool_call": "ditto",
-    "content_blobs": "content-addressed; the replacement's store re-inserts what it needs",
-    "content_fts": "derived from event_content; the replacement's insert writes its own",
-    "content_fts_content": "content_fts's shadow storage",
-    "content_fts_docsize": "content_fts's shadow storage",
-    "conversation_stats": "derived tier, rebuilt from the replacement's rows",
-    "usage_by_conv_model": "derived tier, rebuilt from the replacement's rows",
-}
 
 
 class TestReplacementCarriesWhatTheTranscriptCannotSupply:
     """Ratchet: every replacement carries the facts a re-parse cannot reproduce.
 
     Tags and ownership are attached to a conversation by a person or a server;
-    nothing in the transcript restores them, so delete-then-insert has to. The
-    matrix is trigger x dedup strategy because both axes were load-bearing:
-    the fix for tags landed on the file branch first and the session branch kept
-    destroying them, and #54's ownership loss reached every cell.
+    nothing in the transcript restores them, so delete-then-insert has to.
+    Keyed on the *trigger* that reaches the replacement: the strategy rides
+    along because each trigger belongs to one branch, not because strategy is
+    the axis — that was the mistake the old ratchet made. #54's ownership loss
+    reached every case here, and none of them failed.
     """
 
-    @pytest.mark.parametrize("dedup_strategy", sorted(_KNOWN_DEDUP_STRATEGIES))
     @pytest.mark.parametrize(
-        "trigger,first_ended_at,second_ended_at",
+        "trigger,dedup_strategy,first_ended_at,second_ended_at",
         _REPLACEMENT_TRIGGERS,
         ids=[t[0] for t in _REPLACEMENT_TRIGGERS],
     )
     def test_tags_and_ownership_survive_replacement(
-        self, live_db, tmp_path, dedup_strategy, trigger, first_ended_at, second_ended_at,
+        self, live_db, tmp_path, trigger, dedup_strategy, first_ended_at, second_ended_at,
     ):
         from siftd.storage.sqlite import ensure_conversation_owners_table
 
@@ -1121,119 +1104,6 @@ def _owner_rows(conn, conversation_id):
             (conversation_id,),
         ).fetchall()
     ]
-
-
-def test_every_cascade_child_is_carried_or_declared(tmp_path):
-    """The population a replacement has to reason about, derived by deleting.
-
-    #54's ownership loss was invisible because nothing enumerated what a
-    conversation delete takes with it — the snapshot carried tags, and there
-    was no list to notice that it carried only tags. This derives the list from
-    the database instead of a registry, so a table added later with an
-    `ON DELETE CASCADE` to `conversations` shows up here as undeclared rather
-    than as a silent loss on the next replacement.
-    """
-    from siftd.storage.fts import rebuild_fts_index
-    from siftd.storage.sqlite import (
-        delete_conversation,
-        ensure_conversation_owners_table,
-        open_database,
-    )
-    from siftd.storage.usage_rollup import rebuild_rollups
-
-    db = make_db(
-        tmp_path / "cascade.db",
-        conversations=[{"external_id": "c1", "prompt_text": "hello",
-                        "tool_name": "sh", "tags": ["keep"]}],
-    )
-    conn = open_database(db)
-    try:
-        ensure_conversation_owners_table(conn)
-        conv_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
-        conn.execute(
-            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
-            " VALUES (?, 'alice', NULL, '2024-01-01T00:00:00Z')", (conv_id,),
-        )
-        rebuild_fts_index(conn)
-        rebuild_rollups(conn)
-        event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()[0]
-        apply_tag(conn, "prompt", event_id, get_or_create_tag(conn, "evt"))
-        conn.commit()
-
-        tables = [
-            r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
-            )
-        ]
-        def counts():
-            return {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in tables}
-
-        before = counts()
-        delete_conversation(conn, conv_id)
-        conn.commit()
-        after = counts()
-    finally:
-        conn.close()
-
-    emptied = {t for t in tables if after[t] < before[t]}
-    declared = set(_CARRIED_BY_REPLACEMENT) | set(_NOT_CARRIED_BY_REPLACEMENT)
-    assert emptied - declared == set(), (
-        f"deleting a conversation removes rows from {sorted(emptied - declared)}, which "
-        "nothing declares. Add it to _CARRIED_BY_REPLACEMENT (and to "
-        "storage/replacement.py's snapshot/restore) or to _NOT_CARRIED_BY_REPLACEMENT "
-        "with the reason a replacement's own parse supplies it again."
-    )
-    assert declared - emptied == set(), (
-        f"{sorted(declared - emptied)} is declared but a conversation delete no longer "
-        "touches it — drop the entry rather than leaving a claim nothing tests."
-    )
-    assert set(_CARRIED_BY_REPLACEMENT) == {"tag_assignments", "conversation_owners"}, (
-        "the carried set is shrink-only in the sense that growing it means "
-        "storage/replacement.py grew too; keep the two in step"
-    )
-
-
-# Call sites of `_take_conversation_for_replacement` in ingestion/orchestration.py.
-# Shrink-only in the sense that the guard below fails either way: a fourth site
-# means a fourth path that can drop what a replacement must carry, and it has to
-# be looked at rather than counted.
-_REPLACEMENT_SITES = 3
-
-
-def test_every_replacement_site_is_accounted_for():
-    """The trigger list above is hand-written; this is what guards it.
-
-    A replacement *trigger* is a condition, so it cannot be read off the source
-    the way `DEDUP_STRATEGY` can. What can be counted is the doors: every
-    delete-then-insert goes through `_take_conversation_for_replacement`, so a
-    new one changes this count. That is the signal to ask which trigger it
-    introduces and whether `_REPLACEMENT_TRIGGERS` still covers the population —
-    the question nobody asked when #36 made a second trigger common.
-
-    Known gap, stated rather than papered over: the parametrized test above
-    drives the two ordinary replace branches. The third site — the self-heal
-    that re-links an orphaned conversation — carries the same snapshot through
-    the same helper, so it cannot lose ownership independently, but it is not
-    driven end-to-end here.
-    """
-    import ast
-    import inspect
-
-    from siftd.ingestion import orchestration
-
-    tree = ast.parse(inspect.getsource(orchestration))
-    calls = [
-        node for node in ast.walk(tree)
-        if isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_take_conversation_for_replacement"
-    ]
-    assert len(calls) == _REPLACEMENT_SITES, (
-        f"{len(calls)} replacement sites, expected {_REPLACEMENT_SITES}. Every one "
-        "of them deletes a conversation and stores a new one, so every one can "
-        "lose what the snapshot does not carry. Check _REPLACEMENT_TRIGGERS still "
-        "enumerates the conditions that reach them, then update this count."
-    )
 
 
 def test_every_adapter_dedup_strategy_is_covered():

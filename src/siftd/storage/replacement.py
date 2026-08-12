@@ -21,13 +21,17 @@ That asymmetry is why this is one snapshot object rather than two helpers: the
 mechanics differ per fact, but "take everything, delete, put everything back"
 is one operation, and splitting it is how a third site comes to carry only one
 of them. ``ingestion.orchestration._take_conversation_for_replacement`` is the
-single door — it guards, snapshots, and deletes together.
+single door **in ingest** — it guards, snapshots, and deletes together.
 
-The enumeration this module is answerable to is *what a delete actually
-removes*, not what any registry declares:
-``tests/test_live_tagging.py::test_every_cascade_child_is_carried_or_declared``
-derives it by deleting a conversation and diffing row counts, then requires
-every table to be carried here or listed with a reason it need not be.
+Scope, stated because the obvious wider claim is false: `api/merge.py` replaces
+conversations too, on the same natural key, and carries its own ownership by
+hand while hard-deleting the target's tag assignments — the mirror image of
+what #54 was. This module does not govern that path, and the ratchets do not
+claim it. That second door is #77.
+
+`tests/architecture/test_replacement_carry.py` holds this list to its
+population, asking the schema directly rather than trusting a registry (the
+one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones).
 """
 
 from __future__ import annotations
@@ -35,8 +39,9 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass, field
 
+from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import has_conversation_owners_table
-from siftd.storage.tags import EVENT_TAG_KINDS, apply_tag, get_tag_assignments
+from siftd.storage.tags import apply_tag, get_tag_assignments
 
 
 @dataclass
@@ -63,6 +68,31 @@ class ConversationCarryover:
 
     dropped_blocks: int = 0
 
+    def parts(self) -> list[str]:
+        """The nonzero things this holds, named — for a loss warning.
+
+        One enumeration, and everything else derives from it. Truthiness and
+        the warning text used to enumerate the fields separately, in different
+        modules, and adding ``owners`` to one and not the other made a
+        carryover that held *only* ownership truthy with nothing to say: the
+        empty-transcript branch fired and named an empty list, un-reporting
+        exactly the loss #54 is about. A fifth carried fact is now one line
+        here rather than three edits that can half-land.
+
+        Enumerated rather than templated, so a carryover holding only
+        assignments that could never be re-pointed doesn't report "0
+        conversation tag(s) and 0 element tag(s)" — a warning that names
+        everything except the loss it fired for.
+        """
+        named = [
+            (len(self.conversation), "conversation tag(s)"),
+            (len(self.events), "element tag(s)"),
+            (len(self.owners), "ownership row(s)"),
+            (self.dropped_events, "synthetic-event tag(s)"),
+            (self.dropped_blocks, "block tag(s)"),
+        ]
+        return [f"{count} {label}" for count, label in named if count]
+
     def __bool__(self) -> bool:
         """True when it holds anything — to carry *or* to report.
 
@@ -72,7 +102,11 @@ class ConversationCarryover:
         reading as empty is exactly how that loss went unannounced in the
         empty-transcript branch of re-ingest.
         """
-        return bool(self.conversation or self.events or self.owners or self.dropped)
+        return bool(self.parts())
+
+    def describe(self) -> str:
+        """``parts()`` as one clause. Never empty when the carryover is truthy."""
+        return ", ".join(self.parts())
 
     @property
     def dropped(self) -> int:
@@ -123,8 +157,10 @@ def snapshot_conversation(
             (conversation_id,),
         ).fetchone()[0]
 
-    # conversation_owners only exists on a database that has served a push;
-    # a CLI-only database predates it and has nothing to carry.
+    # `open_database`'s write branch ensures this table, so on the ingest path
+    # the guard is always true — it is here for a connection that never took
+    # that branch (a read-only open, a raw sqlite3 handle in a test), not
+    # because CLI-only databases lack the table. They have it, empty.
     if has_conversation_owners_table(conn):
         carryover.owners = [
             (row["user_id"], row["push_id"], row["assigned_at"])
