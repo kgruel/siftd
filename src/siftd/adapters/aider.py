@@ -99,11 +99,10 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
     sessions = _split_sessions(text)
 
     for timestamp, body in sessions:
-        # The header records local wall time with no offset, but `started_at`
-        # is a UTC column — resolve it against the host zone at parse time
-        # (see `local_to_utc`). `external_id` deliberately keeps the raw
-        # header string: it is the dedup key, and re-keying it would
-        # duplicate every already-ingested aider conversation.
+        # The dedup key keeps the raw header string while `started_at` moves
+        # to UTC (see `local_to_utc`): re-keying it on the converted value
+        # would duplicate every already-ingested aider conversation, and make
+        # one file ingest differently on two machines.
         external_id = f"{NAME}::{path_hash}::{timestamp}"
         started_at = local_to_utc(timestamp)
 

@@ -1,4 +1,13 @@
-"""Shared date parsing utilities for CLI filters and inline query fields."""
+"""Shared date and timestamp handling.
+
+Two directions, both grounded in the fact that `conversations.started_at` is
+compared as a SQL *string*: `parse_date` renders a read-side bound (CLI
+filters, inline query fields, sync cursors), and `local_to_utc` normalizes a
+write-side value at parse time for adapters whose logs carry no offset. New
+timestamp helpers belong here rather than beside their one caller — the
+converters scattered across `ingestion`, `output`, `search`, and `peek` are
+what that habit produced, and they have already drifted apart (#32).
+"""
 
 from __future__ import annotations
 
@@ -83,10 +92,27 @@ def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
     the earlier, pre-transition instant (`fold=0`, Python's default). The log
     carries no information that could disambiguate them.
     """
-    parsed = datetime.fromisoformat(value)
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=tz) if tz is not None else parsed.astimezone()
+    parsed = _parse_iso(value)
+    if parsed.tzinfo is None and tz is not None:
+        parsed = parsed.replace(tzinfo=tz)
+    # A still-naive value resolves against the host zone inside `astimezone`.
     return parsed.astimezone(UTC).isoformat()
+
+
+def _parse_iso(value: str) -> datetime:
+    """`datetime.fromisoformat` with the two affordances every caller wants.
+
+    `fromisoformat` takes any separator character but only an *uppercase* UTC
+    designator, so a lowercase `z` is the one spelling it needs help with. And
+    its own error names neither the value nor the format, so every entry point
+    in this module would otherwise have to re-wrap it — which is how the two
+    would drift into disagreeing about what a bad timestamp looks like.
+    """
+    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
+    try:
+        return datetime.fromisoformat(candidate)
+    except ValueError as e:
+        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
 
 
 def _normalize_timestamp(value: str) -> str:
@@ -110,14 +136,7 @@ def _normalize_timestamp(value: str) -> str:
     re-pulls at most a second of rows through an idempotent merge, and
     `--before` gives up sub-second precision it has never been asked for.
     """
-    # `fromisoformat` takes any separator character but only an uppercase UTC
-    # designator, so a lowercase `z` is the one spelling it needs help with.
-    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
-    try:
-        parsed = datetime.fromisoformat(candidate)
-    except ValueError as e:
-        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
-
+    parsed = _parse_iso(value)
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed.isoformat(timespec="seconds")

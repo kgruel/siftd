@@ -5,7 +5,6 @@ from pathlib import Path
 from conftest import FIXTURES_DIR, pinned_tz
 
 from siftd.adapters import aider
-from siftd.dateparse import parse_date
 from siftd.domain.source import Source
 
 
@@ -44,9 +43,9 @@ class TestAiderAdapter:
     def test_local_header_time_is_stored_as_utc(self):
         """#31: the header is local wall time; `started_at` is a UTC column.
 
-        Written naive, an aider row on a UTC-negative host sorts below a
-        `--since` cursor by the size of the offset, and delta sync skips it —
-        permanently, since the cursor only ever moves forward.
+        `TestLocalToUtc` owns the conversion itself, including what it does to
+        a `--since` bound. This asserts the adapter actually applies it — the
+        one thing that stays green if aider stops calling it.
         """
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
         with pinned_tz("America/Chicago"):  # UTC-5 in July
@@ -56,10 +55,6 @@ class TestAiderAdapter:
         # Every timestamp the conversation carries moves with it.
         assert conv.prompts[0].timestamp == "2025-07-15T19:32:01+00:00"
         assert conv.prompts[0].responses[0].timestamp == "2025-07-15T19:32:01+00:00"
-        # A cursor written at the session's own instant must not skip the row.
-        cursor = parse_date("2025-07-15T19:32:01.780749+00:00")
-        assert cursor is not None
-        assert conv.started_at >= cursor
 
     def test_external_id_keeps_the_raw_header_time(self):
         """The dedup key must not move with the zone.

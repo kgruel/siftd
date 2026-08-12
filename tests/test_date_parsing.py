@@ -155,9 +155,10 @@ _STORED_SHAPES = (
     "{sec}.780749",  # naive microseconds
     "{sec}.780749+00:00",  # explicit offset
     "{sec}Z",  # second precision, Z
-    # `epoch_ms_to_iso` whenever the millisecond component is zero — the shape
-    # that a microsecond-precision bound silently excluded, because `+` sorts
-    # below the `.` it lined up against.
+    # `epoch_ms_to_iso` whenever the millisecond component is zero, and aider
+    # for every header (its own precision is whole seconds). The shape that a
+    # microsecond-precision bound silently excluded, because `+` sorts below
+    # the `.` it lined up against.
     "{sec}+00:00",
     # No designator at all — reachable from any adapter that passes its log's
     # own timestamp through (claude_code, codex_cli, gemini_cli) when the log
@@ -226,43 +227,33 @@ class TestLocalToUtc:
 
     CHICAGO = ZoneInfo("America/Chicago")  # UTC-5 in July, UTC-6 in January
 
-    def test_naive_value_is_read_in_the_given_zone(self):
-        assert (
-            local_to_utc("2025-07-15T14:32:01", tz=self.CHICAGO)
-            == "2025-07-15T19:32:01+00:00"
-        )
+    @pytest.mark.parametrize(
+        "value,tz,expected",
+        [
+            # The base case: a naive value is read in the given zone.
+            ("2025-07-15T14:32:01", CHICAGO, "2025-07-15T19:32:01+00:00"),
+            # CST, not CDT — a fixed offset would get one of these two wrong.
+            ("2025-01-15T14:32:01", CHICAGO, "2025-01-15T20:32:01+00:00"),
+            # aider's header spells the separator as a space, not a `T`.
+            ("2025-07-15 14:32:01", CHICAGO, "2025-07-15T19:32:01+00:00"),
+            # `tz` names the zone a *naive* value was written in, nothing more:
+            # an aware value is converted, never reinterpreted.
+            ("2025-07-15T14:32:01+02:00", CHICAGO, "2025-07-15T12:32:01+00:00"),
+            # A lowercase UTC designator, which `fromisoformat` alone rejects.
+            ("2025-07-15T14:32:01z", CHICAGO, "2025-07-15T14:32:01+00:00"),
+            # The zone in which the old behavior and the new one agree.
+            ("2025-07-15T14:32:01", UTC, "2025-07-15T14:32:01+00:00"),
+            # 01:30 happens twice on 2025-11-02 in Chicago; `fold=0` picks CDT.
+            ("2025-11-02T01:30:00", CHICAGO, "2025-11-02T06:30:00+00:00"),
+        ],
+    )
+    def test_resolved_against_an_explicit_zone(self, value, tz, expected):
+        assert local_to_utc(value, tz=tz) == expected
 
-    def test_offset_follows_the_zone_not_the_calendar(self):
-        """CST vs CDT — a fixed offset would get one of these wrong."""
-        assert (
-            local_to_utc("2025-01-15T14:32:01", tz=self.CHICAGO)
-            == "2025-01-15T20:32:01+00:00"
-        )
-
-    def test_space_separator_is_accepted(self):
-        """aider's header spells the separator as a space, not a `T`."""
-        assert (
-            local_to_utc("2025-07-15 14:32:01", tz=self.CHICAGO)
-            == "2025-07-15T19:32:01+00:00"
-        )
-
-    def test_aware_value_is_converted_not_reinterpreted(self):
-        """`tz` names the zone a *naive* value was written in, nothing more."""
-        assert (
-            local_to_utc("2025-07-15T14:32:01+02:00", tz=self.CHICAGO)
-            == "2025-07-15T12:32:01+00:00"
-        )
-
-    def test_utc_host_is_a_passthrough(self):
-        """The zone in which the old behavior and the new agree."""
-        assert local_to_utc("2025-07-15T14:32:01", tz=UTC) == "2025-07-15T14:32:01+00:00"
-
-    def test_ambiguous_fall_back_hour_takes_the_earlier_instant(self):
-        """01:30 happens twice on 2025-11-02 in Chicago; `fold=0` picks CDT."""
-        assert (
-            local_to_utc("2025-11-02T01:30:00", tz=self.CHICAGO)
-            == "2025-11-02T06:30:00+00:00"
-        )
+    def test_malformed_value_names_itself(self):
+        """Same error contract as the read-side bound — both go through `_parse_iso`."""
+        with pytest.raises(ValueError, match="invalid timestamp"):
+            local_to_utc("not-a-timestamp", tz=self.CHICAGO)
 
     def test_host_zone_is_the_default(self):
         with pinned_tz("America/Chicago"):

@@ -34,7 +34,7 @@ accumulate. After adding a module, run `./dev docs` to refresh the table below.
 | [config.py](config.py) | User configuration management for siftd. |
 | [config_sync.py](config_sync.py) | Sync-specific configuration accessors. |
 | [credentials.py](credentials.py) | Client-side OAuth token acquisition and storage for siftd. |
-| [dateparse.py](dateparse.py) | Shared date parsing utilities for CLI filters and inline query fields. |
+| [dateparse.py](dateparse.py) | Shared date and timestamp handling. |
 | [errors.py](errors.py) | Exception taxonomy: the presentation contract for user-facing errors. |
 | [git.py](git.py) | Git repository utilities for workspace identity. |
 | [ids.py](ids.py) | ULID generation (inline, no dependency). |
