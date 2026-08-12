@@ -2,3 +2,9 @@ keys/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+
+# The `project` fact log is local for now. Named, not globbed: `project-map`
+# stays tracked, so this is a decision about one vertex rather than a rule
+# about the directory. Reverses the tracking half of 9376b14b — the
+# JSONL-canonical locator still stands, and re-tracking is `git add -f`.
+data/project.jsonl
