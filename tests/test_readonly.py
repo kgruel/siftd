@@ -11,6 +11,7 @@ from siftd.errors import DriftError
 from siftd.storage.sqlite import (
     SCHEMA_PATH,
     SCHEMA_VERSION,
+    backup_database,
     connect_read_only,
     open_database,
 )
@@ -343,6 +344,77 @@ class TestConnectReadOnly:
 
         with pytest.raises(DriftError, match="read-only media"):
             connect_read_only(db_path)
+
+    @skip_if_root
+    def test_an_unreadable_sidecar_is_not_treated_as_an_absent_one(self, tmp_path):
+        """Unreadable is not empty, and the caller's next move on None drops it.
+
+        `_sidecar_state` swallowed every OSError, so a hot `-journal` at mode
+        `000` — present, non-empty, simply not open-able — was indistinguishable
+        from no journal, and the caller went on to the `immutable=1` fallback
+        without the rollback state. Found by external review of #48. Only
+        FileNotFoundError may mean "nothing to lose".
+        """
+        from siftd.storage.sqlite import _JOURNAL_MAGIC, _sidecar_state
+
+        db = tmp_path / "t.db"
+        db.write_bytes(b"SQLite format 3\x00" + b"\x00" * 100)
+        journal = tmp_path / "t.db-journal"
+        journal.write_bytes(_JOURNAL_MAGIC + b"\x00" * 200)
+        assert _sidecar_state(db) is not None, "precondition: a readable hot journal is seen"
+
+        os.chmod(journal, 0)
+        try:
+            state = _sidecar_state(db)
+        finally:
+            os.chmod(journal, stat.S_IRUSR | stat.S_IWUSR)
+        assert state is not None and "cannot be inspected" in state, (
+            f"an unreadable hot journal must be reported, got {state!r}"
+        )
+
+    @skip_if_root
+    def test_sidecar_check_follows_a_symlink_to_the_real_database(
+        self, readonly_media, tmp_path
+    ):
+        """The refusal looks where SQLite looks, not where the caller pointed.
+
+        SQLite derives `-wal`/`-journal` names from the file it actually opened.
+        A symlink in a writable directory pointing at a frozen database therefore
+        had its sidecars looked for beside the *link* — none there, so the guard
+        passed and the `immutable=1` fallback opened a database missing every
+        transaction still in its WAL. Found by external review of #48 and
+        reproduced before fixing: the open succeeded and `only_in_wal` was simply
+        absent, with `backup_database` copying that result without complaint.
+        """
+        real = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+        link = tmp_path / "link.db"
+        link.symlink_to(real)
+        assert not (tmp_path / "link.db-wal").exists(), (
+            "precondition: no sidecar beside the link, so a path-literal check finds nothing"
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            connect_read_only(link)
+        with pytest.raises(DriftError, match="read-only media"):
+            backup_database(link, tmp_path / "backup.db")
+
+    @skip_if_root
+    def test_backup_refuses_a_source_whose_wal_it_cannot_replay(
+        self, readonly_media, tmp_path
+    ):
+        """`backup_database` routes its source open through the helper (#48).
+
+        So it inherits the sidecar refusal above, rather than reaching read-only
+        media by a path with no such guard.
+        """
+        db_path = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            backup_database(db_path, tmp_path / "backup.db")
 
     @skip_if_root
     def test_persist_journal_is_not_mistaken_for_a_hot_one(self, readonly_media):

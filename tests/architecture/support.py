@@ -4,8 +4,9 @@ Every ratchet in this directory is an instance of one shape: walk the Python
 sources under `src/siftd`, parse each one, look for a property, and report the
 offenders against a stable root — with a shrink-only allowlist stating why any
 survivor is legitimate. The *property* is what makes each ratchet worth reading
-on its own, and it stays in its own module along with the allowlist and the
-docstring that argues for it.
+on its own, and it stays in its own module along with its allowlist — or, where
+the survivors are permanent rather than shrinking, its stated carve-outs — and
+the docstring that argues for both.
 
 What lives here is only the part that carries no invariant: where the source
 tree is, how to enumerate it, and how to read the static text out of a string

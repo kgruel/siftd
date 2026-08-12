@@ -149,21 +149,45 @@ def _sidecar_state(db_path: Path) -> str | None:
 
     `immutable=1` reads only the main database file. These are the two ways the
     rest of the database can be sitting next to it.
+
+    The path is resolved first, because SQLite derives the `-wal` and `-journal`
+    names from the file it actually opened, not from the name it was handed. A
+    symlink pointing at a database on read-only media would otherwise be checked
+    for sidecars in the *symlink's* directory, find none, and let the caller fall
+    back to `immutable=1` over a database whose WAL still holds committed
+    transactions — reproduced: the fallback opened, and the table created in that
+    WAL was simply absent, with `backup_database` happily copying the result.
+    Looking where SQLite looks is what makes the check mean what it says.
+
+    Only *absence* is treated as nothing to lose. A sidecar that exists but
+    cannot be inspected — mode `000`, owned by someone else — is reported, not
+    skipped: unreadable is not empty, and the caller's next move on None is the
+    `immutable=1` fallback, which would drop whatever the file holds. This is the
+    same direction the WAL test already leans in
+    `_refuse_immutable_over_unreplayed_sidecars`, for the same stated reason —
+    guessing permissively is silent, guessing conservatively is an error with a
+    remedy in it. Found by external review of #48, reproduced: a hot `-journal`
+    at mode `000` was indistinguishable from no journal at all.
     """
+    db_path = db_path.resolve()
     wal = db_path.with_name(f"{db_path.name}-wal")
     try:
         if wal.stat().st_size > _WAL_HEADER_BYTES:
             return f"{wal.name} holding transactions that may never have been checkpointed"
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as e:
+        return f"{wal.name}, which cannot be inspected ({e.strerror}) to tell whether it holds transactions"
 
     journal = db_path.with_name(f"{db_path.name}-journal")
     try:
         with journal.open("rb") as fh:
             if fh.read(len(_JOURNAL_MAGIC)) == _JOURNAL_MAGIC:
                 return f"{journal.name} recording a transaction that needs rolling back"
-    except OSError:
+    except FileNotFoundError:
         pass
+    except OSError as e:
+        return f"{journal.name}, which cannot be inspected ({e.strerror}) to tell whether it is hot"
     return None
 
 
@@ -486,14 +510,25 @@ def backup_database(source_path: Path, target_path: Path) -> None:
         source_path: Path to the source database.
         target_path: Path to write the backup. Parent directory is created if needed.
 
+    The source routes through `connect_read_only` (#48) rather than a hand-rolled
+    `mode=ro` URI, which is a capability change as much as a routing one. The raw
+    open could not read genuinely read-only media at all — it failed with
+    "attempt to write a readonly database", because a plain `mode=ro` open still
+    needs to create the `-shm`. Backing up from such media now works, through the
+    same derived fallback every other read uses. The sidecar refusal is what
+    keeps that new reach honest: where a `-wal` beside the source still holds
+    commits the fallback cannot see, this raises instead of writing a backup that
+    would look complete and not be.
+
     Raises:
         FileNotFoundError: If source database does not exist.
+        DriftError: If the source sits on read-only media beside sidecar state
+            that no read-only connection can replay.
     """
     if not source_path.exists():
         raise FileNotFoundError(f"Database not found: {source_path}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    source_uri = f"file:{source_path.as_posix()}?mode=ro"
-    source_conn = sqlite3.connect(source_uri, uri=True)
+    source_conn = connect_read_only(source_path)
     try:
         dest_conn = sqlite3.connect(str(target_path))
         try:

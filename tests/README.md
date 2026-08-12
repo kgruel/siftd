@@ -78,9 +78,9 @@ subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
   (see the note at the top of `conftest.py`). Every test is hard-isolated from
   the real database by the autouse `_sandbox_db_home` fixture.
 - **Architecture ratchets are self-contained in their *invariant*, not in their
-  mechanics.** Each module in `tests/architecture/` keeps its own property,
-  shrink-only allowlist, and the docstring arguing for both — that is what makes
-  it reviewable alone. The neutral parts (`SRC`, `REPO_ROOT`, `source_files`,
+  mechanics.** Each module in `tests/architecture/` keeps its own property, its
+  shrink-only allowlist or stated permanent carve-outs, and the docstring
+  arguing for both — that is what makes it reviewable alone. The neutral parts (`SRC`, `REPO_ROOT`, `source_files`,
   `literal_text`) live in `architecture/support.py` and are imported.
   `test_shared_mechanics.py` holds the line so this bullet does not have to —
   its docstring carries the measurement that settled it
@@ -102,7 +102,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3273 |
+| `tests/` | 186 | 3276 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 10 | 60 |
 | `tests/cli/` | 28 | 630 |
@@ -228,7 +228,7 @@ docstring so its row is meaningful.
 | [test_query_files.py](test_query_files.py) | 25 | Tests for user-defined SQL query files with dual variable syntax. |
 | [test_reader.py](test_reader.py) | 33 | Tests for siftd.peek.reader — session file reading utilities. |
 | [test_reader_edges.py](test_reader_edges.py) | 3 | — |
-| [test_readonly.py](test_readonly.py) | 17 | Tests for read-only database mode. |
+| [test_readonly.py](test_readonly.py) | 20 | Tests for read-only database mode. |
 | [test_receive.py](test_receive.py) | 18 | Tests for siftd db receive — create-or-merge from a source database. |
 | [test_resources.py](test_resources.py) | 16 | Tests for siftd.api.resources — adapter/query/formatter copy operations. |
 | [test_row.py](test_row.py) | 14 | Tests for siftd.output.row — the shared row atom. |
