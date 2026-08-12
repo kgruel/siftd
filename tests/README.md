@@ -102,7 +102,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3283 |
+| `tests/` | 186 | 3284 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 11 | 62 |
 | `tests/cli/` | 28 | 632 |
@@ -172,7 +172,7 @@ docstring so its row is meaningful.
 | [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
-| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 7 | Merged content is searchable, on every path and at every setting. |
+| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 8 | Merged content is searchable, on every path and at every setting. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |

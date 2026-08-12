@@ -108,14 +108,21 @@ def merge_database(
         # rows' index entries below; splitting the delete from the insert is
         # what would leave a window where search sees neither version.
         #
-        # dict.fromkeys, not a concatenation: the conversations INSERT
-        # preserves the source id, so every replaced id is *also* in
-        # new_conversation_ids and a plain merge of the lists indexes it twice.
+        # The scope is derived from the *content* the source carried, not from
+        # `new_conversation_ids`/`replaced_conversation_ids`. Those answer a
+        # question about conversation rows, and the thing being indexed is
+        # content rows: a conversation present in both databases under the same
+        # id is neither new nor replaced, yet the `event_content` insert above
+        # still adds the source's blocks to it. Scoping by conversation
+        # bookkeeping left exactly that case unsearchable.
         if not dry_run:
-            rebuild_fts_index(conn, conversation_ids=list(dict.fromkeys([
-                *stats.get("new_conversation_ids", []),
-                *stats.get("replaced_conversation_ids", []),
-            ])))
+            rebuild_fts_index(conn, conversation_ids=[
+                row[0] for row in conn.execute("""
+                    SELECT DISTINCT e.conversation_id
+                    FROM main.events e
+                    WHERE e.id IN (SELECT event_id FROM src.event_content)
+                """).fetchall()
+            ])
 
         # Validate FK integrity before committing (so failures are atomic)
         if not dry_run:

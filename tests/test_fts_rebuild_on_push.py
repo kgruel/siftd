@@ -274,3 +274,45 @@ def test_scoped_index_write_is_idempotent(tmp_path):
 
     assert _fts_hit_count(db, "repeatable-phrase") == before
     assert _fts_sync_status(db) == {"orphaned_count": 0, "missing_count": 0}
+
+
+def test_conversation_that_only_gains_events_is_indexed(tmp_path):
+    """A conversation in both databases under the same id is neither new nor
+    replaced — but the merge still adds the source's content to it.
+
+    Found by `codex review` against the first cut of #49, which scoped the
+    index write by `new_conversation_ids + replaced_conversation_ids`. Those
+    answer a question about conversation *rows*; the thing being indexed is
+    content *rows*, so this case reported `skipped_conversations: 1`, indexed
+    nothing, and left the added text unsearchable. The scope is now derived
+    from the content the source carried.
+    """
+    import shutil
+
+    from siftd.api.merge import merge_database
+    from siftd.storage.sqlite import insert_prompt, insert_prompt_content
+
+    target = _seed(tmp_path, "target.db", "original-text", indexed=True)
+    original_hits = _fts_hit_count(target, "original-text")
+    source = tmp_path / "source.db"
+    shutil.copy2(target, source)
+
+    conn = sqlite3.connect(str(source))
+    try:
+        conv_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+        event_id = insert_prompt(conn, conv_id, "added-event", "2026-01-01T00:00:00Z")
+        insert_prompt_content(conn, event_id, 0, "text", '{"text": "appended-text"}')
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = merge_database(target, source, rebuild_fts=False)
+    assert result["new_conversation_ids"] == []
+    assert result["replaced_conversation_ids"] == []
+    assert result["skipped_conversations"] == 1, "the conversation row itself is untouched"
+
+    assert _fts_hit_count(target, "appended-text") == 1
+    # Unchanged, not merely present: re-indexing the conversation must replace
+    # its rows rather than add a second copy of the text already there.
+    assert _fts_hit_count(target, "original-text") == original_hits
+    assert _fts_sync_status(target) == {"orphaned_count": 0, "missing_count": 0}
