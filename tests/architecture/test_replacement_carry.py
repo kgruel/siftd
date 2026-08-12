@@ -75,6 +75,12 @@ NOT_CARRIED = {
     "conversation_stats": "derived tier, rebuilt from the replacement's rows",
     "usage_by_conv_model": "derived tier, rebuilt from the replacement's rows",
     "ingested_files": "the replacement writes its own row (record_ingested_file)",
+    "attributes": (
+        "written by the parse — store_conversation re-derives them at every "
+        "scope ('analyzer', 'provider', tool-call). Known residual cost: gaps "
+        "that `siftd backfill` filled rather than the parse are dropped and "
+        "need backfilling again; they are re-derivable, unlike a tag"
+    ),
 }
 
 
@@ -153,6 +159,7 @@ def test_every_cascade_child_is_carried_or_declared(tmp_path):
         ensure_conversation_owners_table,
         open_database,
     )
+    from siftd.storage.attributes import set_attribute
     from siftd.storage.tags import apply_tag, get_or_create_tag
     from siftd.storage.usage_rollup import rebuild_rollups
 
@@ -182,8 +189,18 @@ def test_every_cascade_child_is_carried_or_declared(tmp_path):
         )
         rebuild_fts_index(conn)
         rebuild_rollups(conn)
+
+        # Seed every polymorphic target kind the `tr_polymorphic_*_cleanup`
+        # triggers reach. That cleanup is invisible to `foreign_key_list`, so
+        # the delete-diff is the only half that can see it — and a diff only
+        # sees what the fixture wrote. `attributes` was missed exactly this
+        # way, which is the same fixture-shaped blind spot that hid
+        # `ingested_files` from the previous cut.
         event_id = conn.execute("SELECT id FROM events LIMIT 1").fetchone()[0]
-        apply_tag(conn, "prompt", event_id, get_or_create_tag(conn, "evt"))
+        block_id = conn.execute("SELECT id FROM event_content LIMIT 1").fetchone()[0]
+        for kind, target in (("conversation", conv_id), ("prompt", event_id), ("block", block_id)):
+            apply_tag(conn, kind, target, get_or_create_tag(conn, f"t-{kind}"))
+            set_attribute(conn, kind, target, "k", "v", scope="analyzer")
         conn.commit()
 
         tables = [
