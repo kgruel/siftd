@@ -486,14 +486,19 @@ def backup_database(source_path: Path, target_path: Path) -> None:
         source_path: Path to the source database.
         target_path: Path to write the backup. Parent directory is created if needed.
 
+    The source is opened by `connect_read_only` rather than a hand-rolled
+    `mode=ro` URI (#48). A backup is exactly the operation that must not read a
+    stale snapshot: if the source sits on read-only media next to a `-wal` that
+    was never checkpointed, the helper refuses with a remedy instead of quietly
+    copying a main file that is missing every commit in it.
+
     Raises:
         FileNotFoundError: If source database does not exist.
     """
     if not source_path.exists():
         raise FileNotFoundError(f"Database not found: {source_path}")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    source_uri = f"file:{source_path.as_posix()}?mode=ro"
-    source_conn = sqlite3.connect(source_uri, uri=True)
+    source_conn = connect_read_only(source_path)
     try:
         dest_conn = sqlite3.connect(str(target_path))
         try:

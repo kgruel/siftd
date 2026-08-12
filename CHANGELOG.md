@@ -70,7 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   run in seven called an empty FTS index healthy — and runs ~18% faster on a
   4.8 GB database. ([#34](https://github.com/kgruel/siftd/issues/34))
 
+- **`siftd db backup` refuses a source it cannot read completely** rather than
+  writing a backup that silently omits every transaction still sitting in an
+  un-replayed `-wal`. ([#48](https://github.com/kgruel/siftd/issues/48))
+
 ### Internal
+
+- The read-only-open ratchet enforces routing through `connect_read_only`
+  rather than absence of the `immutable=1` literal, which a hand-rolled
+  `mode=ro` open could satisfy while still forking the read contract.
+  ([#48](https://github.com/kgruel/siftd/issues/48))
 
 - A read-only database open no longer clears the process-global vocabulary
   caches or opens a throwaway connection to check the schema version, so a read

@@ -345,6 +345,28 @@ class TestConnectReadOnly:
             connect_read_only(db_path)
 
     @skip_if_root
+    def test_backup_refuses_a_source_whose_wal_it_cannot_replay(
+        self, readonly_media, tmp_path
+    ):
+        """A backup is the read that must never copy a stale snapshot (#48).
+
+        `backup_database` used to build its own `mode=ro` source URI, so it was
+        invisible to the routing ratchet and got none of the helper's sidecar
+        protection. Against a source on read-only media beside an un-replayed
+        `-wal`, the honest outcome is the same refusal `connect_read_only`
+        gives — a backup that silently omits every committed transaction in
+        that WAL is worse than no backup, because it looks like one.
+        """
+        from siftd.storage.sqlite import backup_database
+
+        db_path = readonly_media.seed_with_unreplayed_wal(
+            "frozen.db", lambda conn: conn.execute("CREATE TABLE t (x INTEGER)")
+        )
+
+        with pytest.raises(DriftError, match="read-only media"):
+            backup_database(db_path, tmp_path / "backup.db")
+
+    @skip_if_root
     def test_persist_journal_is_not_mistaken_for_a_hot_one(self, readonly_media):
         """A retired rollback journal must not trigger the refusal.
 
