@@ -1,15 +1,24 @@
 """Orchestration: coordinate ingestion pipeline.
 
-Design constraint: One source file → at most one conversation.
-----------------------------------------------------------
-The `ingested_files.path` column is UNIQUE, meaning each file can map to exactly
-one conversation. This is intentional: most adapters produce one conversation per
-file (JSONL session logs, markdown exports, etc.).
+Design constraint: cardinality is a property of the adapter's DEDUP_STRATEGY.
+----------------------------------------------------------------------------
+The `ingested_files.path` column is UNIQUE, so a row can name at most one
+conversation. Which of the two branches below a source takes decides what that
+row means:
 
-If an adapter's parse() yields multiple conversations from a single source, we
-fail that source explicitly. Supporting multi-conversation sources (e.g., SQLite
-DBs containing many sessions) would require schema changes to ingested_files —
-revisit if a real use case emerges.
+- `"file"`: one conversation per source (JSONL session logs, single-transcript
+  exports). The row points at it, and a content change replaces it outright.
+  A parse yielding more than one conversation is an adapter bug and fails the
+  source.
+- `"session"`: the source is a container of conversations (an OpenCode or
+  Gemini SQLite DB, an aider history file accumulating every session for a
+  project). The row is a hash/mtime marker with `conversation_id = NULL`, and
+  each conversation is stored and deduped independently by external_id — so
+  replacing one does not cascade the marker away.
+
+An adapter whose source grows new conversations over its life belongs on
+`"session"`, whatever its storage format. `aider` did not, and every history
+file with a second session failed permanently (#36).
 """
 
 from __future__ import annotations
@@ -127,6 +136,25 @@ def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
     if existing_ts is None:
         return True
     return _parse_timestamp(new_ts) > _parse_timestamp(existing_ts)
+
+
+def _session_should_replace(new_ended: str | None, existing_ended: str | None) -> bool:
+    """Whether a re-parsed session should replace the copy already stored.
+
+    `ended_at` is this branch's per-conversation change detector: a container
+    source re-parses every session it holds, and only the ones that actually
+    moved are worth the delete-then-insert (which costs new ULIDs, a tag
+    snapshot/restore, and the conversation's ownership rows).
+
+    A conversation reporting no `ended_at` is not "unchanged" — it is a
+    session with no detector at all, and `newer than` is false forever, which
+    is what froze every aider session at its first ingest (#36). We only reach
+    here because the file's content hash changed, so the honest reading of
+    "no detector" is that the re-parsed file wins.
+    """
+    if new_ended is None:
+        return True
+    return _compare_timestamps(new_ended, existing_ended)
 
 
 def _get_single_conversation(conversations: list, source_path: str):
@@ -473,10 +501,23 @@ def ingest_all(
                 location = source.as_path
                 if existing_file_info:
                     st = location.stat()
+
+                    # Same rule the file branch states at length: a row
+                    # carrying an error is re-examined every run whatever its
+                    # stat says, because _record_file_error stamped the
+                    # failing file's own hash and mtime. Without it a source
+                    # that fails once and then stops changing matches both
+                    # skips below forever — which is exactly how an aider file
+                    # poisoned by #36 stays poisoned across the upgrade that
+                    # fixes it. Re-examining is what makes the recovery
+                    # reachable without the file having to grow again.
+                    unresolved = existing_file_info["error"] is not None
+
                     stored_mtime = existing_file_info["file_mtime"]
                     stored_size = existing_file_info["file_size"]
                     if (
-                        stored_mtime is not None
+                        not unresolved
+                        and stored_mtime is not None
                         and st.st_mtime == stored_mtime
                         and st.st_size == stored_size
                     ):
@@ -484,7 +525,7 @@ def ingest_all(
                         continue
 
                     current_hash = compute_file_hash(location)
-                    if current_hash == existing_file_info["file_hash"]:
+                    if not unresolved and current_hash == existing_file_info["file_hash"]:
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
@@ -518,10 +559,12 @@ def ingest_all(
                         conn, harness_id, conversation.external_id
                     )
                     if existing:
-                        # Only a newer parsed copy triggers replacement; an
-                        # equal/older session is left untouched (preserving its
+                        # Only a moved session triggers replacement; an
+                        # equal/older one is left untouched (preserving its
                         # tags, ownership, and manual state).
-                        if _compare_timestamps(conversation.ended_at, existing["ended_at"]):
+                        if _session_should_replace(
+                            conversation.ended_at, existing["ended_at"]
+                        ):
                             # Same delete-then-insert shape as the file branch,
                             # so it loses tags the same way and takes the same
                             # claim. A session marker is conversation_id=NULL by

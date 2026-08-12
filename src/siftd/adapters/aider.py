@@ -4,6 +4,10 @@ Pure parser: reads .aider.chat.history.md files and yields Conversation
 domain objects. Each session (delimited by ``# aider chat started at``)
 becomes a separate Conversation.
 
+Aider appends every session for a project to one history file, so this is a
+session-strategy adapter: the source is a growing container of conversations,
+not a single transcript. The last session in the file is the live one.
+
 Discovery is opt-in via ``--path``. DEFAULT_LOCATIONS covers ``~/.aider``.
 Chat history files are scattered across project directories; the user
 supplies scan roots explicitly.
@@ -33,7 +37,7 @@ ADAPTER_INTERFACE_VERSION = 1
 SUPPORT_TIER = "frozen"
 NAME = "aider"
 DEFAULT_LOCATIONS = ["~/.aider"]
-DEDUP_STRATEGY = "file"  # each history file is a distinct source
+DEDUP_STRATEGY = "session"  # one file accumulates every session for a project
 
 # Harness metadata
 HARNESS_SOURCE = "multi"  # aider supports multiple LLM providers
@@ -98,7 +102,7 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
     # Split into sessions by header line
     sessions = _split_sessions(text)
 
-    for timestamp, body in sessions:
+    for index, (timestamp, body) in enumerate(sessions):
         # The dedup key keeps the raw header string while `started_at` moves
         # to UTC (see `local_to_utc`): re-keying it on the converted value
         # would duplicate every already-ingested aider conversation, and make
@@ -110,12 +114,33 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
             external_id=external_id,
             harness=harness,
             started_at=started_at,
+            ended_at=_ended_at(sessions, index),
             workspace_path=workspace_path,
         )
 
         _parse_session_body(body, conversation)
 
         yield from yield_conversation(conversation)
+
+
+def _ended_at(sessions: list[tuple[str, str]], index: int) -> str | None:
+    """When session ``index`` was over, or None while it is still live.
+
+    Aider stamps a session's start and nothing else, so there is no recorded
+    end. The next ``# aider chat started at`` header is the one end signal the
+    format does carry: whatever the session's real last exchange was, it was
+    over by the time the following session opened. It is an upper bound, and
+    the only monotone one available.
+
+    The *last* session has no successor and is the one aider is still
+    appending to, so it reports None — which ingest reads as "no change
+    detector, the re-parsed file wins" (see `_session_should_replace`). Every
+    earlier session reports a value that never moves again, so it settles
+    after one replacement instead of being rewritten on every append.
+    """
+    if index + 1 < len(sessions):
+        return local_to_utc(sessions[index + 1][0])
+    return None
 
 
 def _split_sessions(text: str) -> list[tuple[str, str]]:

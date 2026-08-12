@@ -72,8 +72,10 @@ NAME = "my_harness"
 DEFAULT_LOCATIONS = ["~/.my_harness/logs"]
 
 # Deduplication strategy:
-#   "file"    — one conversation per file (most common)
-#   "session" — multiple files may update the same conversation (use external_id)
+#   "file"    — one conversation per source (most common); parse() must not
+#               yield more than one
+#   "session" — the source is a container of many conversations, each deduped
+#               by external_id and replaced when its ended_at moves
 DEDUP_STRATEGY = "file"
 
 # Provider/source name (e.g., "anthropic", "openai", "google", "multi")

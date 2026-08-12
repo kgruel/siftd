@@ -45,7 +45,9 @@ Use when:
 - Examples: Claude Code, Codex CLI
 
 ### `session`
-Multiple files may update the same conversation. Latest wins:
+The source is a *container* of conversations. Each is deduped independently by
+`external_id`, and a re-parsed session replaces the stored copy when it has
+moved:
 
 ```python
 DEDUP_STRATEGY = "session"
@@ -53,10 +55,18 @@ external_id = f"{NAME}::{session_id}"  # session-based ID
 ```
 
 Use when:
-- Conversations can span multiple files
+- One source holds many sessions, or grows new ones over its life
 - Re-ingesting should update, not duplicate
 - The harness exports session IDs
-- Example: Gemini CLI (multiple chats per project hash)
+- Examples: Gemini CLI and OpenCode (many sessions per database), aider (one
+  history file accumulates every session for a project)
+
+Ingest decides *which* sessions moved from `ended_at`: a re-parsed session
+replaces the stored copy when its `ended_at` is newer, and an unchanged one is
+left alone with its tags and ownership. A session that reports **no**
+`ended_at` is read as still open, so it is replaced on every content change —
+which is correct for a live session and wasteful for a finished one. Emit an
+`ended_at` for every session your format can bound.
 
 ## External ID
 

@@ -96,7 +96,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 185 | 3251 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 7 | 54 |
+| `tests/architecture/` | 8 | 56 |
 | `tests/cli/` | 28 | 630 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -320,6 +320,7 @@ docstring so its row is meaningful.
 |------|-------|---------|
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
+| [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
