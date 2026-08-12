@@ -62,17 +62,82 @@ class SchemaUpgradeRequiredError(DriftError):
     """
 
 
+def connect_read_only(
+    db_path: Path,
+    *,
+    check_same_thread: bool = True,
+    timeout: float = 5.0,
+) -> sqlite3.Connection:
+    """Open a read-only connection, deriving immutability instead of asserting it.
+
+    `mode=ro&immutable=1` tells SQLite the file cannot change, so it omits all
+    locking and change detection. That is not a promise this codebase can keep:
+    `ingest`, a running `serve`, and any second CLI invocation write the same
+    file from another process. SQLite calls the result undefined, and #38 measured it reaching
+    users two ways, both silent:
+
+      - An immutable reader ignores the `-wal` file entirely. Against a database
+        with un-checkpointed commits — which is what a live `serve` leaves — a
+        reader answers from the last checkpoint and says nothing.
+      - When a writer checkpoints mid-read, main-file pages are rewritten under
+        a reader that has no change detection. Scans then truncate early, counts
+        disagree with the rows they counted, and `integrity_check` reports
+        corruption in a database that is fine.
+
+    So the plain `mode=ro` open is tried first: it takes WAL read marks and sees
+    a consistent snapshot no matter who else is writing. It needs to create the
+    `-shm` sidecar, which fails on genuinely read-only media — and that failure
+    is the signal we want, because a medium no writer can reach is a medium
+    where `immutable=1` is *true* rather than assumed. Immutability becomes a
+    property discovered from the file, not a promise made about it.
+
+    The probe is a statement, not the open: `sqlite3.connect` succeeds against
+    read-only media, and the sidecar is only created when the first read
+    transaction starts. It costs nothing measurable (~3 µs/connection) because
+    it is not extra work — it pulls forward the read transaction the caller's
+    own first query would open anyway.
+
+    Only the sidecar's own failures fall back. A read-only directory raises
+    SQLITE_READONLY_DIRECTORY, but a *locked* database raises SQLITE_BUSY — and
+    that means a writer is active, which is exactly when `immutable=1` gives
+    undefined results. Catching OperationalError wholesale would restore the
+    defect precisely where it does the most damage, so anything outside the
+    READONLY/CANTOPEN families propagates.
+
+    Args:
+        db_path: Path to the database file.
+        check_same_thread: Passed through. False lets a connection be closed
+            from a thread other than the one that opened it; it is not a
+            concurrency claim, and callers still open one connection per thread.
+        timeout: Passed through to `sqlite3.connect`; the default is SQLite's
+            own. Lower it to reach the SQLITE_BUSY path without waiting out the
+            full five seconds.
+    """
+    uri = f"file:{db_path.as_posix()}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True, check_same_thread=check_same_thread, timeout=timeout)
+    try:
+        conn.execute("PRAGMA schema_version")
+    except sqlite3.OperationalError as e:
+        if not (e.sqlite_errorname or "").startswith(("SQLITE_READONLY", "SQLITE_CANTOPEN")):
+            raise
+        conn.close()
+        return sqlite3.connect(
+            f"{uri}&immutable=1", uri=True, check_same_thread=check_same_thread, timeout=timeout
+        )
+    return conn
+
+
 def _peek_user_version(db_path: Path) -> int:
     """Best-effort peek of PRAGMA user_version using a transient RO connection.
 
     Returns 0 on any sqlite error (garbage file, locked, etc.) — treated as
-    'no info, don't auto-upgrade'. immutable=1 mirrors the main RO open and
-    prevents creation of WAL/SHM sidecar files.
+    'no info, don't auto-upgrade'. A locked database reaches that same 0 through
+    connect_read_only, which propagates SQLITE_BUSY rather than degrading to an
+    immutable read: `sqlite3.Error` covers it, so a busy file still means
+    'no info' rather than a snapshot that predates the lock holder's commits.
     """
     try:
-        peek = sqlite3.connect(
-            f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True
-        )
+        peek = connect_read_only(db_path)
         try:
             return peek.execute("PRAGMA user_version").fetchone()[0]
         finally:
@@ -115,14 +180,12 @@ def _ensure_schema_for_readonly(db_path: Path) -> None:
         "Auto-upgrading schema v%d → v%d for read-only open of %s",
         version, SCHEMA_VERSION, db_path,
     )
-    upgrader = open_database(db_path, read_only=False)
-    try:
-        # Checkpoint+truncate so the upgraded user_version lands in the main DB
-        # file. Without this, the subsequent RO open (which uses immutable=1
-        # for sidecar-free reads) only sees the pre-upgrade header.
-        upgrader.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    finally:
-        upgrader.close()
+    # No checkpoint before closing: the RO open that follows reads the `-wal`,
+    # so it sees the upgraded user_version wherever it landed. The explicit
+    # `wal_checkpoint(TRUNCATE)` this used to run existed only because that open
+    # was immutable and therefore blind to the WAL — a workaround for the
+    # property #42 removed, not a requirement of the upgrade.
+    open_database(db_path, read_only=False).close()
 
 
 # =============================================================================
@@ -168,10 +231,7 @@ def open_database(
         _ensure_schema_for_readonly(db_path)
 
     if read_only:
-        # Use URI mode with mode=ro&immutable=1 to avoid creating WAL/SHM sidecars
-        # and to work on read-only filesystems. Mirrors embeddings.py approach.
-        uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-        conn = sqlite3.connect(uri, uri=True)
+        conn = connect_read_only(db_path)
     else:
         conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row

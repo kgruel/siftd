@@ -14,12 +14,13 @@ nearest URI. That is a copy-paste failure mode, so this is the enumerable-
 property form of the invariant rather than review attention: every literal
 `immutable=1` under `src/siftd/` is enumerated and must be a known site.
 
-ALLOWLIST is shrink-only, and it is the completion signal for #42: one entry
-comes out per read-only open rewired through the derived helper, and the issue
-is done when the list is empty. The one legitimate assertion —
-`_connect_read_only`'s fallback, reached only *after* a plain `mode=ro` probe
-has proved the medium unwritable — is tracked separately as DERIVED_FALLBACK
-so that emptiness stays meaningful.
+ALLOWLIST is shrink-only, and it was the completion signal for #42: one entry
+came out per read-only open rewired through the derived helper. **It is now
+empty, and must stay that way** — every read-only open in siftd routes through
+`storage.sqlite.connect_read_only`. The one legitimate assertion is that
+helper's own fallback, reached only *after* a plain `mode=ro` probe has proved
+the medium unwritable; it is tracked separately as DERIVED_FALLBACK so that
+emptiness stays meaningful.
 
 Both lists carry an occurrence *count*, not just a site. Keying on the site
 alone would let a second copied URI land inside an already-listed function
@@ -57,18 +58,14 @@ MARKER = "immutable=1"
 # (path relative to src/siftd, enclosing function) → occurrence count.
 # Shrink-only — an entry is removed when #42 rewires that site, and there is no
 # legitimate reason to add one, so an addition is the conversation.
-ALLOWLIST: dict[tuple[str, str], int] = {
-    ("storage/sqlite.py", "_peek_user_version"): 1,
-    ("storage/sqlite.py", "open_database"): 1,
-    ("storage/embeddings.py", "open_embeddings_db"): 1,
-}
+ALLOWLIST: dict[tuple[str, str], int] = {}
 
 # The one permanent use: the fallback taken only when the plain `mode=ro` probe
 # raises SQLITE_READONLY/SQLITE_CANTOPEN, i.e. on a medium no writer can reach,
 # where `immutable=1` is true rather than assumed. Deliberately not an ALLOWLIST
 # row — "ALLOWLIST is empty" has to remain #42's completion test.
 DERIVED_FALLBACK: dict[tuple[str, str], int] = {
-    ("doctor/checks/__init__.py", "_connect_read_only"): 1,
+    ("storage/sqlite.py", "connect_read_only"): 1,
 }
 
 

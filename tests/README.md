@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3245 |
+| `tests/` | 185 | 3247 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 7 | 54 |
 | `tests/cli/` | 28 | 630 |
@@ -143,7 +143,7 @@ docstring so its row is meaningful.
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
-| [test_doctor.py](test_doctor.py) | 122 | Tests for the doctor module. |
+| [test_doctor.py](test_doctor.py) | 121 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
@@ -219,7 +219,7 @@ docstring so its row is meaningful.
 | [test_query_files.py](test_query_files.py) | 25 | Tests for user-defined SQL query files with dual variable syntax. |
 | [test_reader.py](test_reader.py) | 33 | Tests for siftd.peek.reader — session file reading utilities. |
 | [test_reader_edges.py](test_reader_edges.py) | 3 | — |
-| [test_readonly.py](test_readonly.py) | 10 | Tests for read-only database mode. |
+| [test_readonly.py](test_readonly.py) | 13 | Tests for read-only database mode. |
 | [test_receive.py](test_receive.py) | 18 | Tests for siftd db receive — create-or-merge from a source database. |
 | [test_resources.py](test_resources.py) | 16 | Tests for siftd.api.resources — adapter/query/formatter copy operations. |
 | [test_row.py](test_row.py) | 14 | Tests for siftd.output.row — the shared row atom. |

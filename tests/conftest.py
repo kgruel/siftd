@@ -19,6 +19,7 @@ example of converting from monkeypatch-stdout to callback collection.
 import json
 import os
 import random
+import sqlite3
 import string
 import sys
 import time
@@ -1071,3 +1072,92 @@ def cli_db(tmp_path, test_db):
         external_id=row["external_id"],
         args=["--db", str(test_db)],
     )
+
+
+@pytest.fixture
+def readonly_media(tmp_path):
+    """A directory made unwritable, restored on teardown.
+
+    The distinction that matters: chmod of the *file* still leaves the parent
+    writable, so SQLite can create the `-shm` sidecar and a plain `mode=ro` open
+    succeeds. Only an unwritable *directory* blocks the sidecar, which is what
+    makes it the only form of "read-only media" a test can reproduce — and
+    therefore the only way to exercise the `immutable=1` fallback in
+    `storage.sqlite.connect_read_only`.
+
+    Yields the directory. Seed the database into it before making it read-only:
+
+        db = readonly_media.seed("t.db", lambda conn: conn.execute(...))
+    """
+    import stat as _stat
+    from types import SimpleNamespace
+
+    media = tmp_path / "media"
+    media.mkdir()
+    frozen: list[Path] = []
+
+    def seed(name: str, populate=None) -> Path:
+        db = media / name
+        conn = sqlite3.connect(db)
+        try:
+            conn.execute("PRAGMA journal_mode = WAL")
+            if populate is not None:
+                populate(conn)
+            conn.commit()
+            # Leave no sidecars: the fallback is only reachable when SQLite has
+            # to create the -shm itself.
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        finally:
+            conn.close()
+        for leftover in media.glob(f"{name}-*"):
+            leftover.unlink()
+        os.chmod(db, _stat.S_IRUSR)
+        os.chmod(media, _stat.S_IRUSR | _stat.S_IXUSR)
+        frozen.append(db)
+        return db
+
+    try:
+        yield SimpleNamespace(path=media, seed=seed)
+    finally:
+        os.chmod(media, _stat.S_IRWXU)
+        for db in frozen:
+            os.chmod(db, _stat.S_IRUSR | _stat.S_IWUSR)
+
+
+@pytest.fixture
+def wal_writer():
+    """Open a writer holding a commit in the `-wal`, un-checkpointed.
+
+    The setup a derived-immutability test needs at every read-only open: an
+    immutable reader ignores the `-wal` outright, so a commit that is still
+    only in the WAL is exactly the data such a reader cannot see. Yields a
+    factory; the writer stays open (and the WAL un-checkpointed) until teardown.
+
+        writer = wal_writer(db)
+        writer.commit_to_wal("INSERT INTO t VALUES (1)")
+    """
+    from types import SimpleNamespace
+
+    opened = []
+
+    def factory(db_path):
+        conn = sqlite3.connect(db_path)
+        opened.append(conn)
+        conn.execute("PRAGMA journal_mode = WAL")
+
+        def commit_to_wal(*statements):
+            for sql in statements:
+                conn.execute(sql)
+            conn.commit()
+            wal = Path(f"{db_path}-wal")
+            assert wal.exists() and wal.stat().st_size > 0, (
+                "commit was checkpointed away — the test would be vacuous"
+            )
+
+        return SimpleNamespace(conn=conn, commit_to_wal=commit_to_wal)
+
+    try:
+        yield factory
+    finally:
+        for conn in opened:
+            conn.close()
