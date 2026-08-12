@@ -102,7 +102,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3275 |
+| `tests/` | 186 | 3276 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 10 | 60 |
 | `tests/cli/` | 28 | 630 |
@@ -228,7 +228,7 @@ docstring so its row is meaningful.
 | [test_query_files.py](test_query_files.py) | 25 | Tests for user-defined SQL query files with dual variable syntax. |
 | [test_reader.py](test_reader.py) | 33 | Tests for siftd.peek.reader — session file reading utilities. |
 | [test_reader_edges.py](test_reader_edges.py) | 3 | — |
-| [test_readonly.py](test_readonly.py) | 19 | Tests for read-only database mode. |
+| [test_readonly.py](test_readonly.py) | 20 | Tests for read-only database mode. |
 | [test_receive.py](test_receive.py) | 18 | Tests for siftd db receive — create-or-merge from a source database. |
 | [test_resources.py](test_resources.py) | 16 | Tests for siftd.api.resources — adapter/query/formatter copy operations. |
 | [test_row.py](test_row.py) | 14 | Tests for siftd.output.row — the shared row atom. |

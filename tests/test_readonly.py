@@ -346,6 +346,33 @@ class TestConnectReadOnly:
             connect_read_only(db_path)
 
     @skip_if_root
+    def test_an_unreadable_sidecar_is_not_treated_as_an_absent_one(self, tmp_path):
+        """Unreadable is not empty, and the caller's next move on None drops it.
+
+        `_sidecar_state` swallowed every OSError, so a hot `-journal` at mode
+        `000` — present, non-empty, simply not open-able — was indistinguishable
+        from no journal, and the caller went on to the `immutable=1` fallback
+        without the rollback state. Found by external review of #48. Only
+        FileNotFoundError may mean "nothing to lose".
+        """
+        from siftd.storage.sqlite import _JOURNAL_MAGIC, _sidecar_state
+
+        db = tmp_path / "t.db"
+        db.write_bytes(b"SQLite format 3\x00" + b"\x00" * 100)
+        journal = tmp_path / "t.db-journal"
+        journal.write_bytes(_JOURNAL_MAGIC + b"\x00" * 200)
+        assert _sidecar_state(db) is not None, "precondition: a readable hot journal is seen"
+
+        os.chmod(journal, 0)
+        try:
+            state = _sidecar_state(db)
+        finally:
+            os.chmod(journal, stat.S_IRUSR | stat.S_IWUSR)
+        assert state is not None and "cannot be inspected" in state, (
+            f"an unreadable hot journal must be reported, got {state!r}"
+        )
+
+    @skip_if_root
     def test_sidecar_check_follows_a_symlink_to_the_real_database(
         self, readonly_media, tmp_path
     ):
