@@ -123,6 +123,23 @@ def _not_found_message(path: str) -> str:
     return "conversation not found"
 
 
+def ambiguous_prefix_body(exc: Any) -> dict[str, Any]:
+    """Wire body for an ``AmbiguousPrefix``, so an HTTP agent can pick a longer
+    prefix programmatically — mirrors ``siftd id --json``.
+
+    One definition, two entry points: ``_dispatch``'s inline catch (which never
+    reaches the app-level handler) and ``app.py``'s handler for the routes that
+    resolve outside ``_dispatch``, e.g. ``event_detail_route``.
+    """
+    return {
+        "error": str(exc),
+        "kind": "ambiguous_prefix",
+        "prefix": exc.prefix,
+        "matched_ids": exc.matched_ids,
+        "total": exc.total,
+    }
+
+
 def _dispatch(
     path: str, method: str, fn: Callable, params: dict[str, Any],
     render_method: str, db: Path,
@@ -203,19 +220,8 @@ def _dispatch(
         )
         return Response(content={"error": "resource not found"}, status_code=404)
     except AmbiguousPrefix as e:
-        # Preserve the structured shape so an HTTP agent can programmatically
-        # pick a longer prefix — mirrors `siftd id --json`. Must precede the
-        # generic ValueError branch.
-        return Response(
-            content={
-                "error": str(e),
-                "kind": "ambiguous_prefix",
-                "prefix": e.prefix,
-                "matched_ids": e.matched_ids,
-                "total": e.total,
-            },
-            status_code=400,
-        )
+        # Must precede the generic ValueError branch.
+        return Response(content=ambiguous_prefix_body(e), status_code=400)
     except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
     except SchemaUpgradeRequiredError:

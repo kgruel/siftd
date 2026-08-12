@@ -102,10 +102,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3276 |
+| `tests/` | 186 | 3278 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 10 | 60 |
-| `tests/cli/` | 28 | 630 |
+| `tests/architecture/` | 11 | 62 |
+| `tests/cli/` | 28 | 631 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -118,7 +118,7 @@ docstring so its row is meaningful.
 | [test_api_backfill.py](test_api_backfill.py) | 5 | Tests for siftd.api.backfill. |
 | [test_api_conversations_edges.py](test_api_conversations_edges.py) | 2 | — |
 | [test_api_doctor.py](test_api_doctor.py) | 6 | Tests for siftd.api.doctor — wrapper re-exports from siftd.doctor. |
-| [test_api_events.py](test_api_events.py) | 22 | Phase 4: tests for the event detail surface. |
+| [test_api_events.py](test_api_events.py) | 23 | Phase 4: tests for the event detail surface. |
 | [test_api_export_edges.py](test_api_export_edges.py) | 1 | — |
 | [test_api_ingest.py](test_api_ingest.py) | 15 | Tests for siftd.api.ingest. |
 | [test_api_init_edges.py](test_api_init_edges.py) | 1 | — |
@@ -254,7 +254,7 @@ docstring so its row is meaningful.
 | [test_serve_delegation.py](test_serve_delegation.py) | 19 | Tests for serve/delegation.py — generalized CLI-to-serve delegation policy. |
 | [test_serve_delegation_edges.py](test_serve_delegation_edges.py) | 14 | — |
 | [test_serve_delegation_wire.py](test_serve_delegation_wire.py) | 15 | Tests for wire-format expansion + parity between CLI op params and serve routes. |
-| [test_serve_e2e_smoke.py](test_serve_e2e_smoke.py) | 45 | E2E smoke tests for the serve HTTP path. |
+| [test_serve_e2e_smoke.py](test_serve_e2e_smoke.py) | 46 | E2E smoke tests for the serve HTTP path. |
 | [test_serve_fmt.py](test_serve_fmt.py) | 8 | Tests for siftd.serialization.serve_fmt — serve-side JSON renderers. |
 | [test_serve_html_routes_edges.py](test_serve_html_routes_edges.py) | 8 | — |
 | [test_serve_html_routes_stepup.py](test_serve_html_routes_stepup.py) | 9 | — |
@@ -333,6 +333,7 @@ docstring so its row is meaningful.
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
+| [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | An id-prefix query is answered by `prefix_candidates`, never by first-matching. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
@@ -352,7 +353,7 @@ docstring so its row is meaningful.
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
-| [cli/test_id_cmd.py](cli/test_id_cmd.py) | 17 | Tests for 'siftd id' command - ULID classification. |
+| [cli/test_id_cmd.py](cli/test_id_cmd.py) | 18 | Tests for 'siftd id' command - ULID classification. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

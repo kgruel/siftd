@@ -369,6 +369,28 @@ def text_block(text: str) -> str:
     return json.dumps({"text": text})
 
 
+def unambiguous_prefix(target: str, others) -> str:
+    """Shortest prefix of ``target`` that none of ``others`` share.
+
+    A ULID's first 10 chars are its millisecond timestamp, so every id a
+    fixture mints in one tight insert loop shares them, and chars 11-12 carry
+    only 10 bits — a hardcoded ``id[:12]`` collides at ~1/1024 per pair (#33).
+    That makes the slice a coin flip, not a stricter assertion. Derive the
+    prefix from the population instead, so "this prefix names exactly one row"
+    is true by construction on every run.
+    """
+    longest_shared = 0
+    for other in others:
+        if other == target:
+            continue
+        shared = 0
+        while shared < min(len(target), len(other)) and target[shared] == other[shared]:
+            shared += 1
+        longest_shared = max(longest_shared, shared)
+    assert longest_shared < len(target), f"{target} is a prefix of another id"
+    return target[: longest_shared + 1]
+
+
 def make_conversation(
     external_id="test-conv-1",
     workspace_path="/test/project",

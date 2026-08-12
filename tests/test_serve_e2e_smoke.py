@@ -845,6 +845,41 @@ class TestSearchModeWireContract:
         assert resp.status_code == 200, resp.text
         assert resp.json()["tags"] == ["docs:thing"]
 
+    def test_event_detail_ambiguous_prefix_returns_structured_400(self, tmp_path):
+        """A prefix naming two events is a 400 with candidates, not an arbitrary row.
+
+        `event_detail_route` resolves outside `_dispatch`, so this pins that the
+        app-level handler gives it the same `ambiguous_prefix` wire body every
+        dispatched route returns — an HTTP agent picks a longer prefix from it.
+        """
+        from siftd.storage.sqlite import open_database
+
+        db, _ = _make_multi_turn_db(tmp_path / "team.db")
+        conn = open_database(db)
+        try:
+            conv = conn.execute("SELECT id FROM conversations LIMIT 1").fetchone()["id"]
+            shared = "01ZZZZZZZZAB"
+            ids = [shared + "CDEFGHJKLMNPQR", shared + "QRSTVWXYZ01234"]
+            for event_id in ids:
+                conn.execute(
+                    "INSERT INTO events (id, conversation_id, kind, external_id, timestamp)"
+                    " VALUES (?, ?, 'prompt', ?, '2024-01-15T10:00:00Z')",
+                    (event_id, conv, event_id[-4:]),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        app = create_app(db_path=db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get(f"/api/v1/events/{shared}")
+        assert resp.status_code == 400, resp.text
+        body = resp.json()
+        assert body["kind"] == "ambiguous_prefix"
+        assert body["prefix"] == shared
+        assert sorted(body["matched_ids"]) == sorted(ids)
+        assert body["total"] == 2
+
     def test_search_bad_mode_returns_400(self, tmp_path):
         """An unrecognised mode value must return HTTP 400, not silently fall through."""
         db, _ = _make_multi_turn_db(tmp_path / "team.db")

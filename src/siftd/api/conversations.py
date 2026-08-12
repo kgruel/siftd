@@ -1651,17 +1651,45 @@ def prefix_candidates(
     return rows, exact_count
 
 
+def resolve_unique_row(
+    entity_id: str,
+    rows: list[sqlite3.Row],
+    exact_count: Callable[[], int],
+    *,
+    kind_column: str | None = None,
+    noun: str = "conversations",
+) -> sqlite3.Row | None:
+    """Resolve-or-raise on top of :func:`prefix_candidates` for a single arm.
+
+    Returns the whole row, not just its id, so an arm that needs more columns
+    (``api.events.resolve_event_row``) shares this decision instead of
+    re-deriving it — a first-matching arm is the #33 defect.
+
+    ``kind_column`` names a column on ``rows`` to label candidates by in the
+    raised error; ``noun`` names the collided population.
+    """
+    if not rows:
+        return None
+    if len(rows) == 1:
+        return rows[0]
+    shown = rows[:5]
+    raise AmbiguousPrefix(
+        entity_id,
+        [r["id"] for r in shown],
+        exact_count(),
+        candidate_kinds=[r[kind_column] for r in shown] if kind_column else None,
+        noun=noun,
+    )
+
+
 def _resolve_unique(
     entity_id: str,
     rows: list[sqlite3.Row],
     exact_count: Callable[[], int],
 ) -> str | None:
-    """Resolve-or-raise on top of :func:`prefix_candidates` for a single arm."""
-    if not rows:
-        return None
-    if len(rows) == 1:
-        return rows[0]["id"]
-    raise AmbiguousPrefix(entity_id, [r["id"] for r in rows[:5]], exact_count())
+    """:func:`resolve_unique_row`, narrowed to the id — what id-resolvers want."""
+    row = resolve_unique_row(entity_id, rows, exact_count)
+    return row["id"] if row is not None else None
 
 
 def resolve_entity_id(

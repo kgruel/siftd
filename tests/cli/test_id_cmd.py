@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from conftest import unambiguous_prefix
 
 from siftd.cli import main
 from siftd.storage.sqlite import (
@@ -52,6 +53,44 @@ def id_test_db(tmp_path):
     conn.commit()
     conn.close()
     return db_path, c, p, r, tc
+
+
+# 12 chars, the width `short_id` prints. A ULID's first 10 chars are its
+# millisecond timestamp, so ids minted in one ingest millisecond agree on all
+# of them and differ only in the 10 random bits chars 11-12 carry — these are
+# hand-picked rather than minted so the collision is certain, not ~1/1024 (#33).
+COLLIDING_PREFIX = "01ZZZZZZZZAB"
+
+
+@pytest.fixture
+def collide_db(tmp_path):
+    """One conversation and two events all sharing ``COLLIDING_PREFIX``.
+
+    The conversation shares one char *more* with the first event, so a
+    13-char prefix isolates the cross-kind (conversation vs event) collision
+    from the within-events one.
+    """
+    db_path = tmp_path / "collide.db"
+    conn = create_database(db_path)
+    h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/code/test", "2024-01-01T00:00:00Z")
+
+    conv = COLLIDING_PREFIX + "C" + "0123456789ABC"
+    events = [COLLIDING_PREFIX + "C" + "DEFGHJKMNPQRS", COLLIDING_PREFIX + "Q" + "TVWXYZ0123456"]
+    assert len({len(i) for i in (conv, *events)}) == 1 and len(conv) == 26
+
+    conn.execute(
+        "INSERT INTO conversations (id, external_id, harness_id, workspace_id, started_at)"
+        " VALUES (?, 'c1', ?, ?, '2024-01-15T10:00:00Z')", (conv, h, ws),
+    )
+    for i, event_id in enumerate(events):
+        conn.execute(
+            "INSERT INTO events (id, conversation_id, kind, external_id, timestamp)"
+            " VALUES (?, ?, 'prompt', ?, '2024-01-15T10:00:00Z')", (event_id, conv, f"p{i}"),
+        )
+    conn.commit()
+    conn.close()
+    return db_path, conv, events
 
 
 @pytest.fixture
@@ -157,8 +196,8 @@ class TestIdClassification:
 
     def test_conversation_prefix_classification(self, id_test_db, capsys):
         """siftd id <conversation_prefix> classifies as conversation."""
-        db, c, *_ = id_test_db
-        rc = main(["--db", str(db), "id", c[:12]])
+        db, c, p, r, tc = id_test_db
+        rc = main(["--db", str(db), "id", unambiguous_prefix(c, (p, r, tc))])
         assert rc == 0
 
         output = capsys.readouterr().out
@@ -167,8 +206,8 @@ class TestIdClassification:
 
     def test_event_prefix_classification(self, id_test_db, capsys):
         """siftd id <event_prefix> classifies as event."""
-        db, _c, _p, r, _tc = id_test_db
-        rc = main(["--db", str(db), "id", r[:12]])
+        db, c, p, r, tc = id_test_db
+        rc = main(["--db", str(db), "id", unambiguous_prefix(r, (c, p, tc))])
         assert rc == 0
 
         output = capsys.readouterr().out
@@ -182,16 +221,28 @@ class TestIdClassification:
         rc = main(["--db", str(db), "id", "ZZZZZZZZZZZZZZZZZZZ"])
         assert rc == 1
 
-    def test_ambiguous_prefix_returns_exit_2(self, id_test_db, capsys):
-        """siftd id <prefix> returns 2 when it matches both conversation and event."""
-        db, c, _p, r, _tc = id_test_db
-        prefix = ""
-        for i in range(1, min(len(c), len(r)) + 1):
-            if c[:i] == r[:i]:
-                prefix = c[:i]
-            else:
-                break
-        assert prefix
+    def test_prefix_colliding_across_events_returns_exit_2(self, collide_db, capsys):
+        """A prefix naming several events exits 2 and lists them (#33).
+
+        `siftd id` used to answer with an arbitrary one of them, because the
+        event resolver first-matched instead of raising.
+        """
+        db, _conv, events = collide_db
+        rc = main(["--db", str(db), "id", COLLIDING_PREFIX])
+        assert rc == 2
+
+        err = capsys.readouterr().err
+        assert f"{COLLIDING_PREFIX!r} matches 2 events" in err
+        assert "longer prefix" in err
+        for event_id in events:
+            assert event_id in err
+
+    def test_prefix_matching_one_conversation_and_one_event(self, collide_db, capsys):
+        """The cross-kind branch: exactly one conversation and one event."""
+        db, conv, events = collide_db
+        # One char deeper names a single event, so the collision is cross-kind.
+        prefix = events[0][: len(COLLIDING_PREFIX) + 1]
+        assert conv.startswith(prefix)
 
         rc = main(["--db", str(db), "id", prefix])
         assert rc == 2
@@ -199,8 +250,8 @@ class TestIdClassification:
         err = capsys.readouterr().err
         assert "Ambiguous ID prefix" in err
         assert "matches both a conversation and an event" in err
-        assert "conversation:" in err
-        assert "event:" in err
+        assert f"conversation: {conv}" in err
+        assert f"event: {events[0]}" in err
 
     def test_json_output_conversation(self, id_test_db, capsys):
         """siftd id --json outputs structured conversation classification."""
