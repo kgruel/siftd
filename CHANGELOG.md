@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A push that replaces a conversation cleans up after itself by the schema's
+  own rules.** Merge's delete closure was a hand-written second copy of what the
+  tables already declare, and going stale once broke `siftd db pull`/`push`
+  outright (#20); it is now the declared cascade. A merge that replaces every
+  conversation it carries is ~15-20% slower; one that only adds is unchanged.
+  A `--dry-run` merge now reports foreign-key violations instead of predicting
+  success.
+  ([#51](https://github.com/kgruel/siftd/issues/51))
+
+- **Tags survive a push that replaces the conversation you tagged.** Receiving a
+  newer version of a conversation used to destroy every tag on it and on its
+  turns, while keeping its owner; both are now carried, as they already were on
+  re-ingest.
+  ([#77](https://github.com/kgruel/siftd/issues/77))
+
 - **A conversation re-ingested after its transcript changed keeps its owner.**
   On a multi-tenant `siftd serve`, every replacement silently un-owned the
   conversation, and reads are owner-scoped — so it stopped being visible to the

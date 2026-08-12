@@ -38,7 +38,7 @@ from siftd.dateparse import to_utc
 from siftd.domain import Source
 from siftd.storage.replacement import (
     ConversationCarryover,
-    restore_conversation,
+    restore_and_report,
     snapshot_conversation,
 )
 from siftd.storage.sessions import (
@@ -1113,20 +1113,9 @@ def _restore_carryover_after_replacement(
     external_id: str,
 ) -> None:
     """Re-point a snapshot at the replacement rows, reporting what was lost."""
-    unmatched = restore_conversation(conn, conversation_id, snapshot)
-    if snapshot is None:
-        return
-    lost = unmatched + snapshot.dropped_events
-    if lost:
-        logger.warning(
-            f"{lost} element tag(s) on {external_id} could not be carried across "
-            "re-ingest (the event is no longer in the transcript, or is synthetic)"
-        )
-    if snapshot.dropped_blocks:
-        logger.warning(
-            f"{snapshot.dropped_blocks} block tag(s) on {external_id} were dropped "
-            "by re-ingest — block-level re-pointing is not implemented yet"
-        )
+    restore_and_report(
+        conn, conversation_id, snapshot, subject=external_id, operation="re-ingest"
+    )
 
 
 def _session_key_candidates(adapter: AdapterModule, external_id: str) -> list[str]:

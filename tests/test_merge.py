@@ -4,6 +4,7 @@ import re
 import sqlite3
 
 import pytest
+from conftest import conversation_id, tag_names
 from conftest import make_db as _make_db
 
 from siftd.api.merge import merge_database
@@ -363,6 +364,195 @@ def test_dry_run(tmp_path):
     assert count == 1
 
 
+def test_dry_run_of_a_replacing_merge_leaves_the_target_intact(tmp_path):
+    """A dry run that would replace rolls the cascade back too (#51).
+
+    The plain dry run above only ever inserts. This one exercises the branch the
+    deferred-foreign-key change actually forks on: a replacing merge runs its
+    delete inside `SAVEPOINT merge_dry_run` rather than an explicit `BEGIN`,
+    because a `BEGIN` there would still be open at `RELEASE` and `DETACH` cannot
+    run inside a transaction. Get that fork wrong and the failure is either a
+    hard DETACH error or — worse — a dry run that deletes for real.
+    """
+    import time
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old", "tool_name": "sh"}],
+    )
+    time.sleep(0.01)
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "New", "tool_name": "sh"}],
+    )
+
+    conn = sqlite3.connect(str(target))
+    before = {
+        t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+        for t in ("conversations", "events", "event_content", "tag_assignments")
+    }
+    old_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+    conn.close()
+
+    result = merge_database(target, source, dry_run=True)
+    assert result["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    after = {t: conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0] for t in before}
+    assert after == before
+    assert conn.execute("SELECT id FROM conversations").fetchone()[0] == old_id
+    conn.close()
+
+
+def test_replace_leaves_no_trace_of_the_old_conversation(tmp_path):
+    """The delete closure is complete — asked of the database, not a list (#51).
+
+    `_replace_stale_conversations` used to hand-enumerate this closure in 11
+    statements beside the two in `delete_conversation`, with nothing keeping the
+    copies in sync; it went stale when the v9 derived tier was added and broke
+    every replacing merge (#20). It is now one `DELETE FROM conversations` plus
+    `content_fts`, and the schema's cascades and `tr_polymorphic_*` triggers do
+    the rest.
+
+    So this asks the question that survives either implementation: after the
+    merge, does the old conversation's id appear in any TEXT column of any
+    table? Derived by sweeping `sqlite_master`, so a table added later is
+    covered without editing this test — which is exactly what the old
+    enumeration could not say about itself.
+    """
+    import time
+
+    from siftd.ids import ulid as _ulid
+    from siftd.storage.fts import rebuild_fts_index
+    from siftd.storage.sqlite import open_database as _open
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old",
+                        "tool_name": "sh", "tags": ["review"]}],
+    )
+    tgt = _open(target)
+    # `make_db` does not index, and `content_fts` is the one child no cascade
+    # or trigger reaches — so without this the sweep below has nothing to find
+    # there and passes with the explicit delete removed. Verified by mutation:
+    # that is exactly what happened before this line existed.
+    rebuild_fts_index(tgt)
+    assert tgt.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0] > 0
+    old_conv = tgt.execute("SELECT id FROM conversations").fetchone()["id"]
+    old_ids = {old_conv} | {
+        r[0] for r in tgt.execute("SELECT id FROM events WHERE conversation_id = ?", (old_conv,))
+    } | {
+        r[0] for r in tgt.execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id"
+            " WHERE e.conversation_id = ?", (old_conv,)
+        )
+    }
+    harness_id = tgt.execute("SELECT harness_id FROM conversations").fetchone()[0]
+    tgt.execute(
+        "INSERT INTO ingested_files (id, path, file_hash, harness_id, conversation_id, ingested_at)"
+        " VALUES (?, '/fake/path', 'abc123', ?, ?, '2024-01-15T10:00:00Z')",
+        (_ulid(), harness_id, old_conv),
+    )
+    tgt.commit()
+    assert tgt.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 1
+    tgt.close()
+
+    time.sleep(0.01)
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "New", "tool_name": "sh"}],
+    )
+    assert merge_database(target, source)["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    conn.row_factory = sqlite3.Row
+    tables = [
+        n for (n,) in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+            " AND name NOT LIKE 'sqlite_%'"
+        )
+    ]
+    survivors: list[tuple[str, str, str]] = []
+    for table in tables:
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols:
+            continue  # shadow table with no introspectable columns
+        for row in conn.execute(f"SELECT {', '.join(f'[{c}]' for c in cols)} FROM [{table}]"):
+            for col, value in zip(cols, row, strict=True):
+                if isinstance(value, str) and value in old_ids:
+                    survivors.append((table, col, value))
+    conn.close()
+    assert survivors == [], (
+        f"the replaced conversation still has rows referencing it: {survivors}. "
+        "The delete closure did not reach them — check whether the table declares "
+        "ON DELETE CASCADE from conversations (or is covered by a "
+        "tr_polymorphic_*_cleanup trigger), since merge no longer enumerates them."
+    )
+
+
+def test_replaced_conversations_blob_is_released_by_the_cascade(tmp_path):
+    """A replaced tool call's blob is still GC'd when the delete is a cascade.
+
+    `tr_event_tool_call_delete_release_blob` fires on `event_tool_call` deletes.
+    Merge used to delete those rows itself; since #51 they go by the cascade
+    from `conversations`, and this pins that the trigger still fires — the one
+    of #51's stated open costs that a passing suite would not otherwise notice,
+    because the blob is re-supplied by the source and the row count looks right
+    either way.
+    """
+    import time
+
+    from siftd.storage.blobs import store_content
+    from siftd.storage.sqlite import open_database as _open
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old", "tool_name": "sh"}],
+    )
+    # Re-point the target's tool call at a result no source will re-supply.
+    # `make_db` writes the same canned result on both sides, so their blobs are
+    # the same content-addressed row and the merge's own insert would put it
+    # back — a test that could not tell a released blob from a re-supplied one.
+    tgt = _open(target)
+    unique = store_content(tgt, '{"output": "only the replaced version had this"}')
+    tc_event = tgt.execute("SELECT event_id FROM event_tool_call").fetchone()[0]
+    tgt.execute(
+        "UPDATE event_tool_call SET result_hash = ? WHERE event_id = ?", (unique, tc_event)
+    )
+    # `store_content` counted a reference and so did the UPDATE trigger, which
+    # would leave the blob at 2 and surviving the delete for a reason that has
+    # nothing to do with the merge. Recompute from the referrers — the same
+    # expression the merge's own step 5 uses.
+    tgt.execute(
+        "UPDATE content_blobs SET ref_count ="
+        " (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash)"
+    )
+    tgt.commit()
+    old_hashes = {unique}
+    assert tgt.execute(
+        "SELECT ref_count FROM content_blobs WHERE hash = ?", (unique,)
+    ).fetchone()[0] == 1
+    tgt.close()
+
+    time.sleep(0.01)
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "New", "tool_name": "sh"}],
+    )
+    assert merge_database(target, source)["replaced_conversations"] == 1
+
+    conn = sqlite3.connect(str(target))
+    remaining = {r[0] for r in conn.execute("SELECT hash FROM content_blobs")}
+    counts = dict(conn.execute("SELECT hash, ref_count FROM content_blobs"))
+    conn.close()
+    assert not (old_hashes & remaining), (
+        f"the replaced version's blob(s) {sorted(old_hashes & remaining)} were not "
+        "released — the AFTER DELETE trigger did not fire for the cascaded "
+        "event_tool_call row"
+    )
+    assert all(c > 0 for c in counts.values()), f"orphan blobs left behind: {counts}"
+
+
 def test_idempotent(tmp_path):
     """Merging same source twice → second merge has 0 new conversations."""
     target = _make_db(
@@ -707,13 +897,13 @@ def test_replace_cascades_children(tmp_path):
     """).fetchone()[0]
     assert tool_name == "file.read"
 
-    # Tag should be from source
-    tag_name = conn.execute("""
-        SELECT t.name FROM tag_assignments ta
-        JOIN tags t ON t.id = ta.tag_id
-        WHERE ta.target_kind = 'conversation'
-    """).fetchone()[0]
-    assert tag_name == "research"
+    # Both tags: the source's, and the one the target already carried. This
+    # asserted `== "research"` off a bare fetchone() until #77 — which read as
+    # "the source wins" but was really "the target's tag was destroyed", and
+    # could not have distinguished the two.
+    assert tag_names(conn, "conversation", conversation_id(conn, "conv-1")) == {
+        "research", "review"
+    }
 
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
@@ -798,8 +988,20 @@ def test_replace_cascades_grandchildren(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='prompt'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='response'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM attributes WHERE target_kind='tool_call'").fetchone()[0] == 0
-    assert conn.execute("SELECT COUNT(*) FROM tag_assignments WHERE target_kind='tool_call'").fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM ingested_files").fetchone()[0] == 0
+
+    # The tool_call *tag*, unlike the attributes beside it, is re-pointed onto
+    # the replacement's event rather than destroyed (#77). A person put it
+    # there; no re-parse of the source puts it back, which is the whole line
+    # `storage/replacement.py` draws. This asserted `== 0` before, making the
+    # loss look deliberate.
+    carried = conn.execute("""
+        SELECT ta.target_id, t.name FROM tag_assignments ta
+        JOIN tags t ON t.id = ta.tag_id
+        WHERE ta.target_kind = 'tool_call'
+    """).fetchall()
+    new_tc_id = conn.execute("SELECT id FROM events WHERE kind='tool_call'").fetchone()[0]
+    assert [(r[0], r[1]) for r in carried] == [(new_tc_id, "tc-tag")]
 
     # Content should be from source (event_content stores JSON blocks)
     import json
@@ -857,6 +1059,73 @@ def test_replace_clears_derived_tier(tmp_path):
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
     assert violations == []
+
+
+def test_replace_carries_tags_and_ownership(tmp_path):
+    """A merge that replaces a conversation keeps what a person attached (#77).
+
+    The homelab shape: a reviewer tags a conversation on the server, the machine
+    that produced it appends one more turn, and the next push replaces it. Every
+    tag used to go with the old rows — while ownership, carried by a temp-table
+    special case right beside the delete, survived. This is the mirror of #54,
+    which carried tags and dropped ownership; both are now one snapshot.
+
+    Element tags are the discriminating half: a conversation tag only needs the
+    new conversation id, but an event tag has to be *re-pointed* by rejoining on
+    the identifier the replacement shares with its predecessor.
+    """
+    import time
+
+    from siftd.storage.sqlite import ensure_conversation_owners_table
+    from siftd.storage.sqlite import open_database as _open
+    from siftd.storage.tags import get_tag_assignments
+
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old", "tool_name": "sh"}],
+    )
+    tgt = _open(target)
+    ensure_conversation_owners_table(tgt)
+    old_conv = tgt.execute("SELECT id FROM conversations").fetchone()["id"]
+    old_prompt = tgt.execute("SELECT id FROM events WHERE kind='prompt'").fetchone()["id"]
+    apply_tag(tgt, "conversation", old_conv, get_or_create_tag(tgt, "decision:auth"))
+    apply_tag(tgt, "prompt", old_prompt, get_or_create_tag(tgt, "needs-followup"))
+    tgt.execute(
+        "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+        " VALUES (?, 'alice', NULL, ?)",
+        (old_conv, "2024-01-01T00:00:00Z"),
+    )
+    tgt.commit()
+    tgt.close()
+
+    time.sleep(0.01)
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-1", "prompt_text": "Old and then more",
+                        "tool_name": "sh"}],
+    )
+
+    result = merge_database(target, source)
+    assert result["replaced_conversations"] == 1
+
+    conn = _open(target)
+    new_conv = conn.execute("SELECT id FROM conversations").fetchone()["id"]
+    new_prompt = conn.execute("SELECT id FROM events WHERE kind='prompt'").fetchone()["id"]
+    assert new_conv != old_conv, "the replacement should be a different row"
+
+    assert "decision:auth" in tag_names(conn, "conversation", new_conv)
+
+    assert len(get_tag_assignments(conn, "prompt", new_prompt)) == 1, (
+        "the element tag was not re-pointed onto the replacement's event"
+    )
+    assert not get_tag_assignments(conn, "prompt", old_prompt)
+
+    assert conn.execute(
+        "SELECT user_id FROM conversation_owners WHERE conversation_id = ?", (new_conv,)
+    ).fetchone()[0] == "alice"
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
 
 
 def test_cli_no_replace(tmp_path, capsys):

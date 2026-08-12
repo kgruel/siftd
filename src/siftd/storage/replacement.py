@@ -20,28 +20,45 @@ Two such facts exist today, and the second was missing until #54:
 That asymmetry is why this is one snapshot object rather than two helpers: the
 mechanics differ per fact, but "take everything, delete, put everything back"
 is one operation, and splitting it is how a third site comes to carry only one
-of them. ``ingestion.orchestration._take_conversation_for_replacement`` is the
-single door **in ingest** — it guards, snapshots, and deletes together.
+of them — which is not hypothetical. Both replacement paths shipped a half of
+it: ingest carried tags and dropped ownership (#54), and `api/merge.py`, which
+replaces on the same natural key, hand-rolled ownership through a pair of temp
+tables while hard-deleting the target's tag assignments (#77). Each looked
+complete from inside, because neither had a list to be incomplete against.
 
-Scope, stated because the obvious wider claim is false: `api/merge.py` replaces
-conversations too, on the same natural key, and carries its own ownership by
-hand while hard-deleting the target's tag assignments — the mirror image of
-what #54 was. This module does not govern that path, and the ratchets do not
-claim it. That second door is #77.
+Two sites use this, and they differ only in how they get their ids:
+
+- ``ingestion.orchestration._take_conversation_for_replacement`` — the door in
+  ingest, which guards, snapshots and deletes together; the replacement keeps
+  the transcript's ``external_id`` under a fresh conversation ULID.
+- ``api.merge._replace_stale_conversations`` — the merge's stale sweep, which
+  snapshots the *target* conversation and restores against the *source* id,
+  because the replacement arrives from the other database under its own ULID.
+
+The snapshot must be taken before the delete in both, and that is structural
+rather than stylistic: the ``tr_polymorphic_*_cleanup`` triggers are AFTER
+DELETE triggers, so they fire whatever the ``foreign_keys`` pragma is set to,
+and a post-delete read finds nothing to carry.
 
 `tests/architecture/test_replacement_carry.py` holds this list to its
 population, asking the schema directly rather than trusting a registry (the
-one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones).
+one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones),
+and counts the sites above by their calls to the two functions here — not by
+ingest's wrapper, which merge does not use and which is therefore how a second
+door stayed invisible until #77.
 """
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from dataclasses import dataclass, field
 
 from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.tags import apply_tag, get_tag_assignments
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -122,12 +139,25 @@ def snapshot_conversation(
         conversation=get_tag_assignments(conn, "conversation", conversation_id),
     )
 
+    # CROSS JOIN, and it is load-bearing rather than decorative: it is SQLite's
+    # documented way to fix the join order, and without it the plan depends on
+    # whether `sqlite_stat1` exists. With no stats the planner drives from
+    # `tag_assignments`, seeking `idx_tag_assignments_target` on `target_kind`
+    # alone — every event-kind assignment in the whole database, per call — and
+    # probes `events` by id. Driving from `events` instead uses
+    # `idx_events_conversation_kind` and then both columns of the tag index.
+    #
+    # Measured on 300 conversations / 6,000 event tags with no stats: 1654µs
+    # against 17µs per conversation, same rows. `ANALYZE` is never emitted
+    # except by `siftd db optimize`, on request, so a fresh database —
+    # the receiving end of a push, which is exactly where merge calls this once
+    # per replaced conversation — is the no-stats case by default.
     event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
     for row in conn.execute(
         f"""
         SELECT ta.target_kind, e.kind, e.external_id, ta.tag_id, ta.applied_at
-        FROM tag_assignments ta
-        JOIN events e ON e.id = ta.target_id
+        FROM events e
+        CROSS JOIN tag_assignments ta ON ta.target_id = e.id
         WHERE ta.target_kind IN ({event_kinds}) AND e.conversation_id = ?
         """,
         (*sorted(EVENT_TAG_KINDS), conversation_id),
@@ -220,4 +250,50 @@ def restore_conversation(
     if commit:
         conn.commit()
 
+    return unmatched
+
+
+def restore_and_report(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    carryover: ConversationCarryover | None,
+    *,
+    subject: str,
+    operation: str,
+) -> int:
+    """:func:`restore_conversation`, plus the warnings for what it could not carry.
+
+    This is what a replacement door calls; ``restore_conversation`` is the
+    mechanism under it. The split matters because the loss is only knowable
+    here — ``unmatched`` is computed by the restore, the dropped counters by
+    the snapshot, and a door that reported one without the other would announce
+    part of its own data loss.
+
+    It is one function rather than one per door for the reason the module
+    exists: merge grew its own version of this warning and it had already
+    diverged, lumping element and block losses into a single count with a
+    vaguer cause. The two are not interchangeable — an unmatched element tag
+    means the event is gone from the replacement, which is usually correct,
+    while a dropped block tag is a capability that is simply not built yet, and
+    only the second is repaired by a future release.
+
+    ``subject`` names the conversation the way its door addresses it (a
+    transcript's ``external_id`` for ingest, the source conversation id for
+    merge); ``operation`` is the verb that reads correctly in the sentence.
+    """
+    unmatched = restore_conversation(conn, conversation_id, carryover)
+    if carryover is None:
+        return 0
+
+    lost = unmatched + carryover.dropped_events
+    if lost:
+        logger.warning(
+            f"{lost} element tag(s) on {subject} could not be carried across "
+            f"{operation} (the event is no longer present, or is synthetic)"
+        )
+    if carryover.dropped_blocks:
+        logger.warning(
+            f"{carryover.dropped_blocks} block tag(s) on {subject} were dropped "
+            f"by {operation} — block-level re-pointing is not implemented yet"
+        )
     return unmatched
