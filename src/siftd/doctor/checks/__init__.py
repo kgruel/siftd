@@ -63,9 +63,16 @@ class CheckContext:
     formatters_dir: Path
     queries_dir: Path
 
-    # Lazy-loaded connections (populated on first access)
-    _db_conn: sqlite3.Connection | None = field(default=None, repr=False)
-    _embed_conn: sqlite3.Connection | None = field(default=None, repr=False)
+    # Lazy per-thread connections. The runner fans checks out over a thread
+    # pool, so one shared sqlite3.Connection would be read concurrently from
+    # several threads. That is not safe even at threadsafety==3 — the
+    # connection's prepared-statement cache is shared state, and a check that
+    # opens its own *write* connection to the same file (fts-integrity) turns
+    # the overlap into silently wrong query results rather than an error. Each
+    # thread therefore gets its own connection; _open_conns keeps every one of
+    # them reachable so close() can release them all from the caller's thread.
+    _local: threading.local = field(default_factory=threading.local, repr=False, compare=False)
+    _open_conns: list = field(default_factory=list, repr=False, compare=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     # Lazy adapter discovery shared across checks (populated on first access).
@@ -78,24 +85,33 @@ class CheckContext:
         default_factory=threading.Lock, repr=False, compare=False
     )
 
+    def _get_conn(self, attr: str, db_path: Path, *, foreign_keys: bool) -> sqlite3.Connection:
+        """One read-only connection per (thread, database), opened on first use.
+
+        immutable=1 keeps the open sidecar-free (no WAL/SHM created) and works
+        on read-only media — the same contract storage.open_database uses for
+        its read-only opens.
+        """
+        conn = getattr(self._local, attr, None)
+        if conn is None:
+            uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+            # check_same_thread=False so close() can run from the caller's thread.
+            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            if foreign_keys:
+                conn.execute("PRAGMA foreign_keys = ON")
+            setattr(self._local, attr, conn)
+            with self._lock:
+                self._open_conns.append(conn)
+        return conn
+
     def get_db_conn(self):
-        """Get main database connection (lazy-loaded, thread-safe for reads)."""
-        with self._lock:
-            if self._db_conn is None:
-                uri = f"file:{self.db_path.as_posix()}?mode=ro&immutable=1"
-                self._db_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-                self._db_conn.row_factory = sqlite3.Row
-                self._db_conn.execute("PRAGMA foreign_keys = ON")
-            return self._db_conn
+        """Get main database connection (lazy-loaded, one per calling thread)."""
+        return self._get_conn("db_conn", self.db_path, foreign_keys=True)
 
     def get_embed_conn(self):
-        """Get embeddings database connection (lazy-loaded, thread-safe for reads)."""
-        with self._lock:
-            if self._embed_conn is None:
-                uri = f"file:{self.embed_db_path.as_posix()}?mode=ro&immutable=1"
-                self._embed_conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-                self._embed_conn.row_factory = sqlite3.Row
-            return self._embed_conn
+        """Get embeddings database connection (lazy-loaded, one per calling thread)."""
+        return self._get_conn("embed_conn", self.embed_db_path, foreign_keys=False)
 
     def get_adapters(self) -> list:
         """Enabled adapter plugins, loaded once per run and shared across checks."""
@@ -130,13 +146,12 @@ class CheckContext:
         return outcome
 
     def close(self):
-        """Close any open connections."""
-        if (conn := self._db_conn) is not None:
+        """Close every connection this context opened, on any thread."""
+        with self._lock:
+            conns, self._open_conns = self._open_conns, []
+        for conn in conns:
             conn.close()
-            self._db_conn = None
-        if (embed_conn := self._embed_conn) is not None:
-            embed_conn.close()
-            self._embed_conn = None
+        self._local = threading.local()
 
 
 class Check(Protocol):
