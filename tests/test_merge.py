@@ -279,30 +279,66 @@ def test_fk_integrity(tmp_path):
     assert violations == []
 
 
-def test_fts_rebuild(tmp_path):
-    """Search finds content from both DBs after merge."""
+def _fts_matches(db_path, term):
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH ?", (term,),
+        ).fetchone()[0]
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("rebuild_fts", [False, True])
+def test_fts_rebuild(tmp_path, rebuild_fts):
+    """Search finds content from both DBs after merge, at either flag value."""
+    from siftd.storage.fts import rebuild_fts_index
+
     target = _make_db(
         tmp_path / "target.db",
         conversations=[{"external_id": "conv-A", "prompt_text": "Python decorators"}],
     )
+    conn = sqlite3.connect(str(target))
+    rebuild_fts_index(conn, commit=True)   # the target arrives already indexed
+    conn.close()
+
     source = _make_db(
         tmp_path / "source.db",
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
 
+    merge_database(target, source, rebuild_fts=rebuild_fts)
+
+    assert _fts_matches(target, "Python") >= 1
+    assert _fts_matches(target, "Rust") >= 1
+
+
+def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
+    """The trade #49 makes, stated: `rebuild_fts=True` is a no-op.
+
+    It used to run a full corpus rebuild post-commit, which incidentally healed
+    index drift the merge did not cause. That side effect is gone — the merge
+    indexes what it wrote and nothing else. Repair has two deliberate owners,
+    `siftd ingest --rebuild-fts` and `siftd doctor fix`, and O(corpus) on every
+    push is exactly the cost that made the push paths skip indexing at all.
+
+    This test exists so removing the knob outright (#74) cannot look like a
+    behavior change: it already is one, here.
+    """
+    target = _make_db(
+        tmp_path / "target.db",
+        conversations=[{"external_id": "conv-A", "prompt_text": "Python decorators"}],
+    )
+    assert _fts_matches(target, "Python") == 0, "_make_db leaves the target unindexed"
+
+    source = _make_db(
+        tmp_path / "source.db",
+        conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
+    )
     merge_database(target, source, rebuild_fts=True)
 
-    conn = sqlite3.connect(str(target))
-    conn.row_factory = sqlite3.Row
-    python_hits = conn.execute(
-        "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH 'Python'"
-    ).fetchone()[0]
-    rust_hits = conn.execute(
-        "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH 'Rust'"
-    ).fetchone()[0]
-    conn.close()
-    assert python_hits >= 1
-    assert rust_hits >= 1
+    assert _fts_matches(target, "Rust") >= 1, "what the merge wrote is indexed"
+    assert _fts_matches(target, "Python") == 0, "what it did not write is left alone"
 
 
 def test_dry_run(tmp_path):

@@ -28,7 +28,10 @@ def receive_database(
     Args:
         source_path: Path to the incoming database (e.g. a slice).
         target_db: Path to the target siftd database.
-        rebuild_fts: Whether to rebuild the FTS5 index after merge.
+        rebuild_fts: Accepted and ignored. Received content is indexed on
+            both paths — the merge indexes what it wrote, the create path
+            indexes the file it copied (#49). Kept for compatibility; removal
+            is tracked in #74.
         user_id: Authenticated user identity to stamp as conversation owner.
         push_id: Push log ID for provenance linking.
         preflight: If True (default), run structural integrity checks on the
@@ -54,14 +57,20 @@ def receive_database(
 
     if not target_db.exists():
         result = _create_from_source(source_path, target_db)
-        if rebuild_fts:
-            from siftd.storage.fts import rebuild_fts_index
-            from siftd.storage.sqlite import open_database
-            fts_conn = open_database(target_db)
-            try:
-                rebuild_fts_index(fts_conn, commit=True)
-            finally:
-                fts_conn.close()
+        # This copies the source wholesale, and a sync/push slice carries no
+        # index — `sync.py` builds those with `rebuild_fts=False` because a
+        # payload is transport, not a corpus. So gating here meant a
+        # receive-only server's *first* push produced an entirely unindexed
+        # database, which no later push would repair: every later push is a
+        # merge, and merges never wrote the index either. There is nothing to
+        # scope to — the whole file is what arrived (#49).
+        from siftd.storage.fts import rebuild_fts_index
+        from siftd.storage.sqlite import open_database
+        fts_conn = open_database(target_db)
+        try:
+            rebuild_fts_index(fts_conn, commit=True)
+        finally:
+            fts_conn.close()
         if user_id:
             conv_ids = _all_conversation_ids(target_db)
             _stamp_ownership(target_db, conv_ids, user_id, push_id)

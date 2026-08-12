@@ -102,7 +102,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3279 |
+| `tests/` | 186 | 3284 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 11 | 62 |
 | `tests/cli/` | 28 | 632 |
@@ -172,7 +172,7 @@ docstring so its row is meaningful.
 | [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
-| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 4 | AC test for ST-3b: FTS rebuild on push. |
+| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 8 | Merged content is searchable, on every path and at every setting. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
@@ -195,7 +195,7 @@ docstring so its row is meaningful.
 | [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
-| [test_merge.py](test_merge.py) | 36 | Tests for siftd db merge — importing a slice into the main database. |
+| [test_merge.py](test_merge.py) | 37 | Tests for siftd db merge — importing a slice into the main database. |
 | [test_merge_blob_gc.py](test_merge_blob_gc.py) | 2 | D2 — orphan content_blob GC on merge. |
 | [test_merge_owner_scope.py](test_merge_owner_scope.py) | 3 | Multi-tenant write-IDOR guard for the merge path (S0/S1/D1). |
 | [test_migrations.py](test_migrations.py) | 67 | Tests for siftd storage migration paths. |

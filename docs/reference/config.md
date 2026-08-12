@@ -61,7 +61,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 | `db` | string | — | Database path for serve (overrides db.path) |
 | `host` | string | `127.0.0.1` | Bind address |
 | `port` | int | `8484` | Listen port |
-| `fts_rebuild` | string | `on_push` | When to rebuild FTS index: on_push, scheduled, off |
+| `fts_rebuild` | string | `on_push` | Deprecated, no effect: merged content is indexed as part of the merge. Was: when to rebuild the FTS index (on_push, scheduled, off) |
 | `request_max_body_size` | int or size string | `500MB` | Maximum request body size (e.g. '500MB', '1GB', bytes as int). Uses SI prefixes (1 MB = 1 000 000 bytes) matching Caddy. Must be changed in lockstep with Caddyfile request_body max_size. |
 
 ## [serve.auth]

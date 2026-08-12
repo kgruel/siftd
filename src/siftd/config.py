@@ -161,7 +161,7 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
     _SchemaEntry("serve.port", "int", _is_int_like,
                  "Listen port", "8484"),
     _SchemaEntry("serve.fts_rebuild", "string", _is_str,
-                 "When to rebuild FTS index: on_push, scheduled, off", "on_push"),
+                 "Deprecated, no effect: merged content is indexed as part of the merge. Was: when to rebuild the FTS index (on_push, scheduled, off)", "on_push"),
     _SchemaEntry("serve.request_max_body_size", "int or size string", _is_size_like,
                  "Maximum request body size (e.g. '500MB', '1GB', bytes as int). Uses SI prefixes (1 MB = 1 000 000 bytes) matching Caddy. Must be changed in lockstep with Caddyfile request_body max_size.", "500MB"),
     # Serve auth — static_token, OIDC, or introspection
