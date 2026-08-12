@@ -576,6 +576,18 @@ class TestBackgroundTaskCleanupResilience:
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _team_client(tmp_path=None):
+    """A TestClient over a one-conversation team DB."""
+    import tempfile as _tf
+
+    with _tf.TemporaryDirectory() as tmp:
+        base = tmp_path if tmp_path is not None else Path(tmp)
+        team_db = _make_team_db(base / "team.db", conversations=[{"external_id": "c1"}])
+        with TestClient(create_app(db_path=team_db, auth_config=None)) as c:
+            yield c
+
+
 class TestDateParamsAreParsedAtTheBoundary:
     """serve is an input context and had no equivalent of argparse's `date_arg`.
 
@@ -594,10 +606,7 @@ class TestDateParamsAreParsedAtTheBoundary:
 
     @pytest.fixture
     def client(self, tmp_path):
-        team_db = _make_team_db(
-            tmp_path / "team.db", conversations=[{"external_id": "c1"}],
-        )
-        with TestClient(create_app(db_path=team_db, auth_config=None)) as c:
+        with _team_client(tmp_path) as c:
             yield c
 
     @pytest.mark.parametrize("route", ROUTES)
@@ -607,11 +616,14 @@ class TestDateParamsAreParsedAtTheBoundary:
         assert resp.status_code == 400
         assert "lastweek" in resp.json()["error"]
 
-    @pytest.mark.parametrize("route", ROUTES)
-    def test_a_partial_iso_date_is_rejected_not_widened(self, client, route):
+    def test_a_partial_iso_date_is_rejected_not_widened(self, client):
         """`2024-01` is the shape #21 found on the wire. `parse_date` rejects
-        it; raw, it matched every row in January by prefix."""
-        resp = client.get(route, params={"since": "2024-01"})
+        it; raw, it matched every row in January by prefix.
+
+        One route, not the sweep: the per-route parametrize above already
+        proves each handler is wired, and which *values* `parse_date` rejects
+        is its own tests' business."""
+        resp = client.get("/api/v1/pull", params={"since": "2024-01"})
         assert resp.status_code == 400
 
     @pytest.mark.parametrize("route", ROUTES)
@@ -624,3 +636,28 @@ class TestDateParamsAreParsedAtTheBoundary:
         """siftd's own clients send `date_arg` output; `parse_date` accepts it."""
         resp = client.get("/api/v1/pull", params={"since": "2024-01-15T09:30:12"})
         assert resp.status_code == 200
+
+    def test_the_htmx_ui_is_the_third_input_context(self):
+        """`/query` filters too, and it is not a JSON route.
+
+        serve has two boundaries, not one: `routes.py` answers the JSON API
+        and `html_routes.py` answers the htmx UI, and `/query` passes its date
+        facets into `search_view` and a browse Operation without ever building
+        one of `routes.py`'s handlers. It answers in fragments, so it renders
+        the rejection as HTML rather than letting the app-level JSON handler
+        put an error envelope inside a pane.
+
+        `ui_shell`/`ui_find`/`ui_meta` take the same params and are *not*
+        checked here: they only echo them back as URL-as-state so the filter
+        strip prefills what the user typed. Parsing there would redisplay
+        `7d` as a date.
+        """
+        htmx = {"HX-Request": "true"}  # else _shell_redirect 303s to the shell
+        with _team_client() as client:
+            resp = client.get("/query", params={"since": "lastweek"}, headers=htmx)
+            assert resp.status_code == 400
+            assert "text/html" in resp.headers["content-type"]
+            assert "lastweek" in resp.text
+
+            ok = client.get("/query", params={"since": "7d"}, headers=htmx)
+            assert ok.status_code == 200

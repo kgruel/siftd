@@ -306,6 +306,10 @@ class TestToUtc:
         Pinned under a non-UTC host zone, because that is the only condition
         under which the two disagree — a suite run in UTC cannot tell them
         apart, which is how the read-side sites drifted unnoticed.
+
+        Four of the rewired sites take `.timestamp()` of this, so the same
+        offset landed in peek's activity epochs and the HTML "N hours ago"
+        rails; equal aware datetimes carry equal epochs, so this covers it.
         """
         with pinned_tz("America/Chicago"):
             assert to_utc("2025-07-15T14:32:01") == datetime(
@@ -337,12 +341,3 @@ class TestToUtc:
     def test_malformed_value_names_itself(self):
         with pytest.raises(ValueError, match="invalid timestamp"):
             to_utc("not-a-timestamp")
-
-    def test_epoch_is_the_utc_epoch(self):
-        """Four sites called `.timestamp()` on the parse result. On a naive
-        value that resolves against the host zone, so the epoch — and every
-        'N hours ago' derived from it — was off by the offset."""
-        with pinned_tz("America/Chicago"):
-            assert to_utc("2025-07-15T14:32:01").timestamp() == to_utc(
-                "2025-07-15T14:32:01Z"
-            ).timestamp()

@@ -102,17 +102,14 @@ def parse_date(value: str | None) -> str | None:
 def to_utc(value: str) -> datetime:
     """Resolve a stored timestamp to the aware UTC instant it names.
 
-    The read-side converter: for values coming back out of siftd's own
-    columns, all of which store UTC. A naive value from one is therefore a UTC
-    instant whose designator was never written, not a wall clock — contrast
-    `local_to_utc`, which is the same operation for the write side, where
-    naive means the host's local zone.
+    The read-side converter — see the module docstring for why the read and
+    write sides answer the naive case differently. A naive value here is a UTC
+    instant whose designator was never written, not a wall clock.
 
-    Returns an aware datetime rather than a string because every caller wants
-    arithmetic against `datetime.now(UTC)` or a `.timestamp()` epoch; the two
-    callers that want a string render it themselves.
+    Returns an aware datetime rather than a string because callers want
+    arithmetic against `datetime.now(UTC)` or a `.timestamp()` epoch.
 
-    Raises ValueError for anything `_parse_iso` cannot read. Callers that were
+    Raises ValueError for anything `_resolve` cannot read. Callers that were
     already tolerant of unparseable stored values keep catching it — a column
     can hold third-party log content that no adapter validated.
     """
@@ -122,11 +119,10 @@ def to_utc(value: str) -> datetime:
 def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
     """Render a wall-clock timestamp as an aware UTC ISO 8601 string.
 
-    For adapters whose logs record local time with no offset. `started_at` is
-    a UTC column compared as a SQL *string* against UTC-anchored bounds, so a
-    naive local value sorts by the size of the host's offset rather than by
-    the instant it names — far enough below a `--since` cursor that delta sync
-    skips it, silently and without self-healing.
+    The write-side converter, for adapters whose logs record local time with
+    no offset. A naive local value sorts by the size of the host's offset
+    rather than by the instant it names — far enough below a `--since` cursor
+    that delta sync skips it, silently and without self-healing (#31).
 
     `tz` is the zone the value was written in; None means the host's current
     local zone, which is the only zone an adapter can infer. A value that
@@ -145,28 +141,22 @@ def _resolve(value: str, *, naive_tz: tzinfo | None) -> datetime:
     `naive_tz=None` defers to the host's local zone, which is what a naive
     datetime already means to `astimezone` — so the two public spellings
     differ only in the argument they pass here.
+
+    `fromisoformat` takes any separator character but only an *uppercase* UTC
+    designator, so a lowercase `z` is the one spelling it needs help with; and
+    its own error names neither the value nor the format. Both fixes live here
+    because this is the single funnel — every timestamp the module parses.
     """
-    parsed = _parse_iso(value)
+    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError as e:
+        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
+
     if parsed.tzinfo is None and naive_tz is not None:
         parsed = parsed.replace(tzinfo=naive_tz)
     # A still-naive value resolves against the host zone inside `astimezone`.
     return parsed.astimezone(UTC)
-
-
-def _parse_iso(value: str) -> datetime:
-    """`datetime.fromisoformat` with the two affordances every caller wants.
-
-    `fromisoformat` takes any separator character but only an *uppercase* UTC
-    designator, so a lowercase `z` is the one spelling it needs help with. And
-    its own error names neither the value nor the format, so every entry point
-    in this module would otherwise have to re-wrap it — which is how the two
-    would drift into disagreeing about what a bad timestamp looks like.
-    """
-    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
-    try:
-        return datetime.fromisoformat(candidate)
-    except ValueError as e:
-        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
 
 
 def _normalize_timestamp(value: str) -> str:

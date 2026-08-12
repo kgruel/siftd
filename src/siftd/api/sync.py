@@ -371,7 +371,6 @@ def _normalized_cursor(cursor: str) -> str | None:
         return None
 
 
-
 def _filter_signature(filters: dict) -> str:
     """Compute a deterministic signature for an effective filter set.
 

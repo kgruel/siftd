@@ -237,10 +237,13 @@ def create_app(
         Query params are parsed while *building* the arguments to `_dispatch`,
         so a rejected `since`/`before` is raised before that helper's own
         `except SiftdError` can see it, and `/api/v1/pull` never goes through
-        it at all. Registered for `UserInputError` alone rather than the whole
-        taxonomy: the other branches are already mapped where they are raised,
-        and widening this to `SiftdError` would silently re-status errors that
-        currently surface as 500s.
+        Registered for `UserInputError` alone, which is a **scoping decision,
+        not a principle**: `errors.py` declares `http_status` across the whole
+        taxonomy as a serve contract, so widening this to `SiftdError` and
+        dissolving `_dispatch`'s inline `except` into it is the coherent end
+        state. That would also re-status errors that currently reach the client
+        as 500s — correct per the taxonomy, but a wire change no part of #32
+        needs. Tracked separately.
         """
         return Response(content={"error": str(exc)}, status_code=exc.http_status)
 

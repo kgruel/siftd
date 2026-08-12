@@ -42,18 +42,19 @@ def _actor_identity(request: Request) -> str:
 
 
 def _date_param(value: str | None, name: str) -> str | None:
-    """Parse a `since`/`before` query param into a comparable bound.
+    """Parse one `since`/`before` query param into a comparable bound.
 
-    argparse is where the CLI does this, via `date_arg`. serve is the other
-    input context and had no equivalent, so every date param went into
-    `started_at >= ?` exactly as typed — and the filter is a string
-    comparison, so it neither matched nor complained. `since=lastweek` simply
-    returned nothing, and `since=2024-01` (a value `parse_date` rejects)
-    silently matched the whole of January.
+    argparse is where the CLI does this, via `date_arg`. serve had no
+    equivalent, so every date param went into `started_at >= ?` exactly as
+    typed — and the filter is a string comparison, so it neither matched nor
+    complained. `since=lastweek` simply returned nothing, and `since=2024-01`
+    (a value `parse_date` rejects) silently matched the whole of January.
 
     siftd's own clients always send an already-parsed value, which is why this
     stayed invisible: `date_arg` ran first, and `parse_date` accepts its own
     output. Any other client got the vacuous filter.
+
+    Most callers want `_date_bounds`, which does the pair.
     """
     # `is not None` is not enough: a handler called directly rather than
     # through Litestar's binding — which several tests do — still holds the
@@ -68,6 +69,20 @@ def _date_param(value: str | None, name: str) -> str | None:
         return parse_date(value)
     except ValueError as e:
         raise UserInputError(f"invalid {name}: {e}") from e
+
+
+def _date_bounds(
+    since: str | None, before: str | None,
+) -> tuple[str | None, str | None]:
+    """Parse both date params at once, for rebinding at the top of a handler.
+
+    The pair is what a handler actually has, and taking it as a pair is what
+    keeps the two from drifting: a per-param call also hand-writes the param's
+    own name for the error message, so a transposed pair reports the wrong
+    field and nothing catches it. It also means a route that grows a date
+    filter has one thing to remember rather than two.
+    """
+    return _date_param(since, "since"), _date_param(before, "before")
 
 
 def _client_ip(request: Request) -> str | None:
@@ -352,14 +367,14 @@ def tags_route(
     (see :func:`siftd.api.tags.list_tags`); omitted, the enrichment query is
     skipped.
     """
+    since, before = _date_bounds(since, before)
     from siftd.api.tags import list_tags
 
     owner = _effective_owner(request, None)
     fidelity = _fidelity_from_visible(visible)
     return _dispatch(
         "/api/v1/tags", "GET", list_tags,
-        {"db_path": db_path, "since": _date_param(since, "since"),
-         "before": _date_param(before, "before"), "owner": owner,
+        {"db_path": db_path, "since": since, "before": before, "owner": owner,
          "fidelity": fidelity},
         "tags", db_path, fidelity=fidelity,
     )
@@ -628,6 +643,7 @@ def export_route(
     - ``format`` absent: legacy behavior — returns
       ``{"conversations": [...]}`` of full conversation dicts.
     """
+    since, before = _date_bounds(since, before)
     from painted import Fidelity
 
     owner = _effective_owner(request, owner)
@@ -651,8 +667,7 @@ def export_route(
             {"format": format, "fidelity": fidelity, "no_header": no_header,
              "id": id, "last": last, "n": n,
              "workspace": workspace, "tag": tag, "no_tag": no_tag,
-             "tag_kind": tag_kind, "since": _date_param(since, "since"),
-             "before": _date_param(before, "before"),
+             "tag_kind": tag_kind, "since": since, "before": before,
              "search": search, "view": view, "db_path": db_path, "owner": owner},
             "export-artifact", db_path,
             fidelity=fidelity,
@@ -667,8 +682,8 @@ def export_route(
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
         {"fidelity": fidelity, "id": id, "workspace": workspace,
-         "since": _date_param(since, "since"), "before": _date_param(before, "before"),
-         "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
+         "since": since,
+         "before": before, "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
          "n": n, "db_path": db_path, "owner": owner},
         "export", db_path,
         fidelity=fidelity,
@@ -792,6 +807,7 @@ def pull(
     dry_run: int = Parameter(query="dry_run", default=0),
 ) -> Response | File:
     """Slice and stream the team DB based on filters."""
+    since, before = _date_bounds(since, before)
     from siftd.api.sync import SYNC_HTTP_CHUNK_SIZE
 
     owner = _effective_owner(request, owner)
@@ -808,8 +824,8 @@ def pull(
             db_path=db_path,
             workspace=workspace,
             model=model,
-            since=_date_param(since, "since"),
-            before=_date_param(before, "before"),
+            since=since,
+            before=before,
             tag=tag,
             no_tag=no_tag,
             tag_kind=tag_kind,
@@ -848,8 +864,8 @@ def pull(
             source_db=db_path,
             target_path=slice_path,
             workspace=workspace,
-            since=_date_param(since, "since"),
-            before=_date_param(before, "before"),
+            since=since,
+            before=before,
             model=model,
             tag=tag,
             no_tag=no_tag,
@@ -997,6 +1013,7 @@ def conversation_list(
     include_tool_content: bool = Parameter(query="include_tool_content", default=False),
 ) -> dict | Response:
     """List conversations with filtering."""
+    since, before = _date_bounds(since, before)
     from painted import Fidelity
 
     from siftd.api.conversations import list_conversations
@@ -1008,8 +1025,7 @@ def conversation_list(
     return _dispatch(
         "/api/v1/conversations", "GET", list_conversations,
         {"fidelity": fidelity, "db_path": db_path, "workspace": workspace, "model": model,
-         "since": _date_param(since, "since"),
-         "before": _date_param(before, "before"), "search": search, "tool": tool,
+         "since": since, "before": before, "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
          "tag_kind": tag_kind, "tool_tag": tool_tag,
          "n": n, "oldest": oldest, "owner": owner},
@@ -1060,6 +1076,7 @@ def search_route(
     turns: str | None = Parameter(query="turns", default=None),
 ) -> dict | Response:
     """Semantic + FTS search against team DB."""
+    since, before = _date_bounds(since, before)
     try:
         from siftd.api.search import (
             EmbeddingsRequiredError,
@@ -1095,8 +1112,7 @@ def search_route(
             "/api/v1/search", "GET", search_view,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
-             "model": model, "since": _date_param(since, "since"),
-             "before": _date_param(before, "before"),
+             "model": model, "since": since, "before": before,
              "exclude_active": exclude_active,
              "rerank": rerank, "lambda_": lambda_, "recency": recency,
              "recency_half_life": recency_half_life,
