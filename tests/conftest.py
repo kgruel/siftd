@@ -283,6 +283,10 @@ def make_db(
         external_id, prompt_text, response_text, started_at (optional),
         tags (optional list of tag names), tool_name (optional)
 
+    Ends by rebuilding the derived tier, as every real bulk raw-row writer does.
+    Without it usage_by_conv_model / conversation_stats are empty, and every
+    `PRAGMA foreign_key_check` assertion over them is vacuous.
+
     Returns the path for chaining.
     """
     conn = create_database(path)
@@ -334,12 +338,6 @@ def make_db(
             tag_id = get_or_create_tag(conn, tag_name)
             apply_tag(conn, "conversation", conv_id, tag_id)
 
-    # Every real bulk raw-row write ends by rebuilding the derived tier (ingest,
-    # merge, slice all do).  A fixture that skips it is not a production database:
-    # it leaves usage_by_conv_model / conversation_stats EMPTY, which silently
-    # voided every `PRAGMA foreign_key_check` assertion in the merge and receive
-    # suites for those two tables — the reason siftd#20 survived four minor
-    # versions behind a test that looked like it covered it.
     rebuild_rollups(conn)
 
     conn.commit()

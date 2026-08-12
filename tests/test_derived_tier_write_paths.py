@@ -2,13 +2,17 @@
 every path that bulk-writes raw rows must rebuild it, exactly as ingest does.
 
 These tests exercise the REAL slice/merge/receive APIs and then read the
-rollup-backed stats — they deliberately do NOT call rebuild_rollups in setup.
-That fixture habit is precisely what hid the S2 regression: slice() and merge()
+rollup-backed stats. That is what hid the S2 regression: slice() and merge()
 copy raw event rows but did not rebuild the rollup, so stats reads either
 crashed ("no such table: usage_by_conv_model") or silently reported zero tokens
-for real conversations. make_db gives each conversation 100 input + 50 output
-tokens and does NOT rebuild the rollup, so a passing assertion here proves the
-write-path rebuilt the tier itself.
+for real conversations.
+
+make_db gives each conversation 100 input + 50 output tokens. It also rebuilds
+the tier in the SOURCE, but slice/merge/receive copy raw rows only and never
+propagate the tier, so a populated source cannot carry the target — a passing
+assertion here still proves the write-path rebuilt the tier itself. Verified by
+falsification: strip the post-commit rebuild_rollups from slice.py and merge.py
+and the same four of these five tests fail either way.
 """
 
 from pathlib import Path

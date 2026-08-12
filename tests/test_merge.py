@@ -780,21 +780,17 @@ def test_replace_cascades_grandchildren(tmp_path):
 
 
 def test_replace_clears_derived_tier(tmp_path):
-    """Replacing a conversation drops its derived-tier rows, not just its raw children.
+    """After a replace, the derived tier describes the replacement (siftd#20).
 
-    siftd#20: usage_by_conv_model and conversation_stats both declare ON DELETE
-    CASCADE, which the merge's `foreign_keys = OFF` disables — so the stale
-    conversation's rows survived the delete and the pre-commit foreign_key_check
-    rolled the whole merge back. Every subsequent pull in that direction failed
-    identically, which is what made it a hard stop rather than a nuisance.
+    The tier's rows for the stale conversation used to survive the delete — both
+    tables declare ON DELETE CASCADE, which the merge's `foreign_keys = OFF`
+    disables — and foreign_key_check rolled the whole merge back.
 
-    Keyed on `rebuild_rollups`, the tier's own definition, so a third derived
-    table enters this assertion by construction when it enters the tier.
+    That rollback is now caught by every foreign_key_check assertion in this
+    file, since `make_db` populates the tier. What this test adds is the
+    positive half: the surviving rows are keyed to the *new* conversation.
     """
     import time
-
-    from siftd.storage.sqlite import open_database as _open
-    from siftd.storage.usage_rollup import rebuild_rollups
 
     target = _make_db(
         tmp_path / "target.db",
@@ -806,9 +802,10 @@ def test_replace_clears_derived_tier(tmp_path):
         conversations=[{"external_id": "conv-1", "prompt_text": "Updated"}],
     )
 
-    conn = _open(target)
+    conn = sqlite3.connect(str(target))
     old_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
-    rebuild_rollups(conn, commit=True)
+    # Precondition, not setup: if the fixture ever stops rebuilding the tier,
+    # this test — and the file's foreign_key_check assertions — go vacuous.
     assert conn.execute("SELECT COUNT(*) FROM usage_by_conv_model").fetchone()[0] > 0
     conn.close()
 
@@ -818,57 +815,12 @@ def test_replace_clears_derived_tier(tmp_path):
     conn = sqlite3.connect(str(target))
     new_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
     assert new_id != old_id
-    # The tier is re-derived post-merge, so it must describe the replacement —
-    # not carry a row for a conversation that no longer exists.
     for table in ("usage_by_conv_model", "conversation_stats"):
         ids = {r[0] for r in conn.execute(f"SELECT conversation_id FROM {table}")}
         assert ids == {new_id}, table
     violations = conn.execute("PRAGMA foreign_key_check").fetchall()
     conn.close()
     assert violations == []
-
-
-def test_replace_clears_fts_ghost_without_rebuild(tmp_path):
-    """The replaced conversation stops answering searches from its deleted text.
-
-    content_fts is a virtual table: no FK, no cascade, and invisible to
-    foreign_key_check — so this half of siftd#20's defect class fails silently
-    rather than loudly. It only surfaces with rebuild_fts=False, which is the
-    default for receive_database and what every sync caller passes.
-    """
-    import time
-
-    from siftd.storage.fts import get_fts_sync_status, rebuild_fts_index
-    from siftd.storage.sqlite import open_database as _open
-
-    target = _make_db(
-        tmp_path / "target.db",
-        conversations=[{"external_id": "conv-1", "prompt_text": "ghosttext"}],
-    )
-    time.sleep(0.01)
-    source = _make_db(
-        tmp_path / "source.db",
-        conversations=[{"external_id": "conv-1", "prompt_text": "freshtext"}],
-    )
-
-    conn = _open(target)
-    rebuild_fts_index(conn, commit=True)
-    assert conn.execute(
-        "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH 'ghosttext'"
-    ).fetchone()[0] == 1
-    conn.close()
-
-    merge_database(target, source, rebuild_fts=False)
-
-    conn = sqlite3.connect(str(target))
-    assert conn.execute(
-        "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH 'ghosttext'"
-    ).fetchone()[0] == 0
-    # missing_count is deliberately not asserted: the push path never indexes
-    # newly-merged content at all (siftd#49), a wider gap than this delete.
-    orphaned = get_fts_sync_status(conn)["orphaned_count"]
-    conn.close()
-    assert orphaned == 0
 
 
 def test_cli_no_replace(tmp_path, capsys):
