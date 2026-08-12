@@ -569,3 +569,58 @@ class TestBackgroundTaskCleanupResilience:
         assert any("Failed to clean up" in r.getMessage() for r in warning_records), (
             "Expected a WARNING log about cleanup failure"
         )
+
+
+# ---------------------------------------------------------------------------
+# Date-param parsing at the HTTP boundary (#32)
+# ---------------------------------------------------------------------------
+
+
+class TestDateParamsAreParsedAtTheBoundary:
+    """serve is an input context and had no equivalent of argparse's `date_arg`.
+
+    Every `since`/`before` went into `started_at >= ?` exactly as typed. The
+    filter is a *string* comparison, so an unparseable value neither matched
+    nor complained — it silently degraded the request instead of rejecting it.
+    Invisible from siftd's own clients, which always send a parsed value.
+    """
+
+    ROUTES = (
+        "/api/v1/pull",
+        "/api/v1/conversations",
+        "/api/v1/tags",
+        "/api/v1/export",
+    )
+
+    @pytest.fixture
+    def client(self, tmp_path):
+        team_db = _make_team_db(
+            tmp_path / "team.db", conversations=[{"external_id": "c1"}],
+        )
+        with TestClient(create_app(db_path=team_db, auth_config=None)) as c:
+            yield c
+
+    @pytest.mark.parametrize("route", ROUTES)
+    @pytest.mark.parametrize("param", ["since", "before"])
+    def test_an_unparseable_value_is_rejected(self, client, route, param):
+        resp = client.get(route, params={param: "lastweek"})
+        assert resp.status_code == 400
+        assert "lastweek" in resp.json()["error"]
+
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_a_partial_iso_date_is_rejected_not_widened(self, client, route):
+        """`2024-01` is the shape #21 found on the wire. `parse_date` rejects
+        it; raw, it matched every row in January by prefix."""
+        resp = client.get(route, params={"since": "2024-01"})
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize("route", ROUTES)
+    def test_the_vocabulary_the_cli_accepts_works_here_too(self, client, route):
+        """Both input contexts run `parse_date`, so relative forms resolve
+        rather than being compared as the literal string '7d'."""
+        assert client.get(route, params={"since": "7d"}).status_code == 200
+
+    def test_an_already_parsed_value_still_round_trips(self, client):
+        """siftd's own clients send `date_arg` output; `parse_date` accepts it."""
+        resp = client.get("/api/v1/pull", params={"since": "2024-01-15T09:30:12"})
+        assert resp.status_code == 200

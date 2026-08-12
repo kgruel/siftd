@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3262 |
+| `tests/` | 186 | 3269 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 8 | 56 |
 | `tests/cli/` | 28 | 630 |
@@ -264,9 +264,9 @@ docstring so its row is meaningful.
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
 | [test_storage.py](test_storage.py) | 94 | Tests for siftd storage layer coverage. |
-| [test_sync.py](test_sync.py) | 92 | Tests for siftd.api.sync — sync protocol utilities. |
+| [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
-| [test_sync_http_streaming.py](test_sync_http_streaming.py) | 14 | Tests for Y3: HTTP streaming for sync push and pull. |
+| [test_sync_http_streaming.py](test_sync_http_streaming.py) | 18 | Tests for Y3: HTTP streaming for sync push and pull. |
 | [test_sync_progress.py](test_sync_progress.py) | 11 | Tests for push/pull progress emission (api/sync.py). |
 | [test_sync_transport.py](test_sync_transport.py) | 15 | Tests for SSH transport in siftd.api.sync using FakeSSH. |
 | [test_table.py](test_table.py) | 13 | Tests for siftd.output.table — the one width-budgeted painted table. |

@@ -41,6 +41,35 @@ def _actor_identity(request: Request) -> str:
     return _effective_owner(request, None) or "anonymous"
 
 
+def _date_param(value: str | None, name: str) -> str | None:
+    """Parse a `since`/`before` query param into a comparable bound.
+
+    argparse is where the CLI does this, via `date_arg`. serve is the other
+    input context and had no equivalent, so every date param went into
+    `started_at >= ?` exactly as typed — and the filter is a string
+    comparison, so it neither matched nor complained. `since=lastweek` simply
+    returned nothing, and `since=2024-01` (a value `parse_date` rejects)
+    silently matched the whole of January.
+
+    siftd's own clients always send an already-parsed value, which is why this
+    stayed invisible: `date_arg` ran first, and `parse_date` accepts its own
+    output. Any other client got the vacuous filter.
+    """
+    # `is not None` is not enough: a handler called directly rather than
+    # through Litestar's binding — which several tests do — still holds the
+    # unbound `Parameter(...)` sentinel here. Only a real query string is a
+    # date; anything else passes through as the caller's own business.
+    if not isinstance(value, str):
+        return value
+    from siftd.dateparse import parse_date
+    from siftd.errors import UserInputError
+
+    try:
+        return parse_date(value)
+    except ValueError as e:
+        raise UserInputError(f"invalid {name}: {e}") from e
+
+
 def _client_ip(request: Request) -> str | None:
     """Resolve the real client IP, honoring X-Forwarded-For only from trusted proxies.
 
@@ -329,7 +358,8 @@ def tags_route(
     fidelity = _fidelity_from_visible(visible)
     return _dispatch(
         "/api/v1/tags", "GET", list_tags,
-        {"db_path": db_path, "since": since, "before": before, "owner": owner,
+        {"db_path": db_path, "since": _date_param(since, "since"),
+         "before": _date_param(before, "before"), "owner": owner,
          "fidelity": fidelity},
         "tags", db_path, fidelity=fidelity,
     )
@@ -621,7 +651,8 @@ def export_route(
             {"format": format, "fidelity": fidelity, "no_header": no_header,
              "id": id, "last": last, "n": n,
              "workspace": workspace, "tag": tag, "no_tag": no_tag,
-             "tag_kind": tag_kind, "since": since, "before": before,
+             "tag_kind": tag_kind, "since": _date_param(since, "since"),
+             "before": _date_param(before, "before"),
              "search": search, "view": view, "db_path": db_path, "owner": owner},
             "export-artifact", db_path,
             fidelity=fidelity,
@@ -635,8 +666,9 @@ def export_route(
     )
     return _dispatch(
         "/api/v1/export", "GET", export_conversations,
-        {"fidelity": fidelity, "id": id, "workspace": workspace, "since": since,
-         "before": before, "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
+        {"fidelity": fidelity, "id": id, "workspace": workspace,
+         "since": _date_param(since, "since"), "before": _date_param(before, "before"),
+         "tag": tag, "no_tag": no_tag, "tag_kind": tag_kind,
          "n": n, "db_path": db_path, "owner": owner},
         "export", db_path,
         fidelity=fidelity,
@@ -776,8 +808,8 @@ def pull(
             db_path=db_path,
             workspace=workspace,
             model=model,
-            since=since,
-            before=before,
+            since=_date_param(since, "since"),
+            before=_date_param(before, "before"),
             tag=tag,
             no_tag=no_tag,
             tag_kind=tag_kind,
@@ -816,8 +848,8 @@ def pull(
             source_db=db_path,
             target_path=slice_path,
             workspace=workspace,
-            since=since,
-            before=before,
+            since=_date_param(since, "since"),
+            before=_date_param(before, "before"),
             model=model,
             tag=tag,
             no_tag=no_tag,
@@ -976,7 +1008,8 @@ def conversation_list(
     return _dispatch(
         "/api/v1/conversations", "GET", list_conversations,
         {"fidelity": fidelity, "db_path": db_path, "workspace": workspace, "model": model,
-         "since": since, "before": before, "search": search, "tool": tool,
+         "since": _date_param(since, "since"),
+         "before": _date_param(before, "before"), "search": search, "tool": tool,
          "tag": tag, "all_tags": all_tags, "no_tag": no_tag,
          "tag_kind": tag_kind, "tool_tag": tool_tag,
          "n": n, "oldest": oldest, "owner": owner},
@@ -1062,7 +1095,8 @@ def search_route(
             "/api/v1/search", "GET", search_view,
             {"q": q, "db_path": db_path, "n": n, "recall": recall,
              "mode": mode, "workspace": workspace,
-             "model": model, "since": since, "before": before,
+             "model": model, "since": _date_param(since, "since"),
+             "before": _date_param(before, "before"),
              "exclude_active": exclude_active,
              "rerank": rerank, "lambda_": lambda_, "recency": recency,
              "recency_half_life": recency_half_life,

@@ -63,16 +63,57 @@ class TestIsHttpRemote:
 
 class TestResolveSince:
     def test_explicit(self):
-        assert _resolve_since("2024-01", False, _remote()) == "2024-01"
+        """An explicit value passes through — argparse's `date_arg` already
+        normalized it, and `parse_date` accepts its own output either way."""
+        assert _resolve_since("2024-01-15", False, _remote()) == "2024-01-15"
 
     def test_push_all(self):
         assert _resolve_since(None, True, _remote()) is None
 
-    def test_last_push(self):
-        assert _resolve_since(None, False, _remote(last_push="2024-06")) == "2024-06"
-
     def test_no_history(self):
         assert _resolve_since(None, False, _remote()) is None
+
+    @pytest.mark.parametrize(
+        "stored,expected",
+        [
+            # `cursor_ts = win_before or now` — so a cursor is either
+            # `datetime.now(UTC).isoformat()` …
+            ("2024-01-15T09:30:12.780749+00:00", "2024-01-15T09:30:12"),
+            # … or a conversation's own `started_at`, in whichever spelling
+            # its adapter writes. claude_code's is this one.
+            ("2024-01-15T09:30:12Z", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12", "2024-01-15T09:30:12"),
+            ("2024-01-15T09:30:12+00:00", "2024-01-15T09:30:12"),
+        ],
+    )
+    def test_stored_cursor_is_normalized(self, stored, expected):
+        """A stored cursor never passed through argparse, so it must be
+        normalized here or each transport invents its own bound."""
+        assert _resolve_since(None, False, _remote(last_push=stored)) == expected
+
+    def test_a_zulu_cursor_no_longer_skips_its_own_second(self):
+        """The defect, stated as the property that failed.
+
+        `Z` is 0x5A and `.` is 0x2E, so the raw cursor `...T09:30:12Z` sorts
+        *above* every fractional row in its own second. Those rows fell below
+        the bound on the local and HTTP transports, and the cursor then
+        advanced past them, so no later sync reconsidered them. `_pull_ssh`
+        was immune only because it re-parses the cursor as the remote's
+        `--since` argument.
+        """
+        raw = "2024-01-15T09:30:12Z"
+        row = "2024-01-15T09:30:12.900749+00:00"  # 0.9s *after* the cursor
+        assert row < raw  # what the local/HTTP bound compared against
+
+        bound = _resolve_since(None, False, _remote(last_push=raw))
+        assert bound is not None
+        assert row >= bound
+
+    def test_unparseable_cursor_falls_back_to_a_full_sync(self):
+        """Only a hand-edited config can produce one. Full sync is always
+        correct, merges idempotently, and rewrites the cursor readable —
+        the same remedy the filter-signature branch already applies."""
+        assert _resolve_since(None, False, _remote(last_push="lastweek")) is None
 
 
 class TestFriendlyOsError:
@@ -424,13 +465,21 @@ class TestSyncPullBranches:
 
 class TestResolvePullSince:
     def test_explicit(self):
-        assert _resolve_pull_since("2024-01", False, _remote()) == "2024-01"
+        assert _resolve_pull_since("2024-01-15", False, _remote()) == "2024-01-15"
 
     def test_pull_all(self):
-        assert _resolve_pull_since(None, True, _remote(last_pull="2024-06")) is None
+        assert _resolve_pull_since(None, True, _remote(last_pull="2024-06-15")) is None
 
     def test_last_pull(self):
-        assert _resolve_pull_since(None, False, _remote(last_pull="2024-06")) == "2024-06"
+        assert _resolve_pull_since(None, False, _remote(last_pull="2024-06-15")) == "2024-06-15"
+
+    def test_stored_cursor_is_normalized(self):
+        """Pull shares `_normalized_cursor` with push. Before it, `_pull_ssh`
+        got the normalized bound (the remote's argparse re-parsed the cursor)
+        while `_pull_local` and `_pull_http` got the raw string."""
+        assert _resolve_pull_since(
+            None, False, _remote(last_pull="2024-01-15T09:30:12.780749+00:00"),
+        ) == "2024-01-15T09:30:12"
 
 
 class TestPushHttp:
@@ -824,42 +873,42 @@ class TestFilterAwareCursors:
 
     def test_push_same_filters_uses_cursor(self):
         sig = _filter_signature({"workspace": "proj"})
-        r = _remote(last_push="2024-06", last_push_filters=sig)
-        assert _resolve_since(None, False, r, sig) == "2024-06"
+        r = _remote(last_push="2024-06-15", last_push_filters=sig)
+        assert _resolve_since(None, False, r, sig) == "2024-06-15"
 
     def test_push_different_filters_resets_cursor(self):
         old_sig = _filter_signature({"workspace": "proj"})
         new_sig = _filter_signature({"workspace": "other"})
-        r = _remote(last_push="2024-06", last_push_filters=old_sig)
+        r = _remote(last_push="2024-06-15", last_push_filters=old_sig)
         assert _resolve_since(None, False, r, new_sig) is None
 
     def test_push_no_stored_sig_with_new_filters_resets(self):
         """Pre-existing cursor without filter sig resets when filters are added."""
         sig = _filter_signature({"workspace": "proj"})
-        r = _remote(last_push="2024-06")  # no stored filter sig
+        r = _remote(last_push="2024-06-15")  # no stored filter sig
         assert _resolve_since(None, False, r, sig) is None
 
     def test_push_no_stored_sig_no_filters_uses_cursor(self):
         """Pre-existing cursor without filters continues working."""
-        r = _remote(last_push="2024-06")
-        assert _resolve_since(None, False, r, "") == "2024-06"
+        r = _remote(last_push="2024-06-15")
+        assert _resolve_since(None, False, r, "") == "2024-06-15"
 
     def test_pull_same_filters_uses_cursor(self):
         sig = _filter_signature({"tag": ["public"]})
-        r = _remote(last_pull="2024-06", last_pull_filters=sig)
-        assert _resolve_pull_since(None, False, r, sig) == "2024-06"
+        r = _remote(last_pull="2024-06-15", last_pull_filters=sig)
+        assert _resolve_pull_since(None, False, r, sig) == "2024-06-15"
 
     def test_pull_different_filters_resets_cursor(self):
         old_sig = _filter_signature({"tag": ["public"]})
         new_sig = _filter_signature({"tag": ["private"]})
-        r = _remote(last_pull="2024-06", last_pull_filters=old_sig)
+        r = _remote(last_pull="2024-06-15", last_pull_filters=old_sig)
         assert _resolve_pull_since(None, False, r, new_sig) is None
 
     def test_last_sent_filters_checked(self):
         """When last_sent is used, its filter sig is checked."""
         sig = _filter_signature({"owner": "alice"})
-        r = _remote(last_sent="2024-07", last_sent_filters=sig)
-        assert _resolve_since(None, False, r, sig) == "2024-07"
+        r = _remote(last_sent="2024-07-15", last_sent_filters=sig)
+        assert _resolve_since(None, False, r, sig) == "2024-07-15"
 
         new_sig = _filter_signature({"owner": "bob"})
         assert _resolve_since(None, False, r, new_sig) is None
