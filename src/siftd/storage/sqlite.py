@@ -326,7 +326,7 @@ def open_database(
     # every consumer is a `get_or_create_*`, and every call site of those is a
     # write path. That premise is load-bearing and nothing enforces it; the
     # durable fix is to key the caches by database the way `_EmbeddingCache`
-    # already does (see #NN), after which there is nothing to clear here and the
+    # already does (see #66), after which there is nothing to clear here and the
     # premise stops mattering. Until then this branch is a way station.
     #
     # Note the call also resets `blobs._batch_timestamp`, which is neither a
