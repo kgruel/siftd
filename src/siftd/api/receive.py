@@ -28,7 +28,10 @@ def receive_database(
     Args:
         source_path: Path to the incoming database (e.g. a slice).
         target_db: Path to the target siftd database.
-        rebuild_fts: Whether to rebuild the FTS5 index after merge.
+        rebuild_fts: Accepted and ignored. Received content is indexed on
+            both paths — the merge indexes what it wrote, the create path
+            indexes the file it copied (#49). Kept for compatibility; removal
+            is tracked in #74.
         user_id: Authenticated user identity to stamp as conversation owner.
         push_id: Push log ID for provenance linking.
         preflight: If True (default), run structural integrity checks on the
@@ -54,12 +57,13 @@ def receive_database(
 
     if not target_db.exists():
         result = _create_from_source(source_path, target_db)
-        # Unconditional, unlike the merge path's `rebuild_fts`. This copies a
-        # push slice wholesale, and slices are built with the index off (it is
-        # transport, not a corpus) — so gating here meant a receive-only
-        # server's *first* push produced an entirely unindexed database, which
-        # only a manual rebuild would ever fix. There is nothing to scope to:
-        # the whole file is what this push touched (#49).
+        # This copies the source wholesale, and a sync/push slice carries no
+        # index — `sync.py` builds those with `rebuild_fts=False` because a
+        # payload is transport, not a corpus. So gating here meant a
+        # receive-only server's *first* push produced an entirely unindexed
+        # database, which no later push would repair: every later push is a
+        # merge, and merges never wrote the index either. There is nothing to
+        # scope to — the whole file is what arrived (#49).
         from siftd.storage.fts import rebuild_fts_index
         from siftd.storage.sqlite import open_database
         fts_conn = open_database(target_db)

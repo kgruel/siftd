@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a push had become unsearchable outright.
   ([#49](https://github.com/kgruel/siftd/issues/49))
 
+- **Pushing no longer rebuilds the whole search index.** `--no-fts` on
+  `siftd db receive`/`merge` and the `serve.fts_rebuild` setting are accepted
+  and ignored — merged content is indexed either way. The trade: a push no
+  longer *incidentally* repairs index drift it did not cause; use `siftd doctor
+  fix` or `siftd ingest --rebuild-fts`, which is where repair already lived.
+  ([#49](https://github.com/kgruel/siftd/issues/49))
+
 - **`siftd show`, `siftd id`, and `GET /api/v1/events/{id}` no longer answer an
   event-ID prefix that names several events by silently picking one.** They now
   list the candidates and ask for a longer prefix, as conversation prefixes

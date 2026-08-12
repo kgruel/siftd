@@ -1805,7 +1805,7 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 
 - `target_db`: Path to the main siftd database.
 - `source_path`: Path to the source database to merge in.
-- `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
+- `rebuild_fts`: Accepted and ignored. Merged content is indexed as part of the merge (#49), so this no longer decides whether it is searchable; it used to trigger a *full* corpus rebuild on top, which the scoped write makes redundant. Kept for compatibility — removal is tracked in #74.
 - `dry_run`: If True, compute counts but roll back all changes.
 - `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
 - `before_commit`: Optional callback(conn, stats) invoked after merge but before commit.  Runs in the same transaction as the merge, so any writes are atomic with the merge itself.
@@ -1830,7 +1830,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = 
 
 - `source_path`: Path to the incoming database (e.g. a slice).
 - `target_db`: Path to the target siftd database.
-- `rebuild_fts`: Whether to rebuild the FTS5 index after merge.
+- `rebuild_fts`: Accepted and ignored. Received content is indexed on both paths — the merge indexes what it wrote, the create path indexes the file it copied (#49). Kept for compatibility; removal is tracked in #74.
 - `user_id`: Authenticated user identity to stamp as conversation owner.
 - `push_id`: Push log ID for provenance linking.
 

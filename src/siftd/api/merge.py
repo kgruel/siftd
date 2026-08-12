@@ -12,6 +12,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from siftd.storage.fts import rebuild_fts_index
 from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.sqlite import open_database
 
@@ -32,7 +33,11 @@ def merge_database(
     Args:
         target_db: Path to the main siftd database.
         source_path: Path to the source database to merge in.
-        rebuild_fts: Whether to rebuild the FTS5 index after merge.
+        rebuild_fts: Accepted and ignored. Merged content is indexed as part
+            of the merge (#49), so this no longer decides whether it is
+            searchable; it used to trigger a *full* corpus rebuild on top,
+            which the scoped write makes redundant. Kept for compatibility —
+            removal is tracked in #74.
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
             versions from the source. If False, keep existing versions.
@@ -97,24 +102,20 @@ def merge_database(
 
         stats = _merge_attached(conn, replace=replace, user_id=user_id)
 
-        # Index the conversations this merge wrote, in the merge's own
-        # transaction. Unconditional, and deliberately not gated on
-        # rebuild_fts: that flag chooses whether to pay for a *full* rebuild,
-        # and every push path answers no — so before #49 the choice on offer
-        # was O(corpus) per push or an index that silently lagged forever.
-        # Scoped to what changed, indexing is cheap enough to stop being a
-        # choice. In-transaction because `_replace_stale_conversations` already
-        # deletes the replaced rows' index entries here; splitting the delete
-        # from the insert is what would leave a window where search can see
-        # neither version.
-        from siftd.storage.fts import rebuild_fts_index
-
-        touched = [
-            *stats.get("new_conversation_ids", []),
-            *stats.get("replaced_conversation_ids", []),
-        ]
-        if touched:
-            rebuild_fts_index(conn, conversation_ids=touched)
+        # Index what this merge wrote, in the merge's own transaction —
+        # unconditional, never gated on rebuild_fts (#49). In-transaction
+        # because `_replace_stale_conversations` already deleted the replaced
+        # rows' index entries below; splitting the delete from the insert is
+        # what would leave a window where search sees neither version.
+        #
+        # dict.fromkeys, not a concatenation: the conversations INSERT
+        # preserves the source id, so every replaced id is *also* in
+        # new_conversation_ids and a plain merge of the lists indexes it twice.
+        if not dry_run:
+            rebuild_fts_index(conn, conversation_ids=list(dict.fromkeys([
+                *stats.get("new_conversation_ids", []),
+                *stats.get("replaced_conversation_ids", []),
+            ])))
 
         # Validate FK integrity before committing (so failures are atomic)
         if not dry_run:
@@ -148,21 +149,17 @@ def merge_database(
     # derived tier, so usage_by_conv_model / conversation_stats would go stale —
     # the live sync/receive path merges new conversations that would otherwise
     # never reach the rollup, silently undercounting server stats.  Mirrors the
-    # ingest invariant.  Unconditional (not gated on rebuild_fts) so stats stay
-    # correct even when callers skip the FTS rebuild (receive defaults to off).
+    # ingest invariant.  Unconditional, as the FTS write above now is too.
     # Full rebuild — correct but O(corpus); an incremental per-conversation
-    # upsert is a deferred optimization.  Post-commit (matching the FTS rebuild):
-    # a failure here leaves the tier stale rather than aborting the merge.
+    # upsert is a deferred optimization.  Post-commit, unlike the FTS write
+    # above: a failure here leaves the tier stale rather than aborting the
+    # merge, and a rollup is re-derivable where a missing index row is not.
     if not dry_run:
         post_conn = open_database(target_db)
         try:
             from siftd.storage.usage_rollup import rebuild_rollups
 
             rebuild_rollups(post_conn, commit=True)
-            if rebuild_fts:
-                from siftd.storage.fts import rebuild_fts_index
-
-                rebuild_fts_index(post_conn, commit=True)
         finally:
             post_conn.close()
 
@@ -599,8 +596,10 @@ def _replace_stale_conversations(
     # The derived tier is rebuilt post-commit, but foreign_key_check runs before that.
     conn.execute("DELETE FROM usage_by_conv_model WHERE conversation_id IN (SELECT id FROM _stale_convs)")
     conn.execute("DELETE FROM conversation_stats WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    # content_fts is virtual: no FK, invisible to foreign_key_check, and the push
-    # path passes rebuild_fts=False, so nothing else would ever clear these rows.
+    # content_fts is virtual: no FK, invisible to foreign_key_check. Still
+    # load-bearing after #49 — these are the *old* ids, and the scoped index
+    # write covers only the replacements' (new) ids, so nothing else clears
+    # these rows.
     conn.execute("DELETE FROM content_fts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
 
     # Delete the stale conversations themselves

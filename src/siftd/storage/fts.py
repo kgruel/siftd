@@ -100,14 +100,24 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
     rebuild_fts_index(conn)
 
 
-# What counts as indexable text, in one place. `get_fts_sync_status` asks the
-# same question to decide whether a block is *missing* from the index, so a
-# second spelling would make the index and its own drift check disagree about
-# which rows should be there.
+# What counts as indexable text for the two SQL sites that decide it: this
+# module's index writer and `get_fts_sync_status`, which asks the same question
+# to decide whether a block is *missing*. A second spelling here would make the
+# index and its own drift check disagree about which rows belong.
+#
+# Ingest decides it a third time, in Python (`storage/sqlite.py`'s
+# `if text := block.content.get("text")`), and cannot share this — it holds the
+# parsed block, not a row. The `!= ''` is what keeps the two agreeing: an empty
+# string is indexable by `IS NOT NULL` and falsy to ingest, so without it a
+# `{"text": ""}` block counts as permanently missing from an index that ingest
+# will never write. Making them one primitive is #75.
 _INDEXABLE = (
-    "json_valid(ec.content) AND json_extract(ec.content, '$.text') IS NOT NULL"
+    "json_valid(ec.content)"
+    " AND json_extract(ec.content, '$.text') IS NOT NULL"
+    " AND json_extract(ec.content, '$.text') != ''"
 )
 
+# Must end in an open WHERE clause: the scoped branch below appends to it.
 _INDEX_INSERT = f"""
     INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
     SELECT
@@ -120,8 +130,7 @@ _INDEX_INSERT = f"""
     WHERE {_INDEXABLE}
 """
 
-# SQLite caps bound parameters; scope batches stay well under it.
-_SCOPE_BATCH = 500
+_SCOPE_TABLE = "_fts_scope"
 
 
 def rebuild_fts_index(
@@ -132,18 +141,22 @@ def rebuild_fts_index(
 ) -> None:
     """Rebuild the FTS index from event_content blocks.
 
-    Indexes every event_content row with indexable text ($.text IS NOT NULL) —
-    text and thinking block types.
+    Indexes every event_content row with indexable text — the text and thinking
+    block types.
 
     ``conversation_ids`` scopes *both* halves, the delete and the insert, to
     those conversations and leaves every other indexed row untouched. That is
     what lets a merge index exactly what it just wrote rather than re-reading
-    the corpus (#49): a full rebuild is O(corpus) per push, which is why the
-    push paths skipped it and shipped an index that silently lagged instead.
-    ``None`` is the full rebuild.
+    the corpus (#49). ``None`` is the full rebuild; an empty list is a no-op,
+    since "index what this merge touched" over an empty set has nothing to do.
 
-    An empty list is a no-op, not a full rebuild — "index what this merge
-    touched" over an empty set means there is nothing to index.
+    The scope rides a temp table rather than an ``IN (?, ?, …)`` list, and that
+    is not just about the bound-parameter cap. ``content_fts.conversation_id``
+    is an FTS5 ``UNINDEXED`` column, so *any* predicate on it scans the whole
+    index — batching the delete multiplies that scan by the batch count instead
+    of amortizing it. Measured on 16,977 conversations: 34 batches of 500 took
+    ~6-10 s, one temp-table pass ~0.2 s. The insert half needs no help; SQLite
+    drives it from ``idx_events_conversation_kind`` either way.
     """
     # event_content may not exist yet when called from ensure_fts_table before migration 4 runs
     if not conn.execute(
@@ -154,16 +167,19 @@ def rebuild_fts_index(
     if conversation_ids is None:
         conn.execute("DELETE FROM content_fts")
         conn.execute(_INDEX_INSERT)
-    else:
-        for i in range(0, len(conversation_ids), _SCOPE_BATCH):
-            batch = conversation_ids[i : i + _SCOPE_BATCH]
-            marks = ", ".join("?" * len(batch))
-            conn.execute(
-                f"DELETE FROM content_fts WHERE conversation_id IN ({marks})", batch,
+    elif conversation_ids:
+        conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
+        conn.execute(f"CREATE TEMP TABLE {_SCOPE_TABLE} (id TEXT PRIMARY KEY)")
+        try:
+            conn.executemany(
+                f"INSERT OR IGNORE INTO {_SCOPE_TABLE} VALUES (?)",
+                [(cid,) for cid in conversation_ids],
             )
-            conn.execute(
-                f"{_INDEX_INSERT} AND e.conversation_id IN ({marks})", batch,
-            )
+            scope = f"(SELECT id FROM {_SCOPE_TABLE})"
+            conn.execute(f"DELETE FROM content_fts WHERE conversation_id IN {scope}")
+            conn.execute(f"{_INDEX_INSERT} AND e.conversation_id IN {scope}")
+        finally:
+            conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
 
     if commit:
         conn.commit()

@@ -37,63 +37,42 @@ def _fts_hit_count(db_path, phrase):
         conn.close()
 
 
-def _make_sender(tmp_path, name, anchor_phrase):
-    """Build a sender DB with a conversation containing a distinctive anchor phrase."""
+def _seed(tmp_path, name, phrase, *, indexed=False):
+    """A one-conversation DB carrying ``phrase``, optionally already indexed.
+
+    Senders are seeded *unindexed* — that is what a push slice is, and the
+    assertion below pins it, since a sender that arrived pre-indexed would make
+    every receive test pass for the wrong reason. Targets are seeded *indexed*
+    so a non-zero ``missing_count`` afterwards is content the merge under test
+    wrote and failed to index, not drift it inherited.
+    """
     db = make_db(
         tmp_path / name,
-        conversations=[
-            {
-                "external_id": f"conv-{name}",
-                "prompt_text": f"Question before anchor {anchor_phrase}",
-                "response_text": anchor_phrase,
-            }
-        ],
+        conversations=[{"external_id": f"conv-{name}",
+                        "prompt_text": f"question {phrase}", "response_text": phrase}],
     )
-    # make_db does not rebuild FTS — push slices also have no FTS. Confirm.
     conn = sqlite3.connect(str(db))
     try:
-        hits = conn.execute(
-            'SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH ?',
-            (f'"{anchor_phrase}"',),
-        ).fetchone()[0]
+        if indexed:
+            rebuild_fts_index(conn, commit=True)
+        else:
+            assert conn.execute(
+                "SELECT COUNT(*) FROM content_fts WHERE content_fts MATCH ?", (f'"{phrase}"',),
+            ).fetchone()[0] == 0, "an unindexed seed must start with an empty FTS"
     finally:
         conn.close()
-    assert hits == 0, "sender DB should have empty FTS before the test"
     return db
 
 
-def test_first_push_rebuilds_fts(tmp_path):
-    """receive_database with rebuild_fts=True on a new target rebuilds content_fts."""
-    anchor = "smoke-test-anchor-alpha"
-    sender = _make_sender(tmp_path, "sender.db", anchor)
-    target = tmp_path / "target.db"
+def _fts_sync_status(db_path):
+    from siftd.storage.fts import get_fts_sync_status
+    from siftd.storage.sqlite import open_database
 
-    assert not target.exists(), "target must not exist for first-push path"
-
-    receive_database(sender, target, rebuild_fts=True, preflight=False)
-
-    assert target.exists()
-    assert _fts_hit_count(target, anchor) >= 1, (
-        "FTS should find the anchor phrase after first-push with rebuild_fts=True"
-    )
-
-
-def test_first_push_indexes_even_with_rebuild_off(tmp_path):
-    """rebuild_fts=False no longer leaves a first push entirely unindexed (#49).
-
-    This asserted the opposite until #49. A push slice is built with the index
-    off — it is transport, not a corpus — so a receive-only server whose
-    `serve.fts_rebuild` was anything but `on_push` got a database that no
-    search could reach and that no later push would repair, because every later
-    push is a merge and merges never wrote the index either.
-    """
-    anchor = "smoke-test-anchor-beta"
-    sender = _make_sender(tmp_path, "sender.db", anchor)
-    target = tmp_path / "target.db"
-
-    receive_database(sender, target, rebuild_fts=False, preflight=False)
-
-    assert _fts_hit_count(target, anchor) >= 1
+    conn = open_database(db_path, read_only=True)
+    try:
+        return get_fts_sync_status(conn)
+    finally:
+        conn.close()
 
 
 def test_subsequent_push_rebuilds_fts(tmp_path):
@@ -107,7 +86,7 @@ def test_subsequent_push_rebuilds_fts(tmp_path):
     )
     rebuild_fts_index(sqlite3.connect(str(target)), commit=True)
 
-    sender = _make_sender(tmp_path, "sender.db", anchor)
+    sender = _seed(tmp_path, "sender.db", anchor)
 
     receive_database(sender, target, rebuild_fts=True, preflight=False)
 
@@ -158,38 +137,6 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
 # --- siftd#49: the invariant, across every path a merge can arrive by --------
 
-def _seed(tmp_path, name, phrase, *, indexed):
-    """A one-conversation DB carrying ``phrase``, optionally already indexed.
-
-    Targets are seeded *indexed* so a non-zero ``missing_count`` afterwards is
-    content the merge under test wrote and failed to index, not pre-existing
-    drift the merge inherited.
-    """
-    db = make_db(
-        tmp_path / name,
-        conversations=[{"external_id": f"conv-{name}",
-                        "prompt_text": f"question {phrase}", "response_text": phrase}],
-    )
-    if indexed:
-        conn = sqlite3.connect(str(db))
-        try:
-            rebuild_fts_index(conn, commit=True)
-        finally:
-            conn.close()
-    return db
-
-
-def _fts_sync_status(db_path):
-    from siftd.storage.fts import get_fts_sync_status
-
-    conn = sqlite3.connect(str(db_path))
-    conn.row_factory = sqlite3.Row
-    try:
-        return get_fts_sync_status(conn)
-    finally:
-        conn.close()
-
-
 # (label, rebuild_fts) — the value each caller actually passes.
 #   receive_database's own default; `siftd db receive` / inbox / `db pull`;
 #   and the three `serve.fts_rebuild` settings, of which only "on_push" maps
@@ -222,7 +169,12 @@ def test_merged_content_is_always_searchable(tmp_path, label, rebuild_fts):
 
 @pytest.mark.parametrize("rebuild_fts", [False, True])
 def test_first_push_is_always_searchable(tmp_path, rebuild_fts):
-    """The copy path has nothing to scope to: the whole file is what arrived."""
+    """The copy path has nothing to scope to: the whole file is what arrived.
+
+    Subsumes ST-3b's two first-push cases, which asserted only the
+    rebuild_fts=True half and — before #49 — asserted the False half as an
+    empty index, i.e. the defect written down as a contract.
+    """
     anchor = "first-push-invariant-anchor"
     target = tmp_path / "fresh.db"
     receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
@@ -252,3 +204,73 @@ def test_local_path_push_indexes_the_remote(tmp_path):
 
     assert _fts_sync_status(remote) == {"orphaned_count": 0, "missing_count": 0}
     assert _fts_hit_count(remote, anchor) >= 1
+
+
+def test_empty_text_block_is_not_reported_as_missing(tmp_path):
+    """The index writer and ingest agree on what an empty text block is.
+
+    Ingest decides indexability in Python — `if text := block.content.get("text")`
+    (`storage/sqlite.py`) — so it writes the `event_content` row and skips the
+    FTS row for `{"text": ""}`. `_INDEXABLE` is the SQL spelling of the same
+    question, and `get_fts_sync_status` asks it to decide what is *missing*. If
+    the two disagree, every such block counts as missing forever, and #49's
+    `missing_count == 0` invariant becomes unsatisfiable on any database that
+    has one — an empty string can never match a query, so there is nothing to
+    gain by indexing it.
+    """
+    from siftd.storage.sqlite import (
+        create_database,
+        get_or_create_harness,
+        get_or_create_workspace,
+        insert_conversation,
+        insert_prompt,
+        insert_prompt_content,
+    )
+
+    db = tmp_path / "empty.db"
+    conn = create_database(db)
+    h = get_or_create_harness(conn, "h", source="t", log_format="jsonl")
+    ws = get_or_create_workspace(conn, "/p", "2024-01-01T00:00:00Z")
+    c = insert_conversation(conn, external_id="c1", harness_id=h,
+                            workspace_id=ws, started_at="2024-01-15T10:00:00Z")
+    p = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
+    insert_prompt_content(conn, p, 0, "text", '{"text": ""}')   # ingest writes no FTS row
+    insert_prompt_content(conn, p, 1, "text", '{"text": "real content"}')
+    rebuild_fts_index(conn, commit=True)
+    conn.close()
+
+    assert _fts_sync_status(db) == {"orphaned_count": 0, "missing_count": 0}
+    assert _fts_hit_count(db, "real content") == 1
+
+    conn = sqlite3.connect(str(db))
+    try:
+        indexed = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+    finally:
+        conn.close()
+    assert indexed == 1, "the empty-text block must not get an index row either"
+
+
+def test_scoped_index_write_is_idempotent(tmp_path):
+    """Re-indexing a conversation replaces its rows rather than duplicating them.
+
+    This is the only thing the scoped DELETE buys. On the merge path it always
+    finds nothing — `new_conversation_ids` are conversations that did not exist
+    before, and a replaced conversation's *old* rows are cleared under its old
+    id by `_replace_stale_conversations`. Keeping it is what makes
+    `rebuild_fts_index(conversation_ids=...)` a self-contained "make the index
+    match these conversations" rather than an append that happens to be safe
+    because of what its one caller guarantees.
+    """
+    db = _seed(tmp_path, "idem.db", "repeatable-phrase", indexed=True)
+    conn = sqlite3.connect(str(db))
+    try:
+        conv_id = conn.execute("SELECT id FROM conversations").fetchone()[0]
+        before = _fts_hit_count(db, "repeatable-phrase")
+        assert before >= 1
+        for _ in range(3):
+            rebuild_fts_index(conn, commit=True, conversation_ids=[conv_id])
+    finally:
+        conn.close()
+
+    assert _fts_hit_count(db, "repeatable-phrase") == before
+    assert _fts_sync_status(db) == {"orphaned_count": 0, "missing_count": 0}
