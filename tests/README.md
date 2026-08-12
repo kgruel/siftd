@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3243 |
+| `tests/` | 185 | 3245 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 6 | 52 |
 | `tests/cli/` | 28 | 630 |
@@ -208,7 +208,7 @@ docstring so its row is meaningful.
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
-| [test_preflight.py](test_preflight.py) | 10 | Unit tests for siftd.api.database preflight functions. |
+| [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |

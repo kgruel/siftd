@@ -79,6 +79,54 @@ class TestAuditDbIntegrity:
         assert not any(f.check == "db-blob-refcount-drift" for f in findings)
 
 
+class TestSidecarHygiene:
+    def test_audit_leaves_no_sidecars_behind(self, tmp_path):
+        """Auditing an ephemeral payload must not orphan -wal/-shm next to it.
+
+        Doctor's read connections do change detection, so reading a WAL
+        database creates the sidecars and a read-only connection cannot remove
+        them on close. Every preflight caller audits a temp file and unlinks
+        only the ``.db``, so anything left here outlives the payload as litter
+        in the temp directory — one orphaned 32 KB ``-shm`` per `db receive`.
+        """
+        p = _make_clean_db(tmp_path)
+        # WAL is the only journal mode with sidecars to leak, and it is what a
+        # real payload arrives in — create_empty_database leaves DELETE mode,
+        # under which this test would pass no matter what the code does.
+        writer = sqlite3.connect(p)
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("CREATE TABLE payload (x INTEGER)")
+        writer.commit()
+        writer.close()
+        assert not (tmp_path / f"{p.name}-wal").exists(), "writer should have checkpointed"
+        before = {f.name for f in tmp_path.iterdir()}
+
+        audit_db_integrity(p)
+
+        assert {f.name for f in tmp_path.iterdir()} == before
+
+    def test_non_empty_wal_is_left_alone(self, tmp_path):
+        """A -wal holding committed data is never this function's to discard.
+
+        Only sidecars the audit itself created, and only when the -wal is
+        empty. A payload that arrives mid-write keeps its commits.
+        """
+        p = _make_clean_db(tmp_path)
+        writer = sqlite3.connect(p)
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("CREATE TABLE keep_me (x INTEGER)")
+        writer.commit()
+        try:
+            wal = tmp_path / f"{p.name}-wal"
+            assert wal.exists() and wal.stat().st_size > 0, "test needs a live WAL"
+
+            audit_db_integrity(p)
+
+            assert wal.exists() and wal.stat().st_size > 0
+        finally:
+            writer.close()
+
+
 class TestRunPreflight:
     def test_healthy_passes_silently(self, tmp_path):
         p = _make_clean_db(tmp_path)

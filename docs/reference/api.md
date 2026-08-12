@@ -1506,7 +1506,7 @@ def audit_db_integrity(path: Path) -> list
 
 **Raises:**
 
-- `FileNotFoundError`: If ``path`` does not exist. Propagated from the doctor runner, which requires the DB for the structural checks.
+- `FileNotFoundError`: If ``path`` does not exist. Propagated from the doctor runner, which requires the DB for the structural checks. Leaves no sidecars behind. Doctor's read connections do change detection, so reading a WAL database creates ``-wal``/``-shm`` next to it, and a read-only connection cannot remove them on close. Every caller here audits an *ephemeral* payload — a staged upload, a pulled slice — and unlinks only the ``.db`` afterwards, so the sidecars would outlive it as orphans in the temp directory. Only artifacts this call created are removed, and only when the ``-wal`` is empty: a non-empty one holds committed data this function is never the right place to discard. ``-shm`` is a derived index, never authoritative, so it goes whenever the ``-wal`` does.
 - `Note`: embed_db_path defaults to the user's local embed DB, which is irrelevant for source preflight. Any future deep check that reads embed_db_path would need to be excluded from _PREFLIGHT_CHECKS or receive an alternate embed path here.
 
 ### backup_database
