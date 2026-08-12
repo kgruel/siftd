@@ -1,9 +1,18 @@
-"""Shared date parsing utilities for CLI filters and inline query fields."""
+"""Shared date and timestamp handling.
+
+Two directions, both grounded in the fact that `conversations.started_at` is
+compared as a SQL *string*: `parse_date` renders a read-side bound (CLI
+filters, inline query fields, sync cursors), and `local_to_utc` normalizes a
+write-side value at parse time for adapters whose logs carry no offset. New
+timestamp helpers belong here rather than beside their one caller — the
+converters scattered across `ingestion`, `output`, `search`, and `peek` are
+what that habit produced, and they have already drifted apart (#32).
+"""
 
 from __future__ import annotations
 
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta, tzinfo
 
 # The vocabulary `parse_date` accepts, phrased for `--help`. Every `--since`
 # and `--before` option interpolates this, so the flags and the parser cannot
@@ -66,6 +75,46 @@ def parse_date(value: str | None) -> str | None:
     )
 
 
+def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
+    """Render a wall-clock timestamp as an aware UTC ISO 8601 string.
+
+    For adapters whose logs record local time with no offset. `started_at` is
+    a UTC column compared as a SQL *string* against UTC-anchored bounds, so a
+    naive local value sorts by the size of the host's offset rather than by
+    the instant it names — far enough below a `--since` cursor that delta sync
+    skips it, silently and without self-healing.
+
+    `tz` is the zone the value was written in; None means the host's current
+    local zone, which is the only zone an adapter can infer. A value that
+    already carries an offset is converted, never reinterpreted.
+
+    Ambiguous local times — the repeated hour at a DST fall-back — resolve to
+    the earlier, pre-transition instant (`fold=0`, Python's default). The log
+    carries no information that could disambiguate them.
+    """
+    parsed = _parse_iso(value)
+    if parsed.tzinfo is None and tz is not None:
+        parsed = parsed.replace(tzinfo=tz)
+    # A still-naive value resolves against the host zone inside `astimezone`.
+    return parsed.astimezone(UTC).isoformat()
+
+
+def _parse_iso(value: str) -> datetime:
+    """`datetime.fromisoformat` with the two affordances every caller wants.
+
+    `fromisoformat` takes any separator character but only an *uppercase* UTC
+    designator, so a lowercase `z` is the one spelling it needs help with. And
+    its own error names neither the value nor the format, so every entry point
+    in this module would otherwise have to re-wrap it — which is how the two
+    would drift into disagreeing about what a bad timestamp looks like.
+    """
+    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
+    try:
+        return datetime.fromisoformat(candidate)
+    except ValueError as e:
+        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
+
+
 def _normalize_timestamp(value: str) -> str:
     """Normalize an ISO 8601 timestamp to a naive-UTC, second-precision bound.
 
@@ -87,14 +136,7 @@ def _normalize_timestamp(value: str) -> str:
     re-pulls at most a second of rows through an idempotent merge, and
     `--before` gives up sub-second precision it has never been asked for.
     """
-    # `fromisoformat` takes any separator character but only an uppercase UTC
-    # designator, so a lowercase `z` is the one spelling it needs help with.
-    candidate = f"{value[:-1]}Z" if value.endswith("z") else value
-    try:
-        parsed = datetime.fromisoformat(candidate)
-    except ValueError as e:
-        raise ValueError(f"invalid timestamp: '{value}' is not a valid ISO 8601 timestamp") from e
-
+    parsed = _parse_iso(value)
     if parsed.tzinfo is not None:
         parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed.isoformat(timespec="seconds")

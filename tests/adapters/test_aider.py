@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from conftest import FIXTURES_DIR
+from conftest import FIXTURES_DIR, pinned_tz
 
 from siftd.adapters import aider
 from siftd.domain.source import Source
@@ -17,12 +17,17 @@ class TestAiderAdapter:
 
     def test_parse_full(self):
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
-        convos = list(aider.parse(source))
+        # Pinned because started_at resolves against the host zone; UTC is the
+        # zone in which the rendered value matches the header verbatim.
+        with pinned_tz("UTC"):
+            convos = list(aider.parse(source))
+            assert [c.external_id for c in aider.parse(source)] == [
+                c.external_id for c in convos
+            ]
         assert len(convos) == 2
-        assert [c.external_id for c in aider.parse(source)] == [c.external_id for c in convos]
         conv = convos[0]
         assert conv.external_id.startswith("aider::") and "2025-07-15 14:32:01" in conv.external_id
-        assert conv.started_at == "2025-07-15T14:32:01" and conv.harness.name == "aider"
+        assert conv.started_at == "2025-07-15T14:32:01+00:00" and conv.harness.name == "aider"
         assert conv.workspace_path == str(FIXTURES_DIR) and len(conv.prompts) == 2
         assert "write a hello world script" in conv.prompts[0].content[0].content["text"]
         assert "now add a greeting function" in conv.prompts[1].content[0].content["text"]
@@ -32,8 +37,39 @@ class TestAiderAdapter:
         assert [b for b in all_blocks if b.block_type == "tool_output" and "Applied edit" in b.content["text"]]
         resp_cost = next((r for r in conv.prompts[0].responses if r.attributes.get("approx_cost")), None)
         assert resp_cost and resp_cost.attributes["approx_cost"] == "0.01"
-        assert convos[1].started_at == "2025-07-15T15:10:00"
+        assert convos[1].started_at == "2025-07-15T15:10:00+00:00"
         assert "fix the bug in auth.py" in convos[1].prompts[0].content[0].content["text"]
+
+    def test_local_header_time_is_stored_as_utc(self):
+        """#31: the header is local wall time; `started_at` is a UTC column.
+
+        `TestLocalToUtc` owns the conversion itself, including what it does to
+        a `--since` bound. This asserts the adapter actually applies it — the
+        one thing that stays green if aider stops calling it.
+        """
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        with pinned_tz("America/Chicago"):  # UTC-5 in July
+            conv = next(iter(aider.parse(source)))
+
+        assert conv.started_at == "2025-07-15T19:32:01+00:00"
+        # Every timestamp the conversation carries moves with it.
+        assert conv.prompts[0].timestamp == "2025-07-15T19:32:01+00:00"
+        assert conv.prompts[0].responses[0].timestamp == "2025-07-15T19:32:01+00:00"
+
+    def test_external_id_keeps_the_raw_header_time(self):
+        """The dedup key must not move with the zone.
+
+        `external_id` is UNIQUE per harness; re-keying it on the UTC value
+        would duplicate every already-ingested aider conversation, and would
+        make the same file ingest differently on two machines.
+        """
+        source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
+        with pinned_tz("America/Chicago"):
+            chicago = [c.external_id for c in aider.parse(source)]
+        with pinned_tz("Asia/Tokyo"):
+            tokyo = [c.external_id for c in aider.parse(source)]
+        assert chicago == tokyo
+        assert chicago[0].endswith("::2025-07-15 14:32:01")
 
     def test_parse_empty_and_header_only(self, tmp_path):
         empty = tmp_path / "e.md"

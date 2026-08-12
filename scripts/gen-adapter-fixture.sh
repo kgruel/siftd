@@ -35,11 +35,17 @@ main() {
 
     # Python script: run adapter, serialize, idempotence-check, write output
     uv run python - "$adapter" "$case_name" "$out" << 'PYEOF'
-import importlib, json, sqlite3, sys, tempfile
+import importlib, json, os, sqlite3, sys, tempfile, time
 from pathlib import Path
 
 sys.path.insert(0, "tests")
-from _golden import collapse  # collapsed serialization shared with assert_golden
+# Serialization and zone are both halves of the contract assert_golden reads.
+from _golden import GOLDEN_TZ, collapse
+
+# Before any parsing: an adapter that resolves a naive timestamp against the
+# host zone (aider) would otherwise write this machine's offset into the fixture.
+os.environ["TZ"] = GOLDEN_TZ
+time.tzset()
 
 from siftd.domain.source import Source
 

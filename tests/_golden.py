@@ -11,11 +11,21 @@ ripples across every ``expected.json``. The contract stays strict on
 *non-default* values — a wrong/missing/extra non-default field still fails —
 it only stops ritualizing fields that equal their default everywhere.
 
+``GOLDEN_TZ`` is the other half of that shared contract: an adapter that
+resolves a naive log timestamp against the host zone (``aider``) would
+otherwise bake the generating machine's offset into ``expected.json``, and the
+comparing machine would read it as a diff. Both sides pin this zone.
+
 Dependency-light on purpose (stdlib ``dataclasses`` only) so the standalone
 generator heredoc can ``import _golden`` without dragging in pytest/siftd.
 """
 
 import dataclasses
+
+# The zone every golden fixture is generated and compared under. Not UTC
+# because UTC is the "right" zone to store in — because it is *a* zone, and
+# the two sides have to name the same one.
+GOLDEN_TZ = "UTC"
 
 
 def collapse(obj):
