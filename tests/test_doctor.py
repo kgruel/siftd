@@ -1,6 +1,7 @@
 """Tests for the doctor module."""
 
 import sqlite3
+import threading
 
 import pytest
 
@@ -1016,11 +1017,11 @@ class TestCheckContext:
             formatters_dir=tmp_path / "formatters",
             queries_dir=tmp_path / "queries",
         )
-        assert ctx._open_conns == []
+        assert ctx._conns == {}
 
         conn = ctx.get_db_conn()
         assert conn is not None
-        assert ctx._open_conns == [conn]
+        assert list(ctx._conns.values()) == [conn]
 
         ctx.close()
 
@@ -1035,16 +1036,16 @@ class TestCheckContext:
         )
         ctx.close()
 
-    def _conns_per_thread(self, getter, threads=8):
-        """Call ``getter`` twice on each of ``threads`` distinct threads.
+    def _assert_one_conn_per_thread(self, getter, threads=8):
+        """Assert ``getter`` returns one connection per thread, reused within it.
 
         Dedicated threads rather than a pool: a pool is free to run several
         tasks on one worker, and two tasks sharing a thread legitimately share
         that thread's connection — which would make a distinctness assertion
         depend on the pool's scheduling rather than on the invariant.
-        """
-        import threading
 
+        Returns the per-thread connections so callers can assert on them.
+        """
         pairs: list[tuple] = []
         lock = threading.Lock()
 
@@ -1058,10 +1059,17 @@ class TestCheckContext:
             w.start()
         for w in workers:
             w.join()
-        return pairs
+
+        for first, second in pairs:
+            assert first is second, "repeat calls on one thread should reuse its connection"
+        per_thread = [first for first, _ in pairs]
+        assert len(set(per_thread)) == len(per_thread) == threads, (
+            "each thread must get its own connection"
+        )
+        return per_thread
 
     def test_db_conn_is_one_per_thread(self, test_db, tmp_path):
-        """Each thread gets its own connection; repeat calls on a thread reuse it.
+        """Each thread gets its own connection, and close() releases them all.
 
         A single sqlite3.Connection shared across the runner's thread pool
         produced silently wrong query results — see
@@ -1075,18 +1083,11 @@ class TestCheckContext:
             queries_dir=tmp_path / "queries",
         )
 
-        pairs = self._conns_per_thread(ctx.get_db_conn)
-
-        for first, second in pairs:
-            assert first is second, "repeat calls on one thread should reuse its connection"
-        per_thread = [first for first, _ in pairs]
-        assert len({id(c) for c in per_thread}) == len(per_thread), (
-            "each thread must get its own connection"
-        )
-        assert set(map(id, ctx._open_conns)) == set(map(id, per_thread))
+        per_thread = self._assert_one_conn_per_thread(ctx.get_db_conn)
+        assert set(ctx._conns.values()) == set(per_thread)
 
         ctx.close()
-        assert ctx._open_conns == []
+        assert ctx._conns == {}
         for conn in per_thread:
             with pytest.raises(sqlite3.ProgrammingError):
                 conn.execute("SELECT 1")
@@ -1106,12 +1107,23 @@ class TestCheckContext:
             queries_dir=tmp_path / "queries",
         )
 
-        pairs = self._conns_per_thread(ctx.get_embed_conn)
+        self._assert_one_conn_per_thread(ctx.get_embed_conn)
+        ctx.close()
 
-        for first, second in pairs:
-            assert first is second
-        per_thread = [first for first, _ in pairs]
-        assert len({id(c) for c in per_thread}) == len(per_thread)
+    def test_two_databases_get_separate_conns_on_one_thread(self, test_db, tmp_path):
+        """The per-thread cache keys on the database too, not just the thread."""
+        embed_db = tmp_path / "embed.db"
+        sqlite3.connect(embed_db).close()
+        ctx = CheckContext(
+            db_path=test_db,
+            embed_db_path=embed_db,
+            adapters_dir=tmp_path / "adapters",
+            formatters_dir=tmp_path / "formatters",
+            queries_dir=tmp_path / "queries",
+        )
+
+        assert ctx.get_db_conn() is not ctx.get_embed_conn()
+        assert len(ctx._conns) == 2
 
         ctx.close()
 
@@ -1128,8 +1140,6 @@ class TestCheckContext:
         """
         from siftd.api import run_checks
 
-        # test_db has indexable event_content and an empty FTS index, so
-        # fts-stale is a stable warning for this fixture.
         for i in range(30):
             findings = run_checks(db_path=test_db)
             missing = [f for f in findings if f.check == "fts-stale"]

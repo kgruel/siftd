@@ -63,16 +63,12 @@ class CheckContext:
     formatters_dir: Path
     queries_dir: Path
 
-    # Lazy per-thread connections. The runner fans checks out over a thread
-    # pool, so one shared sqlite3.Connection would be read concurrently from
-    # several threads. That is not safe even at threadsafety==3 — the
-    # connection's prepared-statement cache is shared state, and a check that
-    # opens its own *write* connection to the same file (fts-integrity) turns
-    # the overlap into silently wrong query results rather than an error. Each
-    # thread therefore gets its own connection; _open_conns keeps every one of
-    # them reachable so close() can release them all from the caller's thread.
-    _local: threading.local = field(default_factory=threading.local, repr=False, compare=False)
-    _open_conns: list = field(default_factory=list, repr=False, compare=False)
+    # Read-only connections, keyed by (thread, database) and opened on demand.
+    # Never one connection shared across the runner's thread pool: see the
+    # per-thread rule in _get_conn.
+    _conns: dict[tuple[int, str], sqlite3.Connection] = field(
+        default_factory=dict, repr=False, compare=False
+    )
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False, compare=False)
 
     # Lazy adapter discovery shared across checks (populated on first access).
@@ -85,33 +81,47 @@ class CheckContext:
         default_factory=threading.Lock, repr=False, compare=False
     )
 
-    def _get_conn(self, attr: str, db_path: Path, *, foreign_keys: bool) -> sqlite3.Connection:
+    def _get_conn(self, db_path: Path, *, foreign_keys: bool) -> sqlite3.Connection:
         """One read-only connection per (thread, database), opened on first use.
 
+        Per thread, never per run: checks run concurrently, and a single
+        sqlite3.Connection read from several threads is not safe even at
+        threadsafety==3 — the prepared-statement cache is shared state. With
+        fts-integrity opening its own *write* connection to the same file
+        mid-run, the overlap produced wrong query results rather than errors.
+
+        Keying on the thread ident is sound because idents are unique among
+        *live* threads: a dead thread's successor inheriting its connection is
+        sequential use, which check_same_thread=False already permits (that
+        flag is here so close() can run from the caller's thread, not as a
+        concurrency claim).
+
         immutable=1 keeps the open sidecar-free (no WAL/SHM created) and works
-        on read-only media — the same contract storage.open_database uses for
-        its read-only opens.
+        on read-only media — the same URI storage.open_database uses for its
+        read-only opens. Not routed through open_database despite the overlap:
+        it clears the process-global vocabulary caches on every open, which a
+        per-thread open would do repeatedly mid-run, on other subsystems'
+        behalf. A diagnostic reads; it should not reach into shared state.
         """
-        conn = getattr(self._local, attr, None)
-        if conn is None:
-            uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
-            # check_same_thread=False so close() can run from the caller's thread.
-            conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            if foreign_keys:
-                conn.execute("PRAGMA foreign_keys = ON")
-            setattr(self._local, attr, conn)
-            with self._lock:
-                self._open_conns.append(conn)
+        key = (threading.get_ident(), str(db_path))
+        with self._lock:
+            conn = self._conns.get(key)
+            if conn is None:
+                uri = f"file:{db_path.as_posix()}?mode=ro&immutable=1"
+                conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
+                conn.row_factory = sqlite3.Row
+                if foreign_keys:
+                    conn.execute("PRAGMA foreign_keys = ON")
+                self._conns[key] = conn
         return conn
 
     def get_db_conn(self):
         """Get main database connection (lazy-loaded, one per calling thread)."""
-        return self._get_conn("db_conn", self.db_path, foreign_keys=True)
+        return self._get_conn(self.db_path, foreign_keys=True)
 
     def get_embed_conn(self):
         """Get embeddings database connection (lazy-loaded, one per calling thread)."""
-        return self._get_conn("embed_conn", self.embed_db_path, foreign_keys=False)
+        return self._get_conn(self.embed_db_path, foreign_keys=False)
 
     def get_adapters(self) -> list:
         """Enabled adapter plugins, loaded once per run and shared across checks."""
@@ -148,10 +158,9 @@ class CheckContext:
     def close(self):
         """Close every connection this context opened, on any thread."""
         with self._lock:
-            conns, self._open_conns = self._open_conns, []
+            conns, self._conns = list(self._conns.values()), {}
         for conn in conns:
             conn.close()
-        self._local = threading.local()
 
 
 class Check(Protocol):

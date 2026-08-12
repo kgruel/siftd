@@ -288,8 +288,10 @@ def test_no_sqlite3_connect_outside_storage():
 
     # adapters/sdk.py provides open_external_db() for reading third-party databases
     adapter_sdk = src_dir / "adapters" / "sdk.py"
-    # doctor/checks/__init__.py opens connections with check_same_thread=False
-    # for concurrent check execution
+    # doctor/checks/__init__.py opens one read-only connection per (thread,
+    # database) rather than routing through storage.open_database, which clears
+    # the process-global vocabulary caches on every open — a side effect a
+    # diagnostic must not have. See CheckContext._get_conn.
     doctor_checks_init = src_dir / "doctor" / "checks" / "__init__.py"
 
     for py_file in src_dir.rglob("*.py"):
