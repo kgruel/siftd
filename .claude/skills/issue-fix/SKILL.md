@@ -122,6 +122,25 @@ grep -rn "started_at=" src/siftd/adapters/   # every producer
 If the answer comes out as "all N in this file", that phrasing is the tell: the
 file was the assumption, not the finding.
 
+**A derived enumeration is still a sample when its derivation is
+fixture-dependent.** That is the rule above one turn deeper, and it cost three
+findings in one arc precisely because deriving *felt* like having answered.
+#54's ratchet enumerated what a conversation delete removes by deleting one and
+diffing row counts — derived from the database rather than from a registry,
+which was the whole point, since the registry was already wrong. It missed
+`ingested_files`, a declared cascade child the fixture never writes a row to.
+Adding that table fixed the instance; external review then found `attributes`,
+cleaned by a trigger so no foreign key describes it, and also unpopulated.
+Neither half could see the whole: `PRAGMA foreign_key_list` is blind to
+trigger-driven cleanup, and a row-count diff is blind to a table the fixture
+skipped.
+
+So when no single derivation is complete, ask twice and union the answers — and
+add the assertion that runs the other way, `declared - reached == set()`, so a
+fixture that *stops* exercising a listed member fails instead of quietly
+passing. Without that second direction the population can only grow, which is
+the same blindness in slower motion.
+
 Prefer a mechanism that removes the fragile reasoning over one that patches its
 conclusion. Same case: an ASCII-ordering argument about `.` vs `+` vs `Z` was
 replaced by prefix containment, which doesn't depend on ordering at all.
@@ -149,6 +168,25 @@ to undo one mutation. The checkout **succeeded**, wiping a full ratchet rewrite,
 and the `||` fallback never fired because nothing had failed. The green run that
 followed was the *old* ratchet passing. Same hazard as §5's shared-tree writes,
 one directory closer: the destructive command is yours.
+
+**And bound both ends of any scripted edit.** `s.replace(old, new)` where `old`
+was built as `s[s.index(marker):]` runs to the end of the file. On #33 that
+rewrote one test and took four unrelated test classes with it — eight tests,
+surviving two green `./dev check --serve` runs and a commit, because **deleted
+tests do not fail**. The only residue was an import that had become unused, and
+`codex` is what found it. Prefer the Edit tool, which errors on a non-unique or
+non-matching target; when a script is genuinely the right instrument, end every
+slice at an explicit second marker, then ask what disappeared:
+
+```bash
+for f in $(git diff --name-only main); do
+  git show main:$f | grep -oE "^ *(async )?def [a-zA-Z_0-9]+" | sed 's/^ *//' | sort -u > /tmp/_a
+  grep -oE "^ *(async )?def [a-zA-Z_0-9]+" "$f" | sed 's/^ *//' | sort -u > /tmp/_b
+  lost=$(comm -23 /tmp/_a /tmp/_b); [ -n "$lost" ] && echo "--- $f" && echo "$lost"
+done
+```
+
+Every name it prints should be one you meant to remove.
 
 ## 3. Changelog
 
@@ -402,13 +440,27 @@ it matches the word "failed". Run the check, read it, then push.
 Everything in a PR's **Deferred** section disappears from view the moment it
 merges — the body is write-only, which is why that section is issue numbers
 rather than descriptions. File them before wrapping, then back-fill the numbers
-into the body.
+into the body — and never write a not-yet-filed number anywhere durable. On #49
+a commit message named the knob-removal issue as #73 before filing it, and #73
+went to the PR.
 
 Decompose by *cause*, not by symptom. If several deferrals are sites where one
 thing is missing, that's one issue naming the absence and listing the sites,
 not N issues that each fix it again — substrate first, instances as
 consequences ([[rollup-layer-design-2026-06-02]] is the precedent: one layer
 dissolved 13 recompute sites and 4 bugs).
+
+**Split a deferral along what is actually compat-bound.** A dissolution that
+retires a knob has two halves, and only one of them is a compatibility surface:
+the knob's *name* — a config key, a CLI flag, a public parameter — needs a
+ledger and a stated removal version; its *behavior* almost never does. #49's
+plan was to defer the whole thing, which would have shipped the incremental
+index step while `rebuild_fts=True` still ran the O(corpus) rebuild it made
+redundant — so the default configuration, the one the bug was reported from,
+gained nothing at all. Deferring the flag's *name* is compatibility; deferring
+its *cost* ships the bug. Make it a no-op now, file the removal, and state the
+trade in the changelog, since a no-op flag usually drops a side effect someone
+could have been relying on.
 
 Then ratify into the version's roadmap node so it answers "is this in the
 release?". Read it first, then append — the node is a fold, so emitting the
