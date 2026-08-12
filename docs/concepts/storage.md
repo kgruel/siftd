@@ -82,7 +82,7 @@ siftd tracks which log files have been ingested in the `ingested_files` table:
 |--------|---------|
 | `path` | Absolute path to the log file |
 | `file_hash` | SHA256 hash of file contents |
-| `conversation_id` | Which conversation it produced |
+| `conversation_id` | Which conversation it produced — `NULL` for a session-strategy source, whose row is a per-file marker for a container of many conversations |
 | `error` | Parse error message, if any |
 
 When you run `siftd ingest`:
