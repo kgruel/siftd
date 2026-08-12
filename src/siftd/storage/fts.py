@@ -100,31 +100,70 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
     rebuild_fts_index(conn)
 
 
-def rebuild_fts_index(conn: sqlite3.Connection, *, commit: bool = False) -> None:
-    """Drop and rebuild the FTS index from all event_content blocks.
+# What counts as indexable text, in one place. `get_fts_sync_status` asks the
+# same question to decide whether a block is *missing* from the index, so a
+# second spelling would make the index and its own drift check disagree about
+# which rows should be there.
+_INDEXABLE = (
+    "json_valid(ec.content) AND json_extract(ec.content, '$.text') IS NOT NULL"
+)
 
-    Indexes all event_content rows that have indexable text ($.text IS NOT NULL),
-    which includes text and thinking block types. Populates content_fts.
+_INDEX_INSERT = f"""
+    INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
+    SELECT
+        json_extract(ec.content, '$.text'),
+        ec.id,
+        ec.event_id,
+        e.conversation_id
+    FROM event_content ec
+    JOIN events e ON e.id = ec.event_id
+    WHERE {_INDEXABLE}
+"""
+
+# SQLite caps bound parameters; scope batches stay well under it.
+_SCOPE_BATCH = 500
+
+
+def rebuild_fts_index(
+    conn: sqlite3.Connection,
+    *,
+    commit: bool = False,
+    conversation_ids: list[str] | None = None,
+) -> None:
+    """Rebuild the FTS index from event_content blocks.
+
+    Indexes every event_content row with indexable text ($.text IS NOT NULL) —
+    text and thinking block types.
+
+    ``conversation_ids`` scopes *both* halves, the delete and the insert, to
+    those conversations and leaves every other indexed row untouched. That is
+    what lets a merge index exactly what it just wrote rather than re-reading
+    the corpus (#49): a full rebuild is O(corpus) per push, which is why the
+    push paths skipped it and shipped an index that silently lagged instead.
+    ``None`` is the full rebuild.
+
+    An empty list is a no-op, not a full rebuild — "index what this merge
+    touched" over an empty set means there is nothing to index.
     """
     # event_content may not exist yet when called from ensure_fts_table before migration 4 runs
     if not conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='event_content'"
     ).fetchone():
         return
-    conn.execute("DELETE FROM content_fts")
 
-    conn.execute("""
-        INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id)
-        SELECT
-            json_extract(ec.content, '$.text'),
-            ec.id,
-            ec.event_id,
-            e.conversation_id
-        FROM event_content ec
-        JOIN events e ON e.id = ec.event_id
-        WHERE json_valid(ec.content)
-          AND json_extract(ec.content, '$.text') IS NOT NULL
-    """)
+    if conversation_ids is None:
+        conn.execute("DELETE FROM content_fts")
+        conn.execute(_INDEX_INSERT)
+    else:
+        for i in range(0, len(conversation_ids), _SCOPE_BATCH):
+            batch = conversation_ids[i : i + _SCOPE_BATCH]
+            marks = ", ".join("?" * len(batch))
+            conn.execute(
+                f"DELETE FROM content_fts WHERE conversation_id IN ({marks})", batch,
+            )
+            conn.execute(
+                f"{_INDEX_INSERT} AND e.conversation_id IN ({marks})", batch,
+            )
 
     if commit:
         conn.commit()
@@ -147,10 +186,9 @@ def get_fts_sync_status(conn: sqlite3.Connection) -> dict:
         WHERE event_content_id NOT IN (SELECT id FROM event_content)
     """).fetchone()[0]
 
-    missing_count = conn.execute("""
+    missing_count = conn.execute(f"""
         SELECT COUNT(*) FROM event_content ec
-        WHERE json_valid(ec.content)
-          AND json_extract(ec.content, '$.text') IS NOT NULL
+        WHERE {_INDEXABLE}
           AND ec.id NOT IN (SELECT event_content_id FROM content_fts)
     """).fetchone()[0]
 

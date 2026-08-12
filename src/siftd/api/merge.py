@@ -97,6 +97,25 @@ def merge_database(
 
         stats = _merge_attached(conn, replace=replace, user_id=user_id)
 
+        # Index the conversations this merge wrote, in the merge's own
+        # transaction. Unconditional, and deliberately not gated on
+        # rebuild_fts: that flag chooses whether to pay for a *full* rebuild,
+        # and every push path answers no — so before #49 the choice on offer
+        # was O(corpus) per push or an index that silently lagged forever.
+        # Scoped to what changed, indexing is cheap enough to stop being a
+        # choice. In-transaction because `_replace_stale_conversations` already
+        # deletes the replaced rows' index entries here; splitting the delete
+        # from the insert is what would leave a window where search can see
+        # neither version.
+        from siftd.storage.fts import rebuild_fts_index
+
+        touched = [
+            *stats.get("new_conversation_ids", []),
+            *stats.get("replaced_conversation_ids", []),
+        ]
+        if touched:
+            rebuild_fts_index(conn, conversation_ids=touched)
+
         # Validate FK integrity before committing (so failures are atomic)
         if not dry_run:
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
