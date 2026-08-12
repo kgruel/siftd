@@ -10,14 +10,15 @@ from siftd.errors import SiftdError
 from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import (
     SchemaUpgradeRequiredError,
+    remove_database,
 )
 from siftd.storage.sqlite import (
     open_database as _open_database,
 )
 
-# Re-exported via siftd.api so CLI can catch it without crossing the
-# cli → storage import boundary enforced by tests/architecture/test_imports.py.
-__all__ = ["SchemaUpgradeRequiredError"]
+# Re-exported via siftd.api so CLI and serve can reach these without crossing
+# the cli/serve → storage boundary enforced by tests/architecture/test_imports.py.
+__all__ = ["SchemaUpgradeRequiredError", "remove_database"]
 
 # Checks run as pre-flight gates before merge/receive.
 # db-blob-refcount-drift is intentionally excluded: sync slices copy ref_count
@@ -41,15 +42,13 @@ def audit_db_integrity(path: Path) -> list:
         FileNotFoundError: If ``path`` does not exist. Propagated from the
             doctor runner, which requires the DB for the structural checks.
 
-    Leaves no sidecars behind. Doctor's read connections do change detection,
-    so reading a WAL database creates ``-wal``/``-shm`` next to it, and a
-    read-only connection cannot remove them on close. Every caller here audits
-    an *ephemeral* payload — a staged upload, a pulled slice — and unlinks only
-    the ``.db`` afterwards, so the sidecars would outlive it as orphans in the
-    temp directory. Only artifacts this call created are removed, and only when
-    the ``-wal`` is empty: a non-empty one holds committed data this function
-    is never the right place to discard. ``-shm`` is a derived index, never
-    authoritative, so it goes whenever the ``-wal`` does.
+    Creates ``-wal``/``-shm`` beside ``path`` when it is a WAL database, and
+    cannot remove them: doctor's read connections do change detection, and a
+    read-only connection has no way to clean up on close. This function must
+    not do it either — it cannot know whether a writer is active, and unlinking
+    a live ``-shm`` costs the locking coherence SQLite shares through it. A
+    caller destroying an ephemeral payload calls ``remove_database`` instead,
+    which owns the file and takes all three.
 
     Note: embed_db_path defaults to the user's local embed DB, which is
     irrelevant for source preflight. Any future deep check that reads
@@ -58,19 +57,11 @@ def audit_db_integrity(path: Path) -> list:
     """
     from siftd.doctor.runner import run_checks
 
-    wal, shm = Path(f"{path}-wal"), Path(f"{path}-shm")
-    pre_existing = {s for s in (wal, shm) if s.exists()}
-    try:
-        return run_checks(
-            db_path=path,
-            deep=True,
-            checks=_PREFLIGHT_CHECKS,
-        )
-    finally:
-        if not wal.exists() or wal.stat().st_size == 0:
-            for sidecar in (shm, wal):
-                if sidecar not in pre_existing and sidecar.exists():
-                    sidecar.unlink()
+    return run_checks(
+        db_path=path,
+        deep=True,
+        checks=_PREFLIGHT_CHECKS,
+    )
 
 
 def run_preflight(path: Path, label: str = "source") -> None:

@@ -39,6 +39,7 @@ from siftd.domain.sync import (
 )
 from siftd.errors import DriftError, SiftdError
 from siftd.safecall import parse_json
+from siftd.storage.sqlite import remove_database
 
 logger = logging.getLogger(__name__)
 
@@ -1288,8 +1289,7 @@ async def _pull_ssh(
         _receive_or_sync_error(tmp_path, local_db)
         return conversations, size_bytes
     finally:
-        if tmp_path.exists():
-            tmp_path.unlink()
+        remove_database(tmp_path)
 
 
 def _pull_local(
@@ -1408,8 +1408,8 @@ def _pull_http(
                     _receive_or_sync_error(tmp_path, local_db)
                     return conversations, size_bytes
                 finally:
-                    if tmp_path and tmp_path.exists():
-                        tmp_path.unlink()
+                    if tmp_path:
+                        remove_database(tmp_path)
     except httpx.HTTPStatusError as e:
         raise SyncError(f"Pull from {remote.path} failed: HTTP {e.response.status_code}") from e
     except httpx.ConnectError as e:

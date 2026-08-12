@@ -6,7 +6,7 @@ import pytest
 
 from siftd.api.database import PreflightError, audit_db_integrity, run_preflight
 from siftd.ids import ulid
-from siftd.storage.sqlite import create_empty_database
+from siftd.storage.sqlite import create_empty_database, remove_database
 
 
 def _make_clean_db(tmp_path, name="test.db"):
@@ -79,15 +79,14 @@ class TestAuditDbIntegrity:
         assert not any(f.check == "db-blob-refcount-drift" for f in findings)
 
 
-class TestSidecarHygiene:
-    def test_audit_leaves_no_sidecars_behind(self, tmp_path):
-        """Auditing an ephemeral payload must not orphan -wal/-shm next to it.
+class TestEphemeralPayloadCleanup:
+    def test_auditing_then_removing_a_payload_leaves_nothing(self, tmp_path):
+        """The whole point: audit a staged payload, drop it, leave no litter.
 
-        Doctor's read connections do change detection, so reading a WAL
-        database creates the sidecars and a read-only connection cannot remove
-        them on close. Every preflight caller audits a temp file and unlinks
-        only the ``.db``, so anything left here outlives the payload as litter
-        in the temp directory — one orphaned 32 KB ``-shm`` per `db receive`.
+        Doctor's read connections do change detection, so auditing a WAL
+        database creates ``-wal``/``-shm`` beside it and a read-only connection
+        cannot remove them on close. Callers that unlink only the ``.db``
+        orphaned a 32 KB ``-shm`` per `db receive`, per sync pull, per push.
         """
         p = _make_clean_db(tmp_path)
         # WAL is the only journal mode with sidecars to leak, and it is what a
@@ -98,33 +97,17 @@ class TestSidecarHygiene:
         writer.execute("CREATE TABLE payload (x INTEGER)")
         writer.commit()
         writer.close()
-        assert not (tmp_path / f"{p.name}-wal").exists(), "writer should have checkpointed"
-        before = {f.name for f in tmp_path.iterdir()}
 
         audit_db_integrity(p)
+        assert (tmp_path / f"{p.name}-shm").exists(), "audit should have made sidecars"
 
-        assert {f.name for f in tmp_path.iterdir()} == before
+        remove_database(p)
 
-    def test_non_empty_wal_is_left_alone(self, tmp_path):
-        """A -wal holding committed data is never this function's to discard.
+        assert list(tmp_path.iterdir()) == []
 
-        Only sidecars the audit itself created, and only when the -wal is
-        empty. A payload that arrives mid-write keeps its commits.
-        """
-        p = _make_clean_db(tmp_path)
-        writer = sqlite3.connect(p)
-        writer.execute("PRAGMA journal_mode = WAL")
-        writer.execute("CREATE TABLE keep_me (x INTEGER)")
-        writer.commit()
-        try:
-            wal = tmp_path / f"{p.name}-wal"
-            assert wal.exists() and wal.stat().st_size > 0, "test needs a live WAL"
-
-            audit_db_integrity(p)
-
-            assert wal.exists() and wal.stat().st_size > 0
-        finally:
-            writer.close()
+    def test_remove_database_is_a_noop_on_a_missing_file(self, tmp_path):
+        """Callers run it in a finally block, before the payload may exist."""
+        remove_database(tmp_path / "never-created.db")
 
 
 class TestRunPreflight:

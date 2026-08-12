@@ -14,6 +14,8 @@ from litestar.background_tasks import BackgroundTask
 from litestar.params import Parameter
 from litestar.response import File, Response
 
+from siftd.api import remove_database
+
 log = logging.getLogger(__name__)
 
 
@@ -739,8 +741,8 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
             content["owned"] = result["owned"]
         return Response(content=content, status_code=status_code)
     finally:
-        if tmp_path and tmp_path.exists():
-            tmp_path.unlink()
+        if tmp_path:
+            remove_database(tmp_path)
 
 
 @get("/api/v1/pull", sync_to_thread=True)

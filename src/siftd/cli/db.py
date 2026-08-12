@@ -16,17 +16,12 @@ import sys
 import tempfile
 from pathlib import Path
 
+from siftd.api import remove_database
 from siftd.cli._common import resolve_db
 from siftd.cli._filters import date_arg
 from siftd.dateparse import DATE_VOCABULARY
 from siftd.errors import SiftdError
 from siftd.output import fmt_count, status
-
-
-def _database_artifacts(db_path: Path) -> list[Path]:
-    """Return the SQLite database file and its WAL sidecars."""
-    return [db_path, Path(f"{db_path}-wal"), Path(f"{db_path}-shm")]
-
 
 _SUMMARY_TABLES = ("conversations", "events", "tags", "content_blobs")
 
@@ -341,9 +336,7 @@ def cmd_db_restore(args) -> int:
         return 1
 
     db.parent.mkdir(parents=True, exist_ok=True)
-    for artifact in _database_artifacts(db):
-        if artifact.exists():
-            artifact.unlink()
+    remove_database(db)
     shutil.copy2(source, db)
     size = db.stat().st_size
     status.confirm(f"Restored to: {db} ({size / 1024:.1f} KB)")
@@ -604,8 +597,8 @@ def cmd_db_receive(args) -> int:
         )
         return 1
     finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
+        if tmp_path is not None:
+            remove_database(tmp_path)
 
 
 def cmd_db_process(args) -> int:
@@ -731,8 +724,8 @@ def cmd_db_send(args) -> int:
         print(json.dumps({"error": str(e)}), file=sys.stderr)
         return 1
     finally:
-        if tmp_path is not None and tmp_path.exists():
-            tmp_path.unlink()
+        if tmp_path is not None:
+            remove_database(tmp_path)
 
 
 def cmd_db_pull(args) -> int:
