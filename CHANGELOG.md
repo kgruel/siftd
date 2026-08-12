@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A push that replaces a conversation cleans up after itself by the schema's
+  own rules.** Merge's delete closure was a hand-written second copy of what the
+  tables already declare, and going stale once broke `siftd db pull`/`push`
+  outright (#20); it is now the declared cascade. Replacement-heavy merges are
+  ~10% slower; ordinary ones are unchanged.
+  ([#51](https://github.com/kgruel/siftd/issues/51))
+
 - **Tags survive a push that replaces the conversation you tagged.** Receiving a
   newer version of a conversation used to destroy every tag on it and on its
   turns, while keeping its owner; both are now carried, as they already were on

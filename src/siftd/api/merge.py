@@ -103,10 +103,49 @@ def merge_database(
                 f"{missing}. Open it with the current build before merging."
             )
 
-        conn.execute("PRAGMA foreign_keys = OFF")
-
+        # Foreign keys stay ON (as `open_database` left them) rather than being
+        # switched off for the merge, so that `ON DELETE CASCADE` fires and a
+        # replaced conversation's delete closure is the one the schema declares
+        # — not a second copy kept in sync by hand, which is what it was until
+        # #51 and which went stale exactly once: the v9 derived-tier tables were
+        # added, merge was not updated, and every replacing merge failed its own
+        # `foreign_key_check` permanently (#20).
+        #
+        # They are additionally *deferred*, which is a smaller claim than it
+        # looks. It is NOT that the merge inserts children before parents: the
+        # step order below is parent-first throughout, and SQLite already defers
+        # self-referential checks within a single statement, so `events.parent_id`
+        # — the one place a cross-DB `INSERT ... SELECT` really can carry a child
+        # ahead of its parent — needs nothing. Immediate checking passes today.
+        # Deferring is what keeps that from mattering: it holds the parent-first
+        # step order as an implementation detail rather than promoting it to a
+        # load-bearing invariant that nothing states and no test covers, and it
+        # routes every violation through one channel — the `foreign_key_check`
+        # below, with a readable message — instead of a bare IntegrityError from
+        # whichever statement happened to reach the dangling row first.
+        #
+        # It does not weaken the check. `INSERT OR IGNORE` does not swallow a
+        # deferred violation: the row inserts, the counter holds, and COMMIT
+        # raises. `foreign_key_check` catches it first; COMMIT is the backstop.
+        #
+        # `defer_foreign_keys` is per-transaction and resets at COMMIT, so it has
+        # to be set *inside* one — and unlike `foreign_keys`, which is silently
+        # ignored mid-transaction, it can be. Hence the explicit BEGIN: the
+        # transaction otherwise starts implicitly at the first INSERT, well after
+        # this point. The dry-run branch keeps its SAVEPOINT instead, which opens
+        # a transaction of its own; adding a BEGIN there too would leave one open
+        # at RELEASE, and DETACH cannot run inside a transaction.
+        #
+        # `recursive_triggers` is deliberately NOT set, though #51 proposed it.
+        # It reads as necessary — the polymorphic cleanup has to fire for the
+        # events and blocks the *cascade* deletes, not the statement — but SQLite
+        # fires AFTER DELETE triggers for cascade-deleted rows either way, which
+        # `test_replace_leaves_no_trace_of_the_old_conversation` pins.
         if dry_run:
             conn.execute("SAVEPOINT merge_dry_run")
+        else:
+            conn.execute("BEGIN")
+        conn.execute("PRAGMA defer_foreign_keys = ON")
 
         stats = _merge_attached(conn, replace=replace, user_id=user_id)
 
@@ -137,7 +176,6 @@ def merge_database(
             violations = conn.execute("PRAGMA foreign_key_check").fetchall()
             if violations:
                 conn.rollback()
-                conn.execute("PRAGMA foreign_keys = ON")
                 tables = {v[0] for v in violations}
                 raise RuntimeError(
                     f"Foreign key violations after merge (tables: {', '.join(sorted(tables))}). "
@@ -152,8 +190,6 @@ def merge_database(
             conn.execute("RELEASE merge_dry_run")
         else:
             conn.commit()
-
-        conn.execute("PRAGMA foreign_keys = ON")
 
         conn.execute("DETACH DATABASE src")
     finally:
@@ -580,57 +616,29 @@ def _replace_stale_conversations(
     conn.execute("CREATE TEMP TABLE _stale_convs (id TEXT PRIMARY KEY)")
     conn.executemany("INSERT INTO _stale_convs VALUES (?)", [(cid,) for cid in stale_ids])
 
-    # foreign_keys=OFF disables cascade, so delete extension rows explicitly before events
-    conn.execute("""
-        DELETE FROM event_content
-        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM event_response
-        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM event_tool_call
-        WHERE event_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    conn.execute("""
-        DELETE FROM attributes
-        WHERE target_id IN (SELECT id FROM _stale_convs)
-           OR target_id IN (SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs))
-    """)
-    # tag_assignments: must delete event-kind rows before events are deleted (no FK
-    # cascade). Block rows too — the v12 event_content trigger would catch them on
-    # cascade, but only on a v12+ DB with recursive triggers; explicit is uniform.
-    conn.execute("""
-        DELETE FROM tag_assignments
-        WHERE (target_kind = 'conversation' AND target_id IN (SELECT id FROM _stale_convs))
-           OR (target_kind IN ('prompt','response','tool_call','exchange')
-               AND target_id IN (
-                   SELECT id FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)
-               ))
-           OR (target_kind = 'block'
-               AND target_id IN (
-                   SELECT ec.id FROM event_content ec
-                   JOIN events e ON e.id = ec.event_id
-                   WHERE e.conversation_id IN (SELECT id FROM _stale_convs)
-               ))
-    """)
-    conn.execute("DELETE FROM events WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM ingested_files WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    # conversation_owners — table may not exist on pre-migration DBs
-    if has_conversation_owners_table(conn):
-        conn.execute("DELETE FROM conversation_owners WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-
-    # The derived tier is rebuilt post-commit, but foreign_key_check runs before that.
-    conn.execute("DELETE FROM usage_by_conv_model WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    conn.execute("DELETE FROM conversation_stats WHERE conversation_id IN (SELECT id FROM _stale_convs)")
-    # content_fts is virtual: no FK, invisible to foreign_key_check. Still
-    # load-bearing after #49 — these are the *old* ids, and the scoped index
-    # write covers only the replacements' (new) ids, so nothing else clears
-    # these rows.
+    # content_fts before the conversations, because it is the one child the
+    # delete below cannot reach: a virtual table has no foreign key to cascade
+    # from, no trigger, and is invisible to `foreign_key_check` — so nothing
+    # would ever report its rows as orphaned. Still load-bearing after #49,
+    # which writes the index for the *replacements'* ids and so never touches
+    # these.
     conn.execute("DELETE FROM content_fts WHERE conversation_id IN (SELECT id FROM _stale_convs)")
 
-    # Delete the stale conversations themselves
+    # Everything else is the closure the schema already declares, and this used
+    # to be a second copy of it — 11 further statements, kept in sync with
+    # `storage/sqlite.py::delete_conversation` by nothing at all. It went stale
+    # exactly once and that was enough: the v9 derived-tier tables were added,
+    # merge was not updated, and `foreign_key_check` rolled every replacing
+    # merge back permanently (#20).
+    #
+    # Deferred foreign keys (see `merge_database`) let the declared cascade run
+    # instead: events, event_content, event_response, event_tool_call,
+    # ingested_files, conversation_owners, usage_by_conv_model and
+    # conversation_stats by `ON DELETE CASCADE`, and the polymorphic pair
+    # (`attributes`, `tag_assignments`, which have no FK on `target_id`) by the
+    # `tr_polymorphic_*_cleanup` triggers, for conversation-, event- and
+    # block-kind targets alike. `tests/architecture/test_replacement_carry.py`
+    # is what holds that closure to the tables a delete actually reaches.
     conn.execute("DELETE FROM conversations WHERE id IN (SELECT id FROM _stale_convs)")
 
     conn.execute("DROP TABLE _stale_convs")
