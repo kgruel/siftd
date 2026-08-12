@@ -26,7 +26,10 @@ def _load(path: Path, name: str):
 
 
 gen_docs = _load(_GEN_DOCS, "gen_docs")
-ratchet = _load(_REPO_ROOT / "tests" / "architecture" / "test_exceptions.py", "_ratchet")
+# The ratchet is loaded through gen_docs's own loader rather than a second
+# copy here: it is the one that knows the ratchet needs `tests/` on the
+# path, and a duplicate would only pass by accident of pytest's pythonpath.
+ratchet = gen_docs._load_exception_ratchet()
 
 
 def test_every_taxonomy_member_is_documented():

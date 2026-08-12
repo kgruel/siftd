@@ -77,6 +77,14 @@ subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
   races capture. Use `capsys`/`capfd` or a callback/`file=` parameter instead
   (see the note at the top of `conftest.py`). Every test is hard-isolated from
   the real database by the autouse `_sandbox_db_home` fixture.
+- **Architecture ratchets are self-contained in their *invariant*, not in their
+  mechanics.** Each module in `tests/architecture/` keeps its own property,
+  shrink-only allowlist, and the docstring arguing for both — that is what makes
+  it reviewable alone. The neutral parts (`SRC`, `REPO_ROOT`, `source_files`,
+  `literal_text`) live in `architecture/support.py` and are imported.
+  `test_shared_mechanics.py` holds the line so this bullet does not have to —
+  its docstring carries the measurement that settled it
+  ([#45](https://github.com/kgruel/siftd/issues/45)).
 - **Exercise the real edge.** CLI tests should go through argparse, not call the
   command function directly; route tests that must catch wire-contract drift use
   Litestar's `TestClient` end-to-end rather than calling handlers via `.fn()` —
@@ -96,7 +104,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 186 | 3271 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 9 | 58 |
+| `tests/architecture/` | 10 | 60 |
 | `tests/cli/` | 28 | 630 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -326,6 +334,7 @@ docstring so its row is meaningful.
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
+| [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
 

@@ -25,9 +25,8 @@ set must only ever shrink.
 
 import ast
 import builtins
-from pathlib import Path
 
-SRC_ROOT = Path(__file__).parent.parent.parent / "src" / "siftd"
+from architecture.support import SRC, source_files
 
 TAXONOMY_BASES = {"SiftdError", "UserInputError", "DriftError"}
 
@@ -87,8 +86,8 @@ def _base_names(node: ast.ClassDef) -> list[str]:
 def _collect_classes() -> dict[tuple[str, str], list[str]]:
     """Map (relpath, class_name) -> base names, for every class in src/siftd."""
     classes: dict[tuple[str, str], list[str]] = {}
-    for path in sorted(SRC_ROOT.rglob("*.py")):
-        rel = str(path.relative_to(SRC_ROOT))
+    for path in source_files():
+        rel = str(path.relative_to(SRC))
         try:
             tree = ast.parse(path.read_text())
         except SyntaxError:

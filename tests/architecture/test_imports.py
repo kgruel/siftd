@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+from architecture.support import REPO_ROOT, SRC, source_files
+
 # Architecture groups (layered, lowest → highest):
 # - domain: pure data models (no internal dependencies)
 # - utilities: shared helpers (paths, ids, config, git, plugin discovery, math)
@@ -177,28 +179,17 @@ def group_for_module(module_path: str) -> str | None:
     return MODULE_GROUPS.get(top)
 
 
-def collect_python_files(src_dir: Path) -> list[Path]:
-    """Collect all Python files under src/siftd."""
-    return sorted(
-        py_file
-        for py_file in src_dir.rglob("*.py")
-        if "__pycache__" not in py_file.parts
-    )
-
-
 def test_import_rules():
     """Verify that all modules follow import dependency rules."""
-    src_dir = Path(__file__).parent.parent.parent / "src" / "siftd"
-
     ungrouped_files: list[str] = []
     ungrouped_imports: list[str] = []
     violations: list[str] = []
 
-    for file_path in collect_python_files(src_dir):
-        module_path = module_name_from_path(file_path, src_dir)
+    for file_path in source_files():
+        module_path = module_name_from_path(file_path, SRC)
         source_group = group_for_module(module_path)
         if source_group is None:
-            rel_path = file_path.relative_to(src_dir)
+            rel_path = file_path.relative_to(SRC)
             ungrouped_files.append(f"{rel_path} ({module_path})")
             continue
 
@@ -207,14 +198,14 @@ def test_import_rules():
         for imported_module in get_siftd_imports(file_path):
             target_group = group_for_module(imported_module)
             if target_group is None:
-                rel_path = file_path.relative_to(src_dir)
+                rel_path = file_path.relative_to(SRC)
                 ungrouped_imports.append(f"{rel_path} imports {imported_module}")
                 continue
 
             if target_group in allowed_targets:
                 continue
 
-            rel_path = file_path.relative_to(src_dir)
+            rel_path = file_path.relative_to(SRC)
             if (str(rel_path), target_group) in KNOWN_VIOLATIONS:
                 continue
 
@@ -281,20 +272,18 @@ def test_no_sqlite3_connect_outside_storage():
     All DB connections should go through open_database() or open_embeddings_db()
     to ensure consistent read-only handling and avoid WAL/SHM file creation.
     """
-    src_dir = Path(__file__).parent.parent.parent / "src" / "siftd"
-
     violations = []
-    storage_dir = src_dir / "storage"
+    storage_dir = SRC / "storage"
 
     # adapters/sdk.py provides open_external_db() for reading third-party databases
-    adapter_sdk = src_dir / "adapters" / "sdk.py"
+    adapter_sdk = SRC / "adapters" / "sdk.py"
     # doctor/checks/__init__.py opens one read-only connection per (thread,
     # database) rather than routing through storage.open_database, which clears
     # the process-global vocabulary caches on every open — a side effect a
     # diagnostic must not have. See CheckContext._get_conn.
-    doctor_checks_init = src_dir / "doctor" / "checks" / "__init__.py"
+    doctor_checks_init = SRC / "doctor" / "checks" / "__init__.py"
 
-    for py_file in src_dir.rglob("*.py"):
+    for py_file in source_files():
         # Allow sqlite3.connect() inside storage/
         if storage_dir in py_file.parents or py_file.parent == storage_dir:
             continue
@@ -306,7 +295,7 @@ def test_no_sqlite3_connect_outside_storage():
             continue
 
         for line_num, call_text in find_sqlite3_connect_calls(py_file):
-            rel_path = py_file.relative_to(src_dir.parent.parent)
+            rel_path = py_file.relative_to(REPO_ROOT)
             violations.append(f"{rel_path}:{line_num}: {call_text}")
 
     if violations:
