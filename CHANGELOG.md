@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd db pull`/`push` no longer fails outright once the other side
+  re-ingests a conversation you already have.** Replacing a stale conversation
+  deleted its raw children but left its derived-tier rows —
+  `usage_by_conv_model` and `conversation_stats` both declare `ON DELETE
+  CASCADE`, which the merge's `foreign_keys = OFF` disables — so the pre-commit
+  `PRAGMA foreign_key_check` found them dangling and rolled the entire merge
+  back with "Foreign key violations after merge (tables: conversation_stats)".
+  Every subsequent pull in that direction failed identically, leaving the pair
+  permanently unable to sync. The same delete also left `content_fts` rows
+  behind: a virtual table has no cascade and is invisible to
+  `foreign_key_check`, so on the push path (`receive`/`sync` pass
+  `rebuild_fts=False`) the replaced conversation kept answering searches from
+  text that no longer existed. Both are now deleted with the conversation.
+  ([#20](https://github.com/kgruel/siftd/issues/20))
+
 - **`siftd query`, `search`, and `show` no longer read a snapshot older than
   the database.** #38 fixed this for `doctor` and left the cause standing
   everywhere else. Every read-only open built `mode=ro&immutable=1`, telling

@@ -153,6 +153,7 @@ from siftd.storage.sqlite import (
     record_ingested_file,
 )
 from siftd.storage.tags import apply_tag, get_or_create_tag
+from siftd.storage.usage_rollup import rebuild_rollups
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
@@ -332,6 +333,14 @@ def make_db(
         for tag_name in conv.get("tags", []):
             tag_id = get_or_create_tag(conn, tag_name)
             apply_tag(conn, "conversation", conv_id, tag_id)
+
+    # Every real bulk raw-row write ends by rebuilding the derived tier (ingest,
+    # merge, slice all do).  A fixture that skips it is not a production database:
+    # it leaves usage_by_conv_model / conversation_stats EMPTY, which silently
+    # voided every `PRAGMA foreign_key_check` assertion in the merge and receive
+    # suites for those two tables — the reason siftd#20 survived four minor
+    # versions behind a test that looked like it covered it.
+    rebuild_rollups(conn)
 
     conn.commit()
     conn.close()

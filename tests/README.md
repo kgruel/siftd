@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3249 |
+| `tests/` | 185 | 3251 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 7 | 54 |
 | `tests/cli/` | 28 | 630 |
@@ -186,7 +186,7 @@ docstring so its row is meaningful.
 | [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
-| [test_merge.py](test_merge.py) | 35 | Tests for siftd db merge — importing a slice into the main database. |
+| [test_merge.py](test_merge.py) | 37 | Tests for siftd db merge — importing a slice into the main database. |
 | [test_merge_blob_gc.py](test_merge_blob_gc.py) | 2 | D2 — orphan content_blob GC on merge. |
 | [test_merge_owner_scope.py](test_merge_owner_scope.py) | 3 | Multi-tenant write-IDOR guard for the merge path (S0/S1/D1). |
 | [test_migrations.py](test_migrations.py) | 67 | Tests for siftd storage migration paths. |
