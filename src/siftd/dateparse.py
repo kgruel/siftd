@@ -2,11 +2,34 @@
 
 Two directions, both grounded in the fact that `conversations.started_at` is
 compared as a SQL *string*: `parse_date` renders a read-side bound (CLI
-filters, inline query fields, sync cursors), and `local_to_utc` normalizes a
-write-side value at parse time for adapters whose logs carry no offset. New
-timestamp helpers belong here rather than beside their one caller — the
-converters scattered across `ingestion`, `output`, `search`, and `peek` are
-what that habit produced, and they have already drifted apart (#32).
+filters, inline query fields, sync cursors), and `to_utc` / `local_to_utc`
+resolve a stored value to the instant it names.
+
+Every timestamp helper lives here rather than beside its one caller. The habit
+of writing the converter where it was needed produced five of them — in
+`ingestion`, `output` (twice), `search`, and `peek` — plus two more in `api`
+and `cli` that #32's own survey missed, each spelling the `Z` handling its own
+way (`.replace("Z", "+00:00")`, `.rstrip("Z")`, a `"+" not in s` heuristic),
+and they had already drifted into disagreeing about whether a lowercase `z` is
+a timestamp at all.
+
+**What a naive value means is the only thing that ever differed between them,
+and it is the thing none of them said out loud.** It has exactly two answers
+in siftd, and which one is right is a property of where the value came from,
+never of the value itself:
+
+- **UTC**, on the read side — `to_utc`. Every column siftd compares or renders
+  (`started_at`, `ended_at`, `timestamp`, `ingested_at`, `last_activity`)
+  stores UTC, so a naive value from one is a UTC instant that lost its
+  designator, not a wall clock.
+- **Host-local**, on the write side — `local_to_utc`. An adapter log with no
+  offset was written by a program reading the local clock, and the ingesting
+  host's zone is the only zone that can be inferred (#31).
+
+Reading one as the other shifts the instant by the size of the host's offset,
+which is why they stay two names over one core rather than merging: at a call
+site `to_utc(row.started_at)` and `local_to_utc(header_time)` state their
+assumption, where a shared name with a defaulted flag would bury it.
 """
 
 from __future__ import annotations
@@ -75,6 +98,26 @@ def parse_date(value: str | None) -> str | None:
     )
 
 
+def to_utc(value: str) -> datetime:
+    """Resolve a stored timestamp to the aware UTC instant it names.
+
+    The read-side converter: for values coming back out of siftd's own
+    columns, all of which store UTC. A naive value from one is therefore a UTC
+    instant whose designator was never written, not a wall clock — contrast
+    `local_to_utc`, which is the same operation for the write side, where
+    naive means the host's local zone.
+
+    Returns an aware datetime rather than a string because every caller wants
+    arithmetic against `datetime.now(UTC)` or a `.timestamp()` epoch; the two
+    callers that want a string render it themselves.
+
+    Raises ValueError for anything `_parse_iso` cannot read. Callers that were
+    already tolerant of unparseable stored values keep catching it — a column
+    can hold third-party log content that no adapter validated.
+    """
+    return _resolve(value, naive_tz=UTC)
+
+
 def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
     """Render a wall-clock timestamp as an aware UTC ISO 8601 string.
 
@@ -92,11 +135,21 @@ def local_to_utc(value: str, *, tz: tzinfo | None = None) -> str:
     the earlier, pre-transition instant (`fold=0`, Python's default). The log
     carries no information that could disambiguate them.
     """
+    return _resolve(value, naive_tz=tz).isoformat()
+
+
+def _resolve(value: str, *, naive_tz: tzinfo | None) -> datetime:
+    """Parse to UTC, resolving a naive value against `naive_tz`.
+
+    `naive_tz=None` defers to the host's local zone, which is what a naive
+    datetime already means to `astimezone` — so the two public spellings
+    differ only in the argument they pass here.
+    """
     parsed = _parse_iso(value)
-    if parsed.tzinfo is None and tz is not None:
-        parsed = parsed.replace(tzinfo=tz)
+    if parsed.tzinfo is None and naive_tz is not None:
+        parsed = parsed.replace(tzinfo=naive_tz)
     # A still-naive value resolves against the host zone inside `astimezone`.
-    return parsed.astimezone(UTC).isoformat()
+    return parsed.astimezone(UTC)
 
 
 def _parse_iso(value: str) -> datetime:
@@ -136,7 +189,4 @@ def _normalize_timestamp(value: str) -> str:
     re-pulls at most a second of rows through an idempotent merge, and
     `--before` gives up sub-second precision it has never been asked for.
     """
-    parsed = _parse_iso(value)
-    if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
-    return parsed.isoformat(timespec="seconds")
+    return to_utc(value).replace(tzinfo=None).isoformat(timespec="seconds")

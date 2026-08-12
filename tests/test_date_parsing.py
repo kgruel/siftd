@@ -1,13 +1,13 @@
 """Tests for date and timestamp parsing in CLI filters."""
 
-from datetime import UTC, date
+from datetime import UTC, date, datetime
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 import pytest
 from conftest import pinned_tz
 
-from siftd.dateparse import local_to_utc, parse_date
+from siftd.dateparse import local_to_utc, parse_date, to_utc
 
 
 class TestParseDate:
@@ -271,3 +271,71 @@ class TestLocalToUtc:
         cursor = _bound("2025-07-15T19:32:01.780749+00:00")
         assert stored >= cursor
         assert "2025-07-15T14:32:01" < cursor  # what the adapter used to write
+
+
+class TestToUtc:
+    """`to_utc` resolves a value out of one of siftd's own columns.
+
+    Every such column stores UTC, so the naive case is the whole point: a
+    stored value with no designator is a UTC instant that lost its suffix, and
+    reading it as host-local — which is what `datetime.astimezone()` and
+    therefore four of the seven converters this replaced would do — shifts it
+    by the size of the offset.
+    """
+
+    CHICAGO = ZoneInfo("America/Chicago")
+
+    @pytest.mark.parametrize("shape", _STORED_SHAPES)
+    def test_every_stored_spelling_names_the_same_instant(self, shape):
+        """The property the seven hand-rolled converters were each approximating.
+
+        `_STORED_SHAPES` is the derived enumeration of what adapters can write
+        into a timestamp column, all spelling 09:30:12 UTC. A converter is only
+        correct if it collapses them — the sub-second components differ, so
+        compare the second each resolves to.
+        """
+        resolved = to_utc(shape.format(sec="2024-01-15T09:30:12"))
+        assert resolved.tzinfo is not None
+        assert resolved.replace(microsecond=0) == datetime(
+            2024, 1, 15, 9, 30, 12, tzinfo=UTC
+        )
+
+    def test_naive_means_utc_not_the_host_zone(self):
+        """The one bit that separates `to_utc` from `local_to_utc`.
+
+        Pinned under a non-UTC host zone, because that is the only condition
+        under which the two disagree — a suite run in UTC cannot tell them
+        apart, which is how the read-side sites drifted unnoticed.
+        """
+        with pinned_tz("America/Chicago"):
+            assert to_utc("2025-07-15T14:32:01") == datetime(
+                2025, 7, 15, 14, 32, 1, tzinfo=UTC
+            )
+            assert local_to_utc("2025-07-15T14:32:01") == "2025-07-15T19:32:01+00:00"
+
+    def test_an_aware_value_is_converted_never_reinterpreted(self):
+        """`.replace(tzinfo=UTC)` — what `api/caveats.py` did — would say 14:32."""
+        assert to_utc("2025-07-15T14:32:01-05:00") == datetime(
+            2025, 7, 15, 19, 32, 1, tzinfo=UTC
+        )
+
+    def test_lowercase_designator_is_accepted(self):
+        """`fromisoformat` alone rejects it, so each site had to opt in — and
+        `ingestion`'s `rstrip("Z")` fallback did not, raising past its own
+        `except ValueError`."""
+        assert to_utc("2025-07-15T14:32:01z") == datetime(
+            2025, 7, 15, 14, 32, 1, tzinfo=UTC
+        )
+
+    def test_malformed_value_names_itself(self):
+        with pytest.raises(ValueError, match="invalid timestamp"):
+            to_utc("not-a-timestamp")
+
+    def test_epoch_is_the_utc_epoch(self):
+        """Four sites called `.timestamp()` on the parse result. On a naive
+        value that resolves against the host zone, so the epoch — and every
+        'N hours ago' derived from it — was off by the offset."""
+        with pinned_tz("America/Chicago"):
+            assert to_utc("2025-07-15T14:32:01").timestamp() == to_utc(
+                "2025-07-15T14:32:01Z"
+            ).timestamp()
