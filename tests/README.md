@@ -102,7 +102,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3284 |
+| `tests/` | 186 | 3286 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 11 | 62 |
 | `tests/cli/` | 28 | 632 |
@@ -192,7 +192,7 @@ docstring so its row is meaningful.
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
-| [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
+| [test_live_tagging.py](test_live_tagging.py) | 30 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
 | [test_merge.py](test_merge.py) | 37 | Tests for siftd db merge — importing a slice into the main database. |

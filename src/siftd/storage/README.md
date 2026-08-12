@@ -22,6 +22,7 @@ See [Storage](../../../docs/concepts/storage.md) for where data lives, deduplica
 | [fts.py](fts.py) | FTS5 full-text search operations for siftd storage. |
 | [migrate_workspaces.py](migrate_workspaces.py) | Migration script for workspace git remote identity. |
 | [queries.py](queries.py) | Centralized SQL read queries for siftd storage. |
+| [replacement.py](replacement.py) | What a conversation replacement has to carry across delete-then-insert. |
 | [search_log.py](search_log.py) | Search-log storage: capture executed searches and later 'opened' signals. |
 | [sessions.py](sessions.py) | Live session tracking and pending tag storage. |
 | [sql_helpers.py](sql_helpers.py) | SQL helper utilities for query building and result processing. |
