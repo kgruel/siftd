@@ -107,9 +107,9 @@ def open_database(
         read_only: If True, open in read-only mode.
         auto_upgrade: When read_only=True and the on-disk schema is below
             SCHEMA_VERSION, run the migration in a transient write-mode open
-            before the RO connection is established. Set False for diagnostic
-            commands that must report the on-disk version without mutating it
-            (`db schema-version`, slice source pre-check).
+            and reopen the RO connection against the upgraded file. Set False
+            for diagnostic commands that must report the on-disk version
+            without mutating it (`db schema-version`, slice source pre-check).
 
     Returns:
         An open sqlite3.Connection with row_factory set.

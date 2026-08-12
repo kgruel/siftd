@@ -160,11 +160,12 @@ class TestReadOnlyMode:
             conn.close()
 
     def test_read_only_open_leaves_vocabulary_caches_alone(self, tmp_path):
-        """A read cannot invalidate a name → id mapping, so it must not clear one.
+        """Only a write open resets the process-global vocabulary caches (#47).
 
-        The caches are process-global: clearing them on a read discards every
-        other subsystem's warm entries on behalf of an operation that wrote
-        nothing. Only a write can create an id, so only a write open clears (#47).
+        Clearing on a read discarded every other subsystem's warm entries on
+        behalf of an operation that wrote nothing. See the comment at the call
+        site in open_database for what makes skipping it safe — it is not that
+        reads cannot create ids.
         """
         from siftd.storage import sqlite as sq
 
@@ -188,7 +189,7 @@ class TestReadOnlyMode:
         open_database(tmp_path / "other.db").close()
         assert not sq._model_cache
 
-    def test_read_only_open_of_current_schema_opens_one_connection(self, tmp_path):
+    def test_read_only_open_of_current_schema_opens_one_connection(self, tmp_path, monkeypatch):
         """The common read path does not open a connection it throws away.
 
         The stale-schema check used to run against a transient connection opened
@@ -207,11 +208,8 @@ class TestReadOnlyMode:
             opens.append(path)
             return real(path, **kwargs)
 
-        sq.connect_read_only = counting
-        try:
-            conn = open_database(db_path, read_only=True)
-        finally:
-            sq.connect_read_only = real
+        monkeypatch.setattr(sq, "connect_read_only", counting)
+        conn = open_database(db_path, read_only=True)
         try:
             assert len(opens) == 1, f"expected one read-only open, got {len(opens)}"
             assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION

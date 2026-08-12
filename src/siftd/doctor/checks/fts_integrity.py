@@ -28,12 +28,8 @@ class FtsIntegrityCheck:
         # on-disk schema is stale, opening write mode would create a backup and
         # run migrations as a side effect (and take a write lock that blocks a
         # concurrent serve/ingest). Skip instead and let an ordinary command do
-        # the upgrade.
-        #
-        # The version comes off the context's own read-only connection, which is
-        # what keeps that constraint true while asking the question:
-        # get_db_conn() routes through connect_read_only, never open_database,
-        # so it cannot trigger the auto-upgrade this check exists to avoid.
+        # the upgrade. Asking the question cannot itself migrate: the version
+        # comes off ctx's own read-only connection (see CheckContext._get_conn).
         if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
             return [
                 Finding(

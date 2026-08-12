@@ -275,7 +275,13 @@ def test_no_sqlite3_connect_outside_storage():
     violations = []
     storage_dir = SRC / "storage"
 
-    # adapters/sdk.py provides open_external_db() for reading third-party databases
+    # adapters/sdk.py provides open_external_db() for reading third-party
+    # databases. It stays hand-rolled rather than delegating to
+    # storage.connect_read_only: adapters never reach into the storage layer
+    # (src/siftd/adapters/README.md), and sdk.py is the authoring surface for
+    # drop-in adapters under ~/.config/siftd/adapters/, so routing it through
+    # storage would puncture that boundary for every third-party author. The
+    # databases it opens belong to other tools, not to siftd.
     adapter_sdk = SRC / "adapters" / "sdk.py"
 
     for py_file in source_files():
