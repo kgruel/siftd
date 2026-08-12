@@ -10,6 +10,10 @@ file the deferrals.** Each stage has caught something the previous one missed.
 Don't skip the external review because the internal one came back clean; they
 find different classes of thing.
 
+Two things are templates rather than prose, and each step points at its own:
+`references/bodies.md` (PR and issue bodies) and
+`references/simplify-agents.md` (the four review-agent prompts).
+
 ## 1. Triage — is it real, on *current* main?
 
 Reports arrive against old versions. Verify before believing.
@@ -77,6 +81,25 @@ a survey of `started_at` found four spellings; a fifth was reachable from
 `epoch_ms_to_iso` whenever milliseconds were zero, and the bound silently
 excluded it. External review found what the sample missed.
 
+**Then check you enumerated the right population** — grepping producers
+faithfully still fails if you picked the wrong set to grep, and a complete
+sweep of the wrong scope never looks incomplete from inside. On #32 I swept
+every `since`/`before` handler in `serve/routes.py` and claimed the whole HTTP
+surface; `serve/html_routes.py` serves the htmx UI without going through that
+file, and one of its routes still passed raw dates into a filter.
+
+So name the **role** first — "every input context", "every producer of this
+column" — then find its members by grepping for the *capability*, not for
+callers of the function you happen to be editing:
+
+```bash
+grep -rn 'Parameter(query="since")' src/     # every input context
+grep -rn "started_at=" src/siftd/adapters/   # every producer
+```
+
+If the answer comes out as "all N in this file", that phrasing is the tell: the
+file was the assumption, not the finding.
+
 Prefer a mechanism that removes the fragile reasoning over one that patches its
 conclusion. Same case: an ASCII-ordering argument about `.` vs `+` vs `Z` was
 replaced by prefix containment, which doesn't depend on ordering at all.
@@ -104,10 +127,10 @@ version heading.
 
 The reader is deciding whether to upgrade, not learning the mechanism. Mechanism
 goes in the PR; provenance goes in the commits; both are one click from the
-issue link. This is the same rule as the PR word budget — **rationale belongs in
-the durable artifact, and the changelog is not it.** Prose here is worse than
-prose in a PR body, because it ships: a merged PR body is write-only, but a
-changelog entry is read by every user of every later version.
+issue link — the same *rationale belongs in the durable artifact* rule that sets
+the PR budget (`references/bodies.md`). It binds hardest here, because a
+changelog entry **ships**: a PR body is read once, a changelog line is read by
+every user of every later version.
 
 Concretely, from #20:
 
@@ -134,6 +157,22 @@ changelog describes the old design until you fix it.
 ./dev check          # lint + architecture + base lane + docs gate
 ```
 
+**Match the lane to the diff.** `./dev check` runs the *base* lane — it skips
+serve, embeddings, and slow. A fix touching `serve/` that only ever ran the
+base lane is branch-green on tests that never executed, which is the same class
+of error as a test lane no CI job runs. CI will run them all on push, so this
+is about finding out before the merge rather than after:
+
+```bash
+./dev check --serve     # anything under src/siftd/serve/ or tests/test_serve*
+./dev check --all       # ...plus embeddings and slow
+```
+
+Do **not** reach for `pytest -m ""` to "run everything" — it un-gates the
+optional-dependency lanes, so embeddings tests execute without `[embed]`
+installed and fail in ways that look like your regression. On #32 that cost a
+cycle proving two such failures were identical on `main`.
+
 Gotchas that will cost you a cycle:
 
 - **`./dev docs --check` regenerates before it diffs**, against the *index*. So
@@ -159,95 +198,46 @@ git push -u origin fix/<short-slug>
 gh pr create --repo kgruel/siftd --base main --title "<conventional subject>" --body "..."
 ```
 
-PR body: **four fixed headings, ~400 words.** Same words every time — improvised
-headings invite improvised content, which is where the length comes from.
+PR body: **four fixed headings — Defect · Scope · Evidence · Deferred — at
+~400 words.** Issues use the same four with *Why now* in place of Evidence.
+Read `references/bodies.md` before writing either: it carries the schema, why
+the budget holds, and the end-state-not-journey split that decides what goes in
+the body versus a PR comment.
 
-```markdown
-Fixes #N. <one line of context if the PR follows another.>
-
-## Defect     What broke and the verified mechanism. Point at the docstring for
-              the full explanation; do not retell it.
-## Scope      What actually changed (corrected against the tree), what dissolved
-              with it, and any user-visible trade, stated plainly.
-## Evidence   Falsification list, measurements, `./dev check` state. Tables and
-              lists, not prose.
-## Deferred   Filed issue numbers, one line each.
-```
-
-**The body describes the end state, not how it got there.** Review provenance —
-what `/simplify` and `codex` caught, which round, what you tried first — goes in
-a PR *comment*, where it is timestamped, append-only, and sits next to the review
-it came from. It is already durable in the fix commits besides.
-
-The split is not "move the section", and getting it wrong loses real content:
-when review changes the *design*, that change is a property of the fix and must
-be **integrated** into Defect/Scope/Evidence. Only the story of finding it
-becomes a comment. On #46, "the fallback silently dropped committed `-wal`
-content, so it now refuses" belongs in Scope; "codex found it on round one, and
-the guard that fixed it was too blunt until it tested the journal's magic" is a
-comment.
-
-The budget is real: PRs #41/#44/#46 ran 886–1399 words across 8–9 improvised
-sections, against issues that landed at ~450 words in 4–5 without effort. The
-rewrite of #46 to this schema came to **361 words** and lost nothing — every
-measured number and the whole falsification list survived. What was cut was
-narrative retelling of a mechanism that already lives in the code.
-
-That is the load-bearing rule behind the budget: **rationale belongs in the
-durable artifact.** Mechanism goes in the docstring or the folder README, and
-the PR links to it. Otherwise the same paragraph gets hand-written into the
-issue, the PR, the commit message, and the docstring — the /simplify pass on
-#42 flagged exactly that duplication *inside* the code while the same arc's
-prose was doing it across four artifacts. A merged PR body is write-only.
-
-Issues use the same four, one renamed: **Defect** · **Scope** (with counts —
-sites, occurrences, callers) · **Why now** (or why deferred, if filed from a
-PR's Deferred section) · **Shape of the fix**. Same budget.
-
-Note `gh pr create --body` bypasses `.github/PULL_REQUEST_TEMPLATE.md`
-entirely, so a template file would not constrain this path. This skill is the
-enforcement point.
+Improvised headings invite improvised content, which is where the length comes
+from — the measured spread is 886–1399 words across 8–9 sections when the
+schema is skipped, against ~400 when it isn't.
 
 ## 5. `/simplify`
 
 Run it. Four parallel agents review reuse / simplification / efficiency /
 altitude, then you apply what survives.
 
-**Commit first, then launch every review agent with `isolation: "worktree"`.**
+**Commit and push first, then launch every agent with `isolation: "worktree"`,
+using the prompts in `references/simplify-agents.md`.** Copy that preamble
+verbatim — it carries the two things that are mechanical to include and
+expensive to omit (the checkout literal and the time budget), and the per-angle
+"specifically worth checking" bullets are what separate a review that finds
+something from one that returns generalities.
+
 A "read-only" review agent is not read-only in practice: to answer *is this
 slower?* or *does this finding reproduce?* the honest move is to run the code,
-and running it means A/B-swapping files, reverting the fix, or checking out the
-base revision. On #34 two of the four agents wrote to the shared tree — one
-restored the pre-fix file to reproduce the bug and left it there, the other
-copied `main`'s version over the working copy to benchmark, then restored it —
-and their windows overlapped with each other and with my own edits. The fix
-survived only because a later read happened to show the reverted file; a
-`git commit -a` in that window would have shipped the pre-fix code under a
-message describing the fix.
+which means A/B-swapping files or reverting the fix. On #34 two agents did
+exactly that in the shared tree, with overlapping windows — a `git commit -a`
+in that window would have shipped the pre-fix code under a message describing
+the fix. Isolation is the structural answer, not "tell them not to write": the
+writes are legitimate, the shared target isn't.
 
-Isolation is the structural fix, not "tell the agents not to write" — the
-writes are legitimate, the shared target isn't. Consequences to know:
+Two failure modes worth knowing even with the templates:
 
-- **The worktree is created at the base commit, not at your branch**, so
-  `git diff main...HEAD` inside it is *empty* and the agent reviews nothing.
-  On #38 all four agents burned their full budget on this and were killed by
-  the stall watchdog with zero findings. Push the branch first, then give every
-  agent the checkout as a literal instruction:
-  ```
-  git fetch origin
-  git checkout -B review-local origin/<your-branch>
-  git diff origin/main...HEAD
-  ```
-- Give them a time budget in the prompt ("finish well under 10 minutes, return
-  partial findings rather than nothing") — the watchdog kills a silent agent at
-  600s, and an agent told to benchmark will happily spend that on `./dev setup`.
-- Findings come back as text and you apply them in the real tree. Anything an
-  agent "fixed" in its worktree is discarded — which is what you want from a
-  reviewer.
-- Cite an agent's measurements only after reproducing them yourself. On #34 the
-  efficiency agent reported a 4× speedup from the same change that measured
-  ~18% when I ran it; its numbers were contaminated by warm-cache effects and
-  by the file-swapping above.
+- **The worktree starts at the base commit, not your branch**, so
+  `git diff main...HEAD` inside it is *empty*. On #38 all four agents burned
+  their full budget on this and were killed by the stall watchdog with zero
+  findings. That is what the preamble's `git checkout -B review-local
+  origin/<branch>` exists to prevent.
+- **Reproduce any measurement before citing it.** On #34 the efficiency agent
+  reported a 4× speedup from a change that measured ~18% when I ran it —
+  contaminated by warm caches and by the file-swapping above.
 
 It reliably finds adjacent defects, not just style — on #21 it caught that
 `db send/push/pull` passed `parse_date` to argparse as a bare `type=`, which
@@ -260,6 +250,17 @@ just disproved, citing doctor — the caller that had stopped using it.
 Skip findings that need changes well outside the diff, but **record them** —
 they become issues in step 8. A same-name-different-contract collision is worth
 renaming in-diff even when the full consolidation isn't.
+
+**A review can correct your reasoning rather than your code, and that is the
+finding to take most seriously.** The recurring tell is a rationale that
+defends a scope boundary by restating it as a principle. On #32 my comment
+argued the app-level handler covered `UserInputError` alone because widening it
+"would silently re-status errors that currently surface as 500s" — which
+inverts the contract, since `errors.py` declares those statuses *as* the serve
+contract, so the new status is the declared behavior and the 500 was the gap.
+The scope was still right; the reason was wrong. Fix the comment to say plainly
+that it is a scoping decision, and file the coherent end state — otherwise the
+next reader inherits an argument for never doing it.
 
 ## 6. `codex review` (external)
 
@@ -282,11 +283,9 @@ Then, per finding:
 Stop when a pass returns only items you've dispositioned with evidence. Don't
 loop for a clean sheet; deferred-with-reasoning is a valid terminal state.
 
-**Re-sync the PR body, then comment the provenance.** If review changed the
-design, the body still argues for the design you removed — rewrite Defect/Scope/
-Evidence to describe what now ships, and post what review caught as a comment.
-Re-syncing is the step most easily forgotten, and it stays easy to forget
-precisely because nothing fails when you skip it.
+**Then re-sync the PR body and comment the provenance**
+(`references/bodies.md`). This is the step most easily forgotten, and it stays
+easy to forget precisely because nothing fails when you skip it.
 
 ## 7. Merge
 
@@ -324,23 +323,26 @@ gh run view <run-id> --repo kgruel/siftd --log-failed | grep -E "FAILED|assert "
 
 Then check `git log --oneline -3 -- <that test's file>` — if the file predates
 your arc and the failure is timing- or randomness-shaped, it's a pre-existing
-flake, not your regression. Known ones: `tests/cli/test_upgrade.py` (see below)
-and ULID prefix collisions in ID-resolution tests (a 12-char `short_id`
-carries only ~10 bits beyond the millisecond, so same-millisecond IDs collide
-~1/1024).
+flake, not your regression.
 
 **"Pre-existing flake" is a routing decision, not a diagnosis.** Report it and
 file it; don't silently rerun past it, and don't rework code that isn't yours —
 but spend the five minutes to find the actual mechanism first, because the
-mechanism is often bigger than the flake. This skill listed
-`tests/cli/test_upgrade.py` as a *real-clock* flake for two arcs. It isn't. On
-#34, reading it properly showed `main()` spawns a live daemon update-check
-thread that hits PyPI, and `_write_cache` resolves `state_dir()` **at write
-time** — so the thread can land in an unrelated test's `tmp_path` long after
-its own test finished. The flaky assertion was the only one that happened to
-notice; the real finding is that the suite makes live network calls and one
-test can silently corrupt another's fixture (#40). A wrong label in this list
-is worse than no label, because it retires the question.
+mechanism is often bigger than the flake, and **a wrong label retires the
+question**. This skill carried `tests/cli/test_upgrade.py` as a *real-clock*
+flake for two arcs. It isn't: `main()` spawns a live daemon update-check thread
+that hits PyPI, and `_write_cache` resolves `state_dir()` **at write time**, so
+the thread can land in an unrelated test's `tmp_path` long after its own test
+finished. The flaky assertion was just the one that happened to notice; the
+real finding was that the suite makes live network calls and one test can
+silently corrupt another's fixture (#40).
+
+Because of that, this skill deliberately keeps no standing flake list — a
+stale label here is worse than none. Check the open issues instead:
+
+```bash
+gh issue list --repo kgruel/siftd --search "flake in:title,body" --state open
+```
 
 **Never chain the check into the push.** `./dev check | grep -E "All checks|failed"`
 followed by `&& git push` will push on failure, because grep *succeeds* when
@@ -348,10 +350,10 @@ it matches the word "failed". Run the check, read it, then push.
 
 ## 8. File what you deferred
 
-**A merged PR body is write-only.** Everything in its **Deferred** section
-disappears from view the moment it merges — which is why that section is issue
-numbers rather than descriptions. File them before wrapping, then back-fill the
-numbers into the body.
+Everything in a PR's **Deferred** section disappears from view the moment it
+merges — the body is write-only, which is why that section is issue numbers
+rather than descriptions. File them before wrapping, then back-fill the numbers
+into the body.
 
 Decompose by *cause*, not by symptom. If several deferrals are sites where one
 thing is missing, that's one issue naming the absence and listing the sites,
@@ -360,11 +362,19 @@ consequences ([[rollup-layer-design-2026-06-02]] is the precedent: one layer
 dissolved 13 recompute sites and 4 bugs).
 
 Then ratify into the version's roadmap node so it answers "is this in the
-release?":
+release?". Read it first, then append — the node is a fold, so emitting the
+same key updates it rather than duplicating:
 
 ```bash
 sl read project --kind roadmap --plain
+sl emit project roadmap name=siftd-0.13.0 status=pending --stdin message < /tmp/node.md
 ```
+
+`sl emit` takes `[vertex] <kind> KEY=VALUE ...` — **not** `--kind/--key/--status`
+flags, which is the first thing you will try. Write the message to a file and
+pipe it via `--stdin message`: these nodes run to several paragraphs and shell
+quoting will mangle them. State whether the item is **defining or ride-along**,
+since that is the question the node exists to answer at cut time.
 
 And ask whether any established invariant can become an enumerable-property
 ratchet with a shrink-only allowlist, in the shape of
