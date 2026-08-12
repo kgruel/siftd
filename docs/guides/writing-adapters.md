@@ -58,8 +58,9 @@ Use when:
 - One source holds many sessions, or grows new ones over its life
 - Re-ingesting should update, not duplicate
 - The harness exports session IDs
-- Examples: Gemini CLI and OpenCode (many sessions per database), aider (one
-  history file accumulates every session for a project)
+- Examples: OpenCode (many sessions per SQLite database), aider (one markdown
+  history file accumulates every session for a project), Gemini CLI (one
+  conversation per chat JSON, re-exported as the session goes on)
 
 Ingest decides *which* sessions moved from `ended_at`: a re-parsed session
 replaces the stored copy when its `ended_at` is newer, and an unchanged one is

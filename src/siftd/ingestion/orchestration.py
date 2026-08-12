@@ -10,11 +10,13 @@ row means:
   exports). The row points at it, and a content change replaces it outright.
   A parse yielding more than one conversation is an adapter bug and fails the
   source.
-- `"session"`: the source is a container of conversations (an OpenCode or
-  Gemini SQLite DB, an aider history file accumulating every session for a
-  project). The row is a hash/mtime marker with `conversation_id = NULL`, and
-  each conversation is stored and deduped independently by external_id — so
-  replacing one does not cascade the marker away.
+- `"session"`: conversations are deduped by external_id rather than by the
+  file that produced them. That covers a source holding many at once (an
+  OpenCode SQLite DB, an aider history file accumulating every session for a
+  project) and a source holding one that is re-exported as it changes (a
+  Gemini CLI chat JSON). The row is a hash/mtime marker with
+  `conversation_id = NULL`, so replacing any one conversation does not
+  cascade the marker away.
 
 An adapter whose source grows new conversations over its life belongs on
 `"session"`, whatever its storage format. `aider` did not, and every history
@@ -245,9 +247,9 @@ def _parse_source_conversations(
     """Parse a session-strategy source into all of its conversations.
 
     Unlike :func:`_parse_source_conversation` (file strategy, 0/1), a session
-    source may legitimately yield many conversations — e.g. an OpenCode or
-    Gemini SQLite DB with one conversation per session. Each is stored and
-    deduped independently by external_id.
+    source may legitimately yield many conversations — e.g. an OpenCode
+    SQLite DB or an aider history file, each holding one per session. Each is
+    stored and deduped independently by external_id.
     """
     if not adapter.can_handle(source):
         raise AdapterParseError(
