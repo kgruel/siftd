@@ -28,6 +28,7 @@ from conftest import (
     FIXTURES_DIR,
     conversation_id as _conversation_id,
     make_conversation,
+    make_db,
     make_test_adapter,
     tag_names,
 )
@@ -996,22 +997,61 @@ class TestSubagentDrainTargetsParent:
         ]
 
 
-class TestReplacementPreservesTagsPerDedupStrategy:
-    """Ratchet: every replacement path carries the conversation's tags.
+# Every condition that reaches `_take_conversation_for_replacement`, as
+# (id, dedup strategy, first ended_at, second ended_at). Shrink-only: a new
+# trigger is added here and so asserted on, rather than covered by whichever
+# one a test happened to drive. Guarded by
+# `tests/architecture/test_replacement_carry.py`, which counts the sites.
+#
+# Pairs rather than a cross product, because the axes are not independent: the
+# file branch replaces on a changed content hash alone and never reads
+# `ended_at` (`orchestration.py`'s hash-changed path), so only the session
+# branch discriminates on it.
+#
+# The axis matters. The previous enumeration keyed on DEDUP_STRATEGY, but a
+# strategy is not what triggers a replacement — and both of its cases drove the
+# same trigger, a moving `ended_at`. So it asserted survival for one trigger
+# and read as though it covered all of them, which is how #54 shipped: every
+# case below dropped the conversation's ownership rows, and nothing failed.
+_REPLACEMENT_TRIGGERS = [
+    # File strategy: the content hash changed. `ended_at` is not consulted.
+    ("hash_changed", "file", "2024-01-15T11:00:00Z", "2024-01-15T12:00:00Z"),
+    # Session strategy: the transcript's last timestamp moved.
+    ("ended_at_moved", "session", "2024-01-15T11:00:00Z", "2024-01-15T12:00:00Z"),
+    # Session strategy, no `ended_at` at all, so content change alone replaces
+    # (since #36). The more frequent one in practice: it fires on every ingest
+    # while a file is still being appended to.
+    ("ended_at_absent", "session", None, None),
+]
 
-    The fix landed on the file-dedup branch first and the session-dedup branch
-    kept destroying tags, invisible because every regression test drove
-    claude_code (file strategy). Enumerate the strategies instead, so a fourth
-    replacement path cannot regress silently.
+
+class TestReplacementCarriesWhatTheTranscriptCannotSupply:
+    """Ratchet: every replacement carries the facts a re-parse cannot reproduce.
+
+    Tags and ownership are attached to a conversation by a person or a server;
+    nothing in the transcript restores them, so delete-then-insert has to.
+    Keyed on the *trigger* that reaches the replacement: the strategy rides
+    along because each trigger belongs to one branch, not because strategy is
+    the axis — that was the mistake the old ratchet made. #54's ownership loss
+    reached every case here, and none of them failed.
     """
 
-    @pytest.mark.parametrize("dedup_strategy", sorted(_KNOWN_DEDUP_STRATEGIES))
-    def test_tag_survives_replacement(self, live_db, tmp_path, dedup_strategy):
+    @pytest.mark.parametrize(
+        "trigger,dedup_strategy,first_ended_at,second_ended_at",
+        _REPLACEMENT_TRIGGERS,
+        ids=[t[0] for t in _REPLACEMENT_TRIGGERS],
+    )
+    def test_tags_and_ownership_survive_replacement(
+        self, live_db, tmp_path, trigger, dedup_strategy, first_ended_at, second_ended_at,
+    ):
+        from siftd.storage.sqlite import ensure_conversation_owners_table
+
         conn = live_db["conn"]
+        ensure_conversation_owners_table(conn)
         source = tmp_path / "sess.jsonl"
         source.write_text("{}")
-        state = {"ended_at": "2024-01-15T11:00:00Z"}
-        external_id = "strategy_test::S1"
+        state = {"ended_at": first_ended_at}
+        external_id = f"trigger_test::{trigger}"
 
         def parse(_source):
             yield make_conversation(
@@ -1019,11 +1059,11 @@ class TestReplacementPreservesTagsPerDedupStrategy:
                 workspace_path="/test/project",
                 started_at="2024-01-15T10:00:00Z",
                 ended_at=state["ended_at"],
-                harness_name="strategy_test",
+                harness_name="trigger_test",
             )
 
         _Adapter = make_test_adapter(
-            source, name="strategy_test", dedup=dedup_strategy,
+            source, name="trigger_test", dedup=dedup_strategy,
             harness_log_format="jsonl", supports_live_registration=True,
             parse_fn=parse,
         )
@@ -1033,16 +1073,37 @@ class TestReplacementPreservesTagsPerDedupStrategy:
         assert first_id is not None
         apply_tag(conn, "conversation", first_id, get_or_create_tag(conn, "keeper"),
                   commit=True)
+        conn.execute(
+            "INSERT INTO conversation_owners (conversation_id, user_id, push_id, assigned_at)"
+            " VALUES (?, 'alice', 'push-1', '2024-01-01T00:00:00Z')",
+            (first_id,),
+        )
+        conn.commit()
 
-        # The session keeps going: new bytes and a later ended_at, which is what
-        # each strategy keys its replacement on.
+        # The session keeps going: new bytes, and a later ended_at where the
+        # trigger has one.
         source.write_text('{"more": 1}')
-        state["ended_at"] = "2024-01-15T12:00:00Z"
+        state["ended_at"] = second_ended_at
         ingest_all(conn, [_Adapter])
 
         second_id = _conversation_id(conn, external_id)
         assert second_id is not None and second_id != first_id, "no replacement happened"
         assert "keeper" in _conversation_tag_names(conn, external_id)
+        assert _owner_rows(conn, second_id) == [("alice", "push-1", "2024-01-01T00:00:00Z")], (
+            "a replacement that drops ownership un-owns the conversation, and reads "
+            "are owner-scoped — so on a multi-tenant serve it vanishes for its owner"
+        )
+
+
+def _owner_rows(conn, conversation_id):
+    return [
+        (r["user_id"], r["push_id"], r["assigned_at"])
+        for r in conn.execute(
+            "SELECT user_id, push_id, assigned_at FROM conversation_owners"
+            " WHERE conversation_id = ? ORDER BY user_id",
+            (conversation_id,),
+        ).fetchall()
+    ]
 
 
 def test_every_adapter_dedup_strategy_is_covered():

@@ -36,6 +36,11 @@ from typing import TYPE_CHECKING
 from siftd.adapters.sdk import AdapterParseError
 from siftd.dateparse import to_utc
 from siftd.domain import Source
+from siftd.storage.replacement import (
+    ConversationCarryover,
+    restore_conversation,
+    snapshot_conversation,
+)
 from siftd.storage.sessions import (
     drain_pending_tags,
     resolve_session_conversation,
@@ -58,11 +63,6 @@ from siftd.storage.sqlite import (
     record_session_file,
     store_conversation,
     update_file_stat,
-)
-from siftd.storage.tags import (
-    ConversationTagSnapshot,
-    restore_conversation_tags,
-    snapshot_conversation_tags,
 )
 
 from .discovery import discover_all
@@ -458,12 +458,12 @@ def ingest_all(
 
                     # Hash changed - re-ingest
                     # Delete old conversation/record
-                    tag_snapshot: ConversationTagSnapshot | None = None
+                    carryover: ConversationCarryover | None = None
                     if existing_info["conversation_id"]:
-                        tag_snapshot = _take_conversation_for_replacement(
+                        carryover = _take_conversation_for_replacement(
                             conn, existing_info["conversation_id"], file_path
                         )
-                        if tag_snapshot is None:
+                        if carryover is None:
                             # Two paths carry one session and this one changed.
                             # Settle exactly as the collision repair settles
                             # its loser: keep the link, stamp this file's hash
@@ -493,7 +493,7 @@ def ingest_all(
                     conv = _reingest_file(
                         conn, source, adapter, file_path, current_hash, st, stats, filter_binary,
                         _workspace_cache=_workspace_cache,
-                        tag_snapshot=tag_snapshot,
+                        carryover=carryover,
                         resolve_orphan=not existing_info["conversation_id"],
                     )
                     if on_file:
@@ -567,18 +567,18 @@ def ingest_all(
                             # design, so a refusal is unreachable here today —
                             # the guard rides along structurally rather than as
                             # a comment asserting it can't happen.
-                            tag_snapshot = _take_conversation_for_replacement(
+                            carryover = _take_conversation_for_replacement(
                                 conn, existing["id"], file_path
                             )
-                            if tag_snapshot is None:
+                            if carryover is None:
                                 logger.warning(
                                     f"{file_path}: another path's bookkeeping row points at "
                                     f"{conversation.external_id}; leaving it as ingested"
                                 )
                                 continue
                             conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
-                            _restore_tags_after_replacement(
-                                conn, conv_id, tag_snapshot, conversation.external_id
+                            _restore_carryover_after_replacement(
+                                conn, conv_id, carryover, conversation.external_id
                             )
                             _apply_pending_tags(conn, adapter, conversation, conv_id)
                             _update_stats_for_conversation(stats, harness_name, conversation)
@@ -893,7 +893,7 @@ def _take_conversation_for_replacement(
     conn: sqlite3.Connection,
     conversation_id: str,
     file_path: str,
-) -> ConversationTagSnapshot | None:
+) -> ConversationCarryover | None:
     """Claim a conversation for delete-then-insert, or refuse.
 
     Returns a snapshot of the assignments the delete would otherwise destroy,
@@ -918,7 +918,7 @@ def _take_conversation_for_replacement(
     """
     if _conversation_claimed_elsewhere(conn, conversation_id, file_path):
         return None
-    snapshot = snapshot_conversation_tags(conn, conversation_id)
+    snapshot = snapshot_conversation(conn, conversation_id)
     delete_conversation(conn, conversation_id)
     return snapshot
 
@@ -998,7 +998,7 @@ def _reingest_file(
     filter_binary: bool,
     *,
     _workspace_cache: dict | None = None,
-    tag_snapshot: ConversationTagSnapshot | None = None,
+    carryover: ConversationCarryover | None = None,
     resolve_orphan: bool = False,
 ) -> object | None:
     """Re-ingest a file that has changed (file-based dedup strategy).
@@ -1016,11 +1016,11 @@ def _reingest_file(
     Note: delete_conversation also deletes the ingested_files record,
     so we create a new record rather than updating.
 
-    tag_snapshot carries the deleted conversation's assignments so they can be
+    carryover carries the deleted conversation's assignments so they can be
     re-pointed at the replacement rows before the commit — the caller cannot
     do it afterwards, because that would either split the transaction or
     (post-delete) match zero rows. See
-    :class:`~siftd.storage.tags.ConversationTagSnapshot` for what is carried
+    :class:`~siftd.storage.replacement.ConversationCarryover` for what is carried
     and what is not.
     """
     harness_name = adapter.NAME
@@ -1033,9 +1033,9 @@ def _reingest_file(
         # described. Usually the file really was emptied, but a transcript
         # rewritten in place can transiently parse to zero too, so say what was
         # lost rather than dropping it silently.
-        if tag_snapshot:
+        if carryover:
             logger.warning(
-                f"{_describe_snapshot(tag_snapshot)} were dropped: "
+                f"{carryover.describe()} were dropped: "
                 f"{file_path} no longer parses to a conversation"
             )
         # Record with NULL conversation_id
@@ -1065,7 +1065,7 @@ def _reingest_file(
             # tracked transcript. Leaving it lets store_conversation collide,
             # and the duplicate-conversation handler in ingest_all links this
             # path at the existing conversation, which is lossless.
-            tag_snapshot = _take_conversation_for_replacement(
+            carryover = _take_conversation_for_replacement(
                 conn, orphan["id"], file_path
             )
 
@@ -1073,7 +1073,7 @@ def _reingest_file(
 
     # Re-point the pre-delete tag assignments at the replacement rows,
     # preserving applied_at.
-    _restore_tags_after_replacement(conn, conv_id, tag_snapshot, conversation.external_id)
+    _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
 
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
@@ -1106,35 +1106,14 @@ def _update_stats_for_conversation(
             stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
 
 
-def _describe_snapshot(snapshot: ConversationTagSnapshot) -> str:
-    """Name the nonzero parts of a snapshot, for a loss warning.
-
-    Enumerated rather than templated, so a snapshot carrying only assignments
-    that could never be re-pointed doesn't report "0 conversation tag(s) and 0
-    element tag(s)" — a warning that names everything except the loss it fired
-    for. Never empty at the call site: a snapshot is falsy exactly when every
-    part is zero.
-    """
-    parts = []
-    if snapshot.conversation:
-        parts.append(f"{len(snapshot.conversation)} conversation tag(s)")
-    if snapshot.events:
-        parts.append(f"{len(snapshot.events)} element tag(s)")
-    if snapshot.dropped_events:
-        parts.append(f"{snapshot.dropped_events} synthetic-event tag(s)")
-    if snapshot.dropped_blocks:
-        parts.append(f"{snapshot.dropped_blocks} block tag(s)")
-    return ", ".join(parts)
-
-
-def _restore_tags_after_replacement(
+def _restore_carryover_after_replacement(
     conn: sqlite3.Connection,
     conversation_id: str,
-    snapshot: ConversationTagSnapshot | None,
+    snapshot: ConversationCarryover | None,
     external_id: str,
 ) -> None:
     """Re-point a snapshot at the replacement rows, reporting what was lost."""
-    unmatched = restore_conversation_tags(conn, conversation_id, snapshot)
+    unmatched = restore_conversation(conn, conversation_id, snapshot)
     if snapshot is None:
         return
     lost = unmatched + snapshot.dropped_events

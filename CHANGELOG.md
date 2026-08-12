@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A conversation re-ingested after its transcript changed keeps its owner.**
+  On a multi-tenant `siftd serve`, every replacement silently un-owned the
+  conversation, and reads are owner-scoped — so it stopped being visible to the
+  person who owned it. Existing un-owned conversations are not repaired by this
+  change; re-push to restore ownership.
+  ([#54](https://github.com/kgruel/siftd/issues/54))
+
 - **`siftd search` now finds conversations that arrived by push or sync.**
   Merged content is indexed as part of the merge, so it no longer depends on
   whether the receiving side was configured to pay for a full index rebuild —
