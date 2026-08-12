@@ -129,9 +129,42 @@ git push -u origin fix/<short-slug>
 gh pr create --repo kgruel/siftd --base main --title "<conventional subject>" --body "..."
 ```
 
-PR body should carry: what broke and the verified mechanism, the corrected
-scope, why this fix over the alternative, why it survived (the test gap), and
-an explicit **Out of scope** section.
+PR body: **five fixed headings, ~400 words.** Same words every time — improvised
+headings invite improvised content, which is where the length comes from.
+
+```markdown
+Fixes #N. <one line of context if the PR follows another.>
+
+## Defect        What broke and the verified mechanism. Point at the docstring
+                 for the full explanation; do not retell it.
+## Scope         What actually changed (corrected against the tree), what
+                 dissolved with it, and any user-visible trade, stated plainly.
+## Evidence      Falsification list, measurements, `./dev check` state. Tables
+                 and lists, not prose.
+## Changed by review   What /simplify and codex changed. Omit only if nothing did.
+## Deferred      Filed issue numbers, one line each.
+```
+
+The budget is real: PRs #41/#44/#46 ran 886–1399 words across 8–9 improvised
+sections, against issues that landed at ~450 words in 4–5 without effort. The
+rewrite of #46 to this schema came to **361 words** and lost nothing — every
+measured number and the whole falsification list survived. What was cut was
+narrative retelling of a mechanism that already lives in the code.
+
+That is the load-bearing rule behind the budget: **rationale belongs in the
+durable artifact.** Mechanism goes in the docstring or the folder README, and
+the PR links to it. Otherwise the same paragraph gets hand-written into the
+issue, the PR, the commit message, and the docstring — the /simplify pass on
+#42 flagged exactly that duplication *inside* the code while the same arc's
+prose was doing it across four artifacts. A merged PR body is write-only.
+
+Issues use four: **Defect** · **Scope** (with counts — sites, occurrences,
+callers) · **Why now** (or why deferred, if filed from a PR's Deferred section)
+· **Shape of the fix**. Same budget.
+
+Note `gh pr create --body` bypasses `.github/PULL_REQUEST_TEMPLATE.md`
+entirely, so a template file would not constrain this path. This skill is the
+enforcement point.
 
 ## 5. `/simplify`
 
@@ -270,9 +303,10 @@ it matches the word "failed". Run the check, read it, then push.
 
 ## 8. File what you deferred
 
-**A merged PR body is write-only.** Everything in its "Out of scope" section
-disappears from view the moment it merges. Before wrapping, file the durable
-items as issues.
+**A merged PR body is write-only.** Everything in its **Deferred** section
+disappears from view the moment it merges — which is why that section is issue
+numbers rather than descriptions. File them before wrapping, then back-fill the
+numbers into the body.
 
 Decompose by *cause*, not by symptom. If several deferrals are sites where one
 thing is missing, that's one issue naming the absence and listing the sites,
