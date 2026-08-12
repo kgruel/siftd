@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   medium no writer can reach.
   ([#42](https://github.com/kgruel/siftd/issues/42))
 
-  **The trade, stated plainly:** the 0.6.0 note below promising that "read-only
+  **The trade, stated plainly:** the 0.8.0 note below promising that "read-only
   commands no longer create surprise WAL/SHM sidecars" is retired for
   `query`/`search`/`show`. A plain `mode=ro` reader takes WAL read marks, so it
   creates `-wal`/`-shm` next to the database and cannot remove them on close.
