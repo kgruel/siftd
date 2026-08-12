@@ -203,6 +203,44 @@ def test_an_append_touches_only_the_sessions_that_moved(tmp_path, project):
     conn.close()
 
 
+def test_two_sessions_opened_in_the_same_second_both_survive(tmp_path, project):
+    """Aider's header resolves to the second, so its key can collide.
+
+    Both sessions are real, and before the ordinal the second silently
+    replaced the first — one conversation stored while the run reported two,
+    which is data loss that even the stats disagreed with.
+    """
+    _history(project).write_text(
+        "# aider chat started at 2025-01-01 00:00:00\n\n#### first\n\nx\n"
+        "# aider chat started at 2025-01-01 00:00:00\n\n#### second\n\ny\n"
+    )
+    conn = create_database(tmp_path / "siftd.db")
+
+    stats = ingest_all(conn, [_aider_adapter_at(project)])
+
+    stored = conn.execute("SELECT count(*) FROM conversations").fetchone()[0]
+    assert stored == 2, "one of two same-second sessions was dropped"
+    assert stats.conversations == stored, "stats counted a conversation that was not stored"
+    conn.close()
+
+
+def test_distinct_timestamps_keep_the_ids_they_already_have(tmp_path, project):
+    """The ordinal must not re-key sessions that never collided.
+
+    `external_id` is the dedup key across machines and across upgrades, so
+    widening it unconditionally would duplicate every aider conversation
+    already ingested. Only the second and later occurrence of a repeated
+    timestamp carries the suffix.
+    """
+    _append(project, _SESSION_TWO)
+    conn = create_database(tmp_path / "siftd.db")
+    ingest_all(conn, [_aider_adapter_at(project)])
+
+    ids = [r[0] for r in conn.execute("SELECT external_id FROM conversations")]
+    assert all("#" not in external_id for external_id in ids), ids
+    conn.close()
+
+
 def test_a_row_poisoned_by_the_bug_heals_on_upgrade(tmp_path, project):
     """An already-broken file must recover without changing again.
 

@@ -19,6 +19,7 @@ rather than pass a timestamp through.
 
 import hashlib
 import re
+from collections import Counter
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -102,12 +103,26 @@ def _parse_chat_history(path: Path) -> Iterable[Conversation]:
     # Split into sessions by header line
     sessions = _split_sessions(text)
 
+    seen_timestamps: Counter[str] = Counter()
+
     for index, (timestamp, body) in enumerate(sessions):
         # The dedup key keeps the raw header string while `started_at` moves
         # to UTC (see `local_to_utc`): re-keying it on the converted value
         # would duplicate every already-ingested aider conversation, and make
         # one file ingest differently on two machines.
+        seen_timestamps[timestamp] += 1
         external_id = f"{NAME}::{path_hash}::{timestamp}"
+        if seen_timestamps[timestamp] > 1:
+            # Aider's header resolves to the second, so two sessions opened in
+            # the same second collide on this key. Both are real, and without
+            # a disambiguator the second silently replaced the first — one
+            # conversation stored while the run reported two. The ordinal is
+            # appended only from the second occurrence onward, so a file whose
+            # timestamps are all distinct keeps the exact ids it already has:
+            # re-keying those is the duplication the comment above is about.
+            # Sessions are only ever appended, so an occurrence's position
+            # among its same-second peers never moves.
+            external_id = f"{external_id}#{seen_timestamps[timestamp]}"
         started_at = local_to_utc(timestamp)
 
         conversation = Conversation(
