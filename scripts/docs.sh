@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # docs.sh
-# DESC: Generate docs; --check fails if they differ from what is committed
+# DESC: Generate docs; --check fails if the result is not staged or committed
 # Usage: ./dev docs [--check]
 # Dependencies: uv, python3, git
 # Idempotent: Yes
@@ -15,7 +15,7 @@ managed per-folder READMEs (see scripts/gen_docs.py MANIFEST).
 
 Options:
   --check  Regenerate strictly (a skipped target is a hard failure) and fail
-           if the result differs from what is committed (for CI)
+           if the result is not already staged or committed (for CI)
   --help   Show this message
 EOF
 }
@@ -49,18 +49,15 @@ main() {
         local readme_paths
         readme_paths=$(uv run python scripts/gen_docs.py readmes --list)
         if ! git diff --quiet docs/reference/ $readme_paths; then
-            # Not "stale": --check regenerated above, so the working tree is
-            # fresh by construction and "run ./dev docs" can never be the
-            # remedy — that was the advice, and it sent readers hunting for
-            # generator nondeterminism that isn't there. The diff is against
-            # the index, so what this actually asserts is that generated docs
-            # travel with the source they describe.
-            log_error "Generated docs differ from what is committed."
-            log_error "They are already regenerated — 'git add' the files below and commit them."
+            # --check regenerated above, so the working tree is fresh by
+            # construction and re-running './dev docs' can never change this
+            # outcome. The diff is against the index, so what this asserts is
+            # that generated docs travel with the source they describe.
+            log_error "Generated docs are not staged — 'git add' the files below to include them."
             git diff --stat docs/reference/ $readme_paths
             exit 1
         fi
-        log_success "Docs are committed and up to date"
+        log_success "Docs are up to date and staged"
     fi
 }
 

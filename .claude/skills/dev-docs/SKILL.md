@@ -45,8 +45,10 @@ Design: `docs/dev/design/dev-docs-system-2026-07-14.md`.
 2. `./dev check` runs `./dev docs --check` as its **last** step.
 3. CI has a dedicated `docs` job (all extras installed so nothing skips).
 
-If `--check` fails: run `./dev docs`, review the diff, commit it. If it fails
-because a docstring is missing or wrong, fix the source — never the table.
+If `--check` fails, the docs are already regenerated — it regenerates before it
+diffs, so re-running `./dev docs` changes nothing. Review the diff and `git add`
+it. If it fails because a docstring is missing or wrong, fix the source — never
+the table.
 
 ## Extending
 

@@ -3,6 +3,7 @@
 import os
 import pytest
 
+from conftest import skip_if_root
 from siftd.api.conversations import (
     QueryError,
     QueryFile,
@@ -220,7 +221,7 @@ class TestRunQueryFile:
         with pytest.raises(QueryError, match="Query file not found"):
             run_query_file("nope", {}, db_path=test_db)
 
-    @pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
+    @skip_if_root
     def test_permission_error_raises_query_error(self, test_db, tmp_path, monkeypatch):
         """PermissionError reading query file surfaces as QueryError with path."""
         queries = tmp_path / "queries"

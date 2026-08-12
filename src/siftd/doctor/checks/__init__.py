@@ -74,25 +74,33 @@ def _connect_read_only(db_path: Path) -> sqlite3.Connection:
     So the plain `mode=ro` open is tried first: it takes WAL read marks and
     sees a consistent snapshot no matter who else is writing. It needs to
     create the `-shm` sidecar, which fails on genuinely read-only media — and
-    that failure is the signal we actually want, because a medium no writer
-    can reach is a medium where `immutable=1` is *true* rather than assumed.
-    Hence the fallback: immutability becomes a property discovered from the
-    file, not a promise the caller makes on its behalf.
+    that failure is the signal we want, because a medium no writer can reach
+    is a medium where `immutable=1` is *true* rather than assumed. Immutability
+    becomes a property discovered from the file, not a promise made about it.
 
-    The probe has to run a statement. `sqlite3.connect` succeeds against
-    read-only media; the sidecar is only created when the first read
-    transaction opens, so that is where the error surfaces.
+    The probe is a statement, not the open: `sqlite3.connect` succeeds against
+    read-only media, and the sidecar is only created when the first read
+    transaction starts. It costs nothing measurable (~3 µs/connection) because
+    it is not extra work — it pulls forward the read transaction the check's
+    own first query would open anyway.
+
+    Only the sidecar's own failures fall back. A read-only directory raises
+    SQLITE_READONLY_DIRECTORY, but a *locked* database raises SQLITE_BUSY —
+    and that means a writer is active, which is exactly when `immutable=1`
+    gives undefined results. Catching OperationalError wholesale would restore
+    the defect precisely where it does the most damage, so anything outside the
+    READONLY/CANTOPEN families propagates.
     """
     uri = f"file:{db_path.as_posix()}?mode=ro"
-    conn = None
+    conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
     try:
-        conn = sqlite3.connect(uri, uri=True, check_same_thread=False)
         conn.execute("PRAGMA schema_version")
-        return conn
-    except sqlite3.OperationalError:
-        if conn is not None:
-            conn.close()
+    except sqlite3.OperationalError as e:
+        if not e.sqlite_errorname.startswith(("SQLITE_READONLY", "SQLITE_CANTOPEN")):
+            raise
+        conn.close()
         return sqlite3.connect(f"{uri}&immutable=1", uri=True, check_same_thread=False)
+    return conn
 
 
 @dataclass

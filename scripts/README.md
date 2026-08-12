@@ -28,7 +28,7 @@ current command list.
 | [agent](agent.sh) | Launch agent in a worktree with prompt template |
 | [browser-smoke](browser-smoke.sh) | Run the real-browser CSP smoke (T3) against a from-source server |
 | [check](check.sh) | Run lint + test + optional lanes (CI equivalent, quiet by default) |
-| [docs](docs.sh) | Generate docs; --check fails if they differ from what is committed |
+| [docs](docs.sh) | Generate docs; --check fails if the result is not staged or committed |
 | [gen-adapter-fixture](gen-adapter-fixture.sh) | Generate or update tests/fixtures/adapters/<adapter>/<case>/expected.json |
 | [gen-schema-fixture](gen-schema-fixture.sh) | Dump current schema as fixture for tests/fixtures/schemas/v${SCHEMA_VERSION}.sql |
 | [lint](lint.sh) | Run ty type checker + ruff linter (with autofix) |

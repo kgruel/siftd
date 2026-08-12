@@ -4,6 +4,7 @@ import os
 import sqlite3
 import stat
 import threading
+from contextlib import closing
 
 import pytest
 
@@ -34,9 +35,7 @@ from siftd.doctor.checks import (
     WorkspaceIdentityCheck,
     _connect_read_only,
 )
-
-# chmod-based tests are meaningless as root, which bypasses permission bits.
-skip_if_root = pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
+from conftest import skip_if_root
 
 
 @pytest.fixture
@@ -1176,59 +1175,40 @@ class TestCheckContext:
 
         ctx.close()
 
-    def test_read_conn_sees_commits_a_writer_has_not_checkpointed(self, test_db, tmp_path):
+    def test_read_conn_sees_commits_a_writer_has_not_checkpointed(self, check_context, test_db):
         """Doctor's reads are not pinned to the last-checkpointed snapshot.
 
-        ``mode=ro&immutable=1`` tells SQLite the file cannot change, so it
-        omits change detection and ignores the ``-wal`` file outright. Against
-        a database a live ``serve`` or a concurrent ``ingest`` has committed to
-        but not yet checkpointed, every check answered from a snapshot missing
-        those commits — no error, no finding, just a stale reading reported as
-        current. Deterministic rather than racy: with no checkpoint there is no
-        visibility, ever.
+        An immutable connection ignores the ``-wal`` file outright, so against a
+        database a live ``serve`` or concurrent ``ingest`` has committed to but
+        not checkpointed, checks answered from a stale snapshot and reported it
+        as current. Deterministic, not racy: no checkpoint, no visibility, ever.
         """
-        writer = sqlite3.connect(test_db)
-        try:
+        with closing(sqlite3.connect(test_db)) as writer:
             writer.execute("PRAGMA journal_mode = WAL")
             writer.execute("CREATE TABLE wal_probe (x INTEGER)")
             writer.commit()
             writer.execute("PRAGMA wal_checkpoint(TRUNCATE)")
 
-            ctx = CheckContext(
-                db_path=test_db,
-                embed_db_path=tmp_path / "embed.db",
-                adapters_dir=tmp_path / "adapters",
-                formatters_dir=tmp_path / "formatters",
-                queries_dir=tmp_path / "queries",
-            )
-            try:
-                conn = ctx.get_db_conn()
-                assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 0
+            conn = check_context.get_db_conn()
+            assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 0
 
-                writer.execute("INSERT INTO wal_probe VALUES (1)")
-                writer.commit()
+            writer.execute("INSERT INTO wal_probe VALUES (1)")
+            writer.commit()
 
-                # Guard against the test going vacuous: it only means anything
-                # while the commit is still in the WAL and nowhere else.
-                wal = test_db.parent / f"{test_db.name}-wal"
-                assert wal.exists() and wal.stat().st_size > 0, "commit was checkpointed away"
+            # Guard against the test going vacuous: it only means anything
+            # while the commit is still in the WAL and nowhere else.
+            wal = test_db.parent / f"{test_db.name}-wal"
+            assert wal.exists() and wal.stat().st_size > 0, "commit was checkpointed away"
 
-                assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 1
-            finally:
-                ctx.close()
-        finally:
-            writer.close()
+            assert conn.execute("SELECT count(*) FROM wal_probe").fetchone()[0] == 1
 
     @skip_if_root
     def test_read_conn_falls_back_to_immutable_on_read_only_media(self, tmp_path):
         """Immutability is derived from the medium, not asserted by the caller.
 
-        A plain ``mode=ro`` open must create the ``-shm`` sidecar that carries
-        its WAL read marks, which fails when the database's directory is not
-        writable. That failure is the signal worth acting on: a medium no
-        writer can reach is one where ``immutable=1`` is *true* rather than
-        assumed, so doctor falls back to it and keeps the read-only-media
-        support the plain open would have cost.
+        Simulated by making the database's *directory* unwritable, which is what
+        stops the ``-shm`` sidecar from being created — read-only media in the
+        only form the filesystem lets a test reproduce.
         """
         media = tmp_path / "media"
         media.mkdir()

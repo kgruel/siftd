@@ -31,6 +31,17 @@ under-reported drift in roughly one run in seven. A check that needs write
 access opens its own connection and must assume it is racing the read
 connections of every other check.
 
+Those read connections see a **live** database, not a frozen snapshot. They are
+opened with change detection on (`_connect_read_only`), falling back to
+`immutable=1` only when the medium genuinely cannot be written — so a check
+reads whatever is committed at the moment each of its statements runs, and two
+statements in one `run()` can disagree if a writer lands between them. Where
+that matters, read what you need in a single statement rather than assuming
+consistency across several. The previous `immutable=1` open bought consistency
+at a price doctor could not pay: it ignores the `-wal` file, so every check
+silently answered from the last checkpoint whenever a live `serve` or `ingest`
+held un-checkpointed commits.
+
 Severity is a promise about actionability, because `--strict` is documented
 for CI: a `warning` must be something a fix can actually move, and anything
 kept deliberately (a queued tag whose target does not exist yet, a row only a

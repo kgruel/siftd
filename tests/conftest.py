@@ -154,6 +154,11 @@ from siftd.storage.tags import apply_tag, get_or_create_tag
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
 
+# chmod-based tests are meaningless as root, which bypasses permission bits.
+# Shared because the condition is platform logic, not a per-file choice: it has
+# to widen in one place when it meets a platform without getuid.
+skip_if_root = pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
+
 # CWD-relative path so workspace_path and path-hash fields in adapter output
 # are stable across machines (some adapters derive IDs from str(path)).
 GOLDEN_DIR = Path("tests/fixtures/adapters")

@@ -6,11 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from conftest import skip_if_root
 from siftd.storage.sqlite import open_database
-
-
-# Tests that use chmod to change file permissions won't work when running as root
-skip_if_root = pytest.mark.skipif(os.getuid() == 0, reason="requires non-root for chmod")
 
 
 class TestReadOnlyMode:

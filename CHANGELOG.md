@@ -21,7 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `integrity_check` reported corruption in a healthy database. Doctor now
   opens a plain `mode=ro` connection and falls back to `immutable=1` only when
   the sidecar it needs cannot be created, so read-only media still works and
-  immutability is derived from the medium rather than asserted over it.
+  immutability is derived from the medium rather than asserted over it. The
+  trade: `siftd doctor` now leaves `-wal`/`-shm` sidecars next to the database,
+  which a read-only connection cannot clean up on close. Any write to the
+  database creates them anyway, so this is visible only if doctor is the first
+  thing to touch a freshly-checkpointed file.
   ([#38](https://github.com/kgruel/siftd/issues/38))
 
 - **Every default `db pull` after the first one works again.** Sync stores its
