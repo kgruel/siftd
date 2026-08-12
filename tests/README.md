@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 185 | 3251 |
+| `tests/` | 186 | 3256 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 8 | 56 |
 | `tests/cli/` | 28 | 630 |
@@ -177,6 +177,7 @@ docstring so its row is meaningful.
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
+| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 5 | Regression tests for #36: aider history files with more than one session. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 4 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
 | [test_ingestion.py](test_ingestion.py) | 55 | Tests for ingestion orchestration utility functions. |
