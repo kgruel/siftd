@@ -72,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- The architecture ratchets share one definition of where the source tree is
+  (`tests/architecture/support.py`), and a ratchet keeps it that way — the
+  three-`.parent` walk had reached eight copies across seven modules.
+  ([#45](https://github.com/kgruel/siftd/issues/45))
+
 - An architecture ratchet enumerates every read-only open that asserts
   `immutable=1` instead of deriving it, against a now-empty, shrink-only
   allowlist (`tests/architecture/test_readonly_opens.py`).

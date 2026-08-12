@@ -10,6 +10,8 @@ from pathlib import Path
 
 import pytest
 
+from architecture.support import REPO_ROOT, SRC, literal_text, source_files
+
 
 # =============================================================================
 # Test Fixtures
@@ -18,7 +20,7 @@ import pytest
 
 @pytest.fixture
 def src_dir():
-    return Path(__file__).parent.parent.parent / "src" / "siftd"
+    return SRC
 
 
 # =============================================================================
@@ -71,10 +73,10 @@ class TestStderrHygiene:
         """print() calls with 'Tip:' must use file=sys.stderr."""
         violations = []
 
-        for py_file in src_dir.rglob("*.py"):
+        for py_file in source_files(src_dir):
             for line_num, uses_stderr in find_print_calls_with_pattern(py_file, "Tip:"):
                 if not uses_stderr:
-                    rel_path = py_file.relative_to(src_dir.parent.parent)
+                    rel_path = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel_path}:{line_num}: print('Tip:...') without stderr")
 
         if violations:
@@ -84,10 +86,10 @@ class TestStderrHygiene:
         """print() calls with 'Warning:' must use file=sys.stderr."""
         violations = []
 
-        for py_file in src_dir.rglob("*.py"):
+        for py_file in source_files(src_dir):
             for line_num, uses_stderr in find_print_calls_with_pattern(py_file, "Warning:"):
                 if not uses_stderr:
-                    rel_path = py_file.relative_to(src_dir.parent.parent)
+                    rel_path = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel_path}:{line_num}: print('Warning:...') without stderr")
 
         if violations:
@@ -142,7 +144,7 @@ class TestBundledQueries:
                 try:
                     conn.execute(f"EXPLAIN {stmt}")
                 except sqlite3.Error as e:
-                    rel_path = sql_file.relative_to(src_dir.parent.parent)
+                    rel_path = sql_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel_path} (statement {i}): {e}")
 
         conn.close()
@@ -240,7 +242,7 @@ class TestServeRouteBoundary:
         route_re = re.compile(r'["\'](/(?:ui|v1)/[^"\']*)["\']')
 
         violations = []
-        for py_file in output_dir.rglob("*.py"):
+        for py_file in source_files(output_dir):
             for i, line in enumerate(py_file.read_text().splitlines(), 1):
                 # Skip comments and docstrings (heuristic: lines with # or triple-quote context)
                 stripped = line.lstrip()
@@ -250,7 +252,7 @@ class TestServeRouteBoundary:
                     # Allow in docstrings/comments (crude: if line has >>> or e.g.)
                     if "e.g." in line or ">>>" in line or "example" in line.lower():
                         continue
-                    rel = py_file.relative_to(src_dir.parent.parent)
+                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel}:{i}: hardcoded route {m.group(1)!r}")
 
         if violations:
@@ -368,7 +370,7 @@ class TestServeRouteBoundary:
             pkg = src_dir / subdir
             if not pkg.exists():
                 continue
-            for py_file in pkg.rglob("*.py"):
+            for py_file in source_files(pkg):
                 source = py_file.read_text()
                 lines = source.splitlines()
                 try:
@@ -388,7 +390,7 @@ class TestServeRouteBoundary:
                         line = node.lineno
                         if 0 < line <= len(lines) and suppress_comment in lines[line - 1]:
                             continue
-                        rel = py_file.relative_to(src_dir.parent.parent)
+                        rel = py_file.relative_to(REPO_ROOT)
                         violations.append(f"{rel}:{line}: imports {module}")
         return violations
 
@@ -542,18 +544,6 @@ _SQL_KEYWORDS = (
 )
 
 
-def _extract_sql_literal(node: ast.AST) -> str | None:
-    if isinstance(node, ast.Constant) and isinstance(node.value, str):
-        return node.value
-    if isinstance(node, ast.JoinedStr):
-        parts = []
-        for value in node.values:
-            if isinstance(value, ast.Constant) and isinstance(value.value, str):
-                parts.append(value.value)
-        return "".join(parts) if parts else None
-    return None
-
-
 def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
     """Find conn.execute(...) calls with SQL literals in a Python file."""
     import re
@@ -574,7 +564,7 @@ def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
                 continue
             if not node.args:
                 continue
-            sql_literal = _extract_sql_literal(node.args[0])
+            sql_literal = literal_text(node.args[0])
             if not sql_literal or not sql_re.search(sql_literal):
                 continue
             line = node.lineno
@@ -705,7 +695,7 @@ class TestOptionalExtraBoundaries:
         violations = []
         allowed_files = {src_dir / "embeddings" / "__init__.py"}
 
-        for py_file in src_dir.rglob("*.py"):
+        for py_file in source_files(src_dir):
             if py_file in allowed_files:
                 continue
             source = py_file.read_text()
@@ -721,7 +711,7 @@ class TestOptionalExtraBoundaries:
                         if alias.name in self.CONDITIONAL_EMBEDDINGS_EXPORTS
                     )
                     if bad_names:
-                        rel_path = py_file.relative_to(src_dir.parent.parent)
+                        rel_path = py_file.relative_to(REPO_ROOT)
                         violations.append(f"{rel_path}:{node.lineno}: {', '.join(bad_names)}")
 
         if violations:
@@ -738,7 +728,7 @@ def test_no_raw_sql_in_cli_modules(src_dir):
 
     for py_file in src_dir.rglob("cli*.py"):
         for line_num, snippet in find_sql_execute_calls(py_file):
-            rel_path = py_file.relative_to(src_dir.parent.parent)
+            rel_path = py_file.relative_to(REPO_ROOT)
             violations.append(f"{rel_path}:{line_num}: execute({snippet!r})")
 
     if violations:
@@ -930,13 +920,13 @@ class TestDependencyDirection:
         api_dir = src_dir / "api"
         violations = []
 
-        for py_file in api_dir.rglob("*.py"):
+        for py_file in source_files(api_dir):
             source_lines = py_file.read_text().splitlines()
             for line_num, module in _extract_siftd_imports(py_file):
                 if module.startswith("siftd.serialization"):
                     if 0 < line_num <= len(source_lines) and "arch: allow-serialization" in source_lines[line_num - 1]:
                         continue
-                    rel = py_file.relative_to(src_dir.parent.parent)
+                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel}:{line_num}: imports {module}")
 
         if violations:
@@ -955,10 +945,10 @@ class TestDependencyDirection:
         storage_dir = src_dir / "storage"
         violations = []
 
-        for py_file in storage_dir.rglob("*.py"):
+        for py_file in source_files(storage_dir):
             for line_num, module in _extract_siftd_imports(py_file):
                 if module.startswith("siftd.api"):
-                    rel = py_file.relative_to(src_dir.parent.parent)
+                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel}:{line_num}: imports {module}")
 
         if violations:
@@ -981,11 +971,11 @@ class TestDependencyDirection:
                      "siftd.adapters", "siftd.doctor", "siftd.ingestion"}
         violations = []
 
-        for py_file in domain_dir.rglob("*.py"):
+        for py_file in source_files(domain_dir):
             for line_num, module in _extract_siftd_imports(py_file):
                 top = "siftd." + module.split(".")[1]
                 if any(module.startswith(f) for f in forbidden):
-                    rel = py_file.relative_to(src_dir.parent.parent)
+                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel}:{line_num}: imports {module}")
 
         if violations:
@@ -1004,10 +994,10 @@ class TestDependencyDirection:
         api_dir = src_dir / "api"
         violations = []
 
-        for py_file in api_dir.rglob("*.py"):
+        for py_file in source_files(api_dir):
             for line_num, module in _extract_siftd_imports(py_file):
                 if module.startswith("siftd.serialization"):
-                    rel = py_file.relative_to(src_dir.parent.parent)
+                    rel = py_file.relative_to(REPO_ROOT)
                     violations.append(f"{rel}:{line_num}: imports {module}")
 
         if violations:

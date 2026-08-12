@@ -8,10 +8,10 @@ is stable.
 import json
 import os
 import subprocess
-from pathlib import Path
 
 import pytest
 
+from architecture.support import REPO_ROOT, SRC, source_files
 from siftd.storage.sqlite import create_database
 
 
@@ -219,15 +219,14 @@ class TestCommandReferences:
         assert valid_subcommands, "Failed to parse subcommands from help output"
 
         # Scan source files for 'siftd <subcommand>' patterns
-        src_dir = Path(__file__).parent.parent.parent / "src" / "siftd"
         # Match 'siftd <word>' - lowercase word suggests a command
         pattern = re.compile(r"siftd\s+([a-z][\w-]*)")
 
         invalid_references = []
 
-        for py_file in src_dir.rglob("*.py"):
+        for py_file in source_files(SRC):
             content = py_file.read_text()
-            rel_path = str(py_file.relative_to(src_dir.parent.parent))
+            rel_path = str(py_file.relative_to(REPO_ROOT))
 
             for match in pattern.finditer(content):
                 subcommand = match.group(1)

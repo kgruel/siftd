@@ -814,6 +814,14 @@ _BRANCH_PRESENTATION = {
 
 def _load_exception_ratchet():
     import importlib.util
+    import sys
+
+    # The ratchet imports its source-root mechanics from `architecture.support`,
+    # which pytest resolves via `pythonpath = ["src", "tests"]`. This loader runs
+    # outside pytest, so it has to put `tests/` on the path itself.
+    tests_root = str(REPO_ROOT / "tests")
+    if tests_root not in sys.path:
+        sys.path.insert(0, tests_root)
 
     spec = importlib.util.spec_from_file_location("_exc_ratchet", _EXC_RATCHET)
     module = importlib.util.module_from_spec(spec)

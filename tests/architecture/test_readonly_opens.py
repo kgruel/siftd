@@ -44,9 +44,8 @@ pass-through-adapter limit:
 
 import ast
 from collections import Counter
-from pathlib import Path
 
-SRC_DIR = Path(__file__).parent.parent.parent / "src" / "siftd"
+from architecture.support import SRC, literal_text, source_files
 
 MARKER = "immutable=1"
 
@@ -63,24 +62,6 @@ ALLOWLIST: dict[tuple[str, str], int] = {}
 DERIVED_FALLBACK: dict[tuple[str, str], int] = {
     ("storage/sqlite.py", "connect_read_only"): 1,
 }
-
-
-def _literal_text(node: ast.AST) -> str | None:
-    """The static text of a string literal, or None if the node is not one.
-
-    An f-string contributes its constant segments, which is where a copied URI
-    keeps its query parameters — `f"file:{p}?mode=ro&immutable=1"` yields
-    `file:?mode=ro&immutable=1`.
-    """
-    if isinstance(node, ast.Constant):
-        return node.value if isinstance(node.value, str) else None
-    if isinstance(node, ast.JoinedStr):
-        return "".join(
-            part.value
-            for part in node.values
-            if isinstance(part, ast.Constant) and isinstance(part.value, str)
-        )
-    return None
 
 
 def _docstring_ids(tree: ast.Module) -> set[int]:
@@ -105,17 +86,17 @@ def _docstring_ids(tree: ast.Module) -> set[int]:
 def _sites() -> Counter[tuple[str, str]]:
     """Immutable-URI occurrences per (relative path, enclosing function)."""
     found: Counter[tuple[str, str]] = Counter()
-    for path in sorted(SRC_DIR.rglob("*.py")):
+    for path in source_files():
         tree = ast.parse(path.read_text())
         skip = _docstring_ids(tree)
-        rel = path.relative_to(SRC_DIR).as_posix()
+        rel = path.relative_to(SRC).as_posix()
 
         def visit(node: ast.AST, scope: str) -> None:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     visit(child, child.name)
                     continue
-                text = _literal_text(child) if id(child) not in skip else None
+                text = literal_text(child) if id(child) not in skip else None
                 if text and MARKER in text:
                     # Count the outermost matching literal and stop: an
                     # f-string's constant segments each match again otherwise,

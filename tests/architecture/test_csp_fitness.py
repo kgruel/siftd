@@ -19,16 +19,15 @@ smoke, ``./dev browser-smoke``), not a text scan's.
 
 import re
 from html.parser import HTMLParser
-from pathlib import Path
 from urllib.parse import urlparse
 
 import pytest
 
-SRC = Path(__file__).parent.parent.parent / "src" / "siftd"
+from architecture.support import REPO_ROOT, SRC, source_files
 
 # Every source that emits HTML the serve layer can return.
 _HTML_EMITTING_SOURCES = [
-    *sorted((SRC / "serve").rglob("*.py")),
+    *source_files(SRC / "serve"),
     SRC / "output" / "html_fmt.py",
 ]
 
@@ -57,7 +56,7 @@ def _scan(paths, patterns):
         for lineno, line in enumerate(text.splitlines(), 1):
             for pattern, label in patterns:
                 if pattern.search(line):
-                    hits.append(f"{path.relative_to(SRC.parent.parent)}:{lineno} — {label}: {line.strip()[:120]}")
+                    hits.append(f"{path.relative_to(REPO_ROOT)}:{lineno} — {label}: {line.strip()[:120]}")
     return hits
 
 

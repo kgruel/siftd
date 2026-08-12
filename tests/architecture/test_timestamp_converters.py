@@ -46,7 +46,7 @@ here.
 import ast
 from pathlib import Path
 
-SRC = Path(__file__).parent.parent.parent / "src" / "siftd"
+from architecture.support import SRC, source_files
 
 # The module that owns the operation. Every other module asks it.
 OWNER = "dateparse.py"
@@ -86,7 +86,7 @@ def _fromisoformat_calls(path: Path) -> list[int]:
 
 def test_only_dateparse_parses_timestamps():
     offenders = {}
-    for path in sorted(SRC.rglob("*.py")):
+    for path in source_files():
         rel = str(path.relative_to(SRC))
         if rel == OWNER or rel in ALLOWLIST:
             continue
