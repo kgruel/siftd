@@ -327,6 +327,13 @@ class TestToUtc:
             2025, 7, 15, 14, 32, 1, tzinfo=UTC
         )
 
+    def test_a_date_only_value_is_midnight_utc(self):
+        """`ended_at` and `last_activity` are nullable free-form columns whose
+        contents an adapter can pass through from its log; ingestion's dissolved
+        `_parse_timestamp` accepted this shape and `_compare_timestamps` still
+        has to order it."""
+        assert to_utc("2024-01-15") == datetime(2024, 1, 15, tzinfo=UTC)
+
     def test_malformed_value_names_itself(self):
         with pytest.raises(ValueError, match="invalid timestamp"):
             to_utc("not-a-timestamp")

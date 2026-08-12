@@ -94,7 +94,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3259 |
+| `tests/` | 186 | 3262 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 8 | 56 |
 | `tests/cli/` | 28 | 630 |
@@ -138,7 +138,7 @@ docstring so its row is meaningful.
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
-| [test_date_parsing.py](test_date_parsing.py) | 20 | Tests for date and timestamp parsing in CLI filters. |
+| [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
@@ -180,7 +180,7 @@ docstring so its row is meaningful.
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 7 | Regression tests for #36: aider history files with more than one session. |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 55 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |

@@ -28,9 +28,20 @@ def test_fmt_timestamp_converts_aware_timestamps_to_local_timezone():
     assert fmt_timestamp("2024-01-15T10:00:00Z", time_only=True, local_tz=eastern) == "05:00"
 
 
-def test_fmt_timestamp_leaves_naive_timestamps_unchanged():
+def test_fmt_timestamp_reads_naive_timestamps_as_utc():
+    """A naive value comes out of a UTC column, so it shifts like any other.
+
+    This used to render unshifted, on the reading that a missing designator
+    meant the writer had already localized it. No caller passes a local value
+    — every one of them reads `started_at`, a turn `timestamp`, `last_ingest`,
+    or `last_activity` — so the rows that hit this branch were displayed off
+    by the host's offset.
+    """
     eastern = timezone(timedelta(hours=-5))
-    assert fmt_timestamp("2024-01-15T10:00:00", local_tz=eastern) == "2024-01-15 10:00"
+    assert fmt_timestamp("2024-01-15T10:00:00", local_tz=eastern) == "2024-01-15 05:00"
+    assert fmt_timestamp("2024-01-15T10:00:00", local_tz=eastern) == fmt_timestamp(
+        "2024-01-15T10:00:00Z", local_tz=eastern
+    )
 
 
 def test_fmt_timestamp_preserves_short_date_strings():

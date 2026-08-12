@@ -1,6 +1,5 @@
 """Tests for ingestion orchestration utility functions."""
 
-from datetime import UTC
 from types import SimpleNamespace
 
 import pytest
@@ -12,30 +11,9 @@ from siftd.ingestion.orchestration import (
     _extract_first_text,
     _get_single_conversation,
     _normalize_status,
-    _parse_timestamp,
     _summarize_conversation,
     _truncate_summary,
 )
-
-
-class TestParseTimestamp:
-    def test_zulu(self):
-        dt = _parse_timestamp("2024-01-15T10:30:00Z")
-        assert dt.tzinfo is not None
-        assert dt.year == 2024
-
-    def test_offset(self):
-        dt = _parse_timestamp("2024-01-15T10:30:00+00:00")
-        assert dt.tzinfo is not None
-
-    def test_naive_assumed_utc(self):
-        dt = _parse_timestamp("2024-01-15T10:30:00")
-        assert dt.tzinfo == UTC
-
-    def test_fallback_parse(self):
-        # A format that fails the first fromisoformat but succeeds on fallback
-        dt = _parse_timestamp("2024-01-15")
-        assert dt.year == 2024
 
 
 class TestCompareTimestamps:

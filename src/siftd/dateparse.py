@@ -18,7 +18,8 @@ and it is the thing none of them said out loud.** It has exactly two answers
 in siftd, and which one is right is a property of where the value came from,
 never of the value itself:
 
-- **UTC**, on the read side — `to_utc`. Every column siftd compares or renders
+- **UTC**, on the read side — `to_utc`. Every column that gets compared or
+  rendered
   (`started_at`, `ended_at`, `timestamp`, `ingested_at`, `last_activity`)
   stores UTC, so a naive value from one is a UTC instant that lost its
   designator, not a wall clock.

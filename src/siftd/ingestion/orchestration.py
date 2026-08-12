@@ -31,10 +31,10 @@ import sqlite3
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from siftd.adapters.sdk import AdapterParseError
+from siftd.dateparse import to_utc
 from siftd.domain import Source
 from siftd.storage.sessions import (
     drain_pending_tags,
@@ -104,40 +104,20 @@ class IngestEvent:
     error: str | None = None
 
 
-def _parse_timestamp(ts: str) -> datetime:
-    """Parse an ISO 8601 timestamp string to datetime.
-
-    Handles various formats:
-    - 2024-01-15T10:30:00Z (Zulu)
-    - 2024-01-15T10:30:00+00:00 (explicit offset)
-    - 2024-01-15T10:30:00 (naive, assumed UTC)
-    """
-    # Normalize 'Z' suffix to '+00:00' for fromisoformat
-    normalized = ts.replace("Z", "+00:00")
-    try:
-        dt = datetime.fromisoformat(normalized)
-    except ValueError:
-        # Fallback: try without timezone, assume UTC
-        dt = datetime.fromisoformat(ts.rstrip("Z"))
-        dt = dt.replace(tzinfo=UTC)
-
-    # If naive (no tzinfo), assume UTC
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt
-
-
 def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
     """Return True if new_ts is newer than existing_ts.
 
     None is treated as oldest (so any timestamp beats None).
-    Parses timestamps to datetime for safe comparison across formats.
+
+    Resolves both to instants rather than comparing the strings, because the
+    two sides can be spelled differently — one row written by an adapter that
+    passes its log's timestamp through, the other by one that renders its own.
     """
     if new_ts is None:
         return False
     if existing_ts is None:
         return True
-    return _parse_timestamp(new_ts) > _parse_timestamp(existing_ts)
+    return to_utc(new_ts) > to_utc(existing_ts)
 
 
 def _stat_unchanged(existing_info, st: os.stat_result) -> bool:

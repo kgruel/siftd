@@ -5,6 +5,7 @@ the engine entrypoint. No search Operation lives here."""
 from datetime import UTC, datetime
 from pathlib import Path
 
+from siftd.dateparse import to_utc
 from siftd.domain.search_types import ScoreBreakdown, SearchChunk
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.sql_helpers import batched_in_query, has_conversation_owners_table
@@ -65,14 +66,7 @@ def apply_temporal_weight(
 
         if ts_str:
             try:
-                # Parse ISO timestamp (with or without timezone)
-                ts_str_clean = ts_str.replace("Z", "+00:00")
-                if "+" not in ts_str_clean and ts_str_clean.count("-") <= 2:
-                    # No timezone, assume UTC (handles legacy data from pre-fix versions)
-                    ts = datetime.fromisoformat(ts_str_clean).replace(tzinfo=UTC)
-                else:
-                    ts = datetime.fromisoformat(ts_str_clean)
-                days_ago = max(0, (now - ts).total_seconds() / 86400)
+                days_ago = max(0, (now - to_utc(ts_str)).total_seconds() / 86400)
                 # Exponential decay: starts at max_boost, decays to 1.0
                 weight = 1.0 + (max_boost - 1.0) * math.exp(-decay_constant * days_ago)
                 r_copy["score"] = r["score"] * weight
