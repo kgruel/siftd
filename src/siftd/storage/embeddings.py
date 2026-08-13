@@ -190,7 +190,7 @@ def upsert_indexed_state(
         conn.commit()
 
 
-def delete_conversations(
+def delete_indexed_conversations(
     conn: sqlite3.Connection, conversation_ids: set[str], *, commit: bool = False
 ) -> int:
     """Delete chunks + indexed_state for the given conversations (batched).
@@ -198,6 +198,11 @@ def delete_conversations(
     The single sweep the incremental indexer runs before re-indexing changed
     conversations and pruning removed ones. Returns the number of chunk rows deleted.
     A brand-new conversation (no chunks yet) is a harmless no-op.
+
+    Named for the *index*, not for the conversation (#79).
+    ``storage/sqlite.py::delete_conversations`` is a different closure on a
+    different database, with the opposite obligation: that one destroys a
+    conversation, this one drops derived rows for one that still exists.
     """
     if not conversation_ids:
         return 0

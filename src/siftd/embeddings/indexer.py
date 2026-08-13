@@ -36,7 +36,7 @@ from siftd.storage.embeddings import (
     chunk_counts_by_type,
     clear_all,
     config_backend_name,
-    delete_conversations,
+    delete_indexed_conversations,
     get_indexed_state,
     get_meta,
     open_embeddings_db,
@@ -201,7 +201,7 @@ def build_embeddings_index(
             # are NOT swept here — each one's old chunks are replaced inside the same batch
             # transaction that stores its new chunks (below), so an interrupt keeps the
             # prior coverage of every conversation whose replacement hasn't committed.
-            n_removed = delete_conversations(embed_conn, to_prune)
+            n_removed = delete_indexed_conversations(embed_conn, to_prune)
             embed_conn.commit()
 
             if not to_index:
@@ -267,7 +267,7 @@ def build_embeddings_index(
                 # first new chunk — an interrupt before this commit leaves the old chunks
                 # (and coverage) intact rather than wiping every stale conversation up front.
                 if cid not in replaced:
-                    n_removed += delete_conversations(embed_conn, {cid})
+                    n_removed += delete_indexed_conversations(embed_conn, {cid})
                     replaced.add(cid)
                 store_chunk(
                     embed_conn,
@@ -293,7 +293,7 @@ def build_embeddings_index(
         # mark every remaining to_index conversation indexed so it isn't rescanned. These
         # rides the built_at commit below.
         zero_chunk = to_index - replaced
-        n_removed += delete_conversations(embed_conn, zero_chunk)
+        n_removed += delete_indexed_conversations(embed_conn, zero_chunk)
         for cid in to_index:
             if cid not in upserted:
                 upsert_indexed_state(embed_conn, cid, fingerprints[cid], stored_counts.get(cid, 0))

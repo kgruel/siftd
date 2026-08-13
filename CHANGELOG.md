@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Internal
+
+- **A new code path that destroys a conversation now has to say what happens to
+  the tags and ownership attached to it.**
+  ([#79](https://github.com/kgruel/siftd/issues/79))
+
 ### Fixed
 
 - **A push that replaces a conversation cleans up after itself by the schema's
