@@ -104,7 +104,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 186 | 3289 |
 | `tests/adapters/` | 19 | 163 |
-| `tests/architecture/` | 12 | 70 |
+| `tests/architecture/` | 12 | 71 |
 | `tests/cli/` | 28 | 632 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -335,7 +335,7 @@ docstring so its row is meaningful.
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
-| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 8 | A conversation replacement is answerable to one list of what it must carry. |
+| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 9 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |

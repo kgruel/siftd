@@ -114,7 +114,9 @@ DESTROY_DEFINITION_SITE = "storage/sqlite.py"
 # `_sites_by_function`'s call half is what covers a door that goes through the
 # primitive, and nothing covers a door that does both.
 DESTROY_LITERAL = re.compile(
-    r"""DELETE \s+ FROM \s+ (?: \w+ \s* \. \s* )? ["`\[]? conversations \b""",
+    r"""DELETE \s+ FROM \s+
+        (?: ["`\[]? \w+ ["`\]]? \s* \. \s* )?   # optional schema, quoted or not
+        ["`\[]? conversations \b""",
     re.IGNORECASE | re.VERBOSE,
 )
 
@@ -363,6 +365,41 @@ def test_a_conversation_is_destroyed_only_where_the_module_carries():
         "`storage/replacement.py` — then be counted in DESTROY_SITES with what "
         "answers for it. A site that vanished means either the door closed or "
         "the sweep stopped seeing it; the second is the dangerous one."
+    )
+
+
+def test_the_destroy_pattern_reads_every_spelling_of_the_delete():
+    """The regex half is a detector, so its own reach is worth pinning.
+
+    Every widening below came from an external review pass finding the previous
+    form too narrow, one spelling at a time — first whitespace, then a schema
+    qualifier, then a *quoted* schema qualifier. Written as a table because the
+    alternative is discovering the next narrowing the way the last three were
+    found. The negatives matter as much: `conversation_owners` and a
+    `conversations_backup` table must not read as a conversation delete, or the
+    population grows entries that are not doors.
+    """
+    matches = [
+        "DELETE FROM conversations",
+        "DELETE  FROM   conversations",
+        "DELETE\n          FROM conversations",
+        "DELETE FROM main.conversations",
+        'DELETE FROM "main"."conversations"',
+        "DELETE FROM [main].[conversations]",
+        "delete from Main . Conversations",
+    ]
+    misses = [
+        "DELETE FROM conversation_owners",
+        "DELETE FROM conversations_backup",
+        "SELECT * FROM conversations",
+    ]
+    assert [s for s in matches if not DESTROY_LITERAL.search(s)] == [], (
+        "a spelling of the conversation delete is no longer matched — the sweep "
+        "would read a door written that way as absent."
+    )
+    assert [s for s in misses if DESTROY_LITERAL.search(s)] == [], (
+        "the pattern matches something that is not a conversation delete; it "
+        "would put a non-door into DESTROY_SITES."
     )
 
 
