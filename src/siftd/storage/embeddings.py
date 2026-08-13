@@ -190,7 +190,7 @@ def upsert_indexed_state(
         conn.commit()
 
 
-def delete_conversations(
+def delete_indexed_conversations(
     conn: sqlite3.Connection, conversation_ids: set[str], *, commit: bool = False
 ) -> int:
     """Delete chunks + indexed_state for the given conversations (batched).
@@ -198,6 +198,18 @@ def delete_conversations(
     The single sweep the incremental indexer runs before re-indexing changed
     conversations and pruning removed ones. Returns the number of chunk rows deleted.
     A brand-new conversation (no chunks yet) is a harmless no-op.
+
+    Named for the *index*, not for the conversation. It was
+    ``delete_conversations`` until #79, colliding with
+    ``storage/sqlite.py::delete_conversations`` — a different closure, on a
+    different database, with the opposite obligation: that one destroys a
+    conversation and its door must carry a snapshot across, this one drops
+    derived rows the indexer rebuilds from a conversation that still exists.
+    The collision was not merely confusing. `test_replacement_carry.py` keys
+    the replacement population on the *name* of the delete, so under the old
+    spelling three indexer sites read as replacement doors, and the two real
+    ones could only be told apart by resolving imports. Renaming is what lets
+    that ratchet stay a name sweep.
     """
     if not conversation_ids:
         return 0
