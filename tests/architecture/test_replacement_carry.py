@@ -107,13 +107,16 @@ DESTROY_DEFINITION_SITE = "storage/sqlite.py"
 # new door has to be argued for here rather than discovered in a bug. #79
 # anticipated a `siftd db delete` needing an entry; there is no such command —
 # no CLI, api, or serve path destroys a conversation.
+# Counted, not just named, in the same shape as `REPLACEMENT_SITES` — a set of
+# keys is blind to a *second* delete added inside a function already on the
+# list, which is the cheapest way for a door to grow one (external review).
 DESTROY_SITES = {
-    ("ingestion/orchestration.py", "_take_conversation_for_replacement"): (
-        "paired: snapshots here, restores in _restore_carryover_after_replacement"
-    ),
-    ("api/merge.py", "_replace_stale_conversations"): (
-        "paired: snapshots here, restores in _merge_attached"
-    ),
+    # paired: snapshots here, restores in _restore_carryover_after_replacement
+    ("ingestion/orchestration.py", "_take_conversation_for_replacement"): {
+        "delete_conversation": 1,
+    },
+    # paired: snapshots here, restores in _merge_attached
+    ("api/merge.py", "_replace_stale_conversations"): {"delete_conversations": 1},
 }
 
 # Where ingest's own wrapper is called from, in the same shape. The wrapper is
@@ -302,19 +305,24 @@ def test_a_conversation_is_destroyed_only_where_the_module_carries():
     failure. What holds a listed module's arity is the carry count above; what
     this holds is the *population*.
 
-    Asserted by equality, not by "nothing unpaired". The negative form passes
-    perfectly when the sweep finds nothing at all — a refactor of the walker, a
-    changed spelling, a narrowed `source_files()` — which is the silent-green
-    failure the rest of this file exists to remove.
+    Asserted by equality over *counts*, not by "nothing unpaired" over keys.
+    Both weaker forms have a silent pass in them: the negative form succeeds
+    when the sweep finds nothing at all (a refactored walker, a changed
+    spelling, a narrowed `source_files()`), and key-equality succeeds when a
+    second delete is added inside a function already on the list — which is the
+    cheapest way for a door to grow one, and was live here until external
+    review caught it.
     """
-    found = set(
-        _sites_by_function(_call_to(DESTROY_PRIMITIVES), exclude=DESTROY_DEFINITION_SITE)
-    ) | set(_sites_by_function(_literal_containing(DESTROY_LITERAL), exclude=DESTROY_DEFINITION_SITE))
+    found: dict[tuple[str, str], dict[str, int]] = {}
+    for finder in (_call_to(DESTROY_PRIMITIVES), _literal_containing(DESTROY_LITERAL)):
+        for site, per in _sites_by_function(finder, exclude=DESTROY_DEFINITION_SITE).items():
+            for label, n in per.items():
+                found.setdefault(site, {})[label] = found.setdefault(site, {}).get(label, 0) + n
 
-    assert found == set(DESTROY_SITES), (
-        f"conversation-destroying sites moved: {sorted(found ^ set(DESTROY_SITES))}. "
-        "A new one must snapshot before the delete and restore after — see "
-        "`storage/replacement.py` — then be named in DESTROY_SITES with what "
+    assert found == DESTROY_SITES, (
+        f"conversation-destroying sites moved: {found} != {DESTROY_SITES}. A new "
+        "one must snapshot before the delete and restore after — see "
+        "`storage/replacement.py` — then be counted in DESTROY_SITES with what "
         "answers for it. A site that vanished means either the door closed or "
         "the sweep stopped seeing it; the second is the dangerous one."
     )
