@@ -60,6 +60,7 @@ Scope and limits, stated so a future reader can judge what this does not catch:
 """
 
 import ast
+import re
 from collections.abc import Callable
 from functools import cache
 
@@ -93,23 +94,52 @@ DEFINITION_SITE = "storage/replacement.py"
 # were, and it is why the count above could not see them. It cannot decline to
 # *delete*.
 DESTROY_PRIMITIVES = ("delete_conversation", "delete_conversations")
-DESTROY_LITERAL = "DELETE FROM conversations"
 DESTROY_DEFINITION_SITE = "storage/sqlite.py"
 
-# Every place outside `storage/sqlite.py` that destroys a conversation, and what
-# answers for it. Named rather than allowlisted-by-exception, mirroring
-# `REPLACEMENT_SITES`: asserting the population by *equality* is what keeps the
-# property from passing vacuously. A sweep that silently stops finding anything
-# — a refactor here, a changed spelling there — satisfies "nothing unpaired"
-# perfectly, which is the failure mode this whole file exists to remove.
+# A raw delete against the table, in the spellings this codebase can actually
+# produce. It was the bare substring `"DELETE FROM conversations"` until
+# external review pointed out how narrow that is, and the two extensions are
+# not hypothetical here:
 #
-# The value is the module's answer to "what happens to what was attached", so a
-# new door has to be argued for here rather than discovered in a bug. #79
+# - **whitespace** — `storage/sqlite.py` alone has 63 lines of continued SQL, so
+#   `DELETE\n    FROM conversations` is the ordinary way a long statement gets
+#   written;
+# - **a schema qualifier** — `api/merge.py` attaches the source database and
+#   writes `FROM main.conversations` in six places today. That is precisely the
+#   module that hand-rolled its own delete through #77, so the one spelling a
+#   bypass would most plausibly use was the one not being matched.
+#
+# Quoted identifiers are matched too, though siftd writes none. Stated limit:
+# this reads *static* text, so a table name assembled at runtime is invisible —
+# `_sites_by_function`'s call half is what covers a door that goes through the
+# primitive, and nothing covers a door that does both.
+DESTROY_LITERAL = re.compile(
+    r"""DELETE \s+ FROM \s+ (?: \w+ \s* \. \s* )? ["`\[]? conversations \b""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Every place in the package that destroys a conversation, and what answers for
+# it. Declared rather than allowlisted-by-exception, mirroring
+# `REPLACEMENT_SITES` — and counted rather than merely named, because a set of
+# keys is blind to a *second* delete added inside a function already on the
+# list, the cheapest way for a door to grow one.
+#
+# Asserting the population by *equality* is what keeps the property from passing
+# vacuously: a sweep that silently stops finding anything — a refactor here, a
+# changed spelling there — satisfies "nothing unpaired" perfectly, which is the
+# failure mode this whole file exists to remove.
+#
+# A new door has to be argued for here rather than discovered in a bug. #79
 # anticipated a `siftd db delete` needing an entry; there is no such command —
 # no CLI, api, or serve path destroys a conversation.
-# Counted, not just named, in the same shape as `REPLACEMENT_SITES` — a set of
-# keys is blind to a *second* delete added inside a function already on the
-# list, which is the cheapest way for a door to grow one (external review).
+#
+# The definition site is declared here rather than excluded from the sweep.
+# Excluding the module was the obvious shape and the wrong one: it hid every
+# *other* function in `storage/sqlite.py` too, so a new helper there could
+# reach the primitive and appear nowhere — and, adding no second literal, keep
+# `test_the_delete_closure_has_exactly_one_home` green as well. A carve-out
+# that big is not a carve-out, it is a hole. Declaring the two real rows costs
+# two entries and leaves the population total.
 DESTROY_SITES = {
     # paired: snapshots here, restores in _restore_carryover_after_replacement
     ("ingestion/orchestration.py", "_take_conversation_for_replacement"): {
@@ -117,6 +147,10 @@ DESTROY_SITES = {
     },
     # paired: snapshots here, restores in _merge_attached
     ("api/merge.py", "_replace_stale_conversations"): {"delete_conversations": 1},
+    # the closure itself: this IS the delete every door above routes through
+    (DESTROY_DEFINITION_SITE, "delete_conversations"): {"conversations": 1},
+    # the one-conversation spelling, which only delegates
+    (DESTROY_DEFINITION_SITE, "delete_conversation"): {"delete_conversations": 1},
 }
 
 # Where ingest's own wrapper is called from, in the same shape. The wrapper is
@@ -262,8 +296,8 @@ def _call_to(names: tuple[str, ...]) -> Callable[[ast.AST, frozenset[int]], str 
     return match
 
 
-def _literal_containing(needle: str) -> Callable[[ast.AST, frozenset[int]], str | None]:
-    """Match a static string literal containing `needle`, ignoring prose.
+def _literal_matching(pattern: re.Pattern[str]) -> Callable[[ast.AST, frozenset[int]], str | None]:
+    """Match a static string literal against `pattern`, ignoring prose.
 
     The half that catches a door bypassing the primitive entirely — a raw
     `conn.execute("DELETE FROM conversations ...")` carries no call the sweep
@@ -272,13 +306,17 @@ def _literal_containing(needle: str) -> Callable[[ast.AST, frozenset[int]], str 
     the delete from counting as a use, which matters because the docstrings in
     `storage/` quote this exact statement.
     """
-    lowered = needle.lower()
-
     def match(node: ast.AST, prose: frozenset[int]) -> str | None:
         if id(node) in prose:
             return None
         text = literal_text(node)
-        return needle if text and lowered in text.lower() else None
+        if not text:
+            return None
+        found = pattern.search(text)
+        # Labelled by the table, not by the matched text: the label is what
+        # `DESTROY_SITES` counts, and two spellings of the same delete in one
+        # function are two deletes, not two kinds.
+        return "conversations" if found else None
 
     return match
 
@@ -314,8 +352,8 @@ def test_a_conversation_is_destroyed_only_where_the_module_carries():
     review caught it.
     """
     found: dict[tuple[str, str], dict[str, int]] = {}
-    for finder in (_call_to(DESTROY_PRIMITIVES), _literal_containing(DESTROY_LITERAL)):
-        for site, per in _sites_by_function(finder, exclude=DESTROY_DEFINITION_SITE).items():
+    for finder in (_call_to(DESTROY_PRIMITIVES), _literal_matching(DESTROY_LITERAL)):
+        for site, per in _sites_by_function(finder).items():
             for label, n in per.items():
                 found.setdefault(site, {})[label] = found.setdefault(site, {}).get(label, 0) + n
 
@@ -363,14 +401,12 @@ def test_the_delete_closure_has_exactly_one_home():
     """
     home = {
         scope: per
-        for (rel, scope), per in _sites_by_function(
-            _literal_containing(DESTROY_LITERAL)
-        ).items()
+        for (rel, scope), per in _sites_by_function(_literal_matching(DESTROY_LITERAL)).items()
         if rel == DESTROY_DEFINITION_SITE
     }
     uses = sum(n for per in home.values() for n in per.values())
     assert uses == 1, (
-        f"{DESTROY_DEFINITION_SITE} spells {DESTROY_LITERAL!r} {uses} times, "
+        f"{DESTROY_DEFINITION_SITE} deletes from `conversations` {uses} times, "
         "expected exactly 1. The closure is a fact about the schema and gets one "
         "home; if it genuinely moved, move DESTROY_DEFINITION_SITE with it."
     )
