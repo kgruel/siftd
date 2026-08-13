@@ -10,10 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Internal
 
 - **A new code path that destroys a conversation now has to say what happens to
-  the tags and ownership attached to it.** The guard used to key on the sites
-  that carry those across, which could only ever see a door already doing it
-  right — the two data-loss bugs it existed to prevent were both doors that did
-  not. ([#79](https://github.com/kgruel/siftd/issues/79))
+  the tags and ownership attached to it.**
+  ([#79](https://github.com/kgruel/siftd/issues/79))
 
 ### Fixed
 

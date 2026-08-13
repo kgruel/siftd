@@ -60,6 +60,8 @@ Scope and limits, stated so a future reader can judge what this does not catch:
 """
 
 import ast
+from collections.abc import Callable
+from functools import cache
 
 from architecture.support import SRC, docstring_ids, literal_text, source_files
 
@@ -89,24 +91,30 @@ DEFINITION_SITE = "storage/replacement.py"
 #
 # A replacement door can decline to snapshot — that is what both #54 and #77
 # were, and it is why the count above could not see them. It cannot decline to
-# *delete*. So this population is the tractable one, and the two properties are
-# complements rather than substitutes: delete-keying cannot see a half-carry (a
-# door that snapshots and never restores still deletes, so it looks correct
-# from here), and carry-keying cannot see a door that never snapshots at all.
+# *delete*.
 DESTROY_PRIMITIVES = ("delete_conversation", "delete_conversations")
 DESTROY_LITERAL = "DELETE FROM conversations"
 DESTROY_DEFINITION_SITE = "storage/sqlite.py"
 
-# Enclosing functions that destroy a conversation without carrying anything
-# across, and why that is correct. Shrink-only, in the shape of
-# `test_imports.py`'s allowlist: an entry may leave, and a new one has to be
-# argued for here rather than discovered in a bug.
+# Every place outside `storage/sqlite.py` that destroys a conversation, and what
+# answers for it. Named rather than allowlisted-by-exception, mirroring
+# `REPLACEMENT_SITES`: asserting the population by *equality* is what keeps the
+# property from passing vacuously. A sweep that silently stops finding anything
+# — a refactor here, a changed spelling there — satisfies "nothing unpaired"
+# perfectly, which is the failure mode this whole file exists to remove.
 #
-# Empty, and verified so rather than left unexamined. #79 anticipated a
-# `siftd db delete` needing a carve-out; there is no such command — no CLI,
-# api, or serve path destroys a conversation. The only two doors in the tree
-# are the two replacement doors, and both are paired.
-UNPAIRED_DESTROY_SITES: dict[tuple[str, str], str] = {}
+# The value is the module's answer to "what happens to what was attached", so a
+# new door has to be argued for here rather than discovered in a bug. #79
+# anticipated a `siftd db delete` needing an entry; there is no such command —
+# no CLI, api, or serve path destroys a conversation.
+DESTROY_SITES = {
+    ("ingestion/orchestration.py", "_take_conversation_for_replacement"): (
+        "paired: snapshots here, restores in _restore_carryover_after_replacement"
+    ),
+    ("api/merge.py", "_replace_stale_conversations"): (
+        "paired: snapshots here, restores in _merge_attached"
+    ),
+}
 
 # Where ingest's own wrapper is called from, in the same shape. The wrapper is
 # what makes "ask before replacing" structural for ingest — merge answers that
@@ -152,103 +160,128 @@ NOT_CARRIED = {
 }
 
 
-def _calls_by_function(
-    names: tuple[str, ...], *, exclude: str | None = None
+@cache
+def _parsed_sources() -> tuple[tuple[str, ast.Module, frozenset[int]], ...]:
+    """Every source under `src/siftd` as (module, tree, docstring node ids).
+
+    Cached because this module sweeps the package four times and the parse is
+    the expensive third of it. The docstring ids ride along rather than being
+    recomputed per sweep: they are `id()` values, so they are only meaningful
+    while the tree they came from is alive, and keeping the two in one tuple is
+    what guarantees that.
+    """
+    return tuple(
+        (path.relative_to(SRC).as_posix(), tree, frozenset(docstring_ids(tree)))
+        for path in source_files()
+        if (tree := ast.parse(path.read_text()))
+    )
+
+
+def _sites_by_function(
+    match: Callable[[ast.AST, frozenset[int]], str | None], *, exclude: str | None = None
 ) -> dict[tuple[str, str], dict[str, int]]:
-    """Calls to `names` across `src/siftd`, keyed by (module, enclosing function).
+    """Where `match` fires across `src/siftd`, keyed by (module, enclosing function).
 
     Swept over the whole package rather than a named file — a ratchet that
     reads one module can only ever confirm that module, which is what let
     `api/merge.py` be a replacement door nothing here could see.
 
-    Scope is rebound at each nested `FunctionDef` rather than walking the whole
-    subtree per function, so a call inside a nested function is attributed to
-    exactly one scope. `test_readonly_opens.py::_sites` does the same, for the
-    same reason; the first cut of this used `ast.walk` per function and would
-    have counted such a call twice.
+    Two things about the traversal are load-bearing, and both were learned by
+    getting them wrong. Scope is rebound at each nested `FunctionDef` rather
+    than walking the whole subtree per function, so a match inside a nested
+    function is attributed to exactly one scope. And a matched node **stops the
+    descent**: an f-string's constant segments would otherwise each match again
+    under the `JoinedStr` that already did, scoring one statement twice.
+    `test_readonly_opens.py::_sites` carries the same two rules for the same
+    reasons — a third copy of this walker is what #79's review found, and
+    consolidating all of them is filed rather than done here.
 
-    Both call spellings count: bare `f()` and attribute `mod.f()`. Only the
-    first was matched until #79, which is a hole precisely where it costs the
-    most — the delete guard below is a *name* sweep, and `sq.delete_conversation(...)`
-    is a live spelling in this repo's tests. A door reaching the primitive
-    through its module would have carried no bare name and no SQL literal, so
-    both halves of that guard would have missed it. Matching on `.attr` alone
-    is deliberately loose: it counts an unrelated method that happens to share
-    the name, which fails *loudly* into the allowlist rather than silently out
-    of the population. #79's own trigger was the opposite trade — a name
-    collision resolved by renaming, not by teaching this to resolve imports.
+    `match` returns the label to count under, or None. Taking a callable rather
+    than writing the walker twice is not only shorter: the first cut had a call
+    version and a literal version, and only the call version had the
+    stop-descent rule, so an f-stringed `DELETE FROM conversations` counted as
+    two homes.
     """
     sites: dict[tuple[str, str], dict[str, int]] = {}
-    for path in source_files():
-        rel = path.relative_to(SRC).as_posix()
+    for rel, tree, prose in _parsed_sources():
         if rel == exclude:
             continue
         counts: dict[str, dict[str, int]] = {}
 
-        def visit(node: ast.AST, scope: str, counts: dict = counts) -> None:
+        def visit(node: ast.AST, scope: str, counts: dict = counts, prose: frozenset = prose) -> None:
             for child in ast.iter_child_nodes(node):
                 if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-                    visit(child, child.name, counts)
+                    visit(child, child.name, counts, prose)
                     continue
-                if isinstance(child, ast.Call):
-                    called = (
-                        child.func.id
-                        if isinstance(child.func, ast.Name)
-                        else child.func.attr
-                        if isinstance(child.func, ast.Attribute)
-                        else None
-                    )
-                    if called in names:
-                        per = counts.setdefault(scope, {})
-                        per[called] = per.get(called, 0) + 1
-                visit(child, scope, counts)
+                label = match(child, prose)
+                if label is not None:
+                    per = counts.setdefault(scope, {})
+                    per[label] = per.get(label, 0) + 1
+                    continue
+                visit(child, scope, counts, prose)
 
-        visit(ast.parse(path.read_text()), "<module>")
+        visit(tree, "<module>")
         for scope, per in counts.items():
             sites[(rel, scope)] = per
     return sites
 
 
-def _sql_literals_by_function(
-    needle: str, *, exclude: str | None = None
-) -> dict[tuple[str, str], int]:
-    """Static string literals containing `needle`, keyed by (module, function).
+def _call_to(names: tuple[str, ...]) -> Callable[[ast.AST, frozenset[int]], str | None]:
+    """Match a call to any of `names`, in either spelling: `f()` and `mod.f()`.
+
+    Only the bare spelling was matched until #79, which is a hole precisely
+    where it costs the most — the delete guard is a *name* sweep, and
+    `sq.delete_conversation(...)` is a live spelling in this repo. A door
+    reaching the primitive through its module would carry no bare name and no
+    SQL literal, so both halves of that guard would have missed it.
+
+    Matching on `.attr` alone is deliberately loose: it counts an unrelated
+    method that happens to share the name, which fails *loudly* into the
+    declared population rather than silently out of it. #79's own trigger was
+    the opposite trade — a name collision resolved by renaming
+    `storage/embeddings.py`'s function, not by teaching this to resolve
+    imports.
+    """
+
+    def match(node: ast.AST, _prose: frozenset[int]) -> str | None:
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        called = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        return called if called in names else None
+
+    return match
+
+
+def _literal_containing(needle: str) -> Callable[[ast.AST, frozenset[int]], str | None]:
+    """Match a static string literal containing `needle`, ignoring prose.
 
     The half that catches a door bypassing the primitive entirely — a raw
-    `conn.execute("DELETE FROM conversations ...")` carries no call this file
+    `conn.execute("DELETE FROM conversations ...")` carries no call the sweep
     would recognise. `literal_text` reads through f-strings, so an interpolated
     predicate still contributes its keywords; `docstring_ids` keeps prose about
-    the delete from counting as a use, which matters here because the module
-    docstrings in `storage/` quote this exact statement.
+    the delete from counting as a use, which matters because the docstrings in
+    `storage/` quote this exact statement.
     """
-    sites: dict[tuple[str, str], int] = {}
-    for path in source_files():
-        rel = path.relative_to(SRC).as_posix()
-        if rel == exclude:
-            continue
-        tree = ast.parse(path.read_text())
-        prose = docstring_ids(tree)
-        counts: dict[str, int] = {}
+    lowered = needle.lower()
 
-        def visit(node: ast.AST, scope: str, counts: dict = counts, prose: set = prose) -> None:
-            for child in ast.iter_child_nodes(node):
-                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
-                    visit(child, child.name, counts, prose)
-                    continue
-                if id(child) not in prose:
-                    text = literal_text(child)
-                    if text and needle.lower() in text.lower():
-                        counts[scope] = counts.get(scope, 0) + 1
-                visit(child, scope, counts, prose)
+    def match(node: ast.AST, prose: frozenset[int]) -> str | None:
+        if id(node) in prose:
+            return None
+        text = literal_text(node)
+        return needle if text and lowered in text.lower() else None
 
-        visit(tree, "<module>")
-        for scope, n in counts.items():
-            sites[(rel, scope)] = n
-    return sites
+    return match
 
 
-def test_every_site_that_destroys_a_conversation_is_paired_or_declared():
-    """Every place a conversation is destroyed either carries, or says why not.
+def test_a_conversation_is_destroyed_only_where_the_module_carries():
+    """Every place a conversation is destroyed is one of the declared doors.
 
     The complement of `test_every_replacement_site_is_accounted_for`, and the
     reason #79 exists: that one keys on what a *correct* door does, so it can
@@ -256,39 +289,57 @@ def test_every_site_that_destroys_a_conversation_is_paired_or_declared():
     built to prevent were doors that did not. `api/merge.py` hand-rolled its
     own snapshot for the whole life of the previous ratchet.
 
-    Pairing is **same module**, not same enclosing function. Same-function is
-    the stronger claim and neither real door satisfies it: ingest snapshots in
-    `_take_conversation_for_replacement` and restores in
+    **What this does not claim**, since the name used to say "paired" and the
+    mechanism does not support it: the unit is the *site*, but the pairing it
+    can verify is only that the site's module also carries. A module that
+    deletes in one function and restores in an unrelated other satisfies this,
+    and both #54 and #77 lived inside these two modules. Same-function pairing
+    is unavailable rather than merely unenforced — neither door has that shape
+    (ingest snapshots in `_take_conversation_for_replacement`, restores in
     `_restore_carryover_after_replacement`; merge snapshots in
-    `_replace_stale_conversations` and restores in `_merge_attached`. A
-    property no correct code satisfies is a property that gets weakened at the
-    first failure, which is how an allowlist becomes a habit.
+    `_replace_stale_conversations`, restores in `_merge_attached`), and a
+    property no correct code satisfies is one that gets weakened at the first
+    failure. What holds a listed module's arity is the carry count above; what
+    this holds is the *population*.
 
-    Both spellings of the destroy count — the primitive by name, and the raw
-    SQL literal for a door that never reaches the primitive at all.
+    Asserted by equality, not by "nothing unpaired". The negative form passes
+    perfectly when the sweep finds nothing at all — a refactor of the walker, a
+    changed spelling, a narrowed `source_files()` — which is the silent-green
+    failure the rest of this file exists to remove.
     """
-    by_call = _calls_by_function(DESTROY_PRIMITIVES, exclude=DESTROY_DEFINITION_SITE)
-    by_sql = _sql_literals_by_function(DESTROY_LITERAL, exclude=DESTROY_DEFINITION_SITE)
-    found = set(by_call) | set(by_sql)
+    found = set(
+        _sites_by_function(_call_to(DESTROY_PRIMITIVES), exclude=DESTROY_DEFINITION_SITE)
+    ) | set(_sites_by_function(_literal_containing(DESTROY_LITERAL), exclude=DESTROY_DEFINITION_SITE))
 
-    carrying_modules = {module for module, _ in REPLACEMENT_SITES}
-    unpaired = {
-        site
-        for site in found
-        if site[0] not in carrying_modules and site not in UNPAIRED_DESTROY_SITES
-    }
-    assert unpaired == set(), (
-        f"{sorted(unpaired)} destroys a conversation in a module that never "
-        "snapshots a carryover. Either pair it — `snapshot_conversation` before "
-        "the delete, `restore_and_report` after — or add it to "
-        "UNPAIRED_DESTROY_SITES with the reason nothing attached to that "
-        "conversation needs to survive."
+    assert found == set(DESTROY_SITES), (
+        f"conversation-destroying sites moved: {sorted(found ^ set(DESTROY_SITES))}. "
+        "A new one must snapshot before the delete and restore after — see "
+        "`storage/replacement.py` — then be named in DESTROY_SITES with what "
+        "answers for it. A site that vanished means either the door closed or "
+        "the sweep stopped seeing it; the second is the dangerous one."
     )
-    stale = set(UNPAIRED_DESTROY_SITES) - found
-    assert stale == set(), (
-        f"{sorted(stale)} is allowlisted but no longer destroys a conversation — "
-        "drop the entry. The allowlist is shrink-only, which it cannot be if "
-        "dead entries are left to accumulate."
+
+
+def test_the_destroy_primitives_are_never_imported_under_an_alias():
+    """`from ... import delete_conversation as x` would walk straight past the sweep.
+
+    The sweep matches call *names*, so an aliased import renames the call out
+    of the population — found by external review, and cheaper to forbid than to
+    resolve. Forbidding is also the honest shape: teaching a name sweep to
+    follow imports makes it claim a reach it would only sometimes have, where
+    this fails loudly at the one line that introduces the alias.
+    """
+    aliased = [
+        (rel, node.module, alias.name, alias.asname)
+        for rel, tree, _ in _parsed_sources()
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        for alias in node.names
+        if alias.name in DESTROY_PRIMITIVES and alias.asname
+    ]
+    assert aliased == [], (
+        f"{aliased} imports a conversation-destroying primitive under another "
+        "name, which `_sites_by_function` cannot see. Import it plainly."
     )
 
 
@@ -297,22 +348,21 @@ def test_the_delete_closure_has_exactly_one_home():
 
     The positive half of the sweep above, which by construction only looks
     *outside* `storage/sqlite.py`. Without this, moving the statement into a
-    second module and deleting the original passes both tests: the literal
-    would simply have relocated to a place the exclusion hides. #51 is what one
-    unnoticed second copy of this closure costs.
+    second module and deleting the original passes: the literal would simply
+    have relocated to a place the exclusion hides — and if it relocated into a
+    module that already carries, the population check would accept it too. #51
+    is what one unnoticed second copy of this closure costs.
     """
-    home = SRC / DESTROY_DEFINITION_SITE
-    tree = ast.parse(home.read_text())
-    prose = docstring_ids(tree)
-    uses = [
-        node
-        for node in ast.walk(tree)
-        if id(node) not in prose
-        and (text := literal_text(node))
-        and DESTROY_LITERAL.lower() in text.lower()
-    ]
-    assert len(uses) == 1, (
-        f"{DESTROY_DEFINITION_SITE} spells {DESTROY_LITERAL!r} {len(uses)} times, "
+    home = {
+        scope: per
+        for (rel, scope), per in _sites_by_function(
+            _literal_containing(DESTROY_LITERAL)
+        ).items()
+        if rel == DESTROY_DEFINITION_SITE
+    }
+    uses = sum(n for per in home.values() for n in per.values())
+    assert uses == 1, (
+        f"{DESTROY_DEFINITION_SITE} spells {DESTROY_LITERAL!r} {uses} times, "
         "expected exactly 1. The closure is a fact about the schema and gets one "
         "home; if it genuinely moved, move DESTROY_DEFINITION_SITE with it."
     )
@@ -330,7 +380,7 @@ def test_every_replacement_site_is_accounted_for():
     population — the question nobody asked when #36 made a second trigger
     common.
     """
-    found = _calls_by_function(CARRY_PRIMITIVES, exclude=DEFINITION_SITE)
+    found = _sites_by_function(_call_to(CARRY_PRIMITIVES), exclude=DEFINITION_SITE)
     assert found == REPLACEMENT_SITES, (
         f"replacement sites moved: {found} != {REPLACEMENT_SITES}. Every one of "
         "them deletes a conversation and stores a new one, so every one can lose "
@@ -365,7 +415,7 @@ def test_every_ingest_replacement_door_is_accounted_for():
     (`_conversation_claimed_elsewhere`), which merge answers with its owner gate
     instead. A new call here is a new place that can refuse — or fail to.
     """
-    found = _calls_by_function(("_take_conversation_for_replacement",))
+    found = _sites_by_function(_call_to(("_take_conversation_for_replacement",)))
     assert found == INGEST_REPLACEMENT_DOORS, (
         f"ingest replacement doors moved: {found} != {INGEST_REPLACEMENT_DOORS}."
     )
