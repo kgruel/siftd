@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Preserve historical ingest, CLI-surface, and package-split drafts with a
+  next-steps handoff; preservation does not ratify the proposed designs.
+
 - **A new code path that destroys a conversation now has to say what happens to
   the tags and ownership attached to it.**
   ([#79](https://github.com/kgruel/siftd/issues/79))
