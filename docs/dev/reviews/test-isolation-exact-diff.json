@@ -93,5 +93,5 @@
     },
     "interpretation": "Does not revoke the earlier exact-diff approval; not evidence of a code defect."
   },
-  "scope_limit": "Approval applies only to the test-isolation diff above. Not approval of preservation, accumulated runtime changes, this provenance record, the release-readiness report, designs, or future integration. New release candidate remains PENDING FABLE REVIEW (Fable 5.1 High). No reviewer was invoked during this audit."
+  "scope_limit": "Approval applies only to the test-isolation diff above. Not approval of preservation, accumulated runtime changes, this provenance record, the release-readiness report, designs, or future integration. New release candidate remains PENDING ASTRA REVIEW via actual /opt/homebrew/bin/codex (gpt-6-astra, reasoning high), under the user's temporary reviewer substitution. Historical Fable attribution and approval scope above are unchanged. No reviewer was invoked during this audit or candidate normalization; actual Codex CLI approval is reserved for the next review stage."
 }

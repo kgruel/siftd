@@ -1,23 +1,25 @@
 # Next release readiness — evidence candidate
 
 Assessment date: **2026-09-26**. Status: **LOCALLY TESTED CANDIDATE — PENDING
-FABLE REVIEW; PUBLICATION HOLD.** This is an assessment of accumulated patches,
+ASTRA REVIEW VIA CODEX CLI; PUBLICATION HOLD.** This is an assessment of accumulated patches,
 not a version choice, release authorization, or approval of preserved designs.
 
 ## Subject and authority
 
-- Branch: `work/next-slices-01a0ddb3-release`; clean on entry at reviewed test fix
-  `53d0b9cb4de553bc003af61d02942c9cfa03bcd2` (ancestry verified).
-- Tested commit: `53d0b9cb4de553bc003af61d02942c9cfa03bcd2`;
+- Branch: `work/next-slices-01a0ddb3-release`; normalization entered clean at
+  `4b00195f873bbb3f27997c8405070e8868cc02d2`. The review base remains the
+  ancestor `53d0b9cb4de553bc003af61d02942c9cfa03bcd2` (reviewed test fix).
+- Earlier full-suite tested commit: `53d0b9cb4de553bc003af61d02942c9cfa03bcd2`;
   tested tree: `840ec14fc197466ef167fae7a2b3948e9def1d88`.
 - Original main: `58daf4ac0101a012ff0ea286931fce8e2e621110`;
   preservation: `4552bacf60ec6ac6a7b8b40334bc8c1e1d1bfb0c`.
 - Scope baseline: reachable `v0.12.1`, commit
-  `4e6db9868dc37b4d58ab01cf33fa282871f83358`, through the tested commit.
+  `4e6db9868dc37b4d58ab01cf33fa282871f83358`, through the reviewed test fix.
   Package version remains **0.12.1**. Accumulation on main is not publication.
-- This candidate adds only this report and review provenance. Its eventual
-  commit/tree and test-log hashes are in the external checkpoint below; the full
-  tests cover the preceding source/test tree, not a claim of post-commit execution.
+- This candidate adds only this report and review provenance. Normalization
+  changes only prospective review policy and evidence/status reporting; it does
+  not alter historical actual reviews, source, tests, lock files, or version.
+  Exact candidate commit/tree and test subjects are in the new receipt below.
 
 [CHANGELOG.md — Unreleased](../../CHANGELOG.md#unreleased) is the scope container.
 The release skill was read but its publishing steps were not executed. The
@@ -91,7 +93,7 @@ provenance, not a fresh audit of GitHub issue status.
    authorized here. Any later breaking rename needs the actual compatibility
    ledger and stated removal version, not a draft as a substitute.
 
-## Fresh local verification
+## Earlier local verification
 
 Both completed commands ran in **this worktree**, macOS arm64, **Python 3.12.12**,
 an owned `.venv`, dev/serve/embed extras, disposable HOME/XDG state, and a private
@@ -129,6 +131,39 @@ Logs, command/subject/exit files, and interruption details are under
 `provision-*`. Completed check: **14:28:51–14:30:00 UTC**; test-all:
 **14:30:00–14:30:34 UTC**, both on the exact commit/tree above.
 
+### Current candidate normalization verification
+
+The new `./dev check --all -v` completed with **exit 0** at
+**14:50:28–14:51:23 UTC** on 2026-09-26 in this worktree. Its HEAD was
+`4b00195f873bbb3f27997c8405070e8868cc02d2` (tree
+`019f4d342772c03086cea11a736fdffa921f4c14`), with the two scoped policy/report
+edits staged as tree `75c5dc30cce4c21369d6ce611cb57a3988baecb3` and no unstaged
+changes. Lint, architecture **94 passed / 5 skipped**, base **4,042 passed**,
+serve **359 passed / 4 collection skips**, embeddings **111 passed**, slow
+**2 passed**, and strict generated-doc verification passed. No generated drift,
+source/test/lock edits, or new skips resulted.
+
+This run reused this worktree's owned **Python 3.12.12** `.venv`; dev/serve/embed
+extras were provisioned offline from a private copy of the existing cache.
+Each foreground command received a fresh allowlisted environment, disposable
+HOME/XDG and TMPDIR **outside every Git checkout**, with SIGINT and SIGTERM
+explicitly restored to default before exec. Caller-global `SIFTD_NO_UPDATE_CHECK`,
+`SIFTD_DB`, `SIFTD_CONFIG`, `PYTHONPATH`, and `PYTEST_ADDOPTS` were absent.
+The same local model cache and `HF_HUB_OFFLINE=1` were used; no remote embedding
+provider was called. No old lane runner was sourced.
+
+Evidence is under
+`/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/check-all/`:
+`receipt.json` records exact command/exit, HEAD and index tree before/after,
+environment and log hash; `output.log` and staged/unstaged patches are retained.
+Only this report's evidence text follows that all-lane run. The final receipt
+records tree comparison against the committed candidate to make **runtime-tree
+equivalence**, rather than post-commit all-lane execution, explicit. A separate
+`./dev check -v` at the exact final committed HEAD must pass, with a clean
+post-check worktree, before the receipt can mark the candidate ready for review.
+Neither check constitutes Astra approval. Earlier interrupted-run evidence
+remains intact and is not reclassified as success.
+
 ### Coverage is local, not CI or browser certification
 
 `.github/workflows/ci.yml` defines Ubuntu base tests/lint on Python **3.12, 3.13,
@@ -164,9 +199,16 @@ review was invoked here.
 
 **Material HOLDs before publication readiness can be claimed:**
 
-- **Fable 5.1 High review of this new candidate is PENDING.** The valid approval
-  covers only the exact test-isolation diff, not this report, preservation,
-  accumulated runtime scope, designs, or eventual combined integration.
+- **Astra 6 review of this new candidate via actual Codex CLI is PENDING.**
+  The user authorized the temporary substitution: `/opt/homebrew/bin/codex`,
+  model `gpt-6-astra`, reasoning **high**, as recorded in
+  `/tmp/siftd-next-slices-01a0ddb3/checkpoints/reviewer-policy.json`.
+  No review or quota poll is performed during this normalization stage; actual
+  Codex CLI review of the exact committed candidate belongs to the next stage.
+  Future return to Fable requires established availability in a future wave;
+  no Claude requests or quota polling occur in this wave. Historical Fable
+  approval remains valid only for the exact test-isolation diff, not this report,
+  preservation, accumulated runtime scope, designs, or combined integration.
 - User scope/version/compatibility decisions remain open, particularly the
   documented block/synthetic-event metadata limitation and misleading legacy
   FTS help/removal policy. Local green does not ratify accepting metadata loss.
@@ -176,7 +218,10 @@ review was invoked here.
 - No permission to push, tag, bump, publish, mutate GitHub/loops/production, or
   reinstall user tools was given. All remain unperformed and user-controlled.
 
-Machine-readable candidate receipt:
-`/tmp/siftd-next-slices-01a0ddb3/checkpoints/release-candidate.json`.
+Current machine-readable candidate receipt:
+`/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/candidate.json`.
+The earlier `/tmp/siftd-next-slices-01a0ddb3/checkpoints/release-candidate.json`
+is retained as historical evidence; its prospective Fable-only labels are
+superseded by the user's temporary Astra authorization, not by a new approval.
 This is a **locally tested documentation candidate on HOLD**, not a declaration
 that publication or substantial new work's mandatory review gate is complete.
