@@ -1,100 +1,117 @@
-# Next steps — preservation handoff
+# Next steps — integration handoff
 
-Date: **2026-09-26**. Source: clean `main` at
-`58daf4ac0101a012ff0ea286931fce8e2e621110`, verified in the original checkout.
-This slice preserves local history; it does **not** ratify or implement a design.
+Updated **2026-09-26**. **LOCAL INTEGRATION; FINAL ASTRA REVIEW PENDING;
+RELEASE/PUBLICATION HOLD.** Original main remains
+`58daf4ac0101a012ff0ea286931fce8e2e621110`; only local branch
+`work/next-slices-01a0ddb3` changed. Package version remains **0.12.1**.
+Accumulated code on main is not thereby published.
 
-## Delivered code versus publication
+## Actual approvals and integrated scope
 
-The source identifies the package as **0.12.1**; the latest reachable release tag
-is `v0.12.1`. Work accumulated after that tag is on main, **not thereby published**.
-[Unreleased](../../CHANGELOG.md#unreleased) records replacement tag/owner carry,
-schema-owned merge cleanup, scoped FTS maintenance, WAL-aware reads, sync/date
-fixes, adapter fixes, and the #79 delete-keyed replacement ratchet. In the ingest
-plan, only slice 0 (that ratchet) is recorded as shipped. This is not a claim that
-the streaming/upsert architecture or the other proposed slices exist.
+The user explicitly authorized switching this review wave to actual
+**`/opt/homebrew/bin/codex`, model `gpt-6-astra`, reasoning high** until Claude
+Code limits reset. The older checkpoint's assertion that this substitution was
+unauthorized is stale and incorrect. No Claude request or quota poll was made
+in this wave. Historical Fable approvals retain their exact scope; a future
+wave may return to Fable after availability is established.
 
-Release readiness still needs fresh all-lane evidence and compatibility review;
-historical tests, performance numbers, issue claims, and live-corpus counts are
-not current validation. Repairs are not automatically retroactive (notably lost
-ownership); this run must not ingest, repair, or reparse production data.
+| Candidate | Exact approved head | Authority |
+| --- | --- | --- |
+| Test isolation #40 | `53d0b9cb4de553bc003af61d02942c9cfa03bcd2` | Genuine prior Fable approval, unchanged exact diff; not re-reviewed. |
+| Release assessment | `448d50540e4afc24ff92a513fb088a0417d41fd5` | Actual Codex Astra/high PASS; round 2 verified and reused round 1's passing raw review. Documentation only. |
+| Design disposition | `b98b27660164c05ee471e5641076fb5c7fd6fc35` | Fresh actual Codex Astra/high round-2 PASS. Documentation only; **safeToImplement=false**. |
 
-## Preserved documents and their authority
+Both documentation reviews use test-fix `53d0b9cb…` as their base. Exact argv,
+subjects, result paths and hashes are in
+[Codex provenance](reviews/astra-candidates.json); historical test approval is in
+[the exact-diff receipt](reviews/test-isolation-exact-diff.json). Full reports and
+raw transcripts remain in the external artifact paths, not copied into prose.
+The earlier design review's provider timeout remains recorded; its PASS was
+**not** reused. The clean fresh round-2 review supplies that candidate's approval.
 
-These four formerly ignored files are copied byte-for-byte, not rewritten:
+Release and design were merged with ancestry, respectively at `342b4c26…` and
+`8b7cb327…`; their shared test-fix ancestor was not cherry-picked or duplicated.
+Neither input candidate was excluded. This handoff and integration evidence are
+new changes: **input approvals do not approve the final combined candidate**.
+Actual final Codex review remains a separate gate.
 
-- [Ingest stream v2](ingest-stream-design-2026-08-13.md): proposal following a
-  failed v1 review; independent R2 is pending. Key identity, old unkeyed-event
-  metadata, parser invalidation, graph reconciliation, ordering, and source
-  authority need verification before an executable first slice is approved.
-- [R1 review](ingest-stream-review-r1-2026-08-13.md): historical Codex REWORK
-  verdict and findings, including duplicated output. It is not the requested
-  Claude approval. Original absolute source links/line numbers are historical
-  pointers; the new handoff's links are repository-relative.
-- [CLI surface](design/cli-surface-0.13.0-2026-07-18.md): still **DRAFT**.
-  It explicitly records Kyle's 2026-07-18 ratification of D-A (atomic sync split),
-  D-B (mandatory list object; catalog plus exit 2), and D-C (tag subtree with
-  legacy grammar compatibility until 1.0). Preserve those recorded decisions;
-  D-D tier trims and the overall draft are not newly ratified here.
-- [Package split](package-split-plan-2026-06-22.md): historical working plan
-  grounded at `99eadefa`, with outstanding packaging/default-capability choices.
-  Some premises have aged (e.g. current base dependencies include mistune and
-  numpy). It is neither implementation authority nor a promise of a version.
+## Local validation and retained failures
 
-The ingest draft's “Decided (flagged, not asked)” section is its author's recorded
-position, not evidence of new user ratification. No document's force-add changes
-its status. Local paths, aggregate measurements, and reviewer/session metadata
-remain; inspection found no credentials or private transcript excerpts. Commands
-in historical reproduction sections are **not** permission to access live data.
+The merged HEAD `8b7cb327776c8f29111f621becc4cddd5d271236`, tree
+`e4bdd48173f2dea522f176998796ec8e59d87c99`, passed `./dev check --all -v`
+with **exit 0**, clean before and after:
 
-## Gates and next lanes
+- Lint and strict generated-doc checks passed.
+- Architecture: **94 passed / 5 pre-existing skips**; base: **4,042 passed**.
+- Serve: **359 passed / 4 dependency collection skips**; embeddings:
+  **111 passed**; slow: **2 passed**. No tests or skip conditions changed.
 
-Preparation results below are historical evidence from preservation `4552bacf`,
-not the current design lane's validation. See the
-[design R2 record](ingest-stream-review-r2-2026-09-26.md) for the separate original
-eight-failure attempt and corrected validation after merging the reviewed #40
-guard. Neither validation nor a reviewer-policy change authorizes identity work.
+This is local macOS arm64 / Python 3.12.12 evidence. The worktree owns its venv
+with dev/serve/embed extras. Each command uses disposable HOME/XDG and TMPDIR
+outside all Git checkouts, a fresh environment without caller-global
+`SIFTD_NO_UPDATE_CHECK`, `SIFTD_DB`, `SIFTD_CONFIG`, `PYTHONPATH` or
+`PYTEST_ADDOPTS`, and default foreground SIGINT/SIGTERM. The suite owns passive
+update suppression. Dependencies and model weights are offline;
+`FASTEMBED_CACHE_PATH=/tmp/siftd-next-slices-01a0ddb3/model-cache`,
+`HF_HUB_OFFLINE=1`. No remote embedding-provider calls were made.
 
-1. **Preparation BLOCKED:** Python 3.12.12, its own `.venv` with dev/serve/embed
-   extras, regenerated docs, and `./dev check -v` in disposable HOME/XDG paths.
-   Docs regeneration succeeded without generated changes. The check exited **1**:
-   lint passed; architecture had **94 passed, 5 skipped**; base tests had
-   **4,039 passed, 2 failed**.
-   `TestNotice.test_notice_when_newer` expects a notice suppressed by
-   `SIFTD_NO_UPDATE_CHECK=1`. That setting isolates the known #40 live-update
-   network behavior; it does not fix #40 or test an unmodified environment.
-   `test_hybrid_rrf_surfaces_keyword_hits_with_empty_index` requests local
-   `BAAI/bge-small-en-v1.5`, absent from the disposable cache while
-   `HF_HUB_OFFLINE=1`. No remote embedding provider was called. No tests were
-   changed, skipped, or retried to hide these failures. The harness stopped before
-   its final docs gate; standalone `./dev docs --check` subsequently passed (exit
-   0). Optional runtime lanes were not run. Environment provisioning/isolation
-   needs resolution before preparation can clear. The staged whitespace check
-   flags an existing blank line at the R1 review's EOF, retained for byte fidelity.
-2. New independent review in this wave uses actual **`/opt/homebrew/bin/codex`,
-   model `gpt-6-astra`, reasoning high**, as temporarily authorized by the user.
-   Historical Fable reviews remain valid for their exact scope; the old Fable
-   availability preflight was not approval. No Claude requests or quota polling
-   in this wave. A future wave can return to Fable after availability is established.
-3. Separate release-readiness and design worktrees are to start from a passing
-   preservation commit; they are **not created while preparation is blocked**.
-   A bounded identity slice may follow only after its exact migration,
-   metadata preservation, invalidation, and tests clear the design gate. CLI
-   redesign, package split, full streaming/upsert, daemon, and merge-door redesign
-   are outside this first implementation lane.
+Integration evidence lives under
+`/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/integration/`:
+`check-merged-all/receipt.json` and `output.log` record that run. The final
+`candidate.json` must bind subsequent committed-head `check-head-all` and
+`check-head` receipts to the exact final HEAD/tree before marking readiness.
+A ready candidate means ready for final review, not approved or publishable.
 
-Run artifacts (commands, hashes, preflight JSON, dependency and check logs) live
-under `/tmp/siftd-next-slices-01a0ddb3/logs`. A candidate “ready” means preparation
-passed, never that the external review gate or release decision has passed.
+Earlier failures remain failures, not erased by later green: preservation had
+notice/cache failures; the original design attempt put temporary fixtures inside
+Git and failed eight workspace tests; release had an interrupted signal-unsafe
+run; normalization had a dependency-install timeout. Their raw attempts and
+corrections remain in [release evidence](release-readiness-next.md) and
+[design R2 evidence](ingest-stream-review-r2-2026-09-26.md). Those documents'
+“pending review” labels describe their preparation stage; the exact-head reviews
+above supersede those labels, not the underlying limitations.
 
-## Permission and deferred ceremony
+Local checks do not certify Ubuntu/Python 3.12–3.14 CI or T3 real-browser smoke.
+Fresh CI evidence and browser execution/applicability disposition remain release
+gates. The eventual main merge must rerun the harness; main was not merged here.
 
-No push, tag, version bump, publication, GitHub mutation, user-tool installation,
-or production mutation is authorized. Release version and publication permission
-remain user-controlled; local branches named “release” are assessment workspaces,
-not publishing authority. Do not merge into or alter the original main checkout.
+## What the design approval does not decide
 
-Loops ceremony is deferred to the user: no `sl`, `.loops` changes, store/cache/key
-changes, or emitted records. Future handoff may summarize preserved provenance,
-actual tested/reviewed SHAs, gate results, unresolved decisions, and release HOLD
-versus candidate status; this document performs none of that ceremony.
+[Identity-first plan](ingest-identity-first-slice.md) and
+[revised ingest design](ingest-stream-design-2026-08-13.md) are approved as
+**planning documents**, not ratified implementation contracts. Current
+replacement loses NULL-key/unmatched-event and block assignments; warnings are
+not consent. Neither production identity migration nor acceptance of metadata
+loss is authorized. No identity extraction, preflight, invalidation, runtime or
+storage changes were implemented in this integration.
+
+The historical [R1 review](ingest-stream-review-r1-2026-08-13.md),
+[CLI draft](design/cli-surface-0.13.0-2026-07-18.md), and
+[package-split plan](package-split-plan-2026-06-22.md) remain preserved. CLI D-A,
+D-B and D-C retain their recorded historical ratification; that does not ratify
+the whole draft or D-D. Package split, CLI redesign, full streaming/upsert,
+daemon and merge-door redesign remain outside this run. Historical corpus and
+performance figures are not newly verified. Repairs are not automatically
+retroactive; no production corpus was read, ingested, reparsed or repaired here.
+
+## Remaining user decisions
+
+1. **Release scope and compatibility:** defining versus ride-along patches,
+   version and eventual publication permission; disposition of ignored legacy
+   FTS controls/misleading help and their communication/removal policy. These
+   are not settled by local green or the release report's approval.
+2. **Next diagnostic scope:** whether to authorize the proposed pi_agent-only,
+   fixture-backed read-only preflight and its surface/contract. No apply mode;
+   live-data inspection needs separate explicit authorization.
+3. **Future identity transition:** ratify valid-ID/namespace and duplicate-refusal
+   rules, then prove lossless event/block mapping and source authority, durable
+   coverage/completion, interruption/retry/rollback, and protection on natural
+   changed-file ingest—or defer legacy data. These proofs remain engineering
+   gates, not an invitation to silently accept loss.
+
+No push, tag, bump, publication, GitHub mutation, user-tool installation,
+production/config mutation or original-checkout edit occurred. No `sl` or
+`.loops` access/write occurred. Eventual user-owned emit summary only: preserved
+provenance; exact reviewed/tested SHAs; integrated/excluded scope; gate results;
+these unresolved decisions; final-review pending versus release HOLD. No ceremony
+is performed by this document.
