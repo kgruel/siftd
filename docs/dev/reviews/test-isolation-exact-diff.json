@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "record_kind": "exact_diff_review_provenance",
+  "audited_at_utc": "2026-09-26T14:24:47.529659+00:00",
+  "reviewed_range": {
+    "base": "4552bacf60ec6ac6a7b8b40334bc8c1e1d1bfb0c",
+    "head": "53d0b9cb4de553bc003af61d02942c9cfa03bcd2",
+    "head_tree": "840ec14fc197466ef167fae7a2b3948e9def1d88"
+  },
+  "verification": {
+    "exact_diff_equal": true,
+    "diff_sha256": "7ac9b09a6a154f4031362650b753802ff79aad9dd447bc92d81aa406b5ab1e6e",
+    "extraction": "Content after the final staged diff delimiter line and before the upgrade implementation delimiter; trim only trailing LF characters on both extracted content and git diff output. No other whitespace normalization.",
+    "prompt": {
+      "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/review-prompt.txt",
+      "sha256": "e2f9c1029812e0e870ea342610f82658b39073b2eb3a76dad66e7f5057328059",
+      "mtime_utc": "2026-09-26T13:52:21.084723+00:00"
+    }
+  },
+  "review": {
+    "verdict": "APPROVED",
+    "opening_quote": "Approved. No blockers.",
+    "is_error": false,
+    "actual_model_usage": [
+      "claude-fable-5-1"
+    ],
+    "requested_effort": "high",
+    "command": {
+      "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/review-command.json",
+      "sha256": "beb2da157636cab3e63220b4731ea7e07181b8b558fb27a615bffb18ec287f0a",
+      "mtime_utc": "2026-09-26T13:52:21.117553+00:00"
+    },
+    "raw_result": {
+      "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/claude-review-complete.log",
+      "sha256": "c2fb961ac7998d1f6e24d799616cf3a0c13b27797d69e1659eb0ac4bff8998a6",
+      "mtime_utc": "2026-09-26T13:53:23.633917+00:00"
+    },
+    "exit": 0
+  },
+  "post_final_addition_tests": {
+    "ordering": "Final prompt precedes successful final review; both final check logs postdate that review. Exact final diff equality verified above.",
+    "runs": [
+      {
+        "command": "./dev check --all -v",
+        "exit": 0,
+        "log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/check-all-final.log",
+          "sha256": "d2433756ebdd3207eadacb145a79b98d429fb491a9be9f9fa090acef47b91cbc",
+          "mtime_utc": "2026-09-26T13:54:30.886660+00:00"
+        },
+        "exit_file": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/check-all-final.exit",
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "mtime_utc": "2026-09-26T13:54:30.887201+00:00"
+        }
+      },
+      {
+        "command": "./dev test-all -v",
+        "exit": 0,
+        "log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/test-all-final.log",
+          "sha256": "c07a1bc290ee6eab5ff0e844692c8cd6f1e9651515714055c0467db9ed43a1d8",
+          "mtime_utc": "2026-09-26T13:55:36.531275+00:00"
+        },
+        "exit_file": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/logs/test-isolation/test-all-final.exit",
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+          "mtime_utc": "2026-09-26T13:55:36.602045+00:00"
+        }
+      }
+    ],
+    "test_all_summary": {
+      "passed": 4608,
+      "skipped": 5,
+      "skip_status": "pre-existing session-strategy exclusions in file-strategy cardinality test"
+    }
+  },
+  "later_duplicate": {
+    "outcome": "QUOTA_LIMITED_NOT_APPROVAL",
+    "http_429_in_raw_result": true,
+    "is_error": true,
+    "model_usage": {},
+    "exit": 1,
+    "raw_result": {
+      "path": "/tmp/siftd-next-slices-01a0ddb3/reviews/test-isolation-fable-1/raw.json",
+      "sha256": "79bd6d6d6a461a632e2c0322a00dcf2b18445cfa4ce82dbefc0bfee370f8997f",
+      "mtime_utc": "2026-09-26T13:58:46.214211+00:00"
+    },
+    "verification": {
+      "path": "/tmp/siftd-next-slices-01a0ddb3/reviews/test-isolation-fable-1/verification.json",
+      "sha256": "7f2bb5bb3227512af1f585d73a6d5da545cb9532d1a3c0823417e993996a00bf",
+      "mtime_utc": "2026-09-26T13:59:10.630663+00:00"
+    },
+    "interpretation": "Does not revoke the earlier exact-diff approval; not evidence of a code defect."
+  },
+  "scope_limit": "Approval applies only to the test-isolation diff above. Not approval of preservation, accumulated runtime changes, this provenance record, the release-readiness report, designs, or future integration. New release candidate remains PENDING FABLE REVIEW (Fable 5.1 High). No reviewer was invoked during this audit."
+}
