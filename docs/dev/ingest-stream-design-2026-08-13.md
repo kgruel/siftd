@@ -1,9 +1,26 @@
-# Ingest stream — design v2 (2026-08-13)
+# Ingest stream — design v2 (2026-08-13), R2 disposition (2026-09-26)
+
+**PENDING ASTRA REVIEW — safeToImplement=false.** This revised document is a
+candidate, not authorization to implement identity or accept metadata loss.
+Actual Fable 5.1 High R2 reviewed preservation `4552bacf` and returned **REVISE**.
+It did not approve the design. New review is pending actual Codex CLI
+`gpt-6-astra`, reasoning high, under the user-authorized temporary policy;
+no reviewer was invoked during this candidate preparation.
+
+Chronology: the August v1/R1 → v2 rewrite below is historical. R1 remains
+byte-for-byte unchanged. On September 26, actual Fable R2 identified the missing
+NULL-key tag-loss gate. This revision accepts that blocker, narrows the next
+slice, and corrects recommendations that source/probes do not support. See
+[durable R2 record](ingest-stream-review-r2-2026-09-26.md) for the full review,
+verification provenance and disposition; see
+[identity-first plan](ingest-identity-first-slice.md) for the bounded next step.
+Historical corpus counts below were **not** re-measured in this run. Evidence
+here is preserved source, checked-in fixtures and disposable databases only.
 
 Taking siftd's write path from delete-and-reinsert to append, so that a
 transcript lands in the database in the shape it arrived in.
 
-**This is a rewrite, not a revision.** v1 came back REWORK from external review
+**Historical v2 framing:** this was a rewrite, not a revision. v1 came back REWORK from external review
 (codex `gpt-5.6-sol` high, zero-context, repo access — findings and dispositions
 in `ingest-stream-review-r1-2026-08-13.md`). Two of its ground-truth claims were
 false and its organizing thesis was falsified. What changed:
@@ -19,9 +36,13 @@ false and its organizing thesis was falsified. What changed:
 
 Everything below that is not marked as measured is a proposal.
 
-**Scope.** Slices 1–2 at implementation depth. Slices 3–5 at architecture depth
-with forks named. Out of scope: the `siftd cite` / `siftd resolve` command design
-(citation-anchors plan) and `api/merge.py`'s replacement door (own arc).
+**Scope, corrected after R2.** Slices 1–2 are not implementation-ready:
+extraction is mechanically small, but the lossless transition is unproved;
+graph reconciliation also has open semantics. Slices 3–5 remain architecture
+sketches. The only recommended immediate follow-up is a separately authorized,
+read-only pi_agent impact/preflight, not a migration. No upsert/streaming,
+ordering/schema rewrite, CLI/package split, #83 abstraction, production residue
+cleanup, citation commands or merge-door changes are authorized by this draft.
 
 ---
 
@@ -75,9 +96,10 @@ rule — so it has to live in the adapter contract and be enforced by a ratchet.
 
 ## Ground truth
 
-Measured 2026-08-13, reproducible; commands at the end. **Corrections from v1
-are marked.** A reviewer should re-run these; if one is wrong, what rests on it
-is wrong.
+Historical measurements attributed to 2026-08-13; reproduction queries are
+archival, not instructions to run against production in this task. **Corrections
+from v1 are marked.** R2 statically checked code but did not verify live counts.
+The September disposition distinguishes those claims from disposable evidence.
 
 ### G1 — Storage is flat; *several* sources are flat streams
 
@@ -103,7 +125,9 @@ tool_results, so `current_prompt` is never set.
 
 `codex_cli.py:335` hit the same case and fabricated a prompt; `claude_code`
 never did. **This is an independent bug and should ship on its own, not inside
-this arc.**
+this arc.** R2 also identifies the same pre-prompt response drop in pi_agent
+(`parse`, assistant branch); orphan tool results are ignored there too. A key
+extraction test must quantify emitted events, not promise one event per message.
 
 ### G3 — NULL `external_id` is all-or-nothing per (harness, kind)
 
@@ -134,12 +158,20 @@ in the G2 transcript 13 distinct record `uuid`s collapse to only **7 distinct
 | `claude_code` | core | record `uuid`; parent is `parentUuid` → `uuid` | K1 | 100% |
 | `gemini_cli` | frozen | message `id` | K1 | 100% |
 | `vscode` | contrib | `requestId` / `responseId` / `toolCallId` | K1 | 100% |
-| `pi_agent` | contrib | record `id` (45/45); `parentId` (44/45) | K1 | 0% |
+| `pi_agent` | contrib | record `id` (historical presence 45/45); `parentId` (44/45, provenance only) | K1 candidate | prompt/response: 0%; tool calls already use block `id` |
 | `copilot_cli` | contrib | record `id` (9/9), `parentId` (9/9), `data.toolCallId` | K1 | 0% |
 | `opencode` | contrib | SQLite primary keys | K1 | 0% |
 | `antigravity_cli` | core | `step_index`; multi-tool records need a composite | K2/K3 | 0% |
 | `codex_cli` | core | `call_id` for tools; no per-message id | K3 | 0% |
 | `aider` | frozen | markdown, no ids at any granularity | K3/K4 | 0% |
+
+**R2 correction:** pi_agent's fixture has three distinct candidate message
+keys (one user, two assistant), not four: the toolResult record patches a tool.
+The toolCall-bearing assistant also contributes a tool event, so “one message =
+one stored event” is false. Field presence (including 45/45) does not prove
+uniqueness or durability. Validate keys per emitted `(conversation, kind)`,
+including duplicate/missing IDs and unchanged raw tool IDs; no corpus-wide
+uniqueness claim is made here.
 
 **J7 is closed:** `copilot_cli` does carry ids — read from its fixture
 (`tests/fixtures/adapters/copilot_cli/minimal/input.jsonl`), which is the
@@ -243,9 +275,12 @@ Zero share a key across *kinds* within a conversation, so the
 `external_id` is **not globally unique**, and the sub-agent case is not the
 whole story — the ordinary-conversation share is larger. Any reconciliation that
 diffs "stored keys vs source keys" must therefore be scoped to an elected
-authoritative source, which is what `_conversation_claimed_elsewhere`
-(`orchestration.py:811`) currently provides and an upsert would otherwise
-discard.
+authoritative source. `_conversation_claimed_elsewhere`
+(`orchestration.py:811`) currently prevents destructive replacement; it does
+**not elect** an authority. When two paths already link the same conversation,
+both refuse replacement and settle their hashes. A harness-wide invalidation
+can therefore leave the old NULL-key events intact behind fresh bookkeeping.
+Preserve that guard, but do not count settlement as successful migration.
 
 ---
 
@@ -295,9 +330,13 @@ status quo to preserve; this is a decision with a visible-behavior change.
 
 ---
 
-## Dissolution check
+## Historical dissolution check (not current slice authorization)
 
-**Dissolves**
+The table records v2's long-range ambitions, not approved work. In particular
+the residue sweep is excluded from the pi_agent direction, and issue #83,
+ordering/schema and streaming changes are deferred.
+
+**Proposed eventual dissolutions**
 
 | artifact | why | slice |
 |---|---|---|
@@ -323,7 +362,9 @@ until block identity is settled or explicitly refused.
 - **`sequence` column** — net-new; G5 shows there is no coherent order today.
 - **Reconciliation (J1)** — net-new, and the honest price of removing the delete.
 - **Key-stability / content-mutability declarations (J2)** — net-new.
-- **Parser revision in ingest bookkeeping** — net-new, forced by slice 1 (below).
+- **Parser revision in ingest bookkeeping** — historical proposed durable
+  invalidation mechanism; a completion/coverage alternative would need proof.
+  Neither solves NULL-key tag migration by itself.
 
 **Expectation, restated:** this does not shrink the codebase. Complexity moves
 out of mutable parse-time state into keys, declarations, and reconciliation —
@@ -377,13 +418,13 @@ write.
 
 ---
 
-## Schema (sketch) — v12 → v13
+## Historical schema sketch — v12 → v13 (deferred, not authorized)
 
 ```sql
 ALTER TABLE events ADD COLUMN sequence INTEGER;
 CREATE INDEX idx_events_conversation_sequence ON events(conversation_id, sequence);
 ALTER TABLE events ADD COLUMN source_hash TEXT;         -- K3 verification (J2)
-ALTER TABLE ingested_files ADD COLUMN parser_revision TEXT;   -- forced by slice 1
+ALTER TABLE ingested_files ADD COLUMN parser_revision TEXT;   -- proposed durable invalidation
 ```
 
 Plus a fix for `attributes.scope`: either `NOT NULL DEFAULT ''` or a partial
@@ -400,9 +441,52 @@ semantics to reproduce. Sequence backfill is a *choice* (J10) with visible
 behavior change, and the ordering expressions must be inventoried and
 centralized first.
 
-No backfill of `external_id` for NULL rows: sources must be re-parsed by fixed
-adapters. A synthesized key would be indistinguishable from a real one and would
-poison the citation guarantee.
+**R2 blocker — no safe transition is yet proved or ratified.** An adapter-only
+change leaves unchanged files skipped. Forcing them through replacement first
+snapshots old rows: `snapshot_conversation` drops tag assignments on events with
+NULL `external_id` before new keys can help. This includes prompt, response and
+exchange tags (exchange targets a prompt event). Every block tag is excluded
+from carry, even when its parent event is keyed. Conversation tags and owners
+carry when a replacement exists; keyed tool tags carry only if the same key
+still exists. Empty parses can lose even conversation metadata. Warnings do
+not make any of this loss acceptable.
+
+The September disposable probe attached six tag kinds and an owner to the pi
+fixture: snapshot counted three dropped event assignments and one dropped block
+assignment; only conversation/tool-call assignments and ownership survived
+ordinary replacement. It exercised current code, **not** a new identity parser.
+The snapshot mechanism proves why adding keys only after deletion cannot repair
+those old assignments.
+
+A harness-scoped sentinel (`file_hash=''`, `file_mtime=NULL`, `error IS NULL`)
+can bypass both skip gates but is **not an idempotent migration**: ingest restores
+the real hash/stat, and the next invocation invalidates the row again. Repeated
+cycles in the probe each replaced the conversation. A durable completion/version
+or rigorously defined coverage guard is required; checking for any NULL key
+loops forever for legitimately ID-less records, while checking “some keys exist”
+can skip partial coverage. Errors, empty parses and duplicate settlement must
+not be stamped complete. Invalidation also erases the stored hash evidence an
+unchanged-byte bridge would need; preserve evidence before any future mutation.
+
+A positional bridge is not established by unchanged current bytes alone. It
+needs an unambiguous mapping from the **stored old graph** to a deterministic old
+parse, then to the key-only new parse. The database has no general source order;
+timestamp ties, random ULID suffixes, dropped/folded messages, binary filtering,
+parser/config drift, missing timestamps and repeated equal content prevent a
+blanket ordinal match. Changed files (including append) are outside an
+unchanged-byte bridge; duplicate paths may not describe the stored graph at all.
+Matching only `(event_id, block_index)` also cannot prove block identity.
+Ambiguity must refuse before writes, not guess or silently lose tags.
+
+Alternatives remain open: verified in-place assignment of genuine source IDs
+could preserve ULIDs and tags if the graph correspondence is proved; a
+re-parse-only carry bridge could preserve assignments under equally strict
+mapping conditions but still remints IDs; a fresh-database-only mode could defer
+legacy migration if it demonstrably cannot replace legacy rows. None is approved.
+Synthesized IDs are not a substitute for genuine source keys. Explicit acceptance
+of quantified loss would require the user's decision; it has **not** been chosen.
+The recommended next step is read-only impact/preflight, specified in the
+[pi_agent-only plan](ingest-identity-first-slice.md). `safeToImplement=false`.
 
 ---
 
@@ -438,17 +522,26 @@ after any detector rewrite.
 
 **Slice 0 — Ratchet. SHIPPED.** #79, main `58daf4a`.
 
-**Slice 1 — Keys.** Extract K1 ids never read: `pi_agent` (16,598 responses),
-`copilot_cli`, `opencode`. Construct K2/K3 identities for `antigravity_cli` and
-`codex_cli` under the J2 declarations. Sweep the `cline`/`cursor`/`goose`
-residue.
+**Historical Slice 1 — superseded, not authorized.** v2 bundled pi_agent,
+copilot_cli and opencode K1 extraction, antigravity/codex K2/K3 construction and a
+live harness-residue sweep. R2 correctly rejects that as a smallest slice.
 
-**Not schema-free** *(review #3, accepted)*. Ingest skips unchanged files by stat
-then hash (`orchestration.py:435,449`) and `ingested_files` records no parser
-revision, so an adapter-only fix changes nothing until a file changes. Slice 1
-must add `parser_revision` to ingest invalidation, or ship an explicit one-time
-re-parse for affected harnesses. **Gate:** re-parse actually occurs, then G3's
-query moves.
+**Candidate Slice 1 — pi_agent only, blocked.** Propose prompt/response
+`external_id = pi_agent::<record id>` for valid nonempty source IDs; leave missing
+IDs NULL and tool IDs unchanged. Do not change parentage or parse cardinality.
+Namespace and malformed/duplicate-ID handling need ratification and tests.
+Unchanged-file invalidation is necessary for old coverage but not sufficient for
+safe migration, and ordinary changed-file replacement also encounters old NULL
+tags. Neither a plain sentinel nor adding a parser revision solves tag identity.
+No schema-free *safe* migration has been demonstrated. Gate on lossless mapping,
+completion/retry semantics and duplicate-source refusal, not movement in G3's
+historical live query. See the companion plan's acceptance matrix.
+
+**Recommended preceding slice — read-only pi_agent impact/preflight.** Report
+assignments at risk, source/hash/authority ambiguity and candidate key coverage
+without writes, invalidation, ingest or network calls. Requires separate
+ratification and independent review (temporarily Codex CLI `gpt-6-astra`,
+reasoning high); this run implements documentation only.
 
 **Slice 2 — Upsert.** The graph upsert above, plus the `attributes.scope` fix and
 FTS replacement. Fallback replacement retained for K4 and rewritable sources,
@@ -469,7 +562,7 @@ Lands on arcs settled under bounded-write assumptions (#43/#42/#47, #38, the
 
 ---
 
-## Decided (flagged, not asked)
+## Historical author positions (not ratified decisions)
 
 - **Locator grammar:** `<harness>/<conv-key>[/<event-kind>/<event-key>]`, `/`
   delimiter, colons unescaped (legal `pchar`), percent-encoding only for space,
@@ -485,7 +578,23 @@ Lands on arcs settled under bounded-write assumptions (#43/#42/#47, #38, the
 
 ---
 
-## Review R1 disposition
+## Review R2 disposition (2026-09-26)
+
+**REVISE retained.** Accept the material NULL-key/block tag-loss blocker and
+pi_agent-only scope. Accept source-based evidence for skip gates, replacement
+carry, semantic parentage, fresh ULIDs and deferred graph-upsert defects.
+Qualify the suggested sentinel: it bypasses skips, but is neither idempotent nor
+proof that duplicate conversations were re-parsed. Qualify positional carry:
+unchanged bytes plus a key-only diff are necessary, not sufficient to recover
+stored-event correspondence. Correct the per-message cardinality and per-kind
+coverage claims. Recommend preflight first, without deciding metadata loss.
+Full original R2 and claim-by-claim disposition:
+[ingest-stream-review-r2-2026-09-26.md](ingest-stream-review-r2-2026-09-26.md).
+This revision remains **PENDING ASTRA REVIEW**, `safeToImplement=false`.
+
+---
+
+## Historical review R1 disposition
 
 | # | sev | disposition |
 |---|---|---|
@@ -513,7 +622,7 @@ loudly rather than silently).
 
 ---
 
-## Reproduction
+## Historical reproduction (not run against production in this revision)
 
 ```bash
 # G3 — keyed rate per harness and kind
