@@ -6,7 +6,7 @@ RELEASE/PUBLICATION HOLD.** Original main remains
 `work/next-slices-01a0ddb3` changed. Package version remains **0.12.1**.
 Accumulated code on main is not thereby published.
 
-## Actual approvals and integrated scope
+## Review results, eligibility and integrated scope
 
 The user explicitly authorized switching this review wave to actual
 **`/opt/homebrew/bin/codex`, model `gpt-6-astra`, reasoning high** until Claude
@@ -15,10 +15,10 @@ unauthorized is stale and incorrect. No Claude request or quota poll was made
 in this wave. Historical Fable approvals retain their exact scope; a future
 wave may return to Fable after availability is established.
 
-| Candidate | Exact approved head | Authority |
+| Candidate | Exact reviewed head | Authority / eligibility |
 | --- | --- | --- |
 | Test isolation #40 | `53d0b9cb4de553bc003af61d02942c9cfa03bcd2` | Genuine prior Fable approval, unchanged exact diff; not re-reviewed. |
-| Release assessment | `448d50540e4afc24ff92a513fb088a0417d41fd5` | Actual Codex Astra/high PASS; round 2 verified and reused round 1's passing raw review. Documentation only. |
+| Release assessment | `448d50540e4afc24ff92a513fb088a0417d41fd5` | Actual Codex Astra/high PASS, exit 0; round 2 recorded reuse of round 1. **Reuse eligibility unresolved** due to the model-refresh timeout below; not counted as gate approval. Documentation only. |
 | Design disposition | `b98b27660164c05ee471e5641076fb5c7fd6fc35` | Fresh actual Codex Astra/high round-2 PASS. Documentation only; **safeToImplement=false**. |
 
 Both documentation reviews use test-fix `53d0b9cb…` as their base. Exact argv,
@@ -26,14 +26,23 @@ subjects, result paths and hashes are in
 [Codex provenance](reviews/astra-candidates.json); historical test approval is in
 [the exact-diff receipt](reviews/test-isolation-exact-diff.json). Full reports and
 raw transcripts remain in the external artifact paths, not copied into prose.
-The earlier design review's provider timeout remains recorded; its PASS was
-**not** reused. The clean fresh round-2 review supplies that candidate's approval.
+Release round-1 `stderr.log:37` records
+`failed to refresh available models: request timed out`. Its actual PASS and
+exit 0 remain genuine, but do not settle reuse eligibility. The design round-2
+receipt rejected reuse of the identical round-1 error under the strict
+provider-error gate; its clean fresh round-2 review supplies design approval.
+No supported exception is established for release. Applying the same gate,
+**release reuse eligibility is unresolved and is not counted as approval**.
+Original release round-1/round-2 receipts and raw evidence remain unchanged;
+this disposition corrects their unqualified reuse claim, not the raw verdict.
 
 Release and design were merged with ancestry, respectively at `342b4c26…` and
 `8b7cb327…`; their shared test-fix ancestor was not cherry-picked or duplicated.
 Neither input candidate was excluded. This handoff and integration evidence are
 new changes: **input approvals do not approve the final combined candidate**.
-Actual final Codex review remains a separate gate.
+Actual final Codex round 1 returned **REVISE** on `b8a2102731cee1ed52c1126db2ead184f29a5a0e`
+for the inconsistent timeout disclosure/eligibility. This documentation correction
+awaits final exact-head Codex review; it supplies no new approval or gate waiver.
 
 ## Local validation and retained failures
 
@@ -57,10 +66,12 @@ update suppression. Dependencies and model weights are offline;
 
 Integration evidence lives under
 `/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/integration/`:
-`check-merged-all/receipt.json` and `output.log` record that run. The final
-`candidate.json` must bind subsequent committed-head `check-head-all` and
-`check-head` receipts to the exact final HEAD/tree before marking readiness.
-A ready candidate means ready for final review, not approved or publishable.
+`check-merged-all/receipt.json` and `output.log` record that run. The prior
+`check-head-all` and `check-head` receipts describe `b8a2102731…`, not this
+correction. Updated `candidate.json` must bind the correction's committed-head
+check receipts to its exact HEAD/tree before marking readiness.
+A ready candidate means ready for final review, not approved or publishable;
+release reuse eligibility remains a separate unresolved gate.
 
 Earlier failures remain failures, not erased by later green: preservation had
 notice/cache failures; the original design attempt put temporary fixtures inside
@@ -69,7 +80,9 @@ run; normalization had a dependency-install timeout. Their raw attempts and
 corrections remain in [release evidence](release-readiness-next.md) and
 [design R2 evidence](ingest-stream-review-r2-2026-09-26.md). Those documents'
 “pending review” labels describe their preparation stage; the exact-head reviews
-above supersede those labels, not the underlying limitations.
+above record later results, not removal of the underlying limitations. Design
+has eligible approval; release's PASS remains subject to unresolved reuse
+eligibility.
 
 Local checks do not certify Ubuntu/Python 3.12–3.14 CI or T3 real-browser smoke.
 Fresh CI evidence and browser execution/applicability disposition remain release
@@ -99,7 +112,7 @@ retroactive; no production corpus was read, ingested, reparsed or repaired here.
 1. **Release scope and compatibility:** defining versus ride-along patches,
    version and eventual publication permission; disposition of ignored legacy
    FTS controls/misleading help and their communication/removal policy. These
-   are not settled by local green or the release report's approval.
+   are not settled by local green or the release report's raw PASS.
 2. **Next diagnostic scope:** whether to authorize the proposed pi_agent-only,
    fixture-backed read-only preflight and its surface/contract. No apply mode;
    live-data inspection needs separate explicit authorization.

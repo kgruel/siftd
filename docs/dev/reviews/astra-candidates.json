@@ -1,6 +1,6 @@
 {
-  "record_kind": "verified_actual_codex_candidate_reviews",
-  "authorization": "User-authorized temporary Astra substitution; not a self-review verdict. Final combined integration review remains pending.",
+  "record_kind": "actual_codex_candidate_results_and_gate_eligibility",
+  "authorization": "User-authorized temporary Astra substitution; not a self-review verdict. Final combined integration round 1 returned REVISE; corrected candidate awaits exact-head review.",
   "candidates": [
     {
       "lane": "release",
@@ -44,6 +44,20 @@
           "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/exit.txt",
           "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
         }
+      },
+      "reuse_record_scope": "Historical release round-2 receipt records reuse; this is not a current eligibility assertion.",
+      "reuse_eligibility": "unresolved",
+      "counted_as_gate_approval": false,
+      "provider_error": {
+        "diagnostic": "failed to refresh available models: request timed out",
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/stderr.log",
+        "line": 37,
+        "sha256": "cf92ae753db667955d2ca7e87eadb46756056f0e83d12641d33bb02a09dc38f8"
+      },
+      "gate_disposition": "Actual PASS and exit 0 retained. Apply the same strict provider-error gate as design round 2: no supported exception established; reuse eligibility unresolved, not counted as approval. Original release receipts preserved without alteration.",
+      "consistency_reference": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/review-2.json",
+        "sha256": "0cd6817ead1849689e56a5affa43ecc13df66b2f700751ba7bfce17fb9fb1c82"
       }
     },
     {
@@ -97,8 +111,14 @@
     "diff_sha256": "7ac9b09a6a154f4031362650b753802ff79aad9dd447bc92d81aa406b5ab1e6e",
     "receipt": "docs/dev/reviews/test-isolation-exact-diff.json"
   },
-  "verification": "Exact Git trees, diffs and paths; raw artifact SHA256; invocation/exit; startup model and effort; complete assessment equals stdout and receipt findings; release reuse points to actual round-1 PASS.",
+  "verification": "Exact Git subjects and raw artifact hashes verified. Raw PASS/model/effort/exit provenance is distinct from gate eligibility: release round-2 reuse is recorded historically, but its model-refresh timeout leaves reuse eligibility unresolved. Design fresh round-2 approval remains valid.",
   "design_prior_attempt": "Round-1 provider timeout retained and not reused; fresh round-2 PASS is the authority.",
-  "scope_limit": "Documentation approvals do not authorize implementation, live diagnostics, identity migration, metadata loss, final integration approval or publication.",
-  "safeToImplement": false
+  "scope_limit": "Eligible documentation approvals do not authorize implementation, live diagnostics, identity migration, metadata loss, final integration approval or publication. Release raw PASS is not counted as eligible approval pending timeout disposition.",
+  "safeToImplement": false,
+  "integration_review": {
+    "head": "b8a2102731cee1ed52c1126db2ead184f29a5a0e",
+    "verdict": "REVISE",
+    "receipt": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/integration/review-1.json",
+    "correction": "Disclose release timeout and leave reuse eligibility unresolved consistently; new combined exact-head approval remains pending."
+  }
 }
