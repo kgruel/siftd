@@ -1,9 +1,11 @@
 # Ingest stream — design v2 (2026-08-13), R2 disposition (2026-09-26)
 
-**PENDING FABLE REVIEW — safeToImplement=false.** This revised document is a
+**PENDING ASTRA REVIEW — safeToImplement=false.** This revised document is a
 candidate, not authorization to implement identity or accept metadata loss.
 Actual Fable 5.1 High R2 reviewed preservation `4552bacf` and returned **REVISE**.
-It did not approve the design. No new reviewer was invoked for this revision.
+It did not approve the design. New review is pending actual Codex CLI
+`gpt-6-astra`, reasoning high, under the user-authorized temporary policy;
+no reviewer was invoked during this candidate preparation.
 
 Chronology: the August v1/R1 → v2 rewrite below is historical. R1 remains
 byte-for-byte unchanged. On September 26, actual Fable R2 identified the missing
@@ -538,7 +540,8 @@ historical live query. See the companion plan's acceptance matrix.
 **Recommended preceding slice — read-only pi_agent impact/preflight.** Report
 assignments at risk, source/hash/authority ambiguity and candidate key coverage
 without writes, invalidation, ingest or network calls. Requires separate
-ratification and Fable review; this run implements documentation only.
+ratification and independent review (temporarily Codex CLI `gpt-6-astra`,
+reasoning high); this run implements documentation only.
 
 **Slice 2 — Upsert.** The graph upsert above, plus the `attributes.scope` fix and
 FTS replacement. Fallback replacement retained for K4 and rewritable sources,
@@ -587,7 +590,7 @@ stored-event correspondence. Correct the per-message cardinality and per-kind
 coverage claims. Recommend preflight first, without deciding metadata loss.
 Full original R2 and claim-by-claim disposition:
 [ingest-stream-review-r2-2026-09-26.md](ingest-stream-review-r2-2026-09-26.md).
-This revision remains **PENDING FABLE REVIEW**, `safeToImplement=false`.
+This revision remains **PENDING ASTRA REVIEW**, `safeToImplement=false`.
 
 ---
 

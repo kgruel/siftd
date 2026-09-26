@@ -1,6 +1,6 @@
 # Ingest design R2: durable review and disposition
 
-Recorded 2026-09-26. **PENDING FABLE REVIEW — safeToImplement=false.**
+Recorded 2026-09-26. **PENDING ASTRA REVIEW — safeToImplement=false.**
 This candidate responds to a real **REVISE**, not an approval. The verbatim
 review preserved below describes `4552bacf`, not this revised candidate.
 Historical R1 is unchanged, including its duplicated findings.
@@ -20,10 +20,12 @@ Historical R1 is unchanged, including its duplicated findings.
   the model name. Raw `structured_output` exactly equals `assessment.json` and
   its verdict is `revise`.
 - Session: `2562b87a-8c87-44f7-b4f0-7ccf3beba080`. R2 ran no tests.
-- No Claude invocation, quota poll, credential extraction or substitute review
-  occurred here. Required new Fable review is pending. The successful review of
-  the separate test-isolation diff `53d0b9cb` does not approve this diff and that
-  repair was not copied into this lane.
+- No Claude invocation, quota poll or credential extraction occurred here. New
+  review is pending actual `/opt/homebrew/bin/codex`, model `gpt-6-astra`,
+  reasoning high, under the user-authorized temporary policy. Historical Fable
+  attribution is unchanged. The approved test-isolation commit `53d0b9cb` was
+  subsequently merged by ancestry as a validation prerequisite, not copied or
+  re-reviewed; that approval does not approve this design diff.
 
 ## Disposition, independently checked rather than adopted wholesale
 
@@ -48,9 +50,9 @@ replacement barrier. None is authorized. See
 [identity-first plan](ingest-identity-first-slice.md) for precise gates and
 [revised design](ingest-stream-design-2026-08-13.md) for the corrected chronology.
 
-## This candidate's verification and limitations
+## Original candidate attempt: verification and limitations
 
-All artifacts for this run are under
+Original artifacts remain under
 `/tmp/siftd-next-slices-01a0ddb3/logs/design-disposition/`:
 
 - `isolated.sh`: exact environment wrapper; local worktree `.venv`, Python
@@ -71,12 +73,12 @@ All artifacts for this run are under
   parent repository, explaining the eight Git/workspace-related failures below.
   This is a **candidate-run isolation error**, not an ingest regression or a
   claim that these eight failures are the previously known notice/cache issue.
-  The failed attempt is retained, not retried into a green claim. A future
-  check must put temporary test directories outside any Git checkout (still
-  disposable) and use the reviewed suite-owned isolation guard when integrated.
+  The failed attempt is retained as failed. The corrected validation below uses
+  temporary test directories outside every Git checkout and the merged, reviewed
+  suite-owned isolation guard; it does not rewrite this attempt as green.
 - `docs-check.log`, `docs-check.exit`: separate `./dev docs --check`, exit **0**;
   generated references/README spans inspected, no generated diff.
-- Optional serve/embedding/slow lanes not run: no source/test behavior changes;
+- Optional serve/embedding/slow lanes were not run in that attempt: no source/test behavior changes;
   the relevant base/architecture lanes were attempted above. Installing extras
   for strict docs/base imports is not execution of their optional lanes.
 
@@ -93,9 +95,72 @@ tests/test_workspace_identity.py::TestGetOrCreateWorkspaceWithGitRemote::test_up
 tests/test_git.py::TestGetGitRemoteUrl::test_returns_none_for_non_git_directory
 ```
 
-No complete check is green. The documentation candidate is prepared for review,
-not approved for merge or identity implementation. Completion/version guards,
-lossless graph/block mapping and duplicate authority remain unresolved decisions.
+That original attempt has no green complete check. Corrected validation is
+recorded separately below. Completion/version guards, lossless graph/block
+mapping and duplicate authority remain unresolved; `safeToImplement=false`.
+
+## Corrected validation — Astra candidate normalization
+
+The user authorized temporary review by actual `/opt/homebrew/bin/codex`, model
+`gpt-6-astra`, reasoning high. This preparation invokes no reviewer: approval
+remains pending the next stage, not supplied by the preparing assistant.
+Historical R1 and the verbatim Fable R2 below are unchanged.
+
+Only the already-reviewed test fix `53d0b9cb4de553bc003af61d02942c9cfa03bcd2`
+was merged into this branch, with both parents retained by merge commit
+`cee67134c271d409a44033e318f62511149c838e`. The new-review base is `53d0b9cb`;
+the delta is design documentation only. No identity implementation, additional
+source/test changes, migration or metadata-loss acceptance was introduced.
+
+New artifacts live under
+`/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/`:
+
+- `original-attempt/` retains copies and `original-attempt.json` records hashes
+  of the old failed check and wrapper; the originals remain untouched. The old
+  TMPDIR was inside this checkout. Its eight failures show fixture paths resolving
+  to the parent repository, inherited Git remote, or collapsed workspace names.
+  Each new command receipt verifies its temp root lies outside **every** listed
+  worktree and `git rev-parse` there exits 128, not a parent repository.
+- `run.py` starts commands in this worktree, using its own Python 3.12.12 venv
+  and fresh disposable HOME/XDG/TMPDIR under the external artifact directory.
+  The environment is built afresh, without caller-global `SIFTD_NO_UPDATE_CHECK`,
+  `SIFTD_DB`, `SIFTD_CONFIG`, `PYTHONPATH` or `PYTEST_ADDOPTS`. Tests own the #40
+  suppression. SIGINT/SIGTERM are reset to default before child exec and the
+  parent waits in the foreground. Local weights use the existing shared model
+  cache with `HF_HUB_OFFLINE=1`; no remote embedding provider is called.
+- `check-all.log/json`: first corrected-environment attempt was interrupted by
+  the command harness's 120-second timeout during embedding dependency install.
+  Architecture (94 passed / 5 skipped), base (4042 passed), and serve (359 passed /
+  4 skipped) had passed. No child exit was captured; this is **incomplete**, not
+  an exit-0 result. The log and incomplete receipt remain.
+- `check-all-corrected.log/json/exit`: longer-timeout `./dev check --all -v`,
+  exit **0**. Architecture 94 passed / 5 skipped; base 4041 passed / 5 skipped;
+  serve 359 passed / 4 skipped; embeddings 111 passed; slow 2 passed; docs passed.
+  The interrupted serve lane's dependency sync had removed embedding extras,
+  so this attempt began with dependency-gated base skips. These are disclosed,
+  not used to stand in for full-extra base coverage.
+- `check-all-full-extras.log/json/exit`: after the prior run restored all extras,
+  `./dev check --all -v`, exit **0**. Architecture **94 passed / 5 skipped**;
+  base **4042 passed (no skips)**; serve **359 passed / 4 skipped**;
+  embeddings **111 passed**; slow **2 passed**; lint and strict docs passed.
+  All eight original failed nodes pass in the base log. The architecture skips
+  are existing non-file-strategy cases; the serve harness intentionally syncs
+  dev/serve extras, with embedding-dependent modules covered in the next lane.
+  No tests or skip conditions were edited, weakened or removed.
+
+The full-extra run subject was merge HEAD `cee67134`, HEAD tree
+`4b8a530840bd3880856ac5fb4efcf7bbca51c54a`, with staged documentation tree
+`4802e8549840df77c321c798972805a3d2ce6574` (unchanged across the run). Only this
+validation report text follows that run. Runtime-tree equivalence to the final
+candidate is checked explicitly: source, tests, scripts, dependency metadata and
+all other non-design-doc paths must be identical. The external `candidate.json`
+records the final exact commit/tree, equality checks and the post-commit
+`./dev check -v` exit/log at that exact clean HEAD; it is not a review verdict.
+
+A green existing suite validates candidate preparation, **not** future identity
+semantics. `safeToImplement=false`: preflight surface/authorization, valid-key and
+duplicate rules, lossless event/block correspondence, duplicate-source authority,
+and durable completion/retry/rollback still require decisions and proof.
 
 ## Original R2 record (complete, verbatim)
 

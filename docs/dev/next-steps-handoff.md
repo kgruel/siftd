@@ -49,6 +49,12 @@ in historical reproduction sections are **not** permission to access live data.
 
 ## Gates and next lanes
 
+Preparation results below are historical evidence from preservation `4552bacf`,
+not the current design lane's validation. See the
+[design R2 record](ingest-stream-review-r2-2026-09-26.md) for the separate original
+eight-failure attempt and corrected validation after merging the reviewed #40
+guard. Neither validation nor a reviewer-policy change authorizes identity work.
+
 1. **Preparation BLOCKED:** Python 3.12.12, its own `.venv` with dev/serve/embed
    extras, regenerated docs, and `./dev check -v` in disposable HOME/XDG paths.
    Docs regeneration succeeded without generated changes. The check exited **1**:
@@ -65,10 +71,11 @@ in historical reproduction sections are **not** permission to access live data.
    0). Optional runtime lanes were not run. Environment provisioning/isolation
    needs resolution before preparation can clear. The staged whitespace check
    flags an existing blank line at the R1 review's EOF, retained for byte fidelity.
-2. Mandatory independent **Claude Code `claude-fable-5-1`, effort high** review:
-   preservation review, ingest R2/disposition, any implementation, and combined
-   integration. Availability preflight returned READY with verified modelUsage;
-   **preflight is not an assessment or approval**. No substitute reviewer counts.
+2. New independent review in this wave uses actual **`/opt/homebrew/bin/codex`,
+   model `gpt-6-astra`, reasoning high**, as temporarily authorized by the user.
+   Historical Fable reviews remain valid for their exact scope; the old Fable
+   availability preflight was not approval. No Claude requests or quota polling
+   in this wave. A future wave can return to Fable after availability is established.
 3. Separate release-readiness and design worktrees are to start from a passing
    preservation commit; they are **not created while preparation is blocked**.
    A bounded identity slice may follow only after its exact migration,

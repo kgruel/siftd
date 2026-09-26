@@ -1,13 +1,14 @@
 # Ingest identity: smallest pi_agent K1 direction
 
-Date: 2026-09-26. **PENDING FABLE REVIEW. safeToImplement=false.**
+Date: 2026-09-26. **PENDING ASTRA REVIEW. safeToImplement=false.**
 
 This is a plan, not implementation authorization or acceptance of metadata loss.
 It follows actual Fable 5.1 High R2's **REVISE** of preservation `4552bacf`.
 [Design/disposition](ingest-stream-design-2026-08-13.md) ·
 [full R2 and verification](ingest-stream-review-r2-2026-09-26.md).
-No new Fable review was requested; approval of any other exact diff does not
-transfer to this candidate.
+New review is pending actual `/opt/homebrew/bin/codex`, model `gpt-6-astra`,
+reasoning high, under the user-authorized temporary policy. Historical Fable
+reviews retain their exact scope; no other approval transfers to this candidate.
 
 ## Separate extraction from transition
 
@@ -148,9 +149,10 @@ requires its own explicit storage design and review.
    including block identity, changed inputs and duplicate authority. Loss has not
    been accepted; no production cleanup is an option in this scope.
 4. Define durable completion/coverage, retry and rollback before invalidation.
-5. Obtain actual **Fable 5.1 High** review of the new exact diff when permitted.
-   The last request was quota-limited until 2026-09-26 18:20 Europe/Budapest;
-   no quota polling, alternate reviewer or invocation was authorized in this run.
+5. Obtain actual **Codex CLI `gpt-6-astra`, reasoning high** review of the new
+   exact diff under the user-authorized temporary policy. No Claude requests or
+   quota polling in this wave; a future wave may return to Fable after availability
+   is established. This preparation is not an approval.
 
 Deferred: all other adapters; K2/K3 construction; full graph upsert/streaming;
 ordering/sequence/schema rewrite; source-parent storage; #83 abstraction;
