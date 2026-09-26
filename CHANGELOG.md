@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Isolate passive update checks per test so routine CLI calls cannot start PyPI
+  daemons that overwrite another test's cache; dedicated notice/check tests
+  explicitly opt in with fake IO and threads. ([#40](https://github.com/kgruel/siftd/issues/40))
+
 - Preserve historical ingest, CLI-surface, and package-split drafts with a
   next-steps handoff; preservation does not ratify the proposed designs.
 

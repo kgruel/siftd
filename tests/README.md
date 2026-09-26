@@ -77,6 +77,15 @@ subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
   races capture. Use `capsys`/`capfd` or a callback/`file=` parameter instead
   (see the note at the top of `conftest.py`). Every test is hard-isolated from
   the real database by the autouse `_sandbox_db_home` fixture.
+- **Passive update checks are off per test.** The autouse `_disable_update_check`
+  fixture prevents routine `main()` calls (and inherited subprocesses) from
+  starting PyPI daemons that can write into later tests' state directories
+  ([#40](https://github.com/kgruel/siftd/issues/40)). Dedicated notice/check tests
+  request `enable_update_check` and fake network IO/thread creation; install
+  those fakes before exercising any branch. Do not rely on a caller-global
+  `SIFTD_NO_UPDATE_CHECK`: the suite owns isolation and explicit enabled coverage.
+  Prysk `.t` items do not run pytest fixtures, so each acceptance transcript
+  explicitly exports the same disable setting for its subprocesses.
 - **Architecture ratchets are self-contained in their *invariant*, not in their
   mechanics.** Each module in `tests/architecture/` keeps its own property, its
   shrink-only allowlist or stated permanent carve-outs, and the docstring
@@ -105,7 +114,7 @@ docstring so its row is meaningful.
 | `tests/` | 186 | 3289 |
 | `tests/adapters/` | 19 | 163 |
 | `tests/architecture/` | 12 | 71 |
-| `tests/cli/` | 28 | 632 |
+| `tests/cli/` | 29 | 633 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -371,6 +380,7 @@ docstring so its row is meaningful.
 | [cli/test_show_smart_routing.py](cli/test_show_smart_routing.py) | 6 | Phase 4: smart-routing of `siftd show <id>` between conversations and events. |
 | [cli/test_show_tools.py](cli/test_show_tools.py) | 6 | — |
 | [cli/test_tags.py](cli/test_tags.py) | 76 | Tests for siftd tag CLI command (apply, remove, list, rename, delete). |
+| [cli/test_update_check_isolation.py](cli/test_update_check_isolation.py) | 1 | Routine CLI calls must not start background update checks in the test suite. |
 | [cli/test_upgrade.py](cli/test_upgrade.py) | 21 | Tests for siftd upgrade command and version check. |
 
 ### `tests/snapshots/`
