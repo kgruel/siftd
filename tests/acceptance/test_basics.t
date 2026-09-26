@@ -1,5 +1,9 @@
 Test basic siftd CLI commands
 
+Prysk items do not run pytest fixtures; disable passive PyPI checks here:
+
+  $ export SIFTD_NO_UPDATE_CHECK=1
+
 Help exits with code 0:
 
   $ siftd --help > /dev/null; echo "exit code: $?"
