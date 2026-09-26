@@ -26,12 +26,18 @@ Only disposable-fixture callers are authorized in this experiment.
 
 - Paths must be absolute lexical paths without `..` or expansion syntax; do not
   resolve aliases, expand home, recurse directories, or glob. Refuse symlinks
-  (including symlink ancestors), non-regular files, and DB paths containing `?`
-  or `#` (the existing SQLite URI helper does not escape those). Missing source
-  paths are findings; a missing DB refuses the report. No implicit source reads.
+  (including symlink ancestors), non-regular files, DB paths containing `?`, `#`
+  or `%`, and DB paths beginning with `//`. The existing SQLite URI helper does
+  not escape filenames: percent decoding or URI authority interpretation could
+  open a different path from the one validated. Refuse before opening; do not
+  change the helper in this slice. Missing source paths are findings; a missing
+  DB refuses the report. No implicit source reads.
 - Deduplicate identical input path strings, sort them, and select bookkeeping by
-  exact `ingested_files.path` equality. A selected row must have harness name
-  `pi_agent`; absent rows are `untracked`, NULL pointers `unlinked`, dangling or
+  exact `ingested_files.path` equality. A selected row whose harness name is not
+  `pi_agent` yields the source-level `non_pi_source` finding, not whole-request
+  refusal: exclude that row's conversation link from scope and do not parse its
+  file as Pi. Its graph/key/candidate observations are unknown, not zero. Absent
+  rows are `untracked`; for Pi rows, NULL pointers are `unlinked`, dangling or
   cross-harness pointers `invalid_link`. Never infer/rewrite a link from content
   or a session ID. Untracked/unlinked sources can still have source-only findings.
 - Conversation scope is the union of valid selected-row links and explicit orphan
@@ -92,18 +98,66 @@ Use only the bundled Pi parser. A mechanical private `_parse_records(records,
 path)` extraction in `adapters/pi_agent.py` may let existing `parse(Source)` and
 the diagnostic consume the same parser without rereading a mutable file or writing
 a temporary transcript. Preserve adapter behavior/output exactly; parity tests
-are required. This is not K1 extraction: prompt/response external IDs stay NULL.
-If this cannot be factored narrowly, stop rather than clone a second Pi parser.
+are required. Keep `parse(Source)` calling its module-level `load_jsonl`; commit
+characterization cases before extraction: empty input, filename fallback, time
+bounds/model selection, user string blocks, assistant thinking/usage/cost,
+pre-prompt assistant, repeated tool ID, unmatched toolResult, matched result and
+pending flush. Compare full domain output with frozen `now_iso()`, not just counts.
+This is not K1 extraction: prompt/response external IDs stay NULL. If this cannot
+be factored narrowly, stop rather than clone a second Pi parser.
 
-Decode captured UTF-8/JSONL strictly first: blank lines are allowed; invalid JSON,
-non-object records or malformed consumed fields are findings, not the loader's
-silent skips. Distinguish zero-byte/whitespace-only `empty`, no emitted events,
-and `malformed`. Unknown record types/roles are counted as ignored. Refuse graph
-comparison when missing/invalid timestamps would use `now_iso()` or when session
-headers are absent, conflicting or invalid (the adapter's filename fallback is
-not authority). Parsing failures yield a fixed reason, never exception text.
-Raw candidate scanning can still report successfully inspected records, marked
-partial when any record could not be inspected.
+Decode the captured bytes as UTF-8 with no BOM stripping. Iterate in memory with
+text-mode universal-newline semantics (CR, LF, CRLF only, e.g. `TextIOWrapper` over
+`BytesIO`, `encoding="utf-8", newline=None`), then apply `line.strip()` exactly as
+`load_jsonl` does. Do not use `str.splitlines()`: embedded U+2028, vertical tab or
+form feed are not line boundaries to the loader. Blank stripped lines are allowed.
+Strict validation rejects invalid UTF-8/JSON, non-object records and non-finite
+JSON numbers; it never repairs, drops or coerces input for the parser. The ordered
+record list handed to `_parse_records` must equal the loader's output for those
+same bytes. Any strict-versus-loader difference (including a skipped BOM-prefixed
+header, bad JSON or non-object line) makes the source `malformed`; do not parse
+only the surviving records. Graph and keyed observations are then unknown.
+
+Validate the following closed consumed-field table before calling the parser.
+These are private diagnostic admissibility rules, not changes to the adapter or
+an upstream Pi format policy. “Optional” means absence is allowed, without
+inserting defaults; explicit null is allowed only where stated. JSON values below
+mean finite JSON values recursively; booleans are not integers/numbers here.
+Fields not listed are opaque JSON and are not new validation/key-policy surfaces.
+
+| Consumed field / context | Accepted shape |
+|---|---|
+| Every record | Object; optional `type`: string or null; optional `timestamp`: string or null (additional time gate below). |
+| `session` | Optional `id`, `cwd`: string or null (additional header gate below). |
+| `model_change` | Optional `modelId`: string or null. |
+| `message` | Optional `message`: object, never null; optional `message.role`: string or null. Unknown/missing types and roles are ignored, not inferred. |
+| User content | Optional `message.content`: array of strings or block objects, never null or a bare string. |
+| Assistant content | Optional `message.content`: array of block objects, never null or a bare string. |
+| User/assistant block objects | Optional `type`: string (not null); `text` on text blocks: optional string. Other block payload is opaque JSON except the assistant cases below. |
+| Assistant thinking block | Optional `thinking`: string. |
+| Assistant toolCall block | Optional `id`: string or null; optional `name`: string; optional `arguments`: any JSON value, passed unchanged to existing `parse_json_args`. |
+| Assistant metadata | Optional `model`: string or null; optional `usage`: object or null. Its optional `input`, `output`, `cacheRead`, `cacheWrite`: integer or null; optional `cost`: object or null, with optional `total`: number or null. |
+| toolResult | Optional `toolCallId`: string or null; optional `toolName`: string; optional `isError`: boolean; optional `content`: array. Non-object elements and non-text blocks are ignored by `_extract_text`; a text block's optional `text` must be a string. |
+
+A table violation is `malformed`, with graph/key observations unknown. Raw record
+`id` values (including message IDs) are not parser keys and remain governed only
+by the candidate classifier below, except session IDs as above. Raw candidate
+scanning may still count successfully inspected records, marked partial whenever
+any record could not be inspected; it must not run parser code to validate shapes.
+Only decoding/validation failures receive fixed reasons, never exception text.
+Call the parser only on validated input; **any exception from the parser propagates**
+as a failure, not a `malformed` finding or successful report.
+
+Distinguish zero-byte/whitespace-only `empty`, no emitted events, and `malformed`.
+For graph/key comparison require a nonempty session ID, at least one header, and
+agreement of all headers on ID and cwd; otherwise `invalid_session`. Require a
+nonempty timestamp on every session and message record (`missing_timestamp` if
+absent/null/empty); every supplied nonempty timestamp, including on ignored
+records, must pass `datetime.fromisoformat` (`invalid_timestamp` otherwise).
+Keep the original strings; do not normalize or reorder. These gates prevent
+output-dependent `now_iso()`/filename fallback, not the adapter's incidental eager
+call of `now_iso()` as a `dict.get` default. Failure leaves graph/key observations
+unknown without invoking the parser; valid raw candidate observations remain.
 
 Raw message IDs are **diagnostic candidates only**: absent/null is `missing`;
 a string of 1–256 ASCII `[A-Za-z0-9_-]` characters is `candidate`; every other
@@ -136,6 +190,13 @@ observations (not a correspondence proof):
    timestamp/ULID/ordinal, no hash-based identity join. Missing blobs, invalid
    JSON/edges/kinds/extensions or historical binary-filter uncertainty give
    unknown where comparison cannot be made; never filter using current config.
+   For this experiment binary-filter uncertainty means a stored projected block
+   or decoded tool result contains a `filtered_reason` of `binary_content` or
+   `base64_content`, a `source.type` of `filtered`, or either exact placeholder
+   string `[binary content filtered]` / `[base64 content filtered]` (inspect nested
+   JSON too). These markers trigger unknown even if literal user content; absence
+   does not prove historical fidelity. Current Pi results use `output`, which the
+   existing tool-result filter does not inspect; do not invent a new filter.
    Repeated identical node projections are counted as ambiguous groups. Even a
    unique equal projection leaves historical parser/mapping authority unknown.
 3. Keyed assignment exposure uses **current parser** event keys, not hypothetical
@@ -178,8 +239,11 @@ Top-level fields:
   rows separately. Invalid target-kind/event-kind pairs are separate unknown
   assignments, not silently dropped. Include keyed-exposure partitions above.
 - `pending`: row counts, never targets applied. Match selected conversations'
-  external IDs using the existing directed `_covered_keys` rule, but retain all
-  matching conversations across the DB rather than picking the newest winner.
+  external IDs using the existing directed `_covered_keys` rule and resolver's
+  exclusion of conversation external IDs containing `::agent::`, but retain all
+  remaining matching conversations across the DB rather than picking the newest
+  winner. Excluded subagent matches do not imply no pending risk; unmatched queue
+  rows remain in the context counts below, never silently disappear.
   Count uniquely selected matches and ambiguous matches touching scope, once per
   queue row; group by entity_type/last_marker with an `other` bucket. Additionally
   give DB-context counts of unmatched Pi-attributed rows (literal `pi_agent::`
@@ -194,9 +258,9 @@ Top-level fields:
   Unknown/unavailable counts are `null`, not zero; each unassessed source,
   conversation and keyed assignment also has an exact unknown/refused count.
 
-Source reasons include untracked, unlinked, invalid_link, bookkeeping_error,
+Source reasons include untracked, unlinked, non_pi_source, invalid_link, bookkeeping_error,
 missing, unreadable, non_regular, empty, no_events, malformed, missing_id,
-unclassified_id, duplicate_id, missing_timestamp, invalid_session,
+unclassified_id, duplicate_id, missing_timestamp, invalid_timestamp, invalid_session,
 source_changed_during_read, hash_different, hash_unverified. Conversation reasons
 include orphan, partial_keys, invalid_keys, multiple_sources_identical,
 multiple_sources_divergent, multiple_sources_unknown, graph_different,
@@ -211,14 +275,15 @@ boundary; adapter parity belongs with existing Pi adapter tests. No live run.
 
 | Gate | Fixture/assertion |
 |---|---|
-| P1 | Current, absent, v0, stale, future, incomplete-current schema; locked/corrupt/unreadable DB. Explicit refusals; no writable fallback. Full logical dump/schema/user_version/bookkeeping/queue/blob metadata and source bytes unchanged on success and every refusal. SQL trace/authorizer disallows DDL/DML/persistent PRAGMA writes; deny discovery/config/network/ingest/ensure/drain calls. WAL fixture sees uncheckpointed committed rows; no zero-sidecar assertion. |
+| P1 | Current, absent, v0, stale, future, incomplete-current schema; locked/corrupt/unreadable DB. Reject DB paths with `?`, `#`, `%` or leading `//` before opening, including distinct literal/percent-decoded fixture files. Accept the helper's default lock timeout (about 5 seconds); use a rollback-journal exclusive-lock fixture, no new timeout knob. Explicit refusals; no writable fallback. Full logical dump/schema/user_version/bookkeeping/queue/blob metadata and source bytes unchanged on success and every refusal. SQL trace/authorizer disallows DDL/DML/persistent PRAGMA writes; deny discovery/config/network/ingest/ensure/drain calls. WAL fixture sees uncheckpointed committed rows; no zero-sidecar assertion. |
 | P2 | NULL-key prompt + response + exchange assignments, one block assignment, one keyed tool assignment, one conversation assignment, one owner. Two selected paths link one conversation: files=2, conversations=1, assignments=6, owners=1; NULL event assignments=3, blocks=1, keyed tool=1. Repeat selectors do not inflate totals. Add keyed-parent block and NULL-key tool variants; ambiguous pending suffix matches count once, queue unchanged. |
-| P3 | Untracked/unlinked/error/missing/unreadable/non-regular/empty/no-event/malformed sources; explicit Pi orphan, invalid/non-orphan/non-Pi selectors; ID-less/unclassified/duplicate IDs, cross-kind reuse, pre-prompt assistants, folded/repeated tools, partial and fully keyed graphs. Separate nonzero reasons and true unknowns; no inferred orphan linking or coverage. Unselected duplicate reference, absent owner/queue table, dangling/invalid scoped targets and blobs must not become zero risk. |
+| P3 | Untracked/unlinked/non-Pi-bookkeeping/error/missing/unreadable/non-regular/empty/no-event/malformed sources; non-Pi bookkeeping excludes the link and never invokes the parser. Explicit Pi orphan, invalid/non-orphan/non-Pi selectors; ID-less/unclassified/duplicate IDs, cross-kind reuse, pre-prompt assistants, folded/repeated tools, partial and fully keyed graphs. Separate nonzero reasons and true unknowns; no inferred orphan linking or coverage. Exercise every consumed-field table row with accepted and rejected shapes; reject malformed before parser invocation, and inject an unexpected parser exception to assert propagation. CR/LF/CRLF, embedded U+2028/vertical-tab/form-feed, BOM, invalid UTF-8/JSON, non-object lines and non-finite numbers prove loader-equivalent input or explicit malformed/unknown, never skipped-record graph equality. `::agent::` matches stay excluded without dropping queue rows. Unselected duplicate reference, absent owner/queue table, dangling/invalid scoped targets and blobs must not become zero risk. |
 | P4 | Changed/appended/truncated/reordered bytes, stable stat with changed hash, concurrent write/replace/delete via deterministic barriers, identical/divergent duplicate copies, equal hash with different stored graph, repeated content/tied timestamps, missing timestamps, binary-filter uncertainty. Recheck downgrades affected comparisons; no positional matches. Frozen inputs and reordered/duplicated selectors produce identical canonical output except the explicit input-occurrence count; secret sentinels never appear in output/logs. |
 
 Implementation must pass `./dev check` and `./dev check --all` at its exact
 committed HEAD. Contract-only preparation runs `./dev check`; it does not claim
-P1–P4 are already implemented. All extraction/K1, migrations, invalidation or
-completion schema, tag carry bridge, parentage/order changes, graph upsert and
+P1–P4 are already implemented. K1/identity extraction (beyond the mechanical shared
+parser seam above), migrations, invalidation or completion schema, tag carry
+bridge, parentage/order changes, graph upsert and
 CLI/package redesign remain out. If this limited experiment needs a broader
 rewrite, stop with a narrower proposal, not an expanded migration design.
