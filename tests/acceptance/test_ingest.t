@@ -1,5 +1,9 @@
 Test siftd ingest command
 
+Prysk items do not run pytest fixtures; disable passive PyPI checks here:
+
+  $ export SIFTD_NO_UPDATE_CHECK=1
+
 Ingest creates database when it doesn't exist:
 
   $ HOME=$PRYSK_TEMP XDG_DATA_HOME=$PRYSK_TEMP/data XDG_CONFIG_HOME=$PRYSK_TEMP/config siftd --db $PRYSK_TEMP/new.db ingest -v 2>&1 | grep "Creating database"
