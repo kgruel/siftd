@@ -167,7 +167,8 @@ def _candidates(records, bad):
     tools = Counter()
     seen_prompt = False
     uninspectable = 0
-    for record in records:
+    reason_records = {"missing_id": set(), "unclassified_id": set(), "duplicate_id": set()}
+    for record_index, record in enumerate(records):
         if record.get("type") != "message":
             continue
         msg = record.get("message", {})
@@ -196,7 +197,11 @@ def _candidates(records, bad):
             state = "missing" if value is None else "candidate" if isinstance(value, str) and _CANDIDATE.fullmatch(value) else "unclassified"
             counts[kind][state] += 1
             if state == "candidate":
+                if groups[kind][value]:
+                    reason_records["duplicate_id"].add(record_index)
                 groups[kind][value] += 1
+            else:
+                reason_records["missing_id" if state == "missing" else "unclassified_id"].add(record_index)
     for kind, group in groups.items():
         counts[kind]["duplicate_groups"] = sum(n > 1 for n in group.values())
         counts[kind]["duplicate_excess"] = sum(n - 1 for n in group.values() if n > 1)
@@ -207,6 +212,7 @@ def _candidates(records, bad):
         "partial": bad is None or bool(bad + uninspectable),
         "cross_kind_reuse": sum(sum(key in group for group in emitted) > 1 for key in set().union(*emitted)),
         "repeated_tool_groups": sum(n > 1 for n in tools.values()),
+        "reason_records": {reason: len(indices) for reason, indices in reason_records.items()},
     }
 
 
@@ -558,16 +564,20 @@ def inspect_pi_identity(*, db_path: Path, source_paths: tuple[Path, ...], orphan
                 marker if marker in ("last_prompt", "last_response", "last_exchange", "last_tool_call") else "none" if marker is None else "other")] += 1
     pending["groups"] = [{"scope": s, "entity_type": k, "last_marker": m, "rows": n} for (s, k, m), n in sorted(groups.items())]
     report["pending"] = pending
+    for state in ("ambiguous_touching_scope", "unmatched_pi_attributed", "unattributed_or_out_of_scope"):
+        if pending[state]:
+            finding("pending_" + state, "pending_row", count=pending[state])
+    if inventory["unknown_assignments"]:
+        finding("invalid_assignment_target", "assignment", count=inventory["unknown_assignments"])
     for item in observations.values():
         obs = item["obs"]
         for reason in sorted(item["reasons"]):
             finding(reason, "source", [obs["reference"]])
         candidate = obs["candidates"]
         if candidate is not None:
-            for reason, field in (("missing_id", "missing"), ("unclassified_id", "unclassified"), ("duplicate_id", "duplicate_excess")):
-                n = sum(c[field] for c in candidate["kinds"].values())
-                if n:
-                    finding(reason, "record", [obs["reference"]], count=n)
+            for reason, count in candidate["reason_records"].items():
+                if count:
+                    finding(reason, "record", [obs["reference"]], count=count)
         obs["unassessed"] = int(obs["graph"] == "unknown" or obs["hash"] in ("unknown", "unverified") or candidate is None)
     report["unassessed"] = {"sources": sum(s["unassessed"] for s in report["sources"]),
                              "conversations": sum(c["unassessed"] for c in report["conversations"]),

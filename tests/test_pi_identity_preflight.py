@@ -903,6 +903,44 @@ def test_stat_fstat_change_during_initial_capture(fixture, monkeypatch):
     assert report["sources"][0]["candidates"] is None
 
 
+@pytest.mark.parametrize("error", [sqlite3.ProgrammingError("binding bug"), sqlite3.OperationalError("SQL typo")])
+def test_sql_programming_errors_propagate(fixture, monkeypatch, error):
+    def broken(*args, **kwargs):
+        raise error
+    monkeypatch.setattr(storage, "open_database", broken)
+    with pytest.raises(type(error)):
+        inspect(fixture)
+
+
+def test_readonly_helper_sidecar_refusal_is_not_retried(fixture, monkeypatch):
+    from siftd.errors import DriftError
+
+    calls = []
+
+    def refuse(*args, **kwargs):
+        calls.append(kwargs)
+        raise DriftError(SECRET)
+
+    monkeypatch.setattr(storage, "open_database", refuse)
+    report = inspect(fixture)
+    assert report["status"] == "refused" and "database_unavailable" in codes(report)
+    assert calls == [{"read_only": True, "auto_upgrade": False}]
+    assert SECRET not in json.dumps(report)
+
+
+def test_candidate_occurrences_do_not_inflate_record_findings(fixture):
+    _, source, _, _ = fixture
+    items = records()
+    del items[2]["id"]
+    items[2]["message"]["content"] = [{"type": "toolCall"}, {"type": "toolCall"}]
+    write_source(source, items)
+    report = inspect(fixture)
+    candidate = report["sources"][0]["candidates"]
+    assert candidate["kinds"]["tool_call"]["missing"] == 2
+    assert candidate["kinds"]["assistant"]["missing"] == 1
+    assert next(f for f in report["findings"] if f["code"] == "missing_id")["total"] == 1
+
+
 def test_node_block_order_is_not_sibling_order():
     events = [dict(id="p", kind="prompt", parent_id=None)]
     blocks = [dict(event_id="p", block_index=i, block_type="text", content=json.dumps(value)) for i, value in enumerate(["a", "b"])]

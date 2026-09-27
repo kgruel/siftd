@@ -3,6 +3,7 @@
 import sqlite3
 from pathlib import Path
 
+from siftd.errors import DriftError
 from siftd.storage.sessions import _covered_keys
 from siftd.storage.sqlite import SCHEMA_VERSION, open_database
 
@@ -105,7 +106,18 @@ def read_snapshot(db_path: Path, paths: list[str], orphans: list[str]):
                 state = "unattributed_or_out_of_scope"
             pending.append((state, row["entity_type"], row["last_marker"]))
         return {"selected": selected, "graph": graph, "pending": pending}, None
-    except (sqlite3.Error, OSError):
+    except (OSError, DriftError):
+        return None, "database_unavailable"
+    except sqlite3.Error as error:
+        # Environmental/snapshot failures refuse. SQL mistakes and binding bugs
+        # are programming failures, not successful diagnostic reports.
+        code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+        if code not in {
+            sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED, sqlite3.SQLITE_CORRUPT,
+            sqlite3.SQLITE_NOTADB, sqlite3.SQLITE_CANTOPEN, sqlite3.SQLITE_IOERR,
+            sqlite3.SQLITE_READONLY, sqlite3.SQLITE_PERM,
+        }:
+            raise
         return None, "database_unavailable"
     finally:
         if conn is not None:
