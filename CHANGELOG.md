@@ -40,10 +40,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   success.
   ([#51](https://github.com/kgruel/siftd/issues/51))
 
-- **Tags survive a push that replaces the conversation you tagged.** Receiving a
-  newer version of a conversation used to destroy every tag on it and on its
-  turns, while keeping its owner; both are now carried, as they already were on
-  re-ingest.
+- **Pushes carry conversation tags and matching source-keyed event tags.**
+  Receiving a newer conversation previously discarded these tags; they are now
+  carried with its ownership, as on re-ingest. Tags on blocks and events without
+  a matching source key are still not preserved. Upgrading does not restore tags
+  already lost.
   ([#77](https://github.com/kgruel/siftd/issues/77))
 
 - **A conversation re-ingested after its transcript changed keeps its owner.**

@@ -1,5 +1,10 @@
 # Next steps — integration handoff
 
+> Current continuation: [hardening and release follow-up](release-readiness-followup.md).
+> The stage-specific pending labels below are historical: isolated integration
+> subsequently reached the Fable-approved private preflight at `eff4bf7`.
+> Original-main and publication holds remain in place.
+
 Updated **2026-09-26**. **LOCAL INTEGRATION; FINAL ASTRA REVIEW PENDING;
 RELEASE/PUBLICATION HOLD.** Original main remains
 `58daf4ac0101a012ff0ea286931fce8e2e621110`; only local branch

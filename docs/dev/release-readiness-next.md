@@ -1,5 +1,10 @@
 # Next release readiness — evidence candidate
 
+> Historical assessment of the earlier release candidate. See the
+> [current hardening and release follow-up](release-readiness-followup.md) for
+> newer implementation, compatibility wording, local matrix, and browser evidence.
+> The preparation-time pending-review labels below are retained as history.
+
 Assessment date: **2026-09-26**. Status: **LOCALLY TESTED CANDIDATE — PENDING
 ASTRA REVIEW VIA CODEX CLI; PUBLICATION HOLD.** This is an assessment of accumulated patches,
 not a version choice, release authorization, or approval of preserved designs.
