@@ -899,6 +899,18 @@ def _write_receipt(artifacts: Path | None, receipt: dict) -> None:
         (artifacts / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
 
 
+def source_subject() -> dict[str, str]:
+    """Bind remote-fixture evidence to the checked-out source without reading data."""
+    root = Path(__file__).resolve().parents[2]
+    try:
+        return {
+            "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+            "tree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip(),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {"head": "unavailable", "tree": "unavailable"}
+
+
 async def run_remote(workdir: Path, config: RemoteConfig, artifacts: Path | None) -> int:
     """Run T3 via native Playwright and one temporary, verified SSH forward."""
     try:
@@ -911,6 +923,7 @@ async def run_remote(workdir: Path, config: RemoteConfig, artifacts: Path | None
     check = result_checker(results)
     receipt = {
         "mode": "remote",
+        **source_subject(),
         "endpoint": redact_endpoint(config.endpoint),
         "transport": "native Playwright page CDP through SSH reverse loopback forward",
         "local_chromium_launched": False,
