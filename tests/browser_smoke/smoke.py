@@ -1,7 +1,7 @@
 """Real-browser CSP smoke (T3 of docs/guides/serve-browser-testing.md).
 
-Run via ``./dev browser-smoke``. Not pytest-collected — this is a standalone
-exit-code program: 0 = all checks pass, 1 = check failed, 2 = harness fault
+Run via ``./dev browser-smoke``. Its assertions are shared with pytest coverage;
+the executable is an exit-code program: 0 = all checks pass, 1 = check failed, 2 = harness fault
 (broken detector, no chromium, server never came up).
 
 The only tier that catches CSP violations from vendored-library *internals*
@@ -10,7 +10,7 @@ The only tier that catches CSP violations from vendored-library *internals*
 inline handlers) — none of which TestClient or the T1/T2 static tiers can see.
 
 Method (each rule exists because its violation produced a false PASS):
-- headless Chromium over raw CDP (websockets + httpx — no playwright dep)
+- headless Chromium over raw CDP locally; native Playwright page CDP remotely
 - violations detected TWO ways: in-page ``securitypolicyviolation`` listener
   + the CDP security-source log
 - POSITIVE CONTROL FIRST: an off-origin <script src> must be blocked and
@@ -40,7 +40,6 @@ from pathlib import Path
 from typing import BinaryIO
 
 import httpx
-import websockets
 
 PORT = int(os.environ.get("SIFTD_SMOKE_PORT", "8378"))
 CDP_PORT = int(os.environ.get("SIFTD_SMOKE_CDP_PORT", "9378"))
@@ -819,6 +818,10 @@ def result_checker(results):
 
 async def run_local(workdir: Path, chromium: str) -> int:
     """The established local-CDP mode, with a mock Keychain launch flag."""
+    # Keep the unmarked remote transport tests importable in CI's dev-only lane.
+    # The entrypoint syncs ``serve``, which supplies this local-only dependency.
+    import websockets
+
     results = []
     check = result_checker(results)
     print("== fixture ==")
@@ -856,6 +859,9 @@ async def run_local(workdir: Path, chromium: str) -> int:
         failed = [row for row in results if not row[1]]
         print(f"\n{'SMOKE FAIL' if failed else 'SMOKE PASS'}: {len(results) - len(failed)}/{len(results)}")
         return 1 if failed else 0
+    except RuntimeError as error:
+        print(f"FATAL: {error}")
+        return 2
     finally:
         if chrome:
             chrome.terminate()
@@ -998,9 +1004,6 @@ async def run_remote(workdir: Path, config: RemoteConfig, artifacts: Path | None
         if tunnel is not None:
             receipt["remote_listener_cleanup_confirmed"] = tunnel.close()
             receipt["tunnel_exit"] = tunnel.process.returncode if tunnel.process is not None else None
-            if artifacts is not None:
-                artifacts.mkdir(parents=True, exist_ok=True)
-                (artifacts / "ssh-stderr.log").write_text("".join(tunnel.lines))
             if not receipt["remote_listener_cleanup_confirmed"]:
                 receipt["exit"] = 2
         receipt["passed"] = sum(passed for _, passed, _ in results)
@@ -1037,7 +1040,8 @@ def main(argv: list[str] | None = None) -> int:
             except RemoteConfigurationError as error:
                 print(f"FATAL: {error}")
                 return 2
-            return asyncio.run(run_remote(artifacts, config, artifacts))
+            with tempfile.TemporaryDirectory(prefix="siftd-browser-smoke-") as tmp:
+                return asyncio.run(run_remote(Path(tmp), config, artifacts))
         with tempfile.TemporaryDirectory(prefix="siftd-browser-smoke-") as tmp:
             return asyncio.run(run_remote(Path(tmp), config, None))
     chromium = _find_chromium()

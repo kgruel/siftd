@@ -68,7 +68,11 @@ main() {
     uv sync "${extras[@]}" --quiet
 
     log_info "Running browser CSP smoke..."
-    SIFTD_NO_UPDATE_CHECK=1 uv run python tests/browser_smoke/smoke.py "${smoke_args[@]}"
+    if [ "${#smoke_args[@]}" -gt 0 ]; then
+        SIFTD_NO_UPDATE_CHECK=1 uv run python tests/browser_smoke/smoke.py "${smoke_args[@]}"
+    else
+        SIFTD_NO_UPDATE_CHECK=1 uv run python tests/browser_smoke/smoke.py
+    fi
 }
 
 main "$@"

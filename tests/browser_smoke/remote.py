@@ -29,7 +29,7 @@ SSH_OPTIONS = (
     "-o", "ForwardAgent=no",
     "-o", "ConnectTimeout=10",
 )
-_TARGET = re.compile(r"^[A-Za-z0-9_.-]+@[A-Za-z0-9_.:-]+$")
+_TARGET = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9.:-]*$")
 _ALLOCATED_PORT = re.compile(r"Allocated port (\d+) for remote forward")
 
 
@@ -97,7 +97,7 @@ def reserve_loopback_port() -> int:
 
 def ssh_argv(target: str, *options: str, command: str | None = None) -> list[str]:
     """Build fixed SSH options, keeping a remote command after its destination."""
-    argv = ["ssh", *SSH_OPTIONS, *options, target]
+    argv = ["ssh", *SSH_OPTIONS, *options, "--", target]
     if command is not None:
         argv.append(command)
     return argv

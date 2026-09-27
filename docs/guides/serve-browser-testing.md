@@ -149,8 +149,9 @@ ends. The remote browser navigates only to that remote loopback fixture. It
 uses `chromium.connect()` and a per-page CDP session, preserving the existing
 CDP real-input flow, positive control, and both CSP sensors. It creates and
 closes only its own context; it never closes the shared remote browser/service.
-Use `--artifacts DIR` to retain a fixture-only receipt and CDP events; it
-refuses a non-empty directory rather than overwriting prior evidence. The
+Use `--artifacts DIR` to retain only the redacted fixture receipt and CDP
+events; fixture database, server log, and SSH diagnostics stay in a temporary
+directory. It refuses a non-empty directory rather than overwriting prior evidence. The
 optional `browser` extra pins the Playwright client protocol and does not
 download a browser.
 

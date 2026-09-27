@@ -28,6 +28,17 @@ def test_remote_config_rejects_insecure_or_unsafe_destinations():
             "SIFTD_BROWSER_SMOKE_ENDPOINT": "wss://browser.test/ws",
             "SIFTD_BROWSER_SMOKE_SSH_TARGET": "-oProxyCommand=bad",
         })
+    for endpoint in ("wss://user:secret@browser.test/ws", "wss://browser.test/ws#fragment"):
+        with pytest.raises(remote.RemoteConfigurationError):
+            remote.RemoteConfig.from_environment({
+                "SIFTD_BROWSER_SMOKE_ENDPOINT": endpoint,
+                "SIFTD_BROWSER_SMOKE_SSH_TARGET": "tester@host.test",
+            })
+    with pytest.raises(remote.RemoteConfigurationError, match="user@host"):
+        remote.RemoteConfig.from_environment({
+            "SIFTD_BROWSER_SMOKE_ENDPOINT": "wss://browser.test/ws",
+            "SIFTD_BROWSER_SMOKE_SSH_TARGET": "-Efile@test.host",
+        })
 
 
 def test_endpoint_credentials_are_redacted_from_errors_and_receipts(tmp_path: Path):
@@ -48,7 +59,7 @@ def test_ssh_argv_is_private_and_disables_keychain_agent_forwarding():
     assert "UseKeychain=no" in argv
     assert "AddKeysToAgent=no" in argv
     assert "ForwardAgent=no" in argv
-    assert argv[-3:] == ["-R", "127.0.0.1:0:127.0.0.1:43210", "tester@host.test"]
+    assert argv[-4:] == ["-R", "127.0.0.1:0:127.0.0.1:43210", "--", "tester@host.test"]
     assert "-L" not in argv
 
 
@@ -109,6 +120,40 @@ def test_forward_cleanup_terminates_owned_process_and_requires_listener_absence(
     assert forward.close() is True
     assert process.terminated is True
     assert "-iTCP:54321" in calls[0][-1]
+
+
+def test_forward_start_parses_allocated_port_and_verifies_loopback(monkeypatch):
+    config = remote.RemoteConfig("wss://browser.test/ws", "tester@host.test")
+    forward = remote.SSHReverseForward(config, 43210)
+
+    class FakeProcess:
+        def __init__(self):
+            from io import StringIO
+
+            self.stderr = StringIO("Allocated port 54321 for remote forward\n")
+
+        def poll(self):
+            return None
+
+    captured = []
+    monkeypatch.setattr(remote.subprocess, "Popen", lambda argv, **kwargs: captured.append(argv) or FakeProcess())
+    monkeypatch.setattr(forward, "_listener_is_loopback", lambda: True)
+    assert forward.start() == 54321
+    assert captured[0][-2:] == ["--", "tester@host.test"]
+    assert "127.0.0.1:0:127.0.0.1:43210" in captured[0]
+
+
+def test_loopback_verification_rejects_wildcard_listener(monkeypatch):
+    forward = remote.SSHReverseForward(
+        remote.RemoteConfig("wss://browser.test/ws", "tester@host.test"), 43210
+    )
+    forward.remote_port = 54321
+    monkeypatch.setattr(
+        remote.subprocess,
+        "run",
+        lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "p12\nn*:54321\n", ""),
+    )
+    assert forward._listener_is_loopback() is False
 
 
 def test_artifact_directory_refuses_to_overwrite_prior_fixture_evidence(tmp_path: Path):
