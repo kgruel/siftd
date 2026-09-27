@@ -418,7 +418,8 @@ def inspect_pi_identity(*, db_path: Path, source_paths: tuple[Path, ...], orphan
 
     def refuse(code):
         report["status"] = "refused"
-        finding(code, "source", range(len(paths)))
+        # A whole-request refusal is one finding, independent of source scope.
+        finding(code, "request", count=1)
         return finish()
 
     reason = _path_reason(db_path, database=True)

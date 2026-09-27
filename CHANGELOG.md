@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Count private Pi preflight refusals once per request, including empty source
+  scopes; strengthen count, read-boundary, read-only, and secret-free fixtures.
+
 - Add a private, fixture-only, read-only Pi identity exposure diagnostic; no
   identity policy, migration, live inspection, or public command is enabled.
 
@@ -24,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ([#79](https://github.com/kgruel/siftd/issues/79))
 
 ### Fixed
+
+- Clarify that `db merge`/`db receive --no-fts` is an accepted compatibility
+  no-op, not a way to disable indexing; `db slice --no-fts` remains effective.
 
 - **A push that replaces a conversation cleans up after itself by the schema's
   own rules.** Merge's delete closure was a hand-written second copy of what the

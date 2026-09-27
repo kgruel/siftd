@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -89,6 +90,7 @@ def annotate(conn, cid):
 
 
 def test_p2_cardinality_dedup_and_secret_free(fixture, caplog):
+    caplog.set_level(logging.DEBUG)
     db, source, conn, cid = fixture
     annotate(conn, cid)
     copy = source.with_name("copy.jsonl")
@@ -122,6 +124,26 @@ def test_empty_scope_is_not_all(fixture):
     assert report["scope"]["conversations"] == 0
     assert report["sources"] == report["conversations"] == []
     assert report["status"] == "measured"
+
+
+@pytest.mark.parametrize("source_count", [0, 1, 3])
+@pytest.mark.parametrize("reason", ["database_invalid_path", "unsupported_version", "invalid_orphan_selector"])
+def test_whole_request_refusals_count_once(fixture, source_count, reason):
+    db, source, conn, cid = fixture
+    paths = tuple(source.with_name(f"source-{n}.jsonl") for n in range(source_count))
+    orphans = ()
+    if reason == "database_invalid_path":
+        db = db.with_name("literal%41.db")
+    elif reason == "unsupported_version":
+        conn.execute(f"PRAGMA user_version={SCHEMA_VERSION - 1}")
+    else:
+        orphans = (cid,)  # It still has a bookkeeping reference, so is not an orphan.
+    before = logical(conn)
+    report = api.inspect_pi_identity(db_path=db, source_paths=paths, orphan_conversation_ids=orphans)
+    assert report["status"] == "refused" and report["inventory"] is None
+    assert report["findings"] == [{"code": reason, "unit": "request", "total": 1, "references": []}]
+    assert report["unassessed"]["sources"] == source_count
+    assert logical(conn) == before
 
 
 @pytest.mark.parametrize("version", [0, SCHEMA_VERSION - 1, SCHEMA_VERSION + 1])
@@ -197,6 +219,8 @@ def test_db_filesystem_refusals(tmp_path, kind):
         db = alias / "db"
     elif kind == "unreadable":
         db.write_bytes(b"no access")
+    before = {p: p.read_bytes() for p in tmp_path.rglob("*") if p.is_file() and not p.is_symlink()}
+    if kind == "unreadable":
         db.chmod(0)
     try:
         report = api.inspect_pi_identity(db_path=db, source_paths=(), orphan_conversation_ids=())
@@ -204,6 +228,9 @@ def test_db_filesystem_refusals(tmp_path, kind):
     finally:
         if kind == "unreadable":
             db.chmod(0o600)
+    assert {p: p.read_bytes() for p in before} == before
+    if kind == "missing":
+        assert not db.exists()
 
 
 def test_locked_rollback_database_refuses_with_default_timeout(fixture):
@@ -271,6 +298,7 @@ def test_readonly_sql_and_forbidden_collaborators(fixture, monkeypatch):
     assert inspect(fixture)["sources"][0]["graph"] == "equal"
     assert logical(conn) == before and source.read_bytes() == data
     assert trace[0] == "BEGIN" and trace[-1] == "ROLLBACK"
+    assert trace.count("BEGIN") == trace.count("ROLLBACK") == 1
 
 
 @pytest.mark.parametrize("state", ["untracked", "unlinked", "non_pi_source", "invalid_link", "dangling", "bookkeeping_error"])
@@ -377,6 +405,32 @@ def test_duplicate_references(fixture, variant):
     assert report["scope"]["selected_paths"] == (1 if variant == "unselected" else 2)
 
 
+def test_unselected_reference_file_is_never_opened(fixture, monkeypatch):
+    _, source, conn, cid = fixture
+    annotate(conn, cid)
+    other = source.with_name("unselected.jsonl")
+    other.write_bytes(source.read_bytes())
+    link(conn, other, cid)
+    conn.commit()
+    original_open, original_path_open = os.open, Path.open
+
+    def fd_open(path, *args, **kwargs):
+        assert Path(path) != other, "unselected source opened by descriptor"
+        return original_open(path, *args, **kwargs)
+
+    def path_open(path, *args, **kwargs):
+        assert path != other, "unselected source opened through pathlib"
+        return original_path_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", fd_open)
+    monkeypatch.setattr(Path, "open", path_open)
+    report = inspect(fixture)
+    assert report["scope"]["selected_paths"] == report["scope"]["outside_references"] == 1
+    assert report["sources"][0]["graph"] == "equal"
+    assert report["conversations"][0]["source_bytes"] == "unknown"
+    assert report["inventory"]["keyed_exposure"]["tool_call"]["unknown"] == 1
+
+
 @pytest.mark.parametrize("evidence,expected", [("", "unverified"), ("bad", "unverified"), ("0" * 64, "different")])
 def test_hash_evidence(fixture, evidence, expected):
     _, _, conn, _ = fixture
@@ -474,23 +528,52 @@ def test_consumed_field_table(fixture, monkeypatch, index, route, accepted, reje
 
 @pytest.mark.parametrize("arguments", [None, True, 1, 1.5, [], ["x"], {}, "", "not json", '{"x":1}', '{"x":NaN}', '{"x":Infinity}'])
 def test_argument_values_and_nonfinite_decoded_strings(fixture, arguments):
-    _, source, _, _ = fixture
+    _, source, conn, cid = fixture
+    annotate(conn, cid)
     items = records()
     items[2]["message"]["content"][1]["arguments"] = arguments
     write_source(source, items)
     report = inspect(fixture)
     assert "malformed" not in codes(report)
-    if isinstance(arguments, str) and ("NaN" in arguments or "Infinity" in arguments):
+    nonfinite = isinstance(arguments, str) and ("NaN" in arguments or "Infinity" in arguments)
+    if nonfinite:
         assert report["sources"][0]["graph"] == "unknown"
+    assert report["inventory"]["keyed_exposure"]["tool_call"] == {
+        "key_present_in_all_parses": int(not nonfinite), "key_absent_from_all_parses": 0,
+        "mixed": 0, "unknown": int(nonfinite),
+    }
 
 
-def test_argument_recursion_error_is_loud(fixture):
-    _, source, _, _ = fixture
-    items = records()
-    items[2]["message"]["content"][1]["arguments"] = '[' * 10000 + '0' + ']' * 10000
-    write_source(source, items)
-    with pytest.raises(RecursionError):
+def test_argument_recursion_error_is_loud(fixture, monkeypatch):
+    def recurse(arguments):
+        raise RecursionError("argument decoder recursion")
+
+    monkeypatch.setattr(pi_agent, "parse_json_args", recurse)
+    with pytest.raises(RecursionError, match="argument decoder recursion"):
         inspect(fixture)
+
+
+def test_deep_argument_follows_native_parser(fixture):
+    _, source, conn, cid = fixture
+    annotate(conn, cid)
+    arguments = '[' * 10000 + '0' + ']' * 10000
+    items = records()
+    items[2]["message"]["content"][1]["arguments"] = arguments
+    write_source(source, items)
+    # CPython 3.14 can decode this depth without RecursionError. The shared
+    # helper wraps non-object JSON as raw text; the diagnostic must not invent
+    # a recursion error or suppress one on versions where the decoder raises.
+    try:
+        expected = pi_agent.parse_json_args(arguments)
+    except RecursionError:
+        with pytest.raises(RecursionError):
+            inspect(fixture)
+    else:
+        assert expected == {"raw": arguments}
+        report = inspect(fixture)
+        assert report["sources"][0]["graph"] == "different"
+        assert "malformed" not in codes(report)
+        assert report["inventory"]["keyed_exposure"]["tool_call"]["key_present_in_all_parses"] == 1
 
 
 def test_unexpected_parser_error_propagates(fixture, monkeypatch):
@@ -571,6 +654,24 @@ def test_candidates_discarded_cross_kind_and_repeated_tools(fixture):
     write_source(source, items)
     report = inspect(fixture)
     assert "repeated_tool_id" in codes(report) and report["sources"][0]["graph"] == "unknown"
+
+
+def test_tool_candidates_include_discarded_assistant_records(fixture):
+    _, source, _, _ = fixture
+    items = records()
+    items.insert(1, {"type": "message", "id": "discarded", "timestamp": TIME, "message": {
+        "role": "assistant", "content": [{"type": "toolCall", "id": "u", "name": "read", "arguments": {}}],
+    }})
+    write_source(source, items)
+    report = inspect(fixture)
+    candidate = report["sources"][0]["candidates"]
+    assert candidate["kinds"]["discarded_assistant"]["candidate"] == 1
+    # Candidate IDs count raw records; the stored graph counts only emitted tools.
+    assert candidate["kinds"]["tool_call"]["candidate"] == 2
+    assert candidate["cross_kind_reuse"] == 1
+    assert candidate["repeated_tool_groups"] == 0
+    assert report["inventory"]["events"]["tool_call"]["nonnull_key"] == 1
+    assert report["sources"][0]["graph"] == "equal"
 
 
 @pytest.mark.parametrize("change", ["append", "truncate", "reorder", "replace", "delete", "same_stat"])
@@ -762,6 +863,20 @@ def test_repeated_projection_forces_key_unknown(fixture):
     assert report["inventory"]["keyed_exposure"]["tool_call"]["unknown"] == 1
     assert report["conversations"][0]["repeated_projection_groups"] == 1
     assert source.exists()
+
+
+@pytest.mark.parametrize("suffix,uninspectable", [
+    (b"", 0), (b"{broken}\nnull\n", 2),
+    (b'{"type":"message","message":42}\n', 1),
+    (b'{"type":"message","message":{"role":"assistant","content":"bare"}}\n', 1),
+])
+def test_exact_candidate_record_denominators(fixture, suffix, uninspectable):
+    _, source, _, _ = fixture
+    source.write_bytes(source.read_bytes() + suffix)
+    candidates = inspect(fixture)["sources"][0]["candidates"]
+    assert candidates["inspected_records"] == 4
+    assert candidates["uninspectable_records"] == uninspectable
+    assert candidates["partial"] is bool(uninspectable)
 
 
 def test_invalid_utf8_does_not_invent_record_denominator(fixture):

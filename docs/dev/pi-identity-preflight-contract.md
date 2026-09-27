@@ -253,8 +253,10 @@ Top-level fields:
 - `sources`, `conversations`: one observation row per distinct selected entity,
   with enum states and counts defined above. Candidate counts are source-record
   counts, never stored-event counts; include inspected/uninspectable denominators.
-  `findings`: overlapping reason totals, unit (`source`, `conversation`,
+  `findings`: overlapping reason totals, unit (`request`, `source`, `conversation`,
   `assignment`, `record`, `pending_row`) and bounded local-reference samples.
+  Whole-request refusals use unit `request`, total 1 and no entity references,
+  even for an empty source scope; affected source counts remain in `unassessed`.
   Unknown/unavailable counts are `null`, not zero; each unassessed source,
   conversation and keyed assignment also has an exact unknown/refused count.
 

@@ -50,7 +50,7 @@
   usage: siftd db receive [-h] [--no-fts] [--stage] [--no-preflight] [--dry-run]
   
   OPTIONS
-    --no-fts        Skip FTS5 index rebuild
+    --no-fts        Compatibility no-op; does not disable indexing
     --stage         Stage payload in inbox for deferred merge (fast ACK)
     --no-preflight  Skip structural integrity checks on source database
     --dry-run       Preview incoming payload without writing to database
@@ -60,7 +60,7 @@
   
   examples:
     ssh host siftd --db /path/team.db db receive < slice.db
-    ssh host siftd --db /path/team.db db receive --no-fts < slice.db
+    ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op
   
   '''
 # ---

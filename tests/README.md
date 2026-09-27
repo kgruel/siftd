@@ -111,10 +111,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 187 | 3341 |
+| `tests/` | 187 | 3346 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
-| `tests/cli/` | 29 | 633 |
+| `tests/cli/` | 29 | 635 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -225,7 +225,7 @@ docstring so its row is meaningful.
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
-| [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 52 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
+| [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
@@ -361,7 +361,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
-| [cli/test_db.py](cli/test_db.py) | 50 | Tests for siftd db namespace commands. |
+| [cli/test_db.py](cli/test_db.py) | 52 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
