@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Add an explicit, fixture-only Browserless mode to `./dev browser-smoke`.
+  It uses native Playwright page CDP and a verified loopback-only SSH reverse
+  forward, while the local mode keeps its isolated Chromium profile and now
+  uses Chromium's mock Keychain.
+
 - Count private Pi preflight refusals once per request, including empty source
   scopes; strengthen count, read-boundary, read-only, and secret-free fixtures.
 

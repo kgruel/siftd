@@ -71,6 +71,10 @@ dev = [
     "ty",
     "chardet<6",
 ]
+browser = [
+    # Client only: remote T3 connects to an existing browser and never installs one.
+    "playwright==1.63.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/siftd"]
