@@ -67,6 +67,7 @@ def test_frozen_full_domain(tmp_path, monkeypatch, records, expected):
     path = tmp_path / "fallback.jsonl"
     path.write_text("".join(json.dumps(record) + "\n" for record in records))
     assert list(pi_agent.parse(Source("file", path))) == expected
+    assert list(pi_agent._parse_records(records, path)) == expected
 
 
 def test_module_loader_is_the_parse_boundary(monkeypatch):

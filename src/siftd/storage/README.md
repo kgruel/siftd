@@ -13,6 +13,7 @@ See [Storage](../../../docs/concepts/storage.md) for where data lives, deduplica
 
 | Module | Summary |
 |--------|---------|
+| [_pi_identity_preflight.py](_pi_identity_preflight.py) | Private fixture-only Pi diagnostic snapshot; no writes or schema repair. |
 | [attributes.py](attributes.py) | Read/write operations for the polymorphic attributes table (schema v4). |
 | [blobs.py](blobs.py) | Content-addressable blob storage for deduplication. |
 | [conversation_stats.py](conversation_stats.py) | Materialized conversation stats table. |

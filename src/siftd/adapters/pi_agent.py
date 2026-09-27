@@ -66,7 +66,11 @@ def can_handle(source: Source) -> bool:
 def parse(source: Source) -> Iterable[Conversation]:
     """Parse a Pi Agent JSONL file and yield Conversation objects."""
     path = Path(source.location)
-    records = load_jsonl(path)
+    yield from _parse_records(load_jsonl(path), path)
+
+
+def _parse_records(records: list[dict], path: Path) -> Iterable[Conversation]:
+    """Parse already captured records; keep file loading at the adapter boundary."""
     if not records:
         return
 

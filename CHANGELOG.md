@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Add a private, fixture-only, read-only Pi identity exposure diagnostic; no
+  identity policy, migration, live inspection, or public command is enabled.
+
 - Isolate passive update checks per test so routine CLI calls cannot start PyPI
   daemons that overwrite another test's cache; dedicated notice/check tests
   explicitly opt in with fake IO and threads. ([#40](https://github.com/kgruel/siftd/issues/40))
