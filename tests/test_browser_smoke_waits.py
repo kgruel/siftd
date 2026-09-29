@@ -98,6 +98,18 @@ def test_wait_until_treats_an_evaluation_error_as_not_yet():
     assert run(cdp.wait_until("x", "restored", timeout=5)) is True
 
 
+def test_wait_until_reraises_an_evaluation_error_that_is_not_a_navigation():
+    # A closed target or detached session is a harness fault (exit 2), not a
+    # page that is slow to become ready.
+    def evaluate(expr):
+        raise LookupError("Target page, context or browser has been closed")
+
+    cdp = smoke.CDP(ScriptedWire(evaluate=evaluate))
+    with pytest.raises(RuntimeError, match="has been closed") as caught:
+        run(cdp.wait_until("x", "restored", timeout=5))
+    assert not isinstance(caught.value, smoke.ReadinessTimeout)
+
+
 def test_await_outcome_returns_a_missed_outcome_instead_of_raising():
     cdp = smoke.CDP(ScriptedWire(evaluate=lambda expr: False))
     assert run(cdp.await_outcome("document.body.dataset.tone !== 'light'", timeout=0.3)) is False
@@ -110,6 +122,15 @@ def test_wait_for_swap_requires_a_settle_since_the_mark_and_no_request_in_flight
     assert "(window.__settled || 0) > 3" in expression
     assert smoke.HTMX_IDLE in expression
     assert "#main .folio" in expression
+
+
+def test_htmx_idle_waits_out_the_swap_and_settle_phases_not_just_the_request():
+    # htmx drops .htmx-request as soon as the response is swapped in and
+    # settles ~20ms later; until .htmx-settling is gone, the new content has
+    # not been processed and enhance.js has not run on it.
+    for phase in (".htmx-request", ".htmx-swapping", ".htmx-settling"):
+        assert phase in smoke.HTMX_IDLE
+    assert smoke.HTMX_IDLE.startswith("!document.querySelector(")
 
 
 def test_settle_counter_is_installed_on_every_new_document():
@@ -206,12 +227,17 @@ def _calls_by_function(source: str) -> dict[str, set[str]]:
                 inner = child.name
             elif isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
                 inner = f"{scope}.{child.name}" if scope else child.name
-            elif (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Attribute)
-                and child.func.attr in found
-            ):
-                found[child.func.attr].add(scope)
+            elif isinstance(child, ast.Call):
+                # Both ``cdp.drain(...)`` / ``asyncio.sleep(...)`` and a bare
+                # ``sleep(...)`` from ``from asyncio import sleep``.
+                func = child.func
+                name = (
+                    func.attr if isinstance(func, ast.Attribute)
+                    else func.id if isinstance(func, ast.Name)
+                    else None
+                )
+                if name in found:
+                    found[name].add(scope)
             visit(child, inner)
 
     visit(ast.parse(source), "")

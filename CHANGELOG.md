@@ -16,11 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   "fixture-only" description. Local mode kept it on the developer's machine.
 
 - `./dev browser-smoke` waits on conditions instead of fixed sleeps: each
-  navigation waits for its load event, each htmx action for a swap settled
-  since the action plus the DOM it produced, each synchronous handler for its
-  effect, all under explicit deadlines. The fixed settles (0.5-3.5s per step)
-  were slow and a timing guess; a missed condition now fails naming it, and a
-  full run went from about 78s to 7s locally and 86s to 15s remotely.
+  navigation waits for its load event, each htmx action for the DOM it
+  produced with htmx fully idle (no request in flight, nothing swapping or
+  settling), each synchronous handler for its effect, all under explicit
+  deadlines. The fixed settles (0.5-3.5s per step) were slow and a timing
+  guess; a missed condition now fails naming it. Measured on a small sample
+  (one baseline run per mode, a handful after): a full run took 7s locally
+  instead of 78s, and 15-21s remotely instead of 86s.
 
 ## [0.12.2] - 2026-09-29
 

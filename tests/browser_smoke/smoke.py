@@ -198,9 +198,23 @@ NAVIGATION_TIMEOUT = 20.0
 WAIT_TIMEOUT = 10.0
 POLL_INTERVAL = 0.1
 
-# No htmx request in flight: htmx marks the requesting element (or its
-# indicator) with .htmx-request for the request's lifetime.
-HTMX_IDLE = "!document.querySelector('.htmx-request')"
+# htmx idle: no request in flight and no swap still swapping or settling.
+# The request class alone is not enough: htmx removes .htmx-request right after
+# swapping the response in, then settles on a timer (settleDelay, 20ms) — the
+# settle runs the new content's tasks (processNode, which fires hx-trigger=load
+# requests synchronously), then removes .htmx-settling in the same loop that
+# dispatches htmx:afterSettle (and so runs enhance.js). "None of the three
+# classes present" therefore means every swap's settle, and enhance.js, has run,
+# and any request a settle provoked is already visible as .htmx-request.
+HTMX_IDLE = "!document.querySelector('.htmx-request, .htmx-swapping, .htmx-settling')"
+
+# Evaluation errors that mean "the page is mid-navigation, ask again", not a
+# broken harness. Anything else (closed target, detached session) re-raises.
+TRANSIENT_EVAL_ERRORS = (
+    "Execution context was destroyed",
+    "Cannot find context with specified id",
+    "Cannot find default execution context",
+)
 
 
 class ReadinessTimeout(RuntimeError):
@@ -274,9 +288,10 @@ class CDP:
     async def wait_until(self, expr, condition, timeout=WAIT_TIMEOUT):
         """Poll a page expression until truthy; return its value or raise ReadinessTimeout.
 
-        An evaluation error (e.g. the execution context is being replaced by a
-        navigation) counts as "not yet". Between polls the wire is drained, so
-        events keep being collected.
+        An evaluation error that only means the execution context is being
+        replaced by a navigation (TRANSIENT_EVAL_ERRORS) counts as "not yet";
+        any other error is a harness fault and re-raises. Between polls the
+        wire is drained, so events keep being collected.
         """
         end = time.monotonic() + timeout
         last = None
@@ -284,6 +299,8 @@ class CDP:
             try:
                 last = await self.eval(expr)
             except RuntimeError as error:
+                if not any(marker in str(error) for marker in TRANSIENT_EVAL_ERRORS):
+                    raise
                 last = f"evaluation error: {error}"
             else:
                 if last:
@@ -309,11 +326,16 @@ class CDP:
         return await self.eval("window.__settled || 0")
 
     async def wait_for_swap(self, mark, ready, condition, timeout=WAIT_TIMEOUT):
-        """Wait for an htmx swap settled since ``mark``, no request in flight, and ``ready``.
+        """Wait for a settle since ``mark``, htmx fully idle, and ``ready``.
 
-        The settle counter's listener sits on ``document``, so it runs after
-        enhance.js's ``htmx:afterSettle`` handler on ``body``: a counted settle
-        means the page's JS enhancement has already run on the new content.
+        What guarantees "the swap settled and enhance.js ran on it" is
+        ``HTMX_IDLE`` (no request, swapping or settling class anywhere) together
+        with ``ready`` naming DOM the action produces: once that DOM exists,
+        its swap can only be finished when no ``.htmx-settling`` remains. The
+        counter adds one thing: it rules out returning before the action's own
+        request started when ``ready`` already held (e.g. re-clicking the view
+        that is showing). It does not identify *which* swap settled — a sibling
+        or earlier swap can advance it — so it is never relied on alone.
         """
         return await self.wait_until(
             f"(window.__settled || 0) > {int(mark)} && {HTMX_IDLE} && ({ready})",
@@ -649,8 +671,9 @@ async def flow(cdp, check, code_conv):
     # top. "needle" occurs only in prompts, so every hit carries a prompt
     # event_id → the landing is deterministic. Proves the whole chain (button →
     # route → enhance.js) fires in a real browser under CSP; the consume is also
-    # the only in-browser proof scrollToEvent() actually ran. (The settle the
-    # wait above counted ran enhance.js first, so the consume is already done.)
+    # the only in-browser proof scrollToEvent() actually ran. (The wait above
+    # required no .htmx-settling with the folio present, i.e. its afterSettle —
+    # and so enhance.js's consume — has already run.)
     jump_trace = await cdp.eval('!!document.querySelector(\'#main .folio[data-mode="trace"]\')')
     is_target = await cdp.eval("!!document.querySelector('#main .is-target')")
     hint_consumed = await cdp.eval("!document.querySelector('#main [data-scroll-to]')")

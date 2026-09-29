@@ -85,11 +85,19 @@ are already dev deps, no Playwright required):
    event can precede the reply). Load is not readiness here — `#main` mounts
    its view by an htmx request after load — so then poll the concrete state
    the next step needs via `Runtime.evaluate`, with a deadline. For htmx
-   actions, read a settle counter (an `htmx:afterSettle` listener on
-   `document`, which runs after `enhance.js`'s `body` listener) before acting
-   and wait until it has advanced, no `.htmx-request` is in flight, and the
-   expected DOM is present. Keep reading the CDP wire while polling so the
-   security log is still collected.
+   actions, wait until the expected DOM is present **and** htmx is fully idle:
+   no `.htmx-request`, `.htmx-swapping` or `.htmx-settling` anywhere. The
+   request class alone is not enough — htmx drops it right after swapping the
+   response in and settles ~20ms later on a timer, and settling is when the
+   new content is processed and `htmx:afterSettle` (so `enhance.js`) runs;
+   `.htmx-settling` is removed in that same step. Also read a settle counter
+   (an `htmx:afterSettle` listener on `document`) before acting and require it
+   to advance, which stops a wait returning before the action's own request
+   starts when the expected DOM was already there. Keep reading the CDP wire
+   while polling so the security log is still collected. One gap remains: a
+   debounced trigger (the find box's `keyup … delay:350ms`) sends nothing
+   during its delay, so htmx looks idle then; waits after typing must name DOM
+   or URL state that only the final query produces.
 
 ### Three gotchas — each produced a false "it works"
 
