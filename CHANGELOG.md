@@ -15,6 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode that reached the remote browser through the tunnel, contradicting the
   "fixture-only" description. Local mode kept it on the developer's machine.
 
+- The `test-slow` CI job now runs on every CI event (pull requests, main
+  pushes, and publish). It was gated on `github.event_name ==
+  'workflow_call'`, which a called workflow never sees (it gets the caller's
+  `push`), so the slow lane was skipped on every run, including every publish.
+  `tests/test_ci_lanes.py` now requires pytest lane jobs to be unconditional
+  and their `-m` expressions to match the `./dev test*` scripts.
+
 ## [0.12.2] - 2026-09-29
 
 ### Internal

@@ -112,9 +112,15 @@ jobs:
         run: ./dev docs --check
 
   # Local equivalent: ./dev test-slow
-  # Publish invokes this reusable workflow; keep slow tests out of PR CI.
+  # Unconditional, like every other lane: it runs on PRs, on main pushes, and
+  # when publish calls this workflow. It used to be gated on
+  # `github.event_name == 'workflow_call'`, which is never true: a called
+  # workflow sees the *caller's* event (`push` for a tag, or
+  # `workflow_dispatch`), so the job was skipped on every run, publish included.
+  # The lane is "slow" locally only because its ingest test reads the
+  # developer's real $HOME; on a runner with an empty HOME it takes seconds and
+  # finishes inside the base `test` jobs, so PR latency does not grow.
   test-slow:
-    if: github.event_name == 'workflow_call'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
