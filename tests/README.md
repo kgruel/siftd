@@ -111,7 +111,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 188 | 3359 |
+| `tests/` | 189 | 3372 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
 | `tests/cli/` | 29 | 635 |
@@ -148,6 +148,7 @@ docstring so its row is meaningful.
 | [test_backfill.py](test_backfill.py) | 28 | Tests for siftd.backfill module. |
 | [test_blobs.py](test_blobs.py) | 0 | Blob storage tests — now in test_storage.py. |
 | [test_browser_smoke_remote.py](test_browser_smoke_remote.py) | 13 | Unit coverage for the opt-in Browserless T3 transport and containment. |
+| [test_browser_smoke_waits.py](test_browser_smoke_waits.py) | 13 | Unit coverage for the T3 smoke's condition waits, driven by a scripted CDP wire. |
 | [test_builtin_harness_stats.py](test_builtin_harness_stats.py) | 1 | Correctness guard for the harness-stats builtin query (I20). |
 | [test_caveats.py](test_caveats.py) | 120 | Tests for the caveats producer registry and dispatch threading. |
 | [test_caveats_wire.py](test_caveats_wire.py) | 6 | I5 — caveat round-trip across the delegation wire. |
