@@ -2,6 +2,8 @@
 
 import json
 
+import pytest
+
 from siftd.cli.upgrade import (
     _background_check,
     _cache_is_fresh,
@@ -77,6 +79,7 @@ class TestCache:
         assert not _cache_is_fresh()
 
 
+@pytest.mark.usefixtures("enable_update_check")
 class TestNotice:
     def test_no_notice_when_current(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
@@ -106,6 +109,7 @@ class TestNotice:
 
     def test_no_notice_when_env_disabled(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
+        monkeypatch.setattr("siftd.cli.upgrade._get_version", lambda: "0.5.0")
         monkeypatch.setenv("SIFTD_NO_UPDATE_CHECK", "1")
         monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
         _write_cache("0.6.0")
@@ -115,10 +119,13 @@ class TestNotice:
     def test_no_notice_when_config_false_or_no_cache(self, tmp_path, monkeypatch, capsys):
         monkeypatch.setattr("siftd.cli.upgrade.state_dir", lambda: tmp_path)
         monkeypatch.setattr("siftd.cli.upgrade.sys.stderr.isatty", lambda: True)
+        monkeypatch.setattr("siftd.cli.upgrade._get_version", lambda: "0.5.0")
+        _write_cache("0.6.0")
         monkeypatch.setattr("siftd.config.get_config", lambda key: "false")
         maybe_print_notice()
         assert capsys.readouterr().err == ""
 
+        (tmp_path / "update-check.json").unlink()
         monkeypatch.setattr("siftd.config.get_config", lambda key: "true")
         maybe_print_notice()
         assert capsys.readouterr().err == ""
@@ -148,18 +155,8 @@ class TestUpgradeCommandAndChecks:
         _background_check()
         assert called == ["1.2.3"]
 
+    @pytest.mark.usefixtures("enable_update_check")
     def test_maybe_start_check_branches(self, monkeypatch):
-        monkeypatch.setenv("SIFTD_NO_UPDATE_CHECK", "1")
-        maybe_start_check()
-        monkeypatch.delenv("SIFTD_NO_UPDATE_CHECK")
-
-        monkeypatch.setattr("siftd.config.get_config", lambda key: "false")
-        maybe_start_check()
-
-        monkeypatch.setattr("siftd.config.get_config", lambda key: "true")
-        monkeypatch.setattr("siftd.cli.upgrade._cache_is_fresh", lambda: True)
-        maybe_start_check()
-
         started = []
 
         class _T:
@@ -169,10 +166,28 @@ class TestUpgradeCommandAndChecks:
             def start(self):
                 started.append("started")
 
-        monkeypatch.setattr("siftd.cli.upgrade._cache_is_fresh", lambda: False)
+        # Install the fake before *every* branch: a broken disable condition
+        # must fail an assertion, never launch a real daemon.
         monkeypatch.setattr("siftd.cli.upgrade.threading.Thread", _T)
+        monkeypatch.setattr("siftd.cli.upgrade._cache_is_fresh", lambda: False)
+        monkeypatch.setattr("siftd.config.get_config", lambda key: "true")
+        monkeypatch.setenv("SIFTD_NO_UPDATE_CHECK", "1")
         maybe_start_check()
-        assert started and "started" in started
+        assert started == []
+        monkeypatch.delenv("SIFTD_NO_UPDATE_CHECK")
+
+        monkeypatch.setattr("siftd.config.get_config", lambda key: "false")
+        maybe_start_check()
+        assert started == []
+
+        monkeypatch.setattr("siftd.config.get_config", lambda key: "true")
+        monkeypatch.setattr("siftd.cli.upgrade._cache_is_fresh", lambda: True)
+        maybe_start_check()
+        assert started == []
+
+        monkeypatch.setattr("siftd.cli.upgrade._cache_is_fresh", lambda: False)
+        maybe_start_check()
+        assert started == [(_background_check, True), "started"]
 
     def test_upgrade_command_builder(self, monkeypatch):
         monkeypatch.setattr("siftd.cli.upgrade.shutil.which", lambda _: None)

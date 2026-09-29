@@ -1,0 +1,124 @@
+{
+  "record_kind": "actual_codex_candidate_results_and_gate_eligibility",
+  "authorization": "User-authorized temporary Astra substitution; not a self-review verdict. Final combined integration round 1 returned REVISE; corrected candidate awaits exact-head review.",
+  "candidates": [
+    {
+      "lane": "release",
+      "base": "53d0b9cb4de553bc003af61d02942c9cfa03bcd2",
+      "head": "448d50540e4afc24ff92a513fb088a0417d41fd5",
+      "tree": "8a2dad18c918bd9f010cfe70f8c7b83632a6cb0b",
+      "verdict": "PASS",
+      "scope": "documentation-only; no implementation, migration, metadata-loss acceptance or publication authority",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "exit": 0,
+      "reused": true,
+      "review_receipt": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/review-2.json",
+        "sha256": "9d34a53ce6866e4f7ad252f726797b6bbaeba72930c8975dba1c1826f180bc9e"
+      },
+      "actual_review_receipt": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/review-1.json",
+        "sha256": "82577116ed42ec0429113c1b6b3ca072248f72be17fee3d407470088d7069371"
+      },
+      "diff_sha256": "731c98fd458ffbd059a4bd956a07cfa3106969893c70f43e67aa907ea8770e9c",
+      "argv": "/opt/homebrew/bin/codex exec --ignore-user-config --model gpt-6-astra -c 'model_reasoning_effort=\"high\"' -c 'approval_policy=\"never\"' --sandbox read-only --ephemeral --disable hooks --disable multi_agent --disable plugins --disable apps --disable memories --color never -C /tmp/siftd-next-slices-01a0ddb3/astra-review-wave/worktrees/release-round-1 -o /tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/assessment.md -",
+      "raw": {
+        "invocation.json": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/invocation.json",
+          "sha256": "ec11257a45f141514d908c74b585f635ff4f1c6276b718522b2e9a0684c5180a"
+        },
+        "assessment.md": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/assessment.md",
+          "sha256": "d8027f51576cfe1cd77be4e0802f3cc13da5b79c17d98a463705a1088510c207"
+        },
+        "stdout.log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/stdout.log",
+          "sha256": "b667e4804a6200ff0db16a0aa8cb654cbbf8b0b6c15587b5c164326d9d118a4e"
+        },
+        "stderr.log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/stderr.log",
+          "sha256": "cf92ae753db667955d2ca7e87eadb46756056f0e83d12641d33bb02a09dc38f8"
+        },
+        "exit.txt": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/exit.txt",
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+        }
+      },
+      "reuse_record_scope": "Historical release round-2 receipt records reuse; this is not a current eligibility assertion.",
+      "reuse_eligibility": "unresolved",
+      "counted_as_gate_approval": false,
+      "provider_error": {
+        "diagnostic": "failed to refresh available models: request timed out",
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/release/round-1/stderr.log",
+        "line": 37,
+        "sha256": "cf92ae753db667955d2ca7e87eadb46756056f0e83d12641d33bb02a09dc38f8"
+      },
+      "gate_disposition": "Actual PASS and exit 0 retained. Apply the same strict provider-error gate as design round 2: no supported exception established; reuse eligibility unresolved, not counted as approval. Original release receipts preserved without alteration.",
+      "consistency_reference": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/review-2.json",
+        "sha256": "0cd6817ead1849689e56a5affa43ecc13df66b2f700751ba7bfce17fb9fb1c82"
+      }
+    },
+    {
+      "lane": "design",
+      "base": "53d0b9cb4de553bc003af61d02942c9cfa03bcd2",
+      "head": "b98b27660164c05ee471e5641076fb5c7fd6fc35",
+      "tree": "208783018565407f0f0d4e3839651f4c396cefe0",
+      "verdict": "PASS",
+      "scope": "documentation-only; no implementation, migration, metadata-loss acceptance or publication authority",
+      "model": "gpt-6-astra",
+      "reasoning_effort": "high",
+      "exit": 0,
+      "reused": false,
+      "review_receipt": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/review-2.json",
+        "sha256": "0cd6817ead1849689e56a5affa43ecc13df66b2f700751ba7bfce17fb9fb1c82"
+      },
+      "actual_review_receipt": {
+        "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/review-2.json",
+        "sha256": "0cd6817ead1849689e56a5affa43ecc13df66b2f700751ba7bfce17fb9fb1c82"
+      },
+      "diff_sha256": "89b38172824dc1539d74dfb0536f815c1c47fb0ad777e6825b4ccbbf57979640",
+      "argv": "/opt/homebrew/bin/codex exec --ignore-user-config --model gpt-6-astra -c 'model_reasoning_effort=\"high\"' -c 'approval_policy=\"never\"' --sandbox read-only --ephemeral --disable hooks --disable multi_agent --disable plugins --disable apps --disable memories --color never -C /tmp/siftd-next-slices-01a0ddb3/astra-review-wave/worktrees/design-round-2 -o /tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/assessment.md -",
+      "raw": {
+        "invocation.json": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/invocation.json",
+          "sha256": "f89268354972862a4223ca7dd86d6c39040430e7f98866ecab75465e3abe75f1"
+        },
+        "assessment.md": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/assessment.md",
+          "sha256": "ec78a1eb25811472e867f7e91bb031203f3102931a0157879229cef7848fecc0"
+        },
+        "stdout.log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/stdout.log",
+          "sha256": "1a3b52e7acf6648b84f237dae73b14f7540c8a95c5619f3ba7ca0d75d59a4b21"
+        },
+        "stderr.log": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/stderr.log",
+          "sha256": "1a353393b32d3b2147f56b1d478d4c16da6bdab1c2fe53e731a2eac3dae5c355"
+        },
+        "exit.txt": {
+          "path": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/design/round-2/exit.txt",
+          "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+        }
+      }
+    }
+  ],
+  "historical_test_fix": {
+    "head": "53d0b9cb4de553bc003af61d02942c9cfa03bcd2",
+    "review": "Prior genuine Fable approval retained; unchanged and not re-requested.",
+    "diff_sha256": "7ac9b09a6a154f4031362650b753802ff79aad9dd447bc92d81aa406b5ab1e6e",
+    "receipt": "docs/dev/reviews/test-isolation-exact-diff.json"
+  },
+  "verification": "Exact Git subjects and raw artifact hashes verified. Raw PASS/model/effort/exit provenance is distinct from gate eligibility: release round-2 reuse is recorded historically, but its model-refresh timeout leaves reuse eligibility unresolved. Design fresh round-2 approval remains valid.",
+  "design_prior_attempt": "Round-1 provider timeout retained and not reused; fresh round-2 PASS is the authority.",
+  "scope_limit": "Eligible documentation approvals do not authorize implementation, live diagnostics, identity migration, metadata loss, final integration approval or publication. Release raw PASS is not counted as eligible approval pending timeout disposition.",
+  "safeToImplement": false,
+  "integration_review": {
+    "head": "b8a2102731cee1ed52c1126db2ead184f29a5a0e",
+    "verdict": "REVISE",
+    "receipt": "/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/integration/review-1.json",
+    "correction": "Disclose release timeout and leave reuse eligibility unresolved consistently; new combined exact-head approval remains pending."
+  }
+}

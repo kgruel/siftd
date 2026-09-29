@@ -28,6 +28,7 @@ the tag" respectively).
 
 | Module | Summary |
 |--------|---------|
+| [_pi_identity_preflight.py](_pi_identity_preflight.py) | Private, fixture-only Pi identity exposure diagnostic (never an apply token). |
 | [_search_log_capture.py](_search_log_capture.py) | Shared search-log capture helpers used by api/search.py and api/conversations.py. |
 | [adapters.py](adapters.py) | Adapter discovery API. |
 | [auth.py](auth.py) | Authentication helpers for sync remotes and serve. |

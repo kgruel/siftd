@@ -77,6 +77,15 @@ subprocess go in `tests/acceptance/` (prysk `.t` transcripts) or an
   races capture. Use `capsys`/`capfd` or a callback/`file=` parameter instead
   (see the note at the top of `conftest.py`). Every test is hard-isolated from
   the real database by the autouse `_sandbox_db_home` fixture.
+- **Passive update checks are off per test.** The autouse `_disable_update_check`
+  fixture prevents routine `main()` calls (and inherited subprocesses) from
+  starting PyPI daemons that can write into later tests' state directories
+  ([#40](https://github.com/kgruel/siftd/issues/40)). Dedicated notice/check tests
+  request `enable_update_check` and fake network IO/thread creation; install
+  those fakes before exercising any branch. Do not rely on a caller-global
+  `SIFTD_NO_UPDATE_CHECK`: the suite owns isolation and explicit enabled coverage.
+  Prysk `.t` items do not run pytest fixtures, so each acceptance transcript
+  explicitly exports the same disable setting for its subprocesses.
 - **Architecture ratchets are self-contained in their *invariant*, not in their
   mechanics.** Each module in `tests/architecture/` keeps its own property, its
   shrink-only allowlist or stated permanent carve-outs, and the docstring
@@ -102,10 +111,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 186 | 3289 |
-| `tests/adapters/` | 19 | 163 |
+| `tests/` | 188 | 3358 |
+| `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
-| `tests/cli/` | 28 | 632 |
+| `tests/cli/` | 29 | 635 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -138,6 +147,7 @@ docstring so its row is meaningful.
 | [test_auto_index_integration.py](test_auto_index_integration.py) | 2 | Real-backend integration for the post-ingest auto-index hook (embed lane — fastembed). |
 | [test_backfill.py](test_backfill.py) | 28 | Tests for siftd.backfill module. |
 | [test_blobs.py](test_blobs.py) | 0 | Blob storage tests — now in test_storage.py. |
+| [test_browser_smoke_remote.py](test_browser_smoke_remote.py) | 12 | Unit coverage for the opt-in Browserless T3 transport and containment. |
 | [test_builtin_harness_stats.py](test_builtin_harness_stats.py) | 1 | Correctness guard for the harness-stats builtin query (I20). |
 | [test_caveats.py](test_caveats.py) | 120 | Tests for the caveats producer registry and dispatch threading. |
 | [test_caveats_wire.py](test_caveats_wire.py) | 6 | I5 — caveat round-trip across the delegation wire. |
@@ -216,6 +226,7 @@ docstring so its row is meaningful.
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
+| [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
@@ -317,6 +328,7 @@ docstring so its row is meaningful.
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
 | [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
+| [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
 | [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 5 | — |
@@ -350,7 +362,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
-| [cli/test_db.py](cli/test_db.py) | 50 | Tests for siftd db namespace commands. |
+| [cli/test_db.py](cli/test_db.py) | 52 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
@@ -371,6 +383,7 @@ docstring so its row is meaningful.
 | [cli/test_show_smart_routing.py](cli/test_show_smart_routing.py) | 6 | Phase 4: smart-routing of `siftd show <id>` between conversations and events. |
 | [cli/test_show_tools.py](cli/test_show_tools.py) | 6 | — |
 | [cli/test_tags.py](cli/test_tags.py) | 76 | Tests for siftd tag CLI command (apply, remove, list, rename, delete). |
+| [cli/test_update_check_isolation.py](cli/test_update_check_isolation.py) | 1 | Routine CLI calls must not start background update checks in the test suite. |
 | [cli/test_upgrade.py](cli/test_upgrade.py) | 21 | Tests for siftd upgrade command and version check. |
 
 ### `tests/snapshots/`

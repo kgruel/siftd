@@ -5,15 +5,36 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.12.2] - 2026-09-29
 
 ### Internal
+
+- Add an explicit, fixture-only Browserless mode to `./dev browser-smoke`.
+  It uses native Playwright page CDP and a verified loopback-only SSH reverse
+  forward, while the local mode keeps its isolated Chromium profile and now
+  uses Chromium's mock Keychain.
+
+- Count private Pi preflight refusals once per request, including empty source
+  scopes; strengthen count, read-boundary, read-only, and secret-free fixtures.
+
+- Add a private, fixture-only, read-only Pi identity exposure diagnostic; no
+  identity policy, migration, live inspection, or public command is enabled.
+
+- Isolate passive update checks per test so routine CLI calls cannot start PyPI
+  daemons that overwrite another test's cache; dedicated notice/check tests
+  explicitly opt in with fake IO and threads. ([#40](https://github.com/kgruel/siftd/issues/40))
+
+- Preserve historical ingest, CLI-surface, and package-split drafts with a
+  next-steps handoff; preservation does not ratify the proposed designs.
 
 - **A new code path that destroys a conversation now has to say what happens to
   the tags and ownership attached to it.**
   ([#79](https://github.com/kgruel/siftd/issues/79))
 
 ### Fixed
+
+- Clarify that `db merge`/`db receive --no-fts` is an accepted compatibility
+  no-op, not a way to disable indexing; `db slice --no-fts` remains effective.
 
 - **A push that replaces a conversation cleans up after itself by the schema's
   own rules.** Merge's delete closure was a hand-written second copy of what the
@@ -24,10 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   success.
   ([#51](https://github.com/kgruel/siftd/issues/51))
 
-- **Tags survive a push that replaces the conversation you tagged.** Receiving a
-  newer version of a conversation used to destroy every tag on it and on its
-  turns, while keeping its owner; both are now carried, as they already were on
-  re-ingest.
+- **Pushes carry conversation tags and matching source-keyed event tags.**
+  Receiving a newer conversation previously discarded these tags; they are now
+  carried with its ownership, as on re-ingest. Tags on blocks and events without
+  a matching source key are still not preserved. Upgrading does not restore tags
+  already lost.
   ([#77](https://github.com/kgruel/siftd/issues/77))
 
 - **A conversation re-ingested after its transcript changed keeps its owner.**

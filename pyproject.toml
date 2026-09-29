@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "siftd"
-version = "0.12.1"
+version = "0.12.2"
 description = "Personal LLM usage analytics. Ingest conversation logs from CLI coding tools, query via FTS5 and semantic search."
 readme = "README.md"
 license = "MIT"
@@ -70,6 +70,10 @@ dev = [
     "ruff>=0.4",
     "ty",
     "chardet<6",
+]
+browser = [
+    # Client only: remote T3 connects to an existing browser and never installs one.
+    "playwright==1.63.0",
 ]
 
 [tool.hatch.build.targets.wheel]

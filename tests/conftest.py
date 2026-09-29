@@ -96,6 +96,18 @@ def _sandbox_db_home(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _disable_update_check(monkeypatch):
+    """Keep routine main() calls from spawning PyPI daemons that outlive a test."""
+    monkeypatch.setenv("SIFTD_NO_UPDATE_CHECK", "1")
+
+
+@pytest.fixture
+def enable_update_check(_disable_update_check, monkeypatch):
+    """Opt in only for update tests that fake network IO and thread creation."""
+    monkeypatch.delenv("SIFTD_NO_UPDATE_CHECK", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _reset_caveat_producers():
     """Snapshot and restore the caveat producer registry around each test.
 

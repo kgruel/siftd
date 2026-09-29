@@ -6,6 +6,8 @@ import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from siftd.cli import main
 
 
@@ -13,6 +15,27 @@ def test_db_help():
     """siftd db prints help."""
     rc = main(["db"])
     assert rc == 0
+
+
+@pytest.mark.parametrize("command", ["merge", "receive"])
+def test_db_compatibility_no_fts_help(command, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["db", command, "--help"])
+    assert exc.value.code == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "--no-fts" in output
+    assert "Compatibility no-op; does not disable indexing" in output
+    assert "Skip FTS5 index rebuild" not in output
+
+
+def test_db_slice_no_fts_help_remains_effective(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["db", "slice", "--help"])
+    assert exc.value.code == 0
+    output = " ".join(capsys.readouterr().out.split())
+    assert "--no-fts" in output
+    assert "Skip FTS5 index rebuild in output" in output
+    assert "Compatibility no-op" not in output
 
 
 def test_db_info(test_db, capsys):

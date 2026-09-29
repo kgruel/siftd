@@ -1,5 +1,9 @@
 Test siftd doctor commands
 
+Prysk items do not run pytest fixtures; disable passive PyPI checks here:
+
+  $ export SIFTD_NO_UPDATE_CHECK=1
+
 Setup an isolated test database:
 
   $ HOME=$PRYSK_TEMP XDG_DATA_HOME=$PRYSK_TEMP/data XDG_CONFIG_HOME=$PRYSK_TEMP/config siftd --db $PRYSK_TEMP/test.db ingest > /dev/null 2>&1

@@ -1,0 +1,135 @@
+# Next steps — integration handoff
+
+> Current continuation: [hardening and release follow-up](release-readiness-followup.md).
+> The stage-specific pending labels below are historical: isolated integration
+> subsequently reached the Fable-approved private preflight at `eff4bf7`.
+> Original-main and publication holds remain in place.
+
+Updated **2026-09-26**. **LOCAL INTEGRATION; FINAL ASTRA REVIEW PENDING;
+RELEASE/PUBLICATION HOLD.** Original main remains
+`58daf4ac0101a012ff0ea286931fce8e2e621110`; only local branch
+`work/next-slices-01a0ddb3` changed. Package version remains **0.12.1**.
+Accumulated code on main is not thereby published.
+
+## Review results, eligibility and integrated scope
+
+The user explicitly authorized switching this review wave to actual
+**`/opt/homebrew/bin/codex`, model `gpt-6-astra`, reasoning high** until Claude
+Code limits reset. The older checkpoint's assertion that this substitution was
+unauthorized is stale and incorrect. No Claude request or quota poll was made
+in this wave. Historical Fable approvals retain their exact scope; a future
+wave may return to Fable after availability is established.
+
+| Candidate | Exact reviewed head | Authority / eligibility |
+| --- | --- | --- |
+| Test isolation #40 | `53d0b9cb4de553bc003af61d02942c9cfa03bcd2` | Genuine prior Fable approval, unchanged exact diff; not re-reviewed. |
+| Release assessment | `448d50540e4afc24ff92a513fb088a0417d41fd5` | Actual Codex Astra/high PASS, exit 0; round 2 recorded reuse of round 1. **Reuse eligibility unresolved** due to the model-refresh timeout below; not counted as gate approval. Documentation only. |
+| Design disposition | `b98b27660164c05ee471e5641076fb5c7fd6fc35` | Fresh actual Codex Astra/high round-2 PASS. Documentation only; **safeToImplement=false**. |
+
+Both documentation reviews use test-fix `53d0b9cb…` as their base. Exact argv,
+subjects, result paths and hashes are in
+[Codex provenance](reviews/astra-candidates.json); historical test approval is in
+[the exact-diff receipt](reviews/test-isolation-exact-diff.json). Full reports and
+raw transcripts remain in the external artifact paths, not copied into prose.
+Release round-1 `stderr.log:37` records
+`failed to refresh available models: request timed out`. Its actual PASS and
+exit 0 remain genuine, but do not settle reuse eligibility. The design round-2
+receipt rejected reuse of the identical round-1 error under the strict
+provider-error gate; its clean fresh round-2 review supplies design approval.
+No supported exception is established for release. Applying the same gate,
+**release reuse eligibility is unresolved and is not counted as approval**.
+Original release round-1/round-2 receipts and raw evidence remain unchanged;
+this disposition corrects their unqualified reuse claim, not the raw verdict.
+
+Release and design were merged with ancestry, respectively at `342b4c26…` and
+`8b7cb327…`; their shared test-fix ancestor was not cherry-picked or duplicated.
+Neither input candidate was excluded. This handoff and integration evidence are
+new changes: **input approvals do not approve the final combined candidate**.
+Actual final Codex round 1 returned **REVISE** on `b8a2102731cee1ed52c1126db2ead184f29a5a0e`
+for the inconsistent timeout disclosure/eligibility. This documentation correction
+awaits final exact-head Codex review; it supplies no new approval or gate waiver.
+
+## Local validation and retained failures
+
+The merged HEAD `8b7cb327776c8f29111f621becc4cddd5d271236`, tree
+`e4bdd48173f2dea522f176998796ec8e59d87c99`, passed `./dev check --all -v`
+with **exit 0**, clean before and after:
+
+- Lint and strict generated-doc checks passed.
+- Architecture: **94 passed / 5 pre-existing skips**; base: **4,042 passed**.
+- Serve: **359 passed / 4 dependency collection skips**; embeddings:
+  **111 passed**; slow: **2 passed**. No tests or skip conditions changed.
+
+This is local macOS arm64 / Python 3.12.12 evidence. The worktree owns its venv
+with dev/serve/embed extras. Each command uses disposable HOME/XDG and TMPDIR
+outside all Git checkouts, a fresh environment without caller-global
+`SIFTD_NO_UPDATE_CHECK`, `SIFTD_DB`, `SIFTD_CONFIG`, `PYTHONPATH` or
+`PYTEST_ADDOPTS`, and default foreground SIGINT/SIGTERM. The suite owns passive
+update suppression. Dependencies and model weights are offline;
+`FASTEMBED_CACHE_PATH=/tmp/siftd-next-slices-01a0ddb3/model-cache`,
+`HF_HUB_OFFLINE=1`. No remote embedding-provider calls were made.
+
+Integration evidence lives under
+`/tmp/siftd-next-slices-01a0ddb3/astra-review-wave/integration/`:
+`check-merged-all/receipt.json` and `output.log` record that run. The prior
+`check-head-all` and `check-head` receipts describe `b8a2102731…`, not this
+correction. Updated `candidate.json` must bind the correction's committed-head
+check receipts to its exact HEAD/tree before marking readiness.
+A ready candidate means ready for final review, not approved or publishable;
+release reuse eligibility remains a separate unresolved gate.
+
+Earlier failures remain failures, not erased by later green: preservation had
+notice/cache failures; the original design attempt put temporary fixtures inside
+Git and failed eight workspace tests; release had an interrupted signal-unsafe
+run; normalization had a dependency-install timeout. Their raw attempts and
+corrections remain in [release evidence](release-readiness-next.md) and
+[design R2 evidence](ingest-stream-review-r2-2026-09-26.md). Those documents'
+“pending review” labels describe their preparation stage; the exact-head reviews
+above record later results, not removal of the underlying limitations. Design
+has eligible approval; release's PASS remains subject to unresolved reuse
+eligibility.
+
+Local checks do not certify Ubuntu/Python 3.12–3.14 CI or T3 real-browser smoke.
+Fresh CI evidence and browser execution/applicability disposition remain release
+gates. The eventual main merge must rerun the harness; main was not merged here.
+
+## What the design approval does not decide
+
+[Identity-first plan](ingest-identity-first-slice.md) and
+[revised ingest design](ingest-stream-design-2026-08-13.md) are approved as
+**planning documents**, not ratified implementation contracts. Current
+replacement loses NULL-key/unmatched-event and block assignments; warnings are
+not consent. Neither production identity migration nor acceptance of metadata
+loss is authorized. No identity extraction, preflight, invalidation, runtime or
+storage changes were implemented in this integration.
+
+The historical [R1 review](ingest-stream-review-r1-2026-08-13.md),
+[CLI draft](design/cli-surface-0.13.0-2026-07-18.md), and
+[package-split plan](package-split-plan-2026-06-22.md) remain preserved. CLI D-A,
+D-B and D-C retain their recorded historical ratification; that does not ratify
+the whole draft or D-D. Package split, CLI redesign, full streaming/upsert,
+daemon and merge-door redesign remain outside this run. Historical corpus and
+performance figures are not newly verified. Repairs are not automatically
+retroactive; no production corpus was read, ingested, reparsed or repaired here.
+
+## Remaining user decisions
+
+1. **Release scope and compatibility:** defining versus ride-along patches,
+   version and eventual publication permission; disposition of ignored legacy
+   FTS controls/misleading help and their communication/removal policy. These
+   are not settled by local green or the release report's raw PASS.
+2. **Next diagnostic scope:** whether to authorize the proposed pi_agent-only,
+   fixture-backed read-only preflight and its surface/contract. No apply mode;
+   live-data inspection needs separate explicit authorization.
+3. **Future identity transition:** ratify valid-ID/namespace and duplicate-refusal
+   rules, then prove lossless event/block mapping and source authority, durable
+   coverage/completion, interruption/retry/rollback, and protection on natural
+   changed-file ingest—or defer legacy data. These proofs remain engineering
+   gates, not an invitation to silently accept loss.
+
+No push, tag, bump, publication, GitHub mutation, user-tool installation,
+production/config mutation or original-checkout edit occurred. No `sl` or
+`.loops` access/write occurred. Eventual user-owned emit summary only: preserved
+provenance; exact reviewed/tested SHAs; integrated/excluded scope; gate results;
+these unresolved decisions; final-review pending versus release HOLD. No ceremony
+is performed by this document.

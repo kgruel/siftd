@@ -1,7 +1,7 @@
 """Real-browser CSP smoke (T3 of docs/guides/serve-browser-testing.md).
 
-Run via ``./dev browser-smoke``. Not pytest-collected — this is a standalone
-exit-code program: 0 = all checks pass, 1 = check failed, 2 = harness fault
+Run via ``./dev browser-smoke``. Its assertions are shared with pytest coverage;
+the executable is an exit-code program: 0 = all checks pass, 1 = check failed, 2 = harness fault
 (broken detector, no chromium, server never came up).
 
 The only tier that catches CSP violations from vendored-library *internals*
@@ -10,7 +10,7 @@ The only tier that catches CSP violations from vendored-library *internals*
 inline handlers) — none of which TestClient or the T1/T2 static tiers can see.
 
 Method (each rule exists because its violation produced a false PASS):
-- headless Chromium over raw CDP (websockets + httpx — no playwright dep)
+- headless Chromium over raw CDP locally; native Playwright page CDP remotely
 - violations detected TWO ways: in-page ``securitypolicyviolation`` listener
   + the CDP security-source log
 - POSITIVE CONTROL FIRST: an off-origin <script src> must be blocked and
@@ -27,6 +27,7 @@ lands, rewrite ``flow()`` (see the swiss variant preserved in project memory)
 and leave the rest alone.
 """
 
+import argparse
 import asyncio
 import json
 import os
@@ -36,9 +37,9 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from typing import BinaryIO
 
 import httpx
-import websockets
 
 PORT = int(os.environ.get("SIFTD_SMOKE_PORT", "8378"))
 CDP_PORT = int(os.environ.get("SIFTD_SMOKE_CDP_PORT", "9378"))
@@ -82,13 +83,20 @@ RUST = (
 def build_fixture(db_path: Path) -> str:
     """Create the fixture DB; return the conversation id with the code fence."""
     from siftd.api.search import rebuild_fts_index
-    from siftd.storage.usage_rollup import rebuild_rollups
     from siftd.storage.sqlite import (
-        create_database, get_or_create_harness, get_or_create_model,
-        get_or_create_provider, get_or_create_workspace, insert_conversation,
-        insert_prompt, insert_prompt_content, insert_response,
-        insert_response_content, insert_tool_call,
+        create_database,
+        get_or_create_harness,
+        get_or_create_model,
+        get_or_create_provider,
+        get_or_create_workspace,
+        insert_conversation,
+        insert_prompt,
+        insert_prompt_content,
+        insert_response,
+        insert_response_content,
+        insert_tool_call,
     )
+    from siftd.storage.usage_rollup import rebuild_rollups
 
     conn = create_database(db_path)
     h = get_or_create_harness(conn, "csp-smoke", source="smoke", log_format="jsonl")
@@ -205,7 +213,7 @@ class CDP:
             try:
                 msg = json.loads(await asyncio.wait_for(self.ws.recv(), timeout=left))
                 self.events.append(msg)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return
 
     async def eval(self, expr):
@@ -678,133 +686,370 @@ async def flow(cdp, check, goto, code_conv):
 # Lifecycle + verdict (shell-agnostic)
 # ---------------------------------------------------------------------------
 
+try:  # ``python tests/browser_smoke/smoke.py`` vs pytest's namespace import.
+    from .remote import (  # type: ignore[import-not-found]
+        RemoteConfig,
+        RemoteConfigurationError,
+        SSHReverseForward,
+        redact_endpoint,
+        redact_text,
+        reserve_loopback_port,
+    )
+except ImportError:
+    from remote import (  # type: ignore[no-redef]
+        RemoteConfig,
+        RemoteConfigurationError,
+        SSHReverseForward,
+        redact_endpoint,
+        redact_text,
+        reserve_loopback_port,
+    )
 
-async def run(workdir: Path, chromium: str) -> int:
-    results = []
 
-    def check(name, ok, detail=""):
+def local_chromium_argv(chromium: str, workdir: Path) -> list[str]:
+    """Launch only an isolated local profile and never consult macOS Keychain."""
+    return [
+        chromium,
+        "--headless=new",
+        f"--remote-debugging-port={CDP_PORT}",
+        "--no-first-run",
+        "--disable-extensions",
+        "--use-mock-keychain",
+        f"--user-data-dir={workdir / 'profile'}",
+    ]
+
+
+def set_fixture_port(port: int) -> None:
+    """Point the unchanged UI flow at the local or forwarded fixture origin."""
+    global PORT, BASE
+    PORT = port
+    BASE = f"http://127.0.0.1:{port}"
+
+
+def start_fixture(workdir: Path, port: int) -> tuple[subprocess.Popen[bytes], BinaryIO, str]:
+    """Build the isolated fixture and serve it only on local loopback."""
+    db_path = workdir / "fixture.db"
+    code_conv = build_fixture(db_path)
+    server_log = (workdir / "server.log").open("wb")
+    siftd_bin = Path(sys.executable).parent / "siftd"
+    server = subprocess.Popen(
+        [str(siftd_bin), "--db", str(db_path), "serve", "--host", "127.0.0.1", "--port", str(port), "--no-auth"],
+        stdout=server_log,
+        stderr=subprocess.STDOUT,
+    )
+    return server, server_log, code_conv
+
+
+async def wait_for_fixture(port: int) -> None:
+    async with httpx.AsyncClient() as client:
+        for _ in range(40):
+            try:
+                response = await client.get(f"http://127.0.0.1:{port}/api/v1/health")
+                if response.status_code == 200:
+                    return
+            except httpx.TransportError:
+                pass
+            await asyncio.sleep(0.25)
+    raise RuntimeError("fixture server never became healthy; see server.log")
+
+
+async def check_headers(port: int, check) -> None:
+    """Keep HTTP-header assertions on the fixture's own private local socket."""
+    async with httpx.AsyncClient() as client:
+        print("== headers over real HTTP ==")
+        for path in HEADER_PATHS:
+            response = await client.get(f"http://127.0.0.1:{port}{path}")
+            csp = response.headers.get("content-security-policy", "")
+            ok = (
+                "default-src 'self'" in csp
+                and "connect-src 'self'" in csp
+                and all(response.headers.get(key) == value for key, value in EXPECT_HEADERS.items())
+            )
+            check(
+                f"headers on {path}",
+                ok,
+                f"status={response.status_code}" + ("" if ok else f" csp={csp[:80]!r}"),
+            )
+
+
+async def run_assertions(cdp, check, goto, code_conv: str) -> None:
+    """Run the common T3 instrument, positive control, and complete UI flow."""
+    await cdp.cmd("Page.enable")
+    await cdp.cmd("Runtime.enable")
+    await cdp.cmd("Log.enable")
+    await cdp.cmd("Page.addScriptToEvaluateOnNewDocument", {"source": LISTENER})
+
+    async def violations():
+        value = await cdp.eval("JSON.stringify(window.__v || [])")
+        return json.loads(value or "[]")
+
+    print("== positive control ==")
+    await goto(f"{BASE}/", 2.5)
+    await cdp.eval(
+        "var s=document.createElement('script');"
+        "s.src='https://example.org/x.js';document.head.appendChild(s);'injected'"
+    )
+    await cdp.drain(1.0)
+    control = await violations()
+    control_hit = any("example.org" in (item.get("blocked") or "") for item in control)
+    check("positive control blocked+detected", control_hit, json.dumps(control)[:200])
+    if not control_hit:
+        raise RuntimeError("detector is broken; every negative result would be meaningless")
+
+    print("== shell flow ==")
+    await goto(f"{BASE}/", 2.5)
+    await flow(cdp, check, goto, code_conv)
+
+    print("== violations ==")
+    observed = await violations()
+    logs = cdp.security_log_entries()
+    check("zero in-page CSP violations", len(observed) == 0, json.dumps(observed)[:400])
+    real_logs = [entry for entry in logs if "example.org" not in entry]
+    check("zero CDP security-log violations", len(real_logs) == 0, " | ".join(real_logs)[:400])
+
+
+def result_checker(results):
+    def check(name: str, ok: bool, detail: str = "") -> None:
         results.append((name, ok, detail))
         print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" — {detail}" if detail else ""))
 
-    print("== fixture ==")
-    db_path = workdir / "fixture.db"
-    code_conv = build_fixture(db_path)
-    print(f"  built {db_path.name}, code conv {code_conv}")
+    return check
 
-    print("== server (from-source venv entrypoint) ==")
-    siftd_bin = Path(sys.executable).parent / "siftd"
-    server = subprocess.Popen(
-        [str(siftd_bin), "--db", str(db_path), "serve",
-         "--host", "127.0.0.1", "--port", str(PORT), "--no-auth"],
-        stdout=(workdir / "server.log").open("w"), stderr=subprocess.STDOUT,
-    )
+
+async def run_local(workdir: Path, chromium: str) -> int:
+    """The established local-CDP mode, with a mock Keychain launch flag."""
+    # Keep the unmarked remote transport tests importable in CI's dev-only lane.
+    # The entrypoint syncs ``serve``, which supplies this local-only dependency.
+    import websockets
+
+    results = []
+    check = result_checker(results)
+    print("== fixture ==")
+    server, server_log, code_conv = start_fixture(workdir, PORT)
+    print(f"  built fixture.db, code conv {code_conv}")
     chrome = None
     try:
-        async with httpx.AsyncClient() as client:
-            for _ in range(40):
-                try:
-                    r = await client.get(f"{BASE}/api/v1/health")
-                    if r.status_code == 200:
-                        break
-                except Exception:
-                    pass
-                await asyncio.sleep(0.25)
-            else:
-                print("FATAL: server never became healthy; see server.log")
-                return 2
-
-            # ---- real-HTTP header assertions (per-app middleware, F3) ----
-            print("== headers over real HTTP ==")
-            for path in HEADER_PATHS:
-                r = await client.get(f"{BASE}{path}")
-                csp = r.headers.get("content-security-policy", "")
-                ok = (
-                    "default-src 'self'" in csp
-                    and "connect-src 'self'" in csp
-                    and all(r.headers.get(k) == v for k, v in EXPECT_HEADERS.items())
-                )
-                check(f"headers on {path}", ok,
-                      f"status={r.status_code}" + ("" if ok else f" csp={csp[:80]!r}"))
-
+        await wait_for_fixture(PORT)
+        await check_headers(PORT, check)
         chrome = subprocess.Popen(
-            [chromium, "--headless=new", f"--remote-debugging-port={CDP_PORT}",
-             "--no-first-run", "--disable-extensions",
-             f"--user-data-dir={workdir / 'profile'}"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            local_chromium_argv(chromium, workdir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         ws_url = None
         async with httpx.AsyncClient() as client:
             for _ in range(40):
                 try:
-                    r = await client.put(f"http://127.0.0.1:{CDP_PORT}/json/new?about:blank")
-                    ws_url = r.json()["webSocketDebuggerUrl"]
+                    response = await client.put(f"http://127.0.0.1:{CDP_PORT}/json/new?about:blank")
+                    ws_url = response.json()["webSocketDebuggerUrl"]
                     break
-                except Exception:
+                except httpx.TransportError:
                     await asyncio.sleep(0.25)
         if not ws_url:
             print("FATAL: chromium CDP endpoint never came up")
             return 2
-
         async with websockets.connect(ws_url, max_size=20 * 1024 * 1024) as ws:
             cdp = CDP(ws)
-            await cdp.cmd("Page.enable")
-            await cdp.cmd("Runtime.enable")
-            await cdp.cmd("Log.enable")
-            await cdp.cmd("Page.addScriptToEvaluateOnNewDocument", {"source": LISTENER})
 
-            async def goto(url, settle=2.0):
+            async def goto(url: str, settle: float = 2.0) -> None:
                 await cdp.cmd("Page.navigate", {"url": url})
                 await cdp.drain(settle)
 
-            async def violations():
-                v = await cdp.eval("JSON.stringify(window.__v || [])")
-                return json.loads(v or "[]")
-
-            # ---- positive control: instrument must catch a blocked script ----
-            print("== positive control ==")
-            await goto(f"{BASE}/", 2.5)
-            await cdp.eval(
-                "var s=document.createElement('script');"
-                "s.src='https://example.org/x.js';document.head.appendChild(s);'injected'"
-            )
-            await cdp.drain(1.0)
-            ctrl = await violations()
-            ctrl_hit = any("example.org" in (v.get("blocked") or "") for v in ctrl)
-            check("positive control blocked+detected", ctrl_hit, json.dumps(ctrl)[:200])
-            if not ctrl_hit:
-                print("FATAL: detector is broken; every negative result would be meaningless")
-                return 2
-
-            print("== shell flow ==")
-            await goto(f"{BASE}/", 2.5)  # fresh document, control injection gone
-            await flow(cdp, check, goto, code_conv)
-
-            # ---- verdict ----
-            print("== violations ==")
-            v = await violations()
-            logs = cdp.security_log_entries()
-            check("zero in-page CSP violations", len(v) == 0, json.dumps(v)[:400])
-            real_logs = [entry for entry in logs if "example.org" not in entry]
-            check("zero CDP security-log violations", len(real_logs) == 0,
-                  " | ".join(real_logs)[:400])
-
-        failed = [r for r in results if not r[1]]
+            await run_assertions(cdp, check, goto, code_conv)
+        failed = [row for row in results if not row[1]]
         print(f"\n{'SMOKE FAIL' if failed else 'SMOKE PASS'}: {len(results) - len(failed)}/{len(results)}")
         return 1 if failed else 0
+    except RuntimeError as error:
+        print(f"FATAL: {error}")
+        return 2
     finally:
         if chrome:
             chrome.terminate()
+            chrome.wait(timeout=10)
         server.terminate()
         server.wait(timeout=10)
+        server_log.close()
 
 
-def main() -> int:
+class SessionWire:
+    """Feed page-CDP replies and security events into the existing CDP driver."""
+
+    def __init__(self, session) -> None:
+        self.session = session
+        self.queue: asyncio.Queue[str] = asyncio.Queue()
+        for method in ("Log.entryAdded", "Runtime.exceptionThrown", "Runtime.consoleAPICalled"):
+            session.on(method, self._event_handler(method))
+
+    def _event_handler(self, method: str):
+        def collect(params) -> None:
+            self.queue.put_nowait(json.dumps({"method": method, "params": params}))
+
+        return collect
+
+    async def send(self, raw: str) -> None:
+        command = json.loads(raw)
+        try:
+            result = await self.session.send(command["method"], command.get("params", {}))
+            reply = {"id": command["id"], "result": result}
+        except Exception as error:
+            reply = {"id": command["id"], "error": {"message": str(error)}}
+        self.queue.put_nowait(json.dumps(reply))
+
+    async def recv(self) -> str:
+        return await self.queue.get()
+
+
+def _write_receipt(artifacts: Path | None, receipt: dict) -> None:
+    if artifacts is not None:
+        artifacts.mkdir(parents=True, exist_ok=True)
+        (artifacts / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+
+
+def source_subject() -> dict[str, str]:
+    """Bind remote-fixture evidence to the checked-out source without reading data."""
+    root = Path(__file__).resolve().parents[2]
+    try:
+        return {
+            "head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+            "tree": subprocess.check_output(["git", "rev-parse", "HEAD^{tree}"], cwd=root, text=True).strip(),
+        }
+    except (OSError, subprocess.CalledProcessError):
+        return {"head": "unavailable", "tree": "unavailable"}
+
+
+async def run_remote(workdir: Path, config: RemoteConfig, artifacts: Path | None) -> int:
+    """Run T3 via native Playwright and one temporary, verified SSH forward."""
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        print("FATAL: remote mode requires the optional browser test dependency; rerun ./dev browser-smoke --remote")
+        return 2
+
+    results = []
+    check = result_checker(results)
+    receipt = {
+        "mode": "remote",
+        **source_subject(),
+        "endpoint": redact_endpoint(config.endpoint),
+        "transport": "native Playwright page CDP through SSH reverse loopback forward",
+        "local_chromium_launched": False,
+        "bypass_csp": False,
+        "ignore_https_errors": False,
+        "shared_browser_close_called": False,
+        "assertions": [],
+        "exit": 2,
+    }
+    tunnel = None
+    server = None
+    server_log = None
+    cdp = None
+    try:
+        local_port = reserve_loopback_port()
+        tunnel = SSHReverseForward(config, local_port)
+        remote_port = tunnel.start()
+        receipt["local_fixture_port"] = local_port
+        receipt["remote_fixture_port"] = remote_port
+        set_fixture_port(remote_port)
+        print("== fixture ==")
+        server, server_log, code_conv = start_fixture(workdir, local_port)
+        print(f"  built fixture.db, code conv {code_conv}")
+        await wait_for_fixture(local_port)
+        await check_headers(local_port, check)
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.connect(config.endpoint, timeout=15_000)
+            receipt["browser_version"] = browser.version
+            context = await browser.new_context(
+                viewport={"width": 800, "height": 600}, bypass_csp=False, ignore_https_errors=False
+            )
+            receipt["owned_context_closed"] = False
+            try:
+                page = await context.new_page()
+                session = await context.new_cdp_session(page)
+                cdp = CDP(SessionWire(session))
+
+                async def goto(url: str, settle: float = 2.0) -> None:
+                    navigation = await cdp.cmd("Page.navigate", {"url": url})
+                    if navigation.get("errorText"):
+                        raise RuntimeError(f"fixture navigation failed: {navigation['errorText']}")
+                    await cdp.drain(settle)
+
+                await run_assertions(cdp, check, goto, code_conv)
+                await session.detach()
+            finally:
+                await context.close()
+                receipt["owned_context_closed"] = True
+        receipt["exit"] = 1 if any(not result[1] for result in results) else 0
+    except Exception as error:
+        print(f"FATAL: {redact_text(str(error), config.endpoint)}")
+    finally:
+        receipt["assertions"] = [
+            {"name": name, "passed": passed, "detail": detail} for name, passed, detail in results
+        ]
+        if cdp is not None:
+            receipt["cdp_events"] = len(cdp.events)
+            if artifacts is not None:
+                artifacts.mkdir(parents=True, exist_ok=True)
+                (artifacts / "cdp-events.json").write_text(json.dumps(cdp.events, indent=2) + "\n")
+        if server is not None:
+            server.terminate()
+            try:
+                server.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                server.kill()
+                server.wait(timeout=5)
+                receipt["fixture_cleanup_needed_sigkill"] = True
+            receipt["fixture_server_exit"] = server.returncode
+        if server_log is not None:
+            server_log.close()
+        if tunnel is not None:
+            receipt["remote_listener_cleanup_confirmed"] = tunnel.close()
+            receipt["tunnel_exit"] = tunnel.process.returncode if tunnel.process is not None else None
+            if not receipt["remote_listener_cleanup_confirmed"]:
+                receipt["exit"] = 2
+        receipt["passed"] = sum(passed for _, passed, _ in results)
+        receipt["failed"] = sum(not passed for _, passed, _ in results)
+        _write_receipt(artifacts, receipt)
+    print(f"\n{'SMOKE PASS' if receipt['exit'] == 0 else 'SMOKE FAIL'}: {receipt['passed']}/{len(results)}")
+    return receipt["exit"]
+
+
+def prepare_artifacts(path: Path) -> Path:
+    """Refuse to overwrite a prior fixture-only smoke receipt."""
+    if path.exists() and (not path.is_dir() or any(path.iterdir())):
+        raise RemoteConfigurationError(f"artifact directory is not empty: {path}")
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run the isolated T3 browser smoke.")
+    parser.add_argument("--remote", action="store_true", help="use the explicit Browserless/SSH fixture route")
+    parser.add_argument("--artifacts", type=Path, help="directory for remote fixture-only evidence")
+    args = parser.parse_args(argv)
+    if args.artifacts is not None and not args.remote:
+        parser.error("--artifacts is only valid with --remote")
+    if args.remote:
+        try:
+            config = RemoteConfig.from_environment(dict(os.environ))
+        except RemoteConfigurationError as error:
+            print(f"FATAL: {error}")
+            return 2
+        if args.artifacts is not None:
+            try:
+                artifacts = prepare_artifacts(args.artifacts)
+            except RemoteConfigurationError as error:
+                print(f"FATAL: {error}")
+                return 2
+            with tempfile.TemporaryDirectory(prefix="siftd-browser-smoke-") as tmp:
+                return asyncio.run(run_remote(Path(tmp), config, artifacts))
+        with tempfile.TemporaryDirectory(prefix="siftd-browser-smoke-") as tmp:
+            return asyncio.run(run_remote(Path(tmp), config, None))
     chromium = _find_chromium()
     if not chromium:
         print("FATAL: no chromium found — install it or set CHROMIUM_BIN")
         return 2
     with tempfile.TemporaryDirectory(prefix="siftd-browser-smoke-") as tmp:
-        return asyncio.run(run(Path(tmp), chromium))
+        return asyncio.run(run_local(Path(tmp), chromium))
 
 
 if __name__ == "__main__":

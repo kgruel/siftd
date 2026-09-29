@@ -133,3 +133,28 @@ its text-scan checks run in the base CI lane on every `./dev check`, and its
 is for library-internal risk; it's a manual pre-merge check for serve-layer
 changes touching headers/CSP/UI JS rather than a CI job, since it needs a
 browser dependency and carries async/timing flakiness.
+
+## Remote Browserless mode
+
+`./dev browser-smoke --remote` is an explicit developer-test opt-in for a
+remote browser that speaks **native Playwright**. Set
+`SIFTD_BROWSER_SMOKE_ENDPOINT` to a secure `wss://` endpoint and
+`SIFTD_BROWSER_SMOKE_SSH_TARGET` to its SSH destination (`user@host`). The
+endpoint is intentionally configuration, not a checked-in service address; any
+query credential is redacted from smoke errors and receipts.
+
+The command builds the same temporary fixture DB and from-source server on
+local loopback, then owns one SSH reverse forward with loopback binds on both
+ends. The remote browser navigates only to that remote loopback fixture. It
+uses `chromium.connect()` and a per-page CDP session, preserving the existing
+CDP real-input flow, positive control, and both CSP sensors. It creates and
+closes only its own context; it never closes the shared remote browser/service.
+Use `--artifacts DIR` to retain only the redacted fixture receipt and CDP
+events; fixture database, server log, and SSH diagnostics stay in a temporary
+directory. It refuses a non-empty directory rather than overwriting prior evidence. The
+optional `browser` extra pins the Playwright client protocol and does not
+download a browser.
+
+The default local mode remains available. Its isolated Chromium launch includes
+`--use-mock-keychain`, so it cannot trigger a real macOS Keychain interaction.
+Remote mode is preferred where a suitable fixture-only browser service exists.

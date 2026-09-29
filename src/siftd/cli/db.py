@@ -1063,11 +1063,12 @@ Sync remotes:
         epilog="""examples:
   siftd db merge laptop-slice.db              # merge slice into main DB
   siftd db merge laptop-slice.db --dry-run    # preview what would be merged
-  siftd db merge laptop-slice.db --no-fts     # skip FTS5 rebuild""",
+  siftd db merge laptop-slice.db --no-fts     # compatibility no-op""",
     )
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
-    p_merge.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_merge.add_argument("--no-fts", action="store_true",
+                         help="Compatibility no-op; does not disable indexing")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.add_argument("--no-preflight", action="store_true",
@@ -1084,9 +1085,10 @@ creates or merges it into the target database.
 
 examples:
   ssh host siftd --db /path/team.db db receive < slice.db
-  ssh host siftd --db /path/team.db db receive --no-fts < slice.db""",
+  ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op""",
     )
-    p_receive.add_argument("--no-fts", action="store_true", help="Skip FTS5 index rebuild")
+    p_receive.add_argument("--no-fts", action="store_true",
+                           help="Compatibility no-op; does not disable indexing")
     p_receive.add_argument("--stage", action="store_true",
                            help="Stage payload in inbox for deferred merge (fast ACK)")
     p_receive.add_argument("--no-preflight", action="store_true",
