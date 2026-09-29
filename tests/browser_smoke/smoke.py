@@ -726,6 +726,36 @@ def set_fixture_port(port: int) -> None:
     BASE = f"http://127.0.0.1:{port}"
 
 
+# Only what the server process needs to start; everything else is withheld.
+FIXTURE_ENV_PASSTHROUGH = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TZ")
+
+
+def fixture_environment(workdir: Path) -> dict[str, str]:
+    """Environment for the fixture server, with nothing from the developer's home.
+
+    On loopback the server enables its live endpoints, which read agent session
+    files under HOME and the XDG directories (the sessions live zone, /follow).
+    Inherited, those would put real transcripts behind the fixture's port - and,
+    in remote mode, through the reverse forward into a shared browser. HOME and
+    XDG therefore point inside the workdir, and the rest is an allowlist rather
+    than a scrub, so a new SIFTD_* or home-derived variable cannot leak in.
+    """
+    home = workdir / "home"
+    env = {name: os.environ[name] for name in FIXTURE_ENV_PASSTHROUGH if name in os.environ}
+    env["HOME"] = str(home)
+    for name, relative in (
+        ("XDG_CONFIG_HOME", ".config"),
+        ("XDG_DATA_HOME", ".local/share"),
+        ("XDG_STATE_HOME", ".local/state"),
+        ("XDG_CACHE_HOME", ".cache"),
+    ):
+        path = home / relative
+        path.mkdir(parents=True, exist_ok=True)
+        env[name] = str(path)
+    env["SIFTD_NO_UPDATE_CHECK"] = "1"
+    return env
+
+
 def start_fixture(workdir: Path, port: int) -> tuple[subprocess.Popen[bytes], BinaryIO, str]:
     """Build the isolated fixture and serve it only on local loopback."""
     db_path = workdir / "fixture.db"
@@ -736,6 +766,7 @@ def start_fixture(workdir: Path, port: int) -> tuple[subprocess.Popen[bytes], Bi
         [str(siftd_bin), "--db", str(db_path), "serve", "--host", "127.0.0.1", "--port", str(port), "--no-auth"],
         stdout=server_log,
         stderr=subprocess.STDOUT,
+        env=fixture_environment(workdir),
     )
     return server, server_log, code_conv
 

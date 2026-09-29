@@ -145,7 +145,9 @@ query credential is redacted from smoke errors and receipts.
 
 The command builds the same temporary fixture DB and from-source server on
 local loopback, then owns one SSH reverse forward with loopback binds on both
-ends. The remote browser navigates only to that remote loopback fixture. It
+ends. In both modes the server runs with `HOME` and the XDG directories inside
+the temporary workdir and an allowlisted environment, so its live endpoints
+(sessions live zone, `/follow`) find no real agent sessions to serve. The remote browser navigates only to that remote loopback fixture. It
 uses `chromium.connect()` and a per-page CDP session, preserving the existing
 CDP real-input flow, positive control, and both CSP sensors. It creates and
 closes only its own context; it never closes the shared remote browser/service.

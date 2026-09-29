@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Internal
+
+- `./dev browser-smoke`'s fixture server now runs with its own `HOME` and XDG
+  directories and an allowlisted environment. It inherited the developer's, so
+  its live endpoints could read real agent session files; in 0.12.2's remote
+  mode that reached the remote browser through the tunnel, contradicting the
+  "fixture-only" description. Local mode kept it on the developer's machine.
+
 ## [0.12.2] - 2026-09-29
 
 ### Internal

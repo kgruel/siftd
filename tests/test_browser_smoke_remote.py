@@ -85,9 +85,32 @@ def test_fixture_server_is_explicitly_private_and_never_uses_default_db(tmp_path
     server, log, _ = smoke.start_fixture(tmp_path, 43210)
     log.close()
     assert isinstance(server, FakeProcess)
-    argv, _ = calls[0]
+    argv, kwargs = calls[0]
     assert argv[1:3] == ["--db", str(tmp_path / "fixture.db")]
     assert argv[-6:] == ["serve", "--host", "127.0.0.1", "--port", "43210", "--no-auth"]
+    assert kwargs["env"] == smoke.fixture_environment(tmp_path)
+
+
+def test_fixture_server_environment_withholds_the_developers_home(tmp_path: Path, monkeypatch):
+    # The live endpoints read agent sessions under HOME/XDG; none of the caller's
+    # may reach the fixture server, nor any SIFTD_* setting (e.g. delegation).
+    for name, value in {
+        "HOME": "/real/home", "XDG_CONFIG_HOME": "/real/config", "XDG_DATA_HOME": "/real/data",
+        "XDG_STATE_HOME": "/real/state", "XDG_CACHE_HOME": "/real/cache",
+        "SIFTD_SERVE_URL": "https://real.test", "SIFTD_SERVE_DELEGATE": "1", "SIFTD_DB": "/real/siftd.db",
+        "CLAUDE_CONFIG_DIR": "/real/claude", "SSH_AUTH_SOCK": "/real/agent.sock", "PATH": "/usr/bin:/bin",
+    }.items():
+        monkeypatch.setenv(name, value)
+    env = smoke.fixture_environment(tmp_path)
+    home = tmp_path / "home"
+    assert env["HOME"] == str(home)
+    for name in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"):
+        assert Path(env[name]).is_relative_to(home) and Path(env[name]).is_dir()
+    assert env["PATH"] == "/usr/bin:/bin"
+    assert env["SIFTD_NO_UPDATE_CHECK"] == "1"
+    assert set(env) <= {*smoke.FIXTURE_ENV_PASSTHROUGH, "HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME",
+                        "XDG_STATE_HOME", "XDG_CACHE_HOME", "SIFTD_NO_UPDATE_CHECK"}
+    assert not any("/real/" in value for name, value in env.items() if name != "PATH")
 
 
 def test_forward_cleanup_terminates_owned_process_and_requires_listener_absence(monkeypatch):
