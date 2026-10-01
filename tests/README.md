@@ -27,16 +27,18 @@ truth from `.github/workflows/ci.yml`, not an aspiration.
 | `tests/acceptance/` (`*.t`) | End-to-end CLI transcripts via pytest-prysk (cram-style) | base | `./dev test` | `test` |
 | Embeddings tests (across `tests/`, `mark.embeddings`) | Semantic search against a real fastembed/remote backend; the local ONNX stack | `embeddings` | `./dev test-embed`, `./dev test-all` | `test-with-embeddings` (3.12) |
 | Serve tests (across `tests/`, `mark.serve`) | HTTP routes, auth, delegation wire parity, Swiss UI renderers, e2e TestClient smoke | `serve` | `./dev test-serve`, `./dev test-all` | `test-with-serve` (3.12) |
-| Slow tests (`mark.slow`) | Tests >10s: real-subprocess sync e2e and similar | `slow` | `./dev test-slow` | `test-slow` — **release only** (`workflow_call`), not PR CI |
+| Slow tests (`mark.slow`) | Tests >10s: real-subprocess sync e2e and similar | `slow` | `./dev test-slow` | `test-slow` (3.12) |
 | `tests/browser_smoke/` (`smoke.py`) | T3 real-browser CSP smoke: headless Chromium over CDP | none — standalone script | `./dev browser-smoke` | **none** — no CI job runs it |
 
-Two caveats worth internalizing. First, the `slow` lane runs only when the
-publish workflow calls CI (`if: github.event_name == 'workflow_call'`), so a
-regression it would catch will not surface on a pull request — run `./dev
-test-slow` yourself before tagging a release. Second, the browser smoke is a
-standalone Python script, not a pytest marker, and nothing in `ci.yml` invokes
-it; it is a manual pre-merge check for serve UI / CSP work
-(`docs/guides/serve-browser-testing.md`). `tests/architecture/test_csp_fitness.py`
+Two caveats worth internalizing. First, every pytest lane job in `ci.yml` is
+unconditional — it runs on pull requests, main pushes, and the publish call
+alike. The `slow` lane was once gated on `github.event_name ==
+'workflow_call'`, which a called workflow never sees (it gets the caller's
+event), so it silently never ran. `tests/test_ci_lanes.py` keeps lane jobs
+unconditional and each CI `-m` expression equal to its `./dev test*` script's
+marker. Second, the browser smoke is a standalone Python script, not a pytest
+marker, and nothing in `ci.yml` invokes it; it is a manual pre-merge check for
+serve UI / CSP work (`docs/guides/serve-browser-testing.md`). `tests/architecture/test_csp_fitness.py`
 holds the T1/T2 CSP fitness functions that *do* run in CI (they `importorskip`
 litestar, so they execute in the serve/embed installs and skip in the base
 lane).
@@ -111,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 188 | 3359 |
+| `tests/` | 189 | 3362 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
 | `tests/cli/` | 29 | 635 |
@@ -152,6 +154,7 @@ docstring so its row is meaningful.
 | [test_caveats.py](test_caveats.py) | 120 | Tests for the caveats producer registry and dispatch threading. |
 | [test_caveats_wire.py](test_caveats_wire.py) | 6 | I5 — caveat round-trip across the delegation wire. |
 | [test_chunker.py](test_chunker.py) | 16 | Tests for token-aware chunking (schema-v2: estimator-decoupled, widened source_ids). |
+| [test_ci_lanes.py](test_ci_lanes.py) | 3 | CI runs every local pytest lane, unconditionally, with the same marker. |
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
