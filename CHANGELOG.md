@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- The GitLab mirror's `image:build` job (the homelab `siftd serve` image) is
+  tagged `homelab`, pinning it to the Docker-executor runner. Untagged, it
+  could be picked up by the instance's macOS shell runner, which ignores
+  `image:`/`services:` and so has no dind.
+
 - `./dev browser-smoke`'s fixture server now runs with its own `HOME` and XDG
   directories and an allowlisted environment. It inherited the developer's, so
   its live endpoints could read real agent session files; in 0.12.2's remote

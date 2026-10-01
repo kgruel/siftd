@@ -21,6 +21,13 @@ stages:
 
 image:build:
   stage: build
+  # Pin to the homelab Docker-executor runner. The instance's other runner
+  # (osxcompute-primary) is a macOS *shell* executor that also takes untagged
+  # jobs and ignores `image:`/`services:`, so an untagged dind job could run
+  # there with no dind at all. gruel.network practice:
+  # dind-ci-jobs-tag-homelab-runner.
+  tags:
+    - homelab
   image: docker:27
   services:
     - docker:27-dind
