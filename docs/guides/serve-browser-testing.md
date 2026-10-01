@@ -80,6 +80,24 @@ are already dev deps, no Playwright required):
    `Runtime.consoleAPICalled`, `Runtime.exceptionThrown`.
 3. Detect violations two ways: an in-page `securitypolicyviolation` listener and
    the CDP security-source log.
+4. **Wait on conditions, never fixed sleeps.** After `Page.navigate`, wait for
+   that navigation's `Page.loadEventFired` (scan from before the command: the
+   event can precede the reply). Load is not readiness here — `#main` mounts
+   its view by an htmx request after load — so then poll the concrete state
+   the next step needs via `Runtime.evaluate`, with a deadline. For htmx
+   actions, wait until the expected DOM is present **and** htmx is fully idle:
+   no `.htmx-request`, `.htmx-swapping` or `.htmx-settling` anywhere. The
+   request class alone is not enough — htmx drops it right after swapping the
+   response in and settles ~20ms later on a timer, and settling is when the
+   new content is processed and `htmx:afterSettle` (so `enhance.js`) runs;
+   `.htmx-settling` is removed in that same step. Also read a settle counter
+   (an `htmx:afterSettle` listener on `document`) before acting and require it
+   to advance, which stops a wait returning before the action's own request
+   starts when the expected DOM was already there. Keep reading the CDP wire
+   while polling so the security log is still collected. One gap remains: a
+   debounced trigger (the find box's `keyup … delay:350ms`) sends nothing
+   during its delay, so htmx looks idle then; waits after typing must name DOM
+   or URL state that only the final query produces.
 
 ### Three gotchas — each produced a false "it works"
 
@@ -132,7 +150,9 @@ its text-scan checks run in the base CI lane on every `./dev check`, and its
 `siftd.serve`-importing checks run wherever the `serve` extra is installed. T3
 is for library-internal risk; it's a manual pre-merge check for serve-layer
 changes touching headers/CSP/UI JS rather than a CI job, since it needs a
-browser dependency and carries async/timing flakiness.
+browser dependency. Its waits are condition-based with deadlines (step 4
+above), so a slow page makes it slower rather than wrong; a timeout fails the
+run naming the condition that never held, and the violation verdict still runs.
 
 ## Remote Browserless mode
 
