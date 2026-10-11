@@ -20,7 +20,7 @@ from siftd.storage.replacement import (
     snapshot_conversation,
 )
 from siftd.storage.sql_helpers import has_conversation_owners_table
-from siftd.storage.sqlite import delete_conversations, open_database
+from siftd.storage.sqlite import delete_conversations, open_database, schema_version
 
 logger = logging.getLogger(__name__)
 
@@ -84,8 +84,8 @@ def merge_database(
         conn.execute("ATTACH DATABASE ? AS src", (str(source_path),))
 
         # Reject schema version mismatch — merge is for same-version slices.
-        target_ver = conn.execute("PRAGMA main.user_version").fetchone()[0]
-        source_ver = conn.execute("PRAGMA src.user_version").fetchone()[0]
+        target_ver = schema_version(conn)
+        source_ver = schema_version(conn, "src")
         if target_ver != source_ver:
             conn.execute("DETACH DATABASE src")
             raise RuntimeError(

@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under a shrink-only allowlist. A positive control now guards the scanner.
   ([#62](https://github.com/kgruel/siftd/issues/62))
 
+- One function, `schema_version(conn)`, now reads a database's schema version.
+  The read was spelled inline 13 times across five packages; an architecture
+  test keeps it single. Two `db` commands leave the raw-SQL allowlist.
+  ([#67](https://github.com/kgruel/siftd/issues/67))
+
 ### Fixed
 
 - **`siftd doctor` now tells you what to do about files that failed ingestion:**

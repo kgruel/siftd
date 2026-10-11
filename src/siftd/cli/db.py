@@ -48,6 +48,7 @@ def cmd_db_info(args) -> int:
         return 1
 
     from siftd.api import open_database
+    from siftd.api.database import schema_version
 
     # Diagnostic command — report what's on disk; don't auto-upgrade as a side effect.
     conn = open_database(db, read_only=True, auto_upgrade=False)
@@ -56,7 +57,7 @@ def cmd_db_info(args) -> int:
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
         page_count = conn.execute("PRAGMA page_count").fetchone()[0]
         journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        user_version = schema_version(conn)
 
         # Check for FTS5 table
         fts_exists = conn.execute(
@@ -101,12 +102,13 @@ def cmd_db_schema_version(args) -> int:
         return 1
 
     from siftd.api import open_database
+    from siftd.api.database import schema_version
     from siftd.api.migrations import get_schema_version_info
 
     # Triage command — must report the on-disk version even when stale.
     conn = open_database(db, read_only=True, auto_upgrade=False)
     try:
-        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        current = schema_version(conn)
     finally:
         conn.close()
 
@@ -278,19 +280,20 @@ def cmd_db_restore(args) -> int:
 
     if getattr(args, "dry_run", False):
         from siftd.api import open_database
+        from siftd.api.database import schema_version
 
         tgt_schema_ver = None
         tgt_counts: dict[str, int] = {}
         if db.exists():
             conn2 = open_database(db, read_only=True, auto_upgrade=False)
             try:
-                tgt_schema_ver = conn2.execute("PRAGMA user_version").fetchone()[0]
+                tgt_schema_ver = schema_version(conn2)
                 tgt_counts = _table_row_counts(conn2)
             finally:
                 conn2.close()
         conn = open_database(source, read_only=True, auto_upgrade=False)
         try:
-            src_schema_ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            src_schema_ver = schema_version(conn)
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()

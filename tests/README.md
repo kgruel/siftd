@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3388 |
+| `tests/` | 191 | 3390 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 12 | 74 |
+| `tests/architecture/` | 12 | 75 |
 | `tests/cli/` | 29 | 635 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -287,7 +287,7 @@ docstring so its row is meaningful.
 | [test_stats_cache.py](test_stats_cache.py) | 14 | Tests for stats cache (write at ingest, read in db stats). |
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
-| [test_storage.py](test_storage.py) | 94 | Tests for siftd storage layer coverage. |
+| [test_storage.py](test_storage.py) | 96 | Tests for siftd storage layer coverage. |
 | [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
 | [test_sync_http_streaming.py](test_sync_http_streaming.py) | 20 | Tests for Y3: HTTP streaming for sync push and pull. |
@@ -348,7 +348,7 @@ docstring so its row is meaningful.
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 31 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 32 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |

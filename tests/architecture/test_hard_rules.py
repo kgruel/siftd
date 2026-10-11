@@ -5,12 +5,13 @@ test_imports.py (layer boundaries) with additional structural checks.
 """
 
 import ast
+import re
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from architecture.support import REPO_ROOT, SRC, literal_text, source_files
+from architecture.support import REPO_ROOT, SRC, docstring_ids, literal_text, source_files
 
 
 # =============================================================================
@@ -730,16 +731,8 @@ RAW_SQL_CLI_ALLOWLIST: dict[str, str] = {
         "table by table, from `sqlite_master` and COUNT(*)."
     ),
     "cli/db.py::cmd_db_info": (
-        "Inspection: page size/count, journal mode and user_version are the "
-        "report itself. user_version also belongs to #67."
-    ),
-    "cli/db.py::cmd_db_schema_version": (
-        "Inspection: reads the on-disk user_version of a stale database "
-        "without upgrading it. Dissolves into #67's single schema-version read."
-    ),
-    "cli/db.py::cmd_db_restore": (
-        "Restore --dry-run compares both databases' user_version. Dissolves into "
-        "#67's single schema-version read."
+        "Inspection: page size/count, journal mode and FTS presence are the "
+        "report itself."
     ),
 }
 
@@ -797,11 +790,36 @@ def test_raw_sql_cli_allowlist_only_shrinks():
     assert set(RAW_SQL_CLI_ALLOWLIST) <= {
         "cli/db.py::_table_row_counts",
         "cli/db.py::cmd_db_info",
-        "cli/db.py::cmd_db_schema_version",
-        "cli/db.py::cmd_db_restore",
     }, (
         "RAW_SQL_CLI_ALLOWLIST is shrink-only. Route new SQL through "
         "storage/ and api/ instead of adding an entry."
+    )
+
+
+_USER_VERSION_READ = re.compile(r"PRAGMA\s+(?:\w+\.)?user_version\s*$", re.IGNORECASE)
+
+
+def test_schema_version_has_one_reader():
+    """`storage.sqlite.schema_version` is the only place that reads user_version (#67).
+
+    It was spelled inline at thirteen sites across five packages; the next one
+    would have had no helper to find. Writes (`PRAGMA user_version = N`) are
+    migration steps and stay where they are.
+    """
+    offenders = []
+    for path in source_files():
+        tree = ast.parse(path.read_text())
+        prose = docstring_ids(tree)
+        for fn in ast.walk(tree):
+            if not isinstance(fn, ast.FunctionDef) or fn.name == "schema_version":
+                continue
+            for node in ast.walk(fn):
+                text = None if id(node) in prose else literal_text(node)
+                if text and _USER_VERSION_READ.search(text.strip()):
+                    offenders.append(f"{path.relative_to(SRC)}::{fn.name}")
+    assert not offenders, (
+        f"user_version read inline in {sorted(set(offenders))}; "
+        f"call schema_version(conn) instead."
     )
 
 
