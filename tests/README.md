@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 190 | 3379 |
+| `tests/` | 190 | 3380 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 12 | 71 |
+| `tests/architecture/` | 12 | 74 |
 | `tests/cli/` | 29 | 635 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -165,7 +165,7 @@ docstring so its row is meaningful.
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
-| [test_doctor.py](test_doctor.py) | 123 | Tests for the doctor module. |
+| [test_doctor.py](test_doctor.py) | 124 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
@@ -347,7 +347,7 @@ docstring so its row is meaningful.
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 31 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |

@@ -554,7 +554,7 @@ def find_sql_execute_calls(file_path: Path) -> list[tuple[int, str]]:
     except SyntaxError:
         return []
 
-    sql_re = re.compile(rf"\\b({'|'.join(_SQL_KEYWORDS)})\\b", re.IGNORECASE)
+    sql_re = re.compile(rf"\b({'|'.join(_SQL_KEYWORDS)})\b", re.IGNORECASE)
     lines = source.splitlines()
     results = []
 
@@ -722,21 +722,93 @@ class TestOptionalExtraBoundaries:
             )
 
 
-def test_no_raw_sql_in_cli_modules(src_dir):
-    """CLI modules should not execute raw SQL directly."""
-    violations = []
+# Functions in `cli/` that execute their own SQL, by `<module>::<function>`.
+# Shrink-only: an entry is a stated reason, not a suppression.
+RAW_SQL_CLI_ALLOWLIST: dict[str, str] = {
+    "cli/db.py::_table_row_counts": (
+        "`db` is the database-inspection command: it reports what is on disk, "
+        "table by table, from `sqlite_master` and COUNT(*)."
+    ),
+    "cli/db.py::cmd_db_info": (
+        "Inspection: page size/count, journal mode and user_version are the "
+        "report itself. user_version also belongs to #67."
+    ),
+    "cli/db.py::cmd_db_schema_version": (
+        "Inspection: reads the on-disk user_version of a stale database "
+        "without upgrading it. Dissolves into #67's single schema-version read."
+    ),
+    "cli/db.py::cmd_db_vacuum": (
+        "PRAGMA optimize after VACUUM. Dissolves once planner statistics have a "
+        "storage owner (#80)."
+    ),
+    "cli/db.py::cmd_db_restore": (
+        "Restore --dry-run compares both databases' user_version. Dissolves into "
+        "#67's single schema-version read."
+    ),
+}
 
-    for py_file in src_dir.rglob("cli*.py"):
-        for line_num, snippet in find_sql_execute_calls(py_file):
-            rel_path = py_file.relative_to(REPO_ROOT)
-            violations.append(f"{rel_path}:{line_num}: execute({snippet!r})")
 
-    if violations:
-        pytest.fail(
-            "Raw SQL execution found in CLI modules. "
-            "Use API/storage helpers instead:\n"
-            + "\n".join(violations)
-        )
+def _raw_sql_functions(path: Path) -> set[str]:
+    """Functions in one file whose body executes a SQL literal."""
+    sites = {line for line, _ in find_sql_execute_calls(path)}
+    if not sites:
+        return set()
+    owners = set()
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+            end = node.end_lineno or node.lineno
+            if any(node.lineno <= line <= end for line in sites):
+                owners.add(node.name)
+    return owners
+
+
+def _cli_raw_sql_offenders() -> dict[str, str]:
+    """`<module>::<function>` -> module path, for every raw-SQL function in cli/."""
+    found = {}
+    for path in source_files(SRC / "cli"):
+        rel = str(path.relative_to(SRC))
+        for name in _raw_sql_functions(path):
+            found[f"{rel}::{name}"] = rel
+    return found
+
+
+def test_no_raw_sql_in_cli_modules():
+    """CLI modules should not execute raw SQL directly (#62)."""
+    offenders = sorted(set(_cli_raw_sql_offenders()) - set(RAW_SQL_CLI_ALLOWLIST))
+    assert not offenders, (
+        f"Raw SQL executed in CLI modules: {offenders}. The api/ layer is the "
+        f"boundary; put the query in storage/ and reach it through api/."
+    )
+
+
+def test_raw_sql_cli_allowlist_has_no_stale_entries():
+    """An entry whose function stopped executing SQL must come out."""
+    stale = sorted(set(RAW_SQL_CLI_ALLOWLIST) - set(_cli_raw_sql_offenders()))
+    assert not stale, f"Remove from RAW_SQL_CLI_ALLOWLIST, no longer raw SQL: {stale}"
+
+
+def test_raw_sql_cli_allowlist_only_shrinks():
+    """The ratchet's own guard: entries come out, never in."""
+    assert set(RAW_SQL_CLI_ALLOWLIST) <= {
+        "cli/db.py::_table_row_counts",
+        "cli/db.py::cmd_db_info",
+        "cli/db.py::cmd_db_schema_version",
+        "cli/db.py::cmd_db_vacuum",
+        "cli/db.py::cmd_db_restore",
+    }, (
+        "RAW_SQL_CLI_ALLOWLIST is shrink-only. Route new SQL through "
+        "storage/ and api/ instead of adding an entry."
+    )
+
+
+def test_sql_scanner_finds_known_storage_sites():
+    """Positive control: a scanner that finds nothing is indistinguishable from
+    one that passes. The keyword regex once required a literal backslash and
+    matched nothing at all (#62)."""
+    hits = [s for f in source_files(SRC / "storage") for _, s in find_sql_execute_calls(f)]
+    assert len(hits) > 100
+    assert any(s.lstrip().upper().startswith("SELECT") for s in hits)
+    assert any(s.lstrip().upper().startswith("PRAGMA") for s in hits)
 
 
 # =============================================================================

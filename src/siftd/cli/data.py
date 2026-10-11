@@ -1355,18 +1355,9 @@ def _fix_pending_tags(conn, db_path):
 
 
 def _fix_blob_refcount(conn, db_path):
-    cur = conn.execute("""
-        UPDATE content_blobs
-        SET ref_count = COALESCE(
-            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
-        )
-        WHERE ref_count != COALESCE(
-            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
-        )
-    """)
-    updated = cur.rowcount
-    cur2 = conn.execute("DELETE FROM content_blobs WHERE ref_count = 0")
-    deleted = cur2.rowcount
+    from siftd.api.database import repair_blob_refcounts
+
+    updated, deleted = repair_blob_refcounts(conn)
     conn.commit()
     return f"{updated} blob(s) repaired, {deleted} orphan(s) removed"
 

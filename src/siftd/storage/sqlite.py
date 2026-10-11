@@ -2378,6 +2378,27 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     )
 
 
+
+def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
+    """Re-derive ``content_blobs.ref_count`` from ``event_tool_call`` and sweep orphans.
+
+    Returns ``(repaired, removed)``: blobs whose count was corrected, then blobs
+    deleted because nothing references them.
+    """
+    repaired = conn.execute("""
+        UPDATE content_blobs
+        SET ref_count = COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+        WHERE ref_count != COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+    """).rowcount
+    removed = conn.execute("DELETE FROM content_blobs WHERE ref_count = 0").rowcount
+    if commit:
+        conn.commit()
+    return repaired, removed
+
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
     conn.execute(

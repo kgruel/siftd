@@ -36,6 +36,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (one baseline run per mode, a handful after): a full run took 7s locally
   instead of 78s, and 15-21s remotely instead of 86s.
 
+- The architecture rule against raw SQL in CLI modules now runs. Its keyword
+  regex required a literal backslash and its glob matched no CLI module, so it
+  had never matched anything. The blob ref-count repair and `siftd id`'s turn
+  lookup moved into storage; `db`'s inspection commands keep their PRAGMAs
+  under a shrink-only allowlist. A positive control now guards the scanner.
+  ([#62](https://github.com/kgruel/siftd/issues/62))
+
 ### Fixed
 
 - **`siftd doctor` now tells you what to do about files that failed ingestion:**

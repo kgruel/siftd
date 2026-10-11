@@ -124,7 +124,7 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
     Raises AmbiguousPrefix if the prefix matches multiple conversations.
     """
     from siftd.api import resolve_entity_id
-    from siftd.api.events import resolve_event_row
+    from siftd.api.events import event_turn_number, resolve_event_row
 
     conv_full = resolve_entity_id(conn, "conversation", raw_id)  # may raise AmbiguousPrefix
     row = resolve_event_row(conn, raw_id)
@@ -152,7 +152,7 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
             },
         }
     if event_full:
-        turn = _event_turn_number(conn, row)
+        turn = event_turn_number(conn, row)
         return {
             "status": "ok",
             "kind": "event",
@@ -161,36 +161,6 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
         }
 
     return None
-
-
-def _event_turn_number(conn, event_row) -> int | None:
-    """Compute 1-based turn index for an event by walking parent chain to prompt anchor."""
-    if not event_row:
-        return None
-
-    # Walk parent chain until we reach a prompt
-    current_row = event_row
-    while current_row["kind"] != "prompt":
-        parent_id = current_row["parent_id"]
-        if not parent_id:
-            return None
-
-        current_row = conn.execute(
-            "SELECT id, kind, parent_id, timestamp, conversation_id FROM events WHERE id = ?",
-            (parent_id,),
-        ).fetchone()
-        if not current_row:
-            return None
-
-    prompt_row = current_row
-
-    count_row = conn.execute(
-        "SELECT COUNT(*) AS n FROM events"
-        " WHERE conversation_id = ? AND kind = 'prompt'"
-        " AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
-        (prompt_row["conversation_id"], prompt_row["timestamp"], prompt_row["timestamp"], prompt_row["id"]),
-    ).fetchone()
-    return int(count_row["n"]) if count_row else None
 
 
 def build_id_parser(subparsers) -> None:

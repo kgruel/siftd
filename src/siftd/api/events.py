@@ -17,6 +17,7 @@ from siftd.storage.attributes import get_attributes
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
+    fetch_event_turn_number,
 )
 from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
@@ -73,6 +74,11 @@ class EventDetail:
             out["tool_call"] = dict(self.kind_specific)
 
         return out
+
+
+def event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | None) -> int | None:
+    """1-based turn index of an event row (see ``fetch_event_turn_number``)."""
+    return fetch_event_turn_number(conn, event_row)
 
 
 def resolve_event_row(

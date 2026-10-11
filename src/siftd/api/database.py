@@ -151,6 +151,16 @@ def recreate_blob_triggers(conn: sqlite3.Connection) -> None:
     ensure_event_tool_call_triggers(conn)
 
 
+
+def repair_blob_refcounts(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``.
+
+    Does not commit.
+    """
+    from siftd.storage.sqlite import repair_blob_refcounts as _repair
+
+    return _repair(conn)
+
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:
     """Create or open a database, running migrations.
 
