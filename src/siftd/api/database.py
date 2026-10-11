@@ -151,12 +151,14 @@ def recreate_blob_triggers(conn: sqlite3.Connection) -> None:
     ensure_event_tool_call_triggers(conn)
 
 
-
-def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> None:
+def refresh_planner_stats(
+    conn: sqlite3.Connection, *, full: bool = False, commit: bool = False,
+) -> None:
     """Refresh the query planner's table statistics; ``full`` analyzes exhaustively."""
     from siftd.storage.sqlite import refresh_planner_stats as _refresh
 
-    _refresh(conn, full=full)
+    _refresh(conn, full=full, commit=commit)
+
 
 def repair_blob_refcounts(conn: sqlite3.Connection) -> tuple[int, int]:
     """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``.
@@ -166,6 +168,7 @@ def repair_blob_refcounts(conn: sqlite3.Connection) -> tuple[int, int]:
     from siftd.storage.sqlite import repair_blob_refcounts as _repair
 
     return _repair(conn)
+
 
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:
     """Create or open a database, running migrations.

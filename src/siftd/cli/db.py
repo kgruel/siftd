@@ -211,7 +211,7 @@ def cmd_db_vacuum(args) -> int:
     conn = open_database(db)
     try:
         conn.execute("VACUUM")
-        refresh_planner_stats(conn, full=True)
+        refresh_planner_stats(conn, full=True, commit=True)
     finally:
         conn.close()
 

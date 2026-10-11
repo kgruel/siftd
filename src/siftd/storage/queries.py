@@ -1146,7 +1146,6 @@ def fetch_all_conversation_ids(conn: sqlite3.Connection) -> list[str]:
     return [row["id"] for row in rows]
 
 
-
 def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | None) -> int | None:
     """1-based turn index of an event: walk its parent chain to the prompt
     anchoring it, then count that conversation's prompts up to and including it.
@@ -1177,6 +1176,7 @@ def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | N
         (current_row["conversation_id"], current_row["timestamp"], current_row["timestamp"], current_row["id"]),
     ).fetchone()
     return int(count_row["n"]) if count_row else None
+
 
 # =============================================================================
 # Search queries

@@ -222,7 +222,7 @@ def merge_database(
             rebuild_rollups(post_conn, commit=True)
             # A receive-only server grows by merges alone; nothing else
             # would ever give its planner statistics (#80).
-            refresh_planner_stats(post_conn)
+            refresh_planner_stats(post_conn, commit=True)
         finally:
             post_conn.close()
 

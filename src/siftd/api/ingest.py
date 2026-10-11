@@ -293,7 +293,7 @@ def _run_ingest_locked(
             on_event=on_event,
             filter_binary=filter_binary,
         )
-        refresh_planner_stats(conn)
+        refresh_planner_stats(conn, commit=True)
     finally:
         conn.close()
 

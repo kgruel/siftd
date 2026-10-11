@@ -2378,13 +2378,14 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     )
 
 
-
 # Rows per index ANALYZE samples on the bounded path. SQLite's documented
 # recommendation for `PRAGMA optimize`; measured ~3ms at 1M events.
 _ANALYSIS_LIMIT = 400
 
 
-def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> None:
+def refresh_planner_stats(
+    conn: sqlite3.Connection, *, full: bool = False, commit: bool = False,
+) -> None:
     """Keep ``sqlite_stat1`` present and roughly current, so join order is
     chosen from the table shapes rather than from defaults (#80).
 
@@ -2400,8 +2401,8 @@ def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> No
       changed enough to matter (0x10000 widens it to every table on 3.46+).
     - ``full=True``: an unbounded ``ANALYZE``, for the explicit ``db vacuum``.
 
-    Commits: ANALYZE writes ``sqlite_stat1`` and must not ride a caller's
-    open transaction.
+    Caller controls the commit, as everywhere in storage: ANALYZE writes
+    ``sqlite_stat1``, so callers on a write path pass ``commit=True``.
     """
     if full:
         conn.execute("PRAGMA analysis_limit = 0")
@@ -2412,7 +2413,9 @@ def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> No
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
         ).fetchone()
         conn.execute("PRAGMA optimize = 0x10002" if has_stats else "ANALYZE")
-    conn.commit()
+    if commit:
+        conn.commit()
+
 
 def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
     """Re-derive ``content_blobs.ref_count`` from ``event_tool_call`` and sweep orphans.
@@ -2433,6 +2436,7 @@ def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> 
     if commit:
         conn.commit()
     return repaired, removed
+
 
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""

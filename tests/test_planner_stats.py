@@ -51,7 +51,7 @@ def test_stats_flip_the_unpinned_snapshot_join(tmp_path):
     assert not _has_stats(conn)
     assert _first_table(conn, conv) == "ta", "the statless plan this guards against"
 
-    refresh_planner_stats(conn)
+    refresh_planner_stats(conn, commit=True)
 
     assert _has_stats(conn)
     assert _first_table(conn, conv) == "e"
@@ -60,10 +60,10 @@ def test_stats_flip_the_unpinned_snapshot_join(tmp_path):
 
 def test_refresh_with_existing_stats_is_safe_to_repeat(tmp_path):
     conn = _tagged_corpus(tmp_path / "t.db", n=10)
-    refresh_planner_stats(conn)
+    refresh_planner_stats(conn, commit=True)
     before = conn.execute("SELECT COUNT(*) FROM sqlite_stat1").fetchone()[0]
-    refresh_planner_stats(conn)
-    refresh_planner_stats(conn, full=True)
+    refresh_planner_stats(conn, commit=True)
+    refresh_planner_stats(conn, full=True, commit=True)
     assert conn.execute("SELECT COUNT(*) FROM sqlite_stat1").fetchone()[0] >= before > 0
     assert not conn.in_transaction
     conn.close()
@@ -102,6 +102,6 @@ def test_fresh_connection_gets_stats(tmp_path):
     _tagged_corpus(tmp_path / "t.db", n=10).close()
 
     conn = open_database(tmp_path / "t.db")
-    refresh_planner_stats(conn)
+    refresh_planner_stats(conn, commit=True)
     assert conn.execute("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'tag_assignments'").fetchone()[0]
     conn.close()

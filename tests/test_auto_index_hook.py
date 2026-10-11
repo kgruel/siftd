@@ -212,7 +212,7 @@ class _FakeConn:
 def _wire_run_ingest(monkeypatch, stats):
     conn = _FakeConn()
     monkeypatch.setattr(ingest_api, "create_database", lambda path: conn)
-    monkeypatch.setattr(ingest_api, "refresh_planner_stats", lambda _conn: None)
+    monkeypatch.setattr(ingest_api, "refresh_planner_stats", lambda _conn, **_kw: None)
     monkeypatch.setattr(
         ingest_api, "load_all_adapters",
         lambda **_kw: [SimpleNamespace(name="claude_code", module="mod")],

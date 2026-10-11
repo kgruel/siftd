@@ -69,7 +69,7 @@ def receive_database(
         fts_conn = open_database(target_db)
         try:
             rebuild_fts_index(fts_conn, commit=True)
-            refresh_planner_stats(fts_conn)
+            refresh_planner_stats(fts_conn, commit=True)
         finally:
             fts_conn.close()
         if user_id:
