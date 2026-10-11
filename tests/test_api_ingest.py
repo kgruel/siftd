@@ -11,8 +11,18 @@ from siftd.ingestion import IngestStats
 
 
 class _FakeConn:
+    """Stands in for the ingest connection; records the SQL run on it directly."""
+
     def __init__(self) -> None:
         self.closed = False
+        self.executed: list[str] = []
+
+    def execute(self, sql, *_args):
+        self.executed.append(sql)
+        return SimpleNamespace(fetchone=lambda: None)
+
+    def commit(self) -> None:
+        pass
 
     def close(self) -> None:
         self.closed = True
@@ -55,6 +65,8 @@ def test_run_ingest_returns_result_and_writes_stats_cache(tmp_path, monkeypatch)
     assert result.stats is stats
     assert result.elapsed_ms >= 0
     assert cache_calls == [{"db": str(db)}]
+    # A statless database gets its planner statistics before the connection closes (#80).
+    assert "ANALYZE" in conn.executed
     assert conn.closed is True
 
 

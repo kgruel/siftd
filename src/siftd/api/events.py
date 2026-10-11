@@ -18,6 +18,7 @@ from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
 )
+from siftd.storage.queries import fetch_event_turn_number as event_turn_number  # noqa: F401 — re-export for cli/id_cmd
 from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
 

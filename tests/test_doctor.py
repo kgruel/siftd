@@ -29,6 +29,7 @@ from siftd.doctor.checks import (
     FreelistCheck,
     FtsIntegrityCheck,
     FtsStaleCheck,
+    IngestErrorsCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
     SchemaCurrentCheck,
@@ -103,7 +104,7 @@ class TestListChecks:
         checks = list_checks()
         by_name = {c.name: c.has_fix for c in checks}
         assert by_name["ingest-pending"] is True
-        assert by_name["ingest-errors"] is False
+        assert by_name["ingest-errors"] is True
         assert by_name["adapter-stale"] is True
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
@@ -286,6 +287,55 @@ class TestIngestPendingCheck:
         for f in findings:
             assert f.check == "ingest-pending"
             assert f.severity in ("info", "warning", "error")
+
+
+class TestIngestErrorsCheck:
+    """Tests for the ingest-errors check."""
+
+    def _record(self, tmp_path, paths):
+        from siftd.storage.sqlite import get_or_create_harness, open_database, record_failed_file
+
+        db_path = tmp_path / "errors.db"
+        with closing(open_database(db_path)) as conn:
+            harness_id = get_or_create_harness(conn, "aider")
+            for i, path in enumerate(paths):
+                record_failed_file(conn, str(path), f"h{i}", harness_id, f"err{i}")
+            conn.commit()
+        return IngestErrorsCheck().run(_ctx_for(db_path, tmp_path))
+
+    def test_finding_names_the_remedy(self, tmp_path):
+        """A failed file still on disk is retried by the next ingest, and the finding says so (#55)."""
+        present = tmp_path / "a.md"
+        present.write_text("x")
+
+        findings = self._record(tmp_path, [present, tmp_path / "gone.md"])
+
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == "warning"
+        assert f.fix_available is True
+        assert f.fix_command == "siftd ingest"
+        assert f.message == (
+            "Adapter 'aider': 2 file(s) failed ingestion "
+            "(1 retried on every ingest, 1 no longer on disk)"
+        )
+        assert f.context == {"adapter": "aider", "count": 2, "missing": 1, "errors": ["err0", "err1"]}
+
+    def test_deleted_files_get_no_fix(self, tmp_path):
+        """Re-ingesting cannot clear the row of a file that is gone, so offering
+        `siftd ingest` would make `doctor fix` loop."""
+        findings = self._record(tmp_path, [tmp_path / "gone.md"])
+
+        assert findings[0].fix_available is False
+        assert findings[0].fix_command is None
+        assert findings[0].message.endswith("(1 no longer on disk)")
+
+    def test_no_errors_no_findings(self, tmp_path):
+        from siftd.storage.sqlite import open_database
+
+        db_path = tmp_path / "clean.db"
+        open_database(db_path).close()
+        assert IngestErrorsCheck().run(_ctx_for(db_path, tmp_path)) == []
 
 
 class TestAdapterStaleCheck:
@@ -2022,6 +2072,26 @@ class TestDbBlobRefcountDriftCheck:
         assert len(findings) >= 1
         assert findings[0].severity == "warning"
         assert findings[0].fix_command == "siftd doctor fix --blob-refcount"
+
+    def test_fix_repairs_what_the_check_reports(self, tmp_path):
+        """The --blob-refcount fix re-derives counts and sweeps the orphan it leaves."""
+        from siftd.api.database import repair_blob_refcounts
+
+        conn, db_path = _make_deep_ctx(tmp_path)
+        conn.execute("""
+            INSERT INTO content_blobs (hash, content, ref_count, created_at)
+            VALUES ('abc123', 'data', 99, '2024-01-01T00:00:00Z')
+        """)
+        conn.commit()
+
+        assert repair_blob_refcounts(conn) == (1, 1)
+        conn.commit()
+        assert conn.execute("SELECT COUNT(*) FROM content_blobs").fetchone()[0] == 0
+        conn.close()
+
+        ctx = _ctx_for(db_path, tmp_path)
+        assert DbBlobRefcountDriftCheck().run(ctx) == []
+        ctx.close()
 
     def test_check_attributes(self):
         check = DbBlobRefcountDriftCheck()

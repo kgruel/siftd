@@ -36,6 +36,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (one baseline run per mode, a handful after): a full run took 7s locally
   instead of 78s, and 15-21s remotely instead of 86s.
 
+- The architecture rule against raw SQL in CLI modules now runs. Its keyword
+  regex required a literal backslash and its glob matched no CLI module, so it
+  had never matched anything. The blob ref-count repair and `siftd id`'s turn
+  lookup moved into storage; `db`'s inspection commands keep their PRAGMAs
+  under a shrink-only allowlist. A positive control now guards the scanner.
+  ([#62](https://github.com/kgruel/siftd/issues/62))
+
+### Fixed
+
+- **`siftd doctor` now tells you what to do about files that failed ingestion:**
+  run `siftd ingest`, which retries them every time. Previously it reported only
+  a count. Failed files that no longer exist on disk are counted separately and
+  get no fix, since re-ingesting cannot clear them.
+  ([#55](https://github.com/kgruel/siftd/issues/55))
+
+- **Databases keep their query-planner statistics without `siftd db vacuum`.**
+  Ingest, merge and receive finish with a bounded `ANALYZE` (about 1ms at 1M
+  events); if it fails, a warning is logged and the ingest or push still
+  succeeds. Fresh databases, including a receive-only server's, previously had
+  no statistics, so some joins started from the unselective side.
+  `siftd db vacuum` now runs a full `ANALYZE`.
+  ([#80](https://github.com/kgruel/siftd/issues/80))
+
 ## [0.12.2] - 2026-09-29
 
 ### Internal

@@ -1146,6 +1146,38 @@ def fetch_all_conversation_ids(conn: sqlite3.Connection) -> list[str]:
     return [row["id"] for row in rows]
 
 
+def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | None) -> int | None:
+    """1-based turn index of an event: walk its parent chain to the prompt
+    anchoring it, then count that conversation's prompts up to and including it.
+
+    ``event_row`` needs ``id``, ``kind``, ``parent_id``, ``timestamp`` and
+    ``conversation_id``. Returns None when the chain ends without a prompt.
+    """
+    if not event_row:
+        return None
+
+    current_row = event_row
+    while current_row["kind"] != "prompt":
+        parent_id = current_row["parent_id"]
+        if not parent_id:
+            return None
+
+        current_row = conn.execute(
+            "SELECT id, kind, parent_id, timestamp, conversation_id FROM events WHERE id = ?",
+            (parent_id,),
+        ).fetchone()
+        if not current_row:
+            return None
+
+    count_row = conn.execute(
+        "SELECT COUNT(*) AS n FROM events"
+        " WHERE conversation_id = ? AND kind = 'prompt'"
+        " AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
+        (current_row["conversation_id"], current_row["timestamp"], current_row["timestamp"], current_row["id"]),
+    ).fetchone()
+    return int(count_row["n"]) if count_row else None
+
+
 # =============================================================================
 # Search queries
 # =============================================================================

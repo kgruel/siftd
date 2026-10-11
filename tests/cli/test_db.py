@@ -580,8 +580,13 @@ class TestDbErrorPaths:
             def stat(self):
                 return SimpleNamespace(st_size=next(self._sizes))
 
+        executed = []
+
         class _Conn:
-            def execute(self, *_a, **_kw):
+            def execute(self, sql, *_a, **_kw):
+                executed.append(sql)
+
+            def commit(self):
                 return None
 
             def close(self):
@@ -593,6 +598,9 @@ class TestDbErrorPaths:
         rc = main(["db", "vacuum"])
         assert rc == 0
         assert "Saved" in capsys.readouterr().out
+        # The explicit command analyzes exhaustively, not bounded (#80).
+        assert executed[0] == "VACUUM"
+        assert "PRAGMA analysis_limit = 0" in executed and "ANALYZE" in executed
 
 
 class TestDbSchemaVersion:
