@@ -11,7 +11,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.api._compat import warn_rebuild_fts_deprecated
+from siftd.api.compat import warn_rebuild_fts_deprecated
 
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 

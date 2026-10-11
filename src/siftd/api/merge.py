@@ -13,7 +13,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from siftd.api._compat import warn_rebuild_fts_deprecated
+from siftd.api.compat import warn_rebuild_fts_deprecated
 from siftd.storage.fts import rebuild_fts_index
 from siftd.storage.replacement import (
     ConversationCarryover,

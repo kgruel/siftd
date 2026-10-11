@@ -796,7 +796,29 @@ def test_raw_sql_cli_allowlist_only_shrinks():
     )
 
 
-_USER_VERSION_READ = re.compile(r"PRAGMA\s+(?:\w+\.)?user_version\s*$", re.IGNORECASE)
+# Any read of the pragma: `PRAGMA [schema.]user_version` in whatever spelling,
+# or the `pragma_user_version` table-valued function. Writes (`= N`) excluded.
+_USER_VERSION_READ = re.compile(r"user_version\b(?!\s*=)", re.IGNORECASE)
+_SCHEMA_VERSION_OWNER = "storage/sqlite.py::schema_version"
+
+
+def _user_version_reads() -> set[str]:
+    """`<module>::<function>` (or `::<module>`) of every literal reading user_version."""
+    found = set()
+    for path in source_files():
+        tree = ast.parse(path.read_text())
+        prose = docstring_ids(tree)
+        rel = str(path.relative_to(SRC))
+        owner_of: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                for node in ast.walk(fn):
+                    owner_of.setdefault(id(node), fn.name)
+        for node in ast.walk(tree):
+            text = None if id(node) in prose else literal_text(node)
+            if text and _USER_VERSION_READ.search(text):
+                found.add(f"{rel}::{owner_of.get(id(node), '<module>')}")
+    return found
 
 
 def test_schema_version_has_one_reader():
@@ -806,21 +828,16 @@ def test_schema_version_has_one_reader():
     would have had no helper to find. Writes (`PRAGMA user_version = N`) are
     migration steps and stay where they are.
     """
-    offenders = []
-    for path in source_files():
-        tree = ast.parse(path.read_text())
-        prose = docstring_ids(tree)
-        for fn in ast.walk(tree):
-            if not isinstance(fn, ast.FunctionDef) or fn.name == "schema_version":
-                continue
-            for node in ast.walk(fn):
-                text = None if id(node) in prose else literal_text(node)
-                if text and _USER_VERSION_READ.search(text.strip()):
-                    offenders.append(f"{path.relative_to(SRC)}::{fn.name}")
+    offenders = sorted(_user_version_reads() - {_SCHEMA_VERSION_OWNER})
     assert not offenders, (
-        f"user_version read inline in {sorted(set(offenders))}; "
-        f"call schema_version(conn) instead."
+        f"user_version read inline in {offenders}; call schema_version(conn) instead."
     )
+
+
+def test_user_version_scanner_finds_its_owner():
+    """Positive control: the scanner must see the one read it exempts, or a
+    regression in it would pass the ratchet above by finding nothing."""
+    assert _SCHEMA_VERSION_OWNER in _user_version_reads()
 
 
 def test_sql_scanner_finds_known_storage_sites():

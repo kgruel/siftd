@@ -40,12 +40,10 @@ def cmd_serve(args) -> int:
     host = getattr(args, "host", None) or str(get_config("serve.host") or "127.0.0.1")
     port = int(getattr(args, "port", None) or get_config("serve.port") or 8484)
     if get_config("serve.fts_rebuild") is not None:
-        from siftd.api._compat import REBUILD_FTS_REMOVAL
+        from siftd.api.compat import rebuild_fts_notice
 
-        status.warning(
-            "serve.fts_rebuild is deprecated and has no effect",
-            hint=f"Pushed content is always indexed. Remove the key; it is dropped in {REBUILD_FTS_REMOVAL}.",
-        )
+        message, hint = rebuild_fts_notice("serve.fts_rebuild")
+        status.warning(message, hint=hint)
     request_max_body_size = parse_size_bytes(
         str(get_config("serve.request_max_body_size") or "500MB")
     )

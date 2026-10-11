@@ -45,6 +45,7 @@ from siftd.api.database import (
     open_database,
     remove_database,
     run_preflight,
+    schema_version,
 )
 from siftd.api.doctor import (
     CheckInfo,
@@ -222,6 +223,7 @@ __all__ = [
     "open_database",
     "remove_database",
     "run_preflight",
+    "schema_version",
     # tags
     "DERIVATIVE_TAG",
     "ApplyResult",

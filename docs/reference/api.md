@@ -1572,6 +1572,14 @@ Audit a database and raise PreflightError on error-severity findings.
 def run_preflight(path: Path, label: str = ...) -> None
 ```
 
+### schema_version
+
+The schema version recorded in a database: its ``user_version``.
+
+```python
+def schema_version(conn: Connection, schema: str = ...) -> int
+```
+
 ### apply_tags
 
 Apply or remove tags with shared orchestration.

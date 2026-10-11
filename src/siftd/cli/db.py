@@ -47,8 +47,7 @@ def cmd_db_info(args) -> int:
         status.db_missing(db)
         return 1
 
-    from siftd.api import open_database
-    from siftd.api.database import schema_version
+    from siftd.api import open_database, schema_version
 
     # Diagnostic command — report what's on disk; don't auto-upgrade as a side effect.
     conn = open_database(db, read_only=True, auto_upgrade=False)
@@ -101,8 +100,7 @@ def cmd_db_schema_version(args) -> int:
         status.db_missing(db)
         return 1
 
-    from siftd.api import open_database
-    from siftd.api.database import schema_version
+    from siftd.api import open_database, schema_version
     from siftd.api.migrations import get_schema_version_info
 
     # Triage command — must report the on-disk version even when stale.
@@ -279,8 +277,7 @@ def cmd_db_restore(args) -> int:
     db = resolve_db(args)
 
     if getattr(args, "dry_run", False):
-        from siftd.api import open_database
-        from siftd.api.database import schema_version
+        from siftd.api import open_database, schema_version
 
         tgt_schema_ver = None
         tgt_counts: dict[str, int] = {}
@@ -420,12 +417,10 @@ def cmd_db_merge(args) -> int:
     from siftd.api.merge import merge_database
 
     if args.no_fts:
-        from siftd.api._compat import REBUILD_FTS_REMOVAL
+        from siftd.api.compat import rebuild_fts_notice
 
-        status.warning(
-            "--no-fts is deprecated and has no effect",
-            hint=f"Merged content is always indexed. The flag is removed in {REBUILD_FTS_REMOVAL}.",
-        )
+        message, hint = rebuild_fts_notice("--no-fts")
+        status.warning(message, hint=hint)
     dry_run = args.dry_run
     replace = not args.no_replace
 
