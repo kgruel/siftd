@@ -3384,8 +3384,9 @@ def record_failed_file(
 ) -> str:
     """Record a file that failed ingestion. Returns the record id.
 
-    Stores with conversation_id=NULL and error message so the file is tracked
-    and won't retry unless its hash changes.
+    Stores with conversation_id=NULL and error message so the file is tracked.
+    Ingest re-examines an errored row on every run, so it clears itself once
+    the cause is fixed.
     """
     from datetime import UTC, datetime
 

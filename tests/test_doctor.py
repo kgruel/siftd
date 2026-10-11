@@ -29,6 +29,7 @@ from siftd.doctor.checks import (
     FreelistCheck,
     FtsIntegrityCheck,
     FtsStaleCheck,
+    IngestErrorsCheck,
     IngestPendingCheck,
     OrphanedChunksCheck,
     SchemaCurrentCheck,
@@ -103,7 +104,7 @@ class TestListChecks:
         checks = list_checks()
         by_name = {c.name: c.has_fix for c in checks}
         assert by_name["ingest-pending"] is True
-        assert by_name["ingest-errors"] is False
+        assert by_name["ingest-errors"] is True
         assert by_name["adapter-stale"] is True
         assert by_name["embeddings-stale"] is True
         assert by_name["orphaned-chunks"] is True
@@ -286,6 +287,39 @@ class TestIngestPendingCheck:
         for f in findings:
             assert f.check == "ingest-pending"
             assert f.severity in ("info", "warning", "error")
+
+
+class TestIngestErrorsCheck:
+    """Tests for the ingest-errors check."""
+
+    def test_finding_names_the_remedy(self, tmp_path):
+        """A failed file is retried by the next ingest, and the finding says so (#55)."""
+        from siftd.storage.sqlite import get_or_create_harness, open_database, record_failed_file
+
+        db_path = tmp_path / "errors.db"
+        with closing(open_database(db_path)) as conn:
+            harness_id = get_or_create_harness(conn, "aider")
+            record_failed_file(conn, "/a.md", "h1", harness_id, "boom")
+            record_failed_file(conn, "/b.md", "h2", harness_id, "bang")
+            conn.commit()
+
+        findings = IngestErrorsCheck().run(_ctx_for(db_path, tmp_path))
+
+        assert len(findings) == 1
+        f = findings[0]
+        assert f.severity == "warning"
+        assert f.fix_available is True
+        assert f.fix_command == "siftd ingest"
+        assert "2 file(s) failed ingestion" in f.message
+        assert "retried on every ingest" in f.message
+        assert f.context == {"adapter": "aider", "count": 2, "errors": ["boom", "bang"]}
+
+    def test_no_errors_no_findings(self, tmp_path):
+        from siftd.storage.sqlite import open_database
+
+        db_path = tmp_path / "clean.db"
+        open_database(db_path).close()
+        assert IngestErrorsCheck().run(_ctx_for(db_path, tmp_path)) == []
 
 
 class TestAdapterStaleCheck:

@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (one baseline run per mode, a handful after): a full run took 7s locally
   instead of 78s, and 15-21s remotely instead of 86s.
 
+### Fixed
+
+- **`siftd doctor` now tells you what to do about files that failed ingestion:**
+  run `siftd ingest`, which retries them every time. Previously it reported only
+  a count. ([#55](https://github.com/kgruel/siftd/issues/55))
+
 ## [0.12.2] - 2026-09-29
 
 ### Internal
