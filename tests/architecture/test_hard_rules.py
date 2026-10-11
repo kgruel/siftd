@@ -671,6 +671,50 @@ class TestServeRoutesSerialization:
         )
 
 
+    def test_serve_taxonomy_reaches_the_app_handler(self, src_dir):
+        """Nothing between a route and app.py's handler may swallow the taxonomy (#72).
+
+        `_dispatch` must re-raise `SiftdError` before its `ValueError` and
+        catch-all branches, and no route may wrap `_dispatch` in a broad
+        `except`; either one turns a declared 501/503 back into a generic 500.
+        """
+        tree = ast.parse((src_dir / "serve" / "routes.py").read_text())
+
+        def _names(handler):
+            t = handler.type
+            elts = t.elts if isinstance(t, ast.Tuple) else [t]
+            return {e.id for e in elts if isinstance(e, ast.Name)}
+
+        dispatch = next(
+            n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_dispatch"
+        )
+        outer = next(n for n in dispatch.body if isinstance(n, ast.Try))
+        order = [_names(h) for h in outer.handlers]
+        first_siftd = next((i for i, ns in enumerate(order) if "SiftdError" in ns), None)
+        assert first_siftd is not None, "_dispatch must re-raise SiftdError for app.py's handler"
+        assert isinstance(outer.handlers[first_siftd].body[0], ast.Raise)
+        for i, ns in enumerate(order):
+            if ns & {"Exception", "ValueError"}:
+                assert first_siftd < i, "_dispatch must re-raise SiftdError before claiming it"
+
+        wrapped = []
+        for fn in tree.body:
+            if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) or fn.name == "_dispatch":
+                continue
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Try):
+                    continue
+                calls_dispatch = any(
+                    isinstance(c, ast.Call) and getattr(c.func, "id", None) == "_dispatch"
+                    for stmt in node.body for c in ast.walk(stmt)
+                )
+                broad = any(h.type is None or _names(h) & {"Exception", "BaseException"}
+                            for h in node.handlers)
+                if calls_dispatch and broad:
+                    wrapped.append(fn.name)
+        assert not wrapped, f"routes wrap _dispatch in a broad except: {wrapped}"
+
+
 class TestOptionalExtraBoundaries:
     """Optional extras must fail through stable availability gates."""
 

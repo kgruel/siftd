@@ -115,6 +115,11 @@ class EmbeddingsNotAvailable(DriftError):
         )
         super().__init__(self.message)
 
+    def to_dict(self) -> dict[str, object]:
+        # ``reason`` can be an EmbeddingConfigError's text, which may name a
+        # secret's location, so the wire gets the operation alone.
+        return {"error": f"{self.operation} requires an embedding backend, which this server does not have"}
+
 
 def require_embeddings(operation: str = "This operation") -> None:
     """Raise EmbeddingsNotAvailable unless a usable backend is configured/installed."""

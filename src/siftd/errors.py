@@ -32,6 +32,8 @@ tests/architecture/test_exceptions.py):
 
 from __future__ import annotations
 
+from http import HTTPStatus
+
 
 class SiftdError(Exception):
     """Base for errors whose message is complete and user-actionable.
@@ -42,29 +44,35 @@ class SiftdError(Exception):
     copy that didn't — join this root directly (exit 1, wire 500).
     """
 
-    # Root default: generic server failure; branches refine (400/503). A direct
-    # root joiner (e.g. a future slice's operation-family exception) keeps
-    # today's generic-500 wire behavior instead of AttributeError-ing serve's
-    # `except SiftdError: ... e.http_status` dispatch.
+    # Root default: generic server failure; branches refine (400/503). serve's
+    # app-level handler answers with it for every class in the taxonomy.
     http_status: int = 500
+
+    # Whether ``str(self)`` is written for a remote caller as well as the
+    # operator, so serve may send it. Default-deny: a message naming server
+    # paths, secrets' locations or upstream responses must never reach the wire
+    # because a class forgot to opt out. A class opts in; a raise site whose
+    # text is not safe sets it False on the instance.
+    wire_message: bool = False
 
     # Optional remediation NEXT STEP, rendered by the CLI backstop on
     # status.error's hint channel. Distinct from the message (the fact +
     # inline remediation): set it only when the follow-up is a separate
     # command the user could run (e.g. AnchorNotFound suggesting a search).
-    # CLI-only — serve bodies carry str(e) and drop the hint.
+    # CLI-only — the serve body is to_dict() and drops it.
     hint: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         """The serve wire body for this error (#72).
 
-        A direct root joiner is an operation failure whose message is written
-        for the operator (paths, token commands, stderr), so the wire gets a
-        generic body and the server log gets the message. The input and drift
-        branches below are written for the caller and carry it. A subclass with
-        structure to carry, or a message to redact, overrides this.
+        The message when ``wire_message`` allows it, else the status phrase
+        ("service unavailable"); serve logs the full message either way. A
+        subclass with structure to carry, or a fixed caller-safe message,
+        overrides this.
         """
-        return {"error": "internal server error"}
+        if self.wire_message:
+            return {"error": str(self)}
+        return {"error": HTTPStatus(self.http_status).phrase.lower()}
 
 
 class UserInputError(SiftdError):
@@ -76,9 +84,8 @@ class UserInputError(SiftdError):
     """
 
     http_status = 400
-
-    def to_dict(self) -> dict[str, object]:
-        return {"error": str(self)}
+    # The request is the caller's own; the message is about it.
+    wire_message = True
 
 
 class DriftError(SiftdError):
@@ -91,6 +98,3 @@ class DriftError(SiftdError):
     """
 
     http_status = 503
-
-    def to_dict(self) -> dict[str, object]:
-        return {"error": str(self)}

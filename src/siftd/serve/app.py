@@ -237,10 +237,14 @@ def create_app(
         `event_detail_route`). Litestar resolves handlers through the MRO, so
         `AmbiguousPrefix` reaches here and keeps its structured body.
         """
-        if exc.http_status >= 500:
-            logging.getLogger("siftd.serve").exception(
-                "%s on %s %s", type(exc).__name__, request.method, request.url.path,
-            )
+        log = logging.getLogger("siftd.serve")
+        if exc.http_status == 500:
+            log.exception("%s on %s %s", type(exc).__name__, request.method, request.url.path)
+        elif exc.http_status > 500:
+            # An environment state (no backend, stale index or schema): the
+            # message is the diagnosis, and a traceback per request is noise.
+            log.warning("%s on %s %s: %s", type(exc).__name__, request.method,
+                        request.url.path, exc)
         return Response(content=exc.to_dict(), status_code=exc.http_status)
 
     # `exc` stays unannotated: Litestar types the mapping's

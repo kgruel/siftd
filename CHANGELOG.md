@@ -11,12 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`siftd serve` answers every error with its declared status, on every route.**
   Routes outside the shared dispatcher (`/api/v1/pull`, query-parameter parsing,
-  event detail) turned everything but bad input into a generic 500. A stale or
-  misconfigured server now answers 503 or 501 with its message there too, as
-  the other routes already did. Operation failures (500) no longer put their
-  operator-facing message on the wire: the body is
-  `{"error": "internal server error"}`, and the message goes to the server
-  log. A client matching on 500 for these cases should match the declared
+  event detail) turned everything but bad input into a generic 500; a stale or
+  misconfigured server now answers 503 or 501 there too. Error bodies carry a
+  message only when it was written for the caller (bad input, an incompatible
+  embeddings index, most embedding-config problems). Everything else gets the
+  status phrase, such as `{"error": "service unavailable"}`, and the message goes
+  to the server log. Some messages that did reach clients before named server
+  paths, a secret's file or environment variable, or an upstream provider's
+  response. A client matching on 500 for these cases should match the declared
   status instead. ([#58](https://github.com/kgruel/siftd/issues/58),
   [#72](https://github.com/kgruel/siftd/issues/72))
 

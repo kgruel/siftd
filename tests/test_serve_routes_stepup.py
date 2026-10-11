@@ -140,11 +140,8 @@ def test_search_route_importerror_and_dispatch_error(monkeypatch, tmp_path):
     monkeypatch.setattr(builtins, "__import__", fake_import)
     r1 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", mode="fts"))
     assert r1.status_code == 501
-
-    monkeypatch.setattr(builtins, "__import__", real_import)
-    monkeypatch.setattr(routes, "_dispatch", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("boom")))
-    r2 = _run(routes.search_route.fn(SimpleNamespace(), db, q="hi", mode="fts"))
-    assert r2.status_code == 500
+    # The route's own catch-all around _dispatch is gone (#72): _dispatch turns
+    # non-taxonomy errors into a 500 itself and re-raises the taxonomy.
 
 
 def test_health_existing_db_and_pull_nonempty(monkeypatch, tmp_path):

@@ -358,8 +358,50 @@ class TestSearch:
             assert str(exc) not in resp.json()["error"]
         elif make_exc == "DirectSiftdError":
             assert resp.json() == {"error": "internal server error"}
+        elif make_exc == "EmbeddingsNotAvailable":
+            # Its reason can carry config text, so the wire names the operation only.
+            assert resp.json() == {
+                "error": "Search requires an embedding backend, which this server does not have"
+            }
         else:
             assert str(exc) in resp.json()["error"]
+
+    @pytest.mark.parametrize("site", ["token_ref", "upstream_echo", "plain_drift"])
+    def test_drift_messages_not_written_for_callers_stay_off_the_wire(
+        self, tmp_path, monkeypatch, site
+    ):
+        """Default-deny (#72): a drift message naming a server path, a secret's
+        location or an upstream response becomes the status phrase on the wire."""
+        from siftd.embeddings.base import EmbeddingConfigError
+        from siftd.errors import DriftError
+
+        secret = str(tmp_path / "secrets" / "embed-key")  # does not exist
+        if site == "plain_drift":
+            exc = DriftError(f"{secret} sits on read-only media next to its -wal")
+        elif site == "token_ref":
+            # The real raise site in embeddings/base.py, not a hand-set flag.
+            from siftd.embeddings.base import _build_remote, _EmbedSettings
+
+            settings = _EmbedSettings("openai", f"file:{secret}", "", None, "", "", "")
+            with pytest.raises(EmbeddingConfigError) as caught:
+                _build_remote("openai", settings)
+            exc = caught.value
+            assert secret in str(exc)  # the operator still sees where to look
+        else:
+            exc = EmbeddingConfigError("openai: request rejected (HTTP 400): {upstream body}")
+            exc.wire_message = False  # as embeddings/remote.py's raise site sets it
+        team_db = _make_team_db(tmp_path / "team.db", conversations=[{"external_id": "c1"}])
+
+        def _boom(*a, **k):
+            raise exc
+
+        monkeypatch.setattr("siftd.api.search.search_view", _boom)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/v1/search", params={"q": "hello"})
+        assert resp.status_code == 503
+        assert resp.json() == {"error": "service unavailable"}
+        assert secret not in resp.text
 
     def test_taxonomy_raised_outside_dispatch_keeps_its_status(self, tmp_path, monkeypatch):
         """#58: a route that never enters `_dispatch` (here /api/v1/pull) used to

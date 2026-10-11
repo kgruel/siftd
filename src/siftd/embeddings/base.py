@@ -44,6 +44,9 @@ class EmbeddingConfigError(DriftError, EmbeddingError):
     """[embed] config is present but unusable — bad backend name, unresolvable key ref,
     or a preset missing a required model/base_url. Never retried, never degraded."""
 
+    # Names a config key and what is wrong with it; two raise sites opt out.
+    wire_message = True
+
 
 class EmbeddingTransientError(RuntimeError, EmbeddingError):
     """A reachability blip — timeout, 429, 5xx, or network error. A single query can
@@ -173,7 +176,9 @@ def _build_remote(name: str, settings: _EmbedSettings) -> RemoteBackend:
         try:
             api_key = resolve_token_ref(settings.api_key)
         except TokenRefError as e:
-            raise EmbeddingConfigError(f"embed.api_key is unresolvable: {e}") from e
+            err = EmbeddingConfigError(f"embed.api_key is unresolvable: {e}")
+            err.wire_message = False  # names the key's file or environment variable
+            raise err from e
 
     # A preset's default dimension belongs to its default model; an overridden model's
     # dimension is learned from the first response unless embed.dimensions sets it explicitly.

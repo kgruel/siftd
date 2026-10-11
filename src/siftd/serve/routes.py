@@ -138,8 +138,10 @@ def _dispatch(
     owned by serialization/; html_routes deliberately uses output/ for
     fragment rendering.
 
-    Catches exceptions and returns a structured JSON error response
-    instead of letting raw tracebacks propagate as 500 errors.
+    Re-raises the ``SiftdError`` taxonomy for app.py's handler, which owns its
+    status and body on every route (#72); any other exception becomes a JSON
+    error response here instead of a raw traceback. A caller must not wrap
+    this in a broad ``except``, which would swallow the taxonomy.
     """
     import logging
 
@@ -1073,39 +1075,28 @@ def search_route(
         )
     except ValueError as e:
         return Response(content={"error": str(e)}, status_code=400)
-    try:
-        return _dispatch(
-            "/api/v1/search", "GET", search_view,
-            {"q": q, "db_path": db_path, "n": n, "recall": recall,
-             "mode": mode, "workspace": workspace,
-             "model": model, "since": since, "before": before,
-             "exclude_active": exclude_active,
-             "rerank": rerank, "lambda_": lambda_, "recency": recency,
-             "recency_half_life": recency_half_life,
-             "recency_max_boost": recency_max_boost,
-             "tag": tag, "all_tags": all_tags,
-             "no_tag": no_tag, "tag_kind": tag_kind,
-             "include_derivative": include_derivative,
-             "owner": owner, "tool": tool, "tool_tag": tool_tag,
-             "raw_fts": raw_fts,
-             # Recipe controls — search_view runs the post-processing recipe.
-             "view": view, "sort": sort, "select": select,
-             "threshold": threshold, "full": full,
-             "around": around, "turns": turns,
-             "issuer": "web"},
-            "search", db_path,
-            render_context={"debug_ids": debug_ids, "mode": mode},
-        )
-    except SiftdError:
-        raise  # _dispatch re-raises the taxonomy for app.py's handler
-    except Exception:
-        import logging
-
-        logging.getLogger("siftd.serve").exception("search error")
-        return Response(
-            content={"error": "search failed"},
-            status_code=500,
-        )
+    return _dispatch(
+        "/api/v1/search", "GET", search_view,
+        {"q": q, "db_path": db_path, "n": n, "recall": recall,
+         "mode": mode, "workspace": workspace,
+         "model": model, "since": since, "before": before,
+         "exclude_active": exclude_active,
+         "rerank": rerank, "lambda_": lambda_, "recency": recency,
+         "recency_half_life": recency_half_life,
+         "recency_max_boost": recency_max_boost,
+         "tag": tag, "all_tags": all_tags,
+         "no_tag": no_tag, "tag_kind": tag_kind,
+         "include_derivative": include_derivative,
+         "owner": owner, "tool": tool, "tool_tag": tool_tag,
+         "raw_fts": raw_fts,
+         # Recipe controls — search_view runs the post-processing recipe.
+         "view": view, "sort": sort, "select": select,
+         "threshold": threshold, "full": full,
+         "around": around, "turns": turns,
+         "issuer": "web"},
+        "search", db_path,
+        render_context={"debug_ids": debug_ids, "mode": mode},
+    )
 
 
 # ---------------------------------------------------------------------------
