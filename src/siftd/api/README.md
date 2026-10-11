@@ -28,6 +28,7 @@ the tag" respectively).
 
 | Module | Summary |
 |--------|---------|
+| [_compat.py](_compat.py) | Deprecated surface still accepted, each with its stated removal version. |
 | [_pi_identity_preflight.py](_pi_identity_preflight.py) | Private, fixture-only Pi identity exposure diagnostic (never an apply token). |
 | [_search_log_capture.py](_search_log_capture.py) | Shared search-log capture helpers used by api/search.py and api/conversations.py. |
 | [adapters.py](adapters.py) | Adapter discovery API. |

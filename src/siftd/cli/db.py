@@ -419,7 +419,13 @@ def cmd_db_merge(args) -> int:
 
     from siftd.api.merge import merge_database
 
-    rebuild_fts = not args.no_fts
+    if args.no_fts:
+        from siftd.api._compat import REBUILD_FTS_REMOVAL
+
+        status.warning(
+            "--no-fts is deprecated and has no effect",
+            hint=f"Merged content is always indexed. The flag is removed in {REBUILD_FTS_REMOVAL}.",
+        )
     dry_run = args.dry_run
     replace = not args.no_replace
 
@@ -427,7 +433,6 @@ def cmd_db_merge(args) -> int:
         result = merge_database(
             target_db=db,
             source_path=source,
-            rebuild_fts=rebuild_fts,
             dry_run=dry_run,
             replace=replace,
             preflight=not args.no_preflight,
@@ -578,10 +583,10 @@ def cmd_db_receive(args) -> int:
 
         from siftd.api.receive import receive_database
 
-        rebuild_fts = not args.no_fts
-        result = receive_database(
-            tmp_path, db, rebuild_fts=rebuild_fts, preflight=not args.no_preflight
-        )
+        # --no-fts is accepted and ignored without a warning: it is part of
+        # what sync clients send (api/sync.py::_push_ssh), and receive's
+        # stderr is what they show the user when a push fails.
+        result = receive_database(tmp_path, db, preflight=not args.no_preflight)
         print(json.dumps(result))
         return 0
 
@@ -1066,13 +1071,12 @@ Sync remotes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd db merge laptop-slice.db              # merge slice into main DB
-  siftd db merge laptop-slice.db --dry-run    # preview what would be merged
-  siftd db merge laptop-slice.db --no-fts     # compatibility no-op""",
+  siftd db merge laptop-slice.db --dry-run    # preview what would be merged""",
     )
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
     p_merge.add_argument("--no-fts", action="store_true",
-                         help="Compatibility no-op; does not disable indexing")
+                         help="Deprecated, no effect (removed in 0.14.0)")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.add_argument("--no-preflight", action="store_true",
@@ -1088,11 +1092,9 @@ Sync remotes:
 creates or merges it into the target database.
 
 examples:
-  ssh host siftd --db /path/team.db db receive < slice.db
-  ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op""",
+  ssh host siftd --db /path/team.db db receive < slice.db""",
     )
-    p_receive.add_argument("--no-fts", action="store_true",
-                           help="Compatibility no-op; does not disable indexing")
+    p_receive.add_argument("--no-fts", action="store_true", help=argparse.SUPPRESS)
     p_receive.add_argument("--stage", action="store_true",
                            help="Stage payload in inbox for deferred merge (fast ACK)")
     p_receive.add_argument("--no-preflight", action="store_true",

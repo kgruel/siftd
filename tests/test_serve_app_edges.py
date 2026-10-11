@@ -14,7 +14,7 @@ def test_create_app_without_auth_has_no_auth_middleware(tmp_path):
     # the rate limiter (F4, on by default) would otherwise add its own entry.
     # The security-headers middleware (F3) is unconditional.
     app = serve_app.create_app(
-        db_path=tmp_path / "db.db", auth_config=None, fts_rebuild="off",
+        db_path=tmp_path / "db.db", auth_config=None,
         rate_limit_per_minute=0,
     )
     assert [type(m) for m in app.middleware] == [serve_app._SecurityHeadersMiddleware]
@@ -27,11 +27,13 @@ def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_
     monkeypatch.setattr("siftd.serve.auth.create_auth_middleware", lambda _cfg: marker)
     db = tmp_path / "team.db"
     app = serve_app.create_app(
-        db_path=db, auth_config={"issuer": "https://idp"}, fts_rebuild="scheduled",
+        db_path=db, auth_config={"issuer": "https://idp"},
         rate_limit_per_minute=0,
     )
     assert marker in app.middleware
-    assert (asyncio.run(app.dependencies["db_path"].dependency()), asyncio.run(app.dependencies["fts_rebuild"].dependency())) == (db, "scheduled")
+    assert asyncio.run(app.dependencies["db_path"].dependency()) == db
+    # serve.fts_rebuild's provider is gone with the knob it served (#74).
+    assert "fts_rebuild" not in app.dependencies
 
 
 def test_ui_shell_public_but_data_routes_require_auth(tmp_path):

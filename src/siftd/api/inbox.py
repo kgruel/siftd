@@ -161,7 +161,7 @@ def _process_one(
         from siftd.api.receive import receive_database
 
         result = receive_database(
-            payload_path, db_path, rebuild_fts=True,
+            payload_path, db_path,
             user_id=user_id, push_id=push_id,
         )
         conversations = result.get("conversations", 0)

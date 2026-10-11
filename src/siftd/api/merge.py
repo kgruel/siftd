@@ -13,6 +13,7 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
+from siftd.api._compat import warn_rebuild_fts_deprecated
 from siftd.storage.fts import rebuild_fts_index
 from siftd.storage.replacement import (
     ConversationCarryover,
@@ -29,7 +30,7 @@ def merge_database(
     target_db: Path,
     source_path: Path,
     *,
-    rebuild_fts: bool = True,
+    rebuild_fts: bool | None = None,
     dry_run: bool = False,
     replace: bool = True,
     before_commit: Callable[[sqlite3.Connection, dict], None] | None = None,
@@ -41,11 +42,9 @@ def merge_database(
     Args:
         target_db: Path to the main siftd database.
         source_path: Path to the source database to merge in.
-        rebuild_fts: Accepted and ignored. Merged content is indexed as part
-            of the merge (#49), so this no longer decides whether it is
-            searchable; it used to trigger a *full* corpus rebuild on top,
-            which the scoped write makes redundant. Kept for compatibility —
-            removal is tracked in #74.
+        rebuild_fts: Deprecated, no effect; passing it warns, and it is removed
+            in 0.14.0 (#74). Merged content is indexed as part of the merge
+            (#49), so this no longer decides whether it is searchable.
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
             versions from the source. If False, keep existing versions.
@@ -70,6 +69,7 @@ def merge_database(
         FileNotFoundError: If either database does not exist.
         PreflightError: If preflight=True and source fails integrity checks.
     """
+    warn_rebuild_fts_deprecated("merge_database", rebuild_fts)
     if not target_db.exists():
         raise FileNotFoundError(f"Target database not found: {target_db}")
     if not source_path.exists():

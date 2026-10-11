@@ -44,7 +44,6 @@ siftd serve --db /data/team.db --port 9000 --no-auth
 db = "/data/siftd/team.db"
 host = "0.0.0.0"
 port = 8484
-fts_rebuild = "on_push"    # "on_push" | "scheduled" | "off"
 ```
 
 ## Authentication

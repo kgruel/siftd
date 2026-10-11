@@ -107,7 +107,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
 
     # push invalid tiny body
     tiny = _Req(b"short")
-    bad = _run(routes.push.fn(tiny, db, "on_push"))
+    bad = _run(routes.push.fn(tiny, db))
     assert bad.status_code == 400
 
     # push success path with mocks
@@ -117,7 +117,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
     monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda _s: None)
     ok_req = _Req(b"x" * 32, client=SimpleNamespace(host="127.0.0.1"))
-    ok = _run(routes.push.fn(ok_req, db, "on_push"))
+    ok = _run(routes.push.fn(ok_req, db))
     assert ok.status_code == 201
 
     # pull empty slice path
