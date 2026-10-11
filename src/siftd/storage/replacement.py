@@ -148,10 +148,10 @@ def snapshot_conversation(
     # `idx_events_conversation_kind` and then both columns of the tag index.
     #
     # Measured on 300 conversations / 6,000 event tags with no stats: 1654µs
-    # against 17µs per conversation, same rows. `ANALYZE` is never emitted
-    # except by `siftd db optimize`, on request, so a fresh database —
-    # the receiving end of a push, which is exactly where merge calls this once
-    # per replaced conversation — is the no-stats case by default.
+    # against 17µs per conversation, same rows. Write paths now refresh stats
+    # as they finish (`refresh_planner_stats`, #80), but a merge's replacements
+    # run *before* its refresh, so the first push into a fresh database still
+    # executes this with none. The pin stays.
     event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
     for row in conn.execute(
         f"""

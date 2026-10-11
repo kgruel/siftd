@@ -14,7 +14,7 @@ from time import perf_counter
 from typing import Literal
 
 from siftd.adapters.registry import load_all_adapters, wrap_adapter_paths
-from siftd.api.database import create_database
+from siftd.api.database import create_database, refresh_planner_stats
 from siftd.api.search import rebuild_fts_index
 from siftd.errors import UserInputError
 from siftd.ingestion import IngestEvent, IngestStats, ingest_all
@@ -293,6 +293,7 @@ def _run_ingest_locked(
             on_event=on_event,
             filter_binary=filter_binary,
         )
+        refresh_planner_stats(conn)
     finally:
         conn.close()
 

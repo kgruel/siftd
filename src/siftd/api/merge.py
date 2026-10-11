@@ -216,9 +216,13 @@ def merge_database(
     if not dry_run:
         post_conn = open_database(target_db)
         try:
+            from siftd.storage.sqlite import refresh_planner_stats
             from siftd.storage.usage_rollup import rebuild_rollups
 
             rebuild_rollups(post_conn, commit=True)
+            # A receive-only server grows by merges alone; nothing else
+            # would ever give its planner statistics (#80).
+            refresh_planner_stats(post_conn)
         finally:
             post_conn.close()
 

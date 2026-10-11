@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 190 | 3380 |
+| `tests/` | 191 | 3385 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 74 |
 | `tests/cli/` | 29 | 635 |
@@ -231,6 +231,7 @@ docstring so its row is meaningful.
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
+| [test_planner_stats.py](test_planner_stats.py) | 5 | Planner statistics are a maintained state, not something a user has to ask for (#80). |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |

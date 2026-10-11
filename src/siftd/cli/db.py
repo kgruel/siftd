@@ -206,11 +206,12 @@ def cmd_db_vacuum(args) -> int:
     size_before = db.stat().st_size
 
     from siftd.api import open_database
+    from siftd.api.database import refresh_planner_stats
 
     conn = open_database(db)
     try:
         conn.execute("VACUUM")
-        conn.execute("PRAGMA optimize")
+        refresh_planner_stats(conn, full=True)
     finally:
         conn.close()
 

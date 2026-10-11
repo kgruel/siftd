@@ -152,6 +152,12 @@ def recreate_blob_triggers(conn: sqlite3.Connection) -> None:
 
 
 
+def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> None:
+    """Refresh the query planner's table statistics; ``full`` analyzes exhaustively."""
+    from siftd.storage.sqlite import refresh_planner_stats as _refresh
+
+    _refresh(conn, full=full)
+
 def repair_blob_refcounts(conn: sqlite3.Connection) -> tuple[int, int]:
     """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``.
 

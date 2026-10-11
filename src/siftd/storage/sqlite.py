@@ -2379,6 +2379,41 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
 
 
 
+# Rows per index ANALYZE samples on the bounded path. SQLite's documented
+# recommendation for `PRAGMA optimize`; measured ~3ms at 1M events.
+_ANALYSIS_LIMIT = 400
+
+
+def refresh_planner_stats(conn: sqlite3.Connection, *, full: bool = False) -> None:
+    """Keep ``sqlite_stat1`` present and roughly current, so join order is
+    chosen from the table shapes rather than from defaults (#80).
+
+    Without stats the planner can drive a join from the unselective side: the
+    replacement snapshot in ``storage/replacement.py`` scanned every event tag
+    per conversation until it pinned its order with CROSS JOIN. Callers are the
+    write paths that change the corpus's size: ingest, merge, receive.
+
+    - No stats yet: a bounded ``ANALYZE``. ``PRAGMA optimize`` alone cannot be
+      relied on here, because before SQLite 3.46 it only considers tables this
+      connection has already queried, so on a fresh connection it does nothing.
+    - Stats present: ``PRAGMA optimize``, a near no-op unless a table has
+      changed enough to matter (0x10000 widens it to every table on 3.46+).
+    - ``full=True``: an unbounded ``ANALYZE``, for the explicit ``db vacuum``.
+
+    Commits: ANALYZE writes ``sqlite_stat1`` and must not ride a caller's
+    open transaction.
+    """
+    if full:
+        conn.execute("PRAGMA analysis_limit = 0")
+        conn.execute("ANALYZE")
+    else:
+        conn.execute(f"PRAGMA analysis_limit = {_ANALYSIS_LIMIT}")
+        has_stats = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
+        ).fetchone()
+        conn.execute("PRAGMA optimize = 0x10002" if has_stats else "ANALYZE")
+    conn.commit()
+
 def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
     """Re-derive ``content_blobs.ref_count`` from ``event_tool_call`` and sweep orphans.
 

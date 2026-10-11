@@ -737,10 +737,6 @@ RAW_SQL_CLI_ALLOWLIST: dict[str, str] = {
         "Inspection: reads the on-disk user_version of a stale database "
         "without upgrading it. Dissolves into #67's single schema-version read."
     ),
-    "cli/db.py::cmd_db_vacuum": (
-        "PRAGMA optimize after VACUUM. Dissolves once planner statistics have a "
-        "storage owner (#80)."
-    ),
     "cli/db.py::cmd_db_restore": (
         "Restore --dry-run compares both databases' user_version. Dissolves into "
         "#67's single schema-version read."
@@ -793,7 +789,6 @@ def test_raw_sql_cli_allowlist_only_shrinks():
         "cli/db.py::_table_row_counts",
         "cli/db.py::cmd_db_info",
         "cli/db.py::cmd_db_schema_version",
-        "cli/db.py::cmd_db_vacuum",
         "cli/db.py::cmd_db_restore",
     }, (
         "RAW_SQL_CLI_ALLOWLIST is shrink-only. Route new SQL through "

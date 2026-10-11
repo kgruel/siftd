@@ -65,10 +65,11 @@ def receive_database(
         # merge, and merges never wrote the index either. There is nothing to
         # scope to — the whole file is what arrived (#49).
         from siftd.storage.fts import rebuild_fts_index
-        from siftd.storage.sqlite import open_database
+        from siftd.storage.sqlite import open_database, refresh_planner_stats
         fts_conn = open_database(target_db)
         try:
             rebuild_fts_index(fts_conn, commit=True)
+            refresh_planner_stats(fts_conn)
         finally:
             fts_conn.close()
         if user_id:
