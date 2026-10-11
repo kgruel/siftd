@@ -194,9 +194,11 @@ class RemoteBackend:
                 delay *= 2
                 continue
             # Other 4xx: bad request (e.g. unknown model, malformed input) — not retryable.
-            raise EmbeddingConfigError(
+            err = EmbeddingConfigError(
                 f"{self.name}: request rejected (HTTP {status}): {resp.text[:200]}"
             )
+            err.wire_message = False  # echoes the upstream provider's response
+            raise err
 
         raise last_transient or EmbeddingTransientError(f"{self.name}: embedding request failed")
 

@@ -168,9 +168,10 @@ def test_dispatch_query_error_returns_400(monkeypatch, tmp_path):
     def _raise(*_a, **_kw):
         raise QueryError("Missing template variables: foo")
     monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
-    out = routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
-    assert out.status_code == 400
-    assert "Missing template variables" in out.content["error"]
+    # _dispatch re-raises the taxonomy; app.py's handler owns status and body
+    # (#72), pinned over HTTP in test_serve.py.
+    with pytest.raises(QueryError):
+        routes._dispatch("/api/v1/x", "GET", lambda: None, {}, "stats", tmp_path / "db.db")
 
 
 def test_event_detail_route_threads_effective_owner(monkeypatch, tmp_path):
@@ -202,13 +203,20 @@ def test_dispatch_ambiguous_prefix_returns_structured_400(monkeypatch, tmp_path)
         raise AmbiguousPrefix("01ABC", ["01ABCDEF0001", "01ABCDEF0002"], 2)
 
     monkeypatch.setattr("siftd.api.dispatch.execute", _raise)
-    out = routes._dispatch("/api/v1/conversations/{id}", "GET", lambda: None, {}, "detail", tmp_path / "db.db")
-    assert out.status_code == 400
-    assert out.content["kind"] == "ambiguous_prefix"
-    assert out.content["prefix"] == "01ABC"
-    assert out.content["matched_ids"] == ["01ABCDEF0001", "01ABCDEF0002"]
-    assert out.content["total"] == 2
-    assert "error" in out.content  # human message still present
+    from litestar.testing import TestClient
+
+    from siftd.serve.app import create_app
+
+    app = create_app(db_path=tmp_path / "db.db", auth_config=None, rate_limit_per_minute=0)
+    with TestClient(app, raise_server_exceptions=False) as client:
+        resp = client.get("/api/v1/conversations/01ABC")
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["kind"] == "ambiguous_prefix"
+    assert body["prefix"] == "01ABC"
+    assert body["matched_ids"] == ["01ABCDEF0001", "01ABCDEF0002"]
+    assert body["total"] == 2
+    assert "error" in body  # human message still present
 
 
 def test_tag_write_invalid_json_returns_400(monkeypatch, tmp_path):

@@ -578,6 +578,8 @@ def _decode_embedding_numpy(blob: bytes) -> np.ndarray:
 class IndexCompatError(DriftError):
     """Raised when index metadata is incompatible with current backend configuration."""
 
+    wire_message = True  # versions, backend/model names and the rebuild command
+
 
 def validate_index_compat(
     conn: sqlite3.Connection,

@@ -72,6 +72,11 @@ class SchemaUpgradeRequiredError(DriftError):
     writable copy first.
     """
 
+    def to_dict(self) -> dict[str, object]:
+        # The message names the server's absolute database path: right for the
+        # CLI, whose operator owns the filesystem, never for the wire (F8a).
+        return {"error": "server database schema requires upgrade"}
+
 
 def connect_read_only(
     db_path: Path,

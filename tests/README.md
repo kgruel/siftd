@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3391 |
+| `tests/` | 191 | 3393 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 12 | 76 |
+| `tests/architecture/` | 12 | 77 |
 | `tests/cli/` | 29 | 639 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -259,7 +259,7 @@ docstring so its row is meaningful.
 | [test_search_serializer_drift.py](test_search_serializer_drift.py) | 4 | Anti-drift tests for search dataclass serialization. |
 | [test_serialization_ingest_backfill.py](test_serialization_ingest_backfill.py) | 3 | Anti-drift tests for ingest/backfill result serialization. |
 | [test_serialization_tags.py](test_serialization_tags.py) | 3 | — |
-| [test_serve.py](test_serve.py) | 48 | Tests for siftd serve — HTTP team sync server. |
+| [test_serve.py](test_serve.py) | 50 | Tests for siftd serve — HTTP team sync server. |
 | [test_serve_app_edges.py](test_serve_app_edges.py) | 3 | — |
 | [test_serve_auth_edges.py](test_serve_auth_edges.py) | 45 | — |
 | [test_serve_auth_focus.py](test_serve_auth_focus.py) | 1 | — |
@@ -348,7 +348,7 @@ docstring so its row is meaningful.
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 33 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 34 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |

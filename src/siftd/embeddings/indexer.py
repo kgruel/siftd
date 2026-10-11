@@ -63,6 +63,8 @@ class IncrementalCompatError(DriftError):
     rebuild, never a silent mix.
     """
 
+    wire_message = True  # versions, backend/model names and the rebuild command
+
 
 @dataclass
 class IndexStats:
