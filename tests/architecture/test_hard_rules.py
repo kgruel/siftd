@@ -5,12 +5,13 @@ test_imports.py (layer boundaries) with additional structural checks.
 """
 
 import ast
+import re
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from architecture.support import REPO_ROOT, SRC, literal_text, source_files
+from architecture.support import REPO_ROOT, SRC, docstring_ids, literal_text, source_files
 
 
 # =============================================================================
@@ -730,16 +731,8 @@ RAW_SQL_CLI_ALLOWLIST: dict[str, str] = {
         "table by table, from `sqlite_master` and COUNT(*)."
     ),
     "cli/db.py::cmd_db_info": (
-        "Inspection: page size/count, journal mode and user_version are the "
-        "report itself. user_version also belongs to #67."
-    ),
-    "cli/db.py::cmd_db_schema_version": (
-        "Inspection: reads the on-disk user_version of a stale database "
-        "without upgrading it. Dissolves into #67's single schema-version read."
-    ),
-    "cli/db.py::cmd_db_restore": (
-        "Restore --dry-run compares both databases' user_version. Dissolves into "
-        "#67's single schema-version read."
+        "Inspection: page size/count, journal mode and FTS presence are the "
+        "report itself."
     ),
 }
 
@@ -797,12 +790,54 @@ def test_raw_sql_cli_allowlist_only_shrinks():
     assert set(RAW_SQL_CLI_ALLOWLIST) <= {
         "cli/db.py::_table_row_counts",
         "cli/db.py::cmd_db_info",
-        "cli/db.py::cmd_db_schema_version",
-        "cli/db.py::cmd_db_restore",
     }, (
         "RAW_SQL_CLI_ALLOWLIST is shrink-only. Route new SQL through "
         "storage/ and api/ instead of adding an entry."
     )
+
+
+# Any read of the pragma: `PRAGMA [schema.]user_version` in whatever spelling,
+# or the `pragma_user_version` table-valued function. Writes (`= N`) excluded.
+_USER_VERSION_READ = re.compile(r"user_version\b(?!\s*=)", re.IGNORECASE)
+_SCHEMA_VERSION_OWNER = "storage/sqlite.py::schema_version"
+
+
+def _user_version_reads() -> set[str]:
+    """`<module>::<function>` (or `::<module>`) of every literal reading user_version."""
+    found = set()
+    for path in source_files():
+        tree = ast.parse(path.read_text())
+        prose = docstring_ids(tree)
+        rel = str(path.relative_to(SRC))
+        owner_of: dict[int, str] = {}
+        for fn in ast.walk(tree):
+            if isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef):
+                for node in ast.walk(fn):
+                    owner_of.setdefault(id(node), fn.name)
+        for node in ast.walk(tree):
+            text = None if id(node) in prose else literal_text(node)
+            if text and _USER_VERSION_READ.search(text):
+                found.add(f"{rel}::{owner_of.get(id(node), '<module>')}")
+    return found
+
+
+def test_schema_version_has_one_reader():
+    """`storage.sqlite.schema_version` is the only place that reads user_version (#67).
+
+    It was spelled inline at thirteen sites across five packages; the next one
+    would have had no helper to find. Writes (`PRAGMA user_version = N`) are
+    migration steps and stay where they are.
+    """
+    offenders = sorted(_user_version_reads() - {_SCHEMA_VERSION_OWNER})
+    assert not offenders, (
+        f"user_version read inline in {offenders}; call schema_version(conn) instead."
+    )
+
+
+def test_user_version_scanner_finds_its_owner():
+    """Positive control: the scanner must see the one read it exempts, or a
+    regression in it would pass the ratchet above by finding nothing."""
+    assert _SCHEMA_VERSION_OWNER in _user_version_reads()
 
 
 def test_sql_scanner_finds_known_storage_sites():

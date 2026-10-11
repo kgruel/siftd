@@ -684,7 +684,7 @@ def export_route(
 
 
 @post("/api/v1/push")
-async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | dict:
+async def push(request: Request, db_path: Path) -> Response | dict:
     """Receive a pushed slice and merge into team DB."""
     from siftd.serve.auth import require_write
 
@@ -710,11 +710,9 @@ async def push(request: Request, db_path: Path, fts_rebuild: str) -> Response | 
         identity = _get_push_identity(request)
         push_id = ulid()
 
-        rebuild_fts = fts_rebuild == "on_push"
         try:
             result = receive_database(
                 tmp_path, db_path,
-                rebuild_fts=rebuild_fts,
                 user_id=identity,
                 push_id=push_id,
             )

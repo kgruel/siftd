@@ -42,6 +42,17 @@ from siftd.storage.tags import (
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 12
 
+
+def schema_version(conn: sqlite3.Connection, schema: str = "main") -> int:
+    """The schema version recorded in a database: its ``user_version``.
+
+    Takes a connection the caller already holds, never opens one (#67).
+    ``schema`` names an attached database, as merge compares ``main`` to ``src``.
+    """
+    if not schema.isidentifier():
+        raise ValueError(f"not a schema name: {schema!r}")
+    return conn.execute(f"PRAGMA {schema}.user_version").fetchone()[0]
+
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
@@ -323,7 +334,7 @@ def open_database(
             # instead of tolerating it. Version 0 is an uninitialized or
             # pre-versioning file: no info, so leave it and let the caller's
             # own first query surface the real error.
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if 0 < version < SCHEMA_VERSION:
                 conn.close()
                 _migrate_stale_for_readonly(db_path, version)
@@ -375,7 +386,7 @@ def open_database(
             # pre-migration backup is needed.  backup_database() opens its own
             # source connection so it cannot run while BEGIN IMMEDIATE holds an
             # exclusive lock on the same file.
-            _version_peek = conn.execute("PRAGMA user_version").fetchone()[0]
+            _version_peek = schema_version(conn)
             if not is_new and _version_peek < SCHEMA_VERSION:
                 from datetime import date as _date
                 _bak_name = f"{db_path.stem}.bak.{_date.today():%Y%m%d}.db"
@@ -397,7 +408,7 @@ def open_database(
             conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("BEGIN IMMEDIATE")
 
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if version > SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Database schema version {version} is from a newer version of siftd "
@@ -441,7 +452,7 @@ def open_database(
             conn.execute("PRAGMA foreign_keys = ON")
         else:
             # read_only: on future-version DB, warn and open (write-mode raises)
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if version > SCHEMA_VERSION:
                 _logger.warning(
                     "DB stamped v%d; current install supports only v%d, opening read-only. "

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from siftd.errors import DriftError
 from siftd.storage.sessions import _covered_keys
-from siftd.storage.sqlite import SCHEMA_VERSION, open_database
+from siftd.storage.sqlite import SCHEMA_VERSION, open_database, schema_version
 
 # Closed identifiers, never interpolated caller input.
 _COLUMNS = {
@@ -29,7 +29,7 @@ def read_snapshot(db_path: Path, paths: list[str], orphans: list[str]):
     try:
         conn = open_database(db_path, read_only=True, auto_upgrade=False)
         conn.execute("BEGIN")
-        if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        if schema_version(conn) != SCHEMA_VERSION:
             return None, "unsupported_version"
         tables = {r[0]: (r[1], r[2]) for r in conn.execute("SELECT name, type, rootpage FROM sqlite_schema")}
         for table, columns in _COLUMNS.items():

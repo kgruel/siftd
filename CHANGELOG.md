@@ -43,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   under a shrink-only allowlist. A positive control now guards the scanner.
   ([#62](https://github.com/kgruel/siftd/issues/62))
 
+- One function, `schema_version(conn)`, now reads a database's schema version.
+  The read was spelled inline 13 times across five packages; an architecture
+  test keeps it single. Two `db` commands leave the raw-SQL allowlist.
+  ([#67](https://github.com/kgruel/siftd/issues/67))
+
 ### Fixed
 
 - **`siftd doctor` now tells you what to do about files that failed ingestion:**
@@ -58,6 +63,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   no statistics, so some joins started from the unselective side.
   `siftd db vacuum` now runs a full `ANALYZE`.
   ([#80](https://github.com/kgruel/siftd/issues/80))
+
+### Deprecated
+
+These have had no effect since 0.12.2, which indexes merged content as part of
+the merge. Each now warns, and is removed in **0.14.0**.
+([#74](https://github.com/kgruel/siftd/issues/74))
+
+- `siftd db merge --no-fts`.
+- The `rebuild_fts` argument to `merge_database` and `receive_database`
+  (a `DeprecationWarning` when passed).
+- The `serve.fts_rebuild` config key: `siftd serve` warns at startup if it is
+  set. Its `"scheduled"` value was never implemented.
+
+`siftd db receive --no-fts` is unaffected and stays accepted, now hidden from
+`--help`, with no removal scheduled. Sync clients send it, so warning or
+rejecting it would break pushes from older versions. `db slice --no-fts` and
+`db send --no-fts` still work as before.
 
 ## [0.12.2] - 2026-09-29
 

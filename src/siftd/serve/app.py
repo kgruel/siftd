@@ -149,7 +149,6 @@ def create_app(
     *,
     db_path: Path,
     auth_config: dict | None = None,
-    fts_rebuild: str = "on_push",
     request_max_body_size: int = 500_000_000,  # 500 MB in SI bytes (matches Caddy default)
     rate_limit_per_minute: int | None = 600,
     allow_live_endpoints: bool = True,
@@ -159,7 +158,6 @@ def create_app(
     Args:
         db_path: Path to the team SQLite database.
         auth_config: Auth config dict (None = no auth).
-        fts_rebuild: FTS rebuild strategy ("on_push", "scheduled", "off").
         request_max_body_size: Max request body in bytes; applies to streaming push.
         rate_limit_per_minute: Per-client request cap (finding F4). ``None``/``0``
             disables it. The limiter keys by the real client IP — honoring
@@ -177,9 +175,6 @@ def create_app(
 
     async def provide_db_path() -> Path:
         return db_path
-
-    async def provide_fts_rebuild() -> str:
-        return fts_rebuild
 
     async def provide_request_max_body_size() -> int:
         return request_max_body_size
@@ -271,7 +266,6 @@ def create_app(
         },
         dependencies={
             "db_path": Provide(provide_db_path),
-            "fts_rebuild": Provide(provide_fts_rebuild),
             "request_max_body_size": Provide(provide_request_max_body_size),
             "auth_config": Provide(provide_auth_config),
             "live_enabled": Provide(provide_live_enabled),

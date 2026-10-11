@@ -12,6 +12,7 @@ from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import (
     SchemaUpgradeRequiredError,
     remove_database,
+    schema_version,
 )
 from siftd.storage.sqlite import (
     open_database as _open_database,
@@ -19,7 +20,7 @@ from siftd.storage.sqlite import (
 
 # Re-exported via siftd.api so CLI and serve can reach these without crossing
 # the cli/serve → storage boundary enforced by tests/architecture/test_imports.py.
-__all__ = ["SchemaUpgradeRequiredError", "remove_database"]
+__all__ = ["SchemaUpgradeRequiredError", "remove_database", "schema_version"]
 
 # Checks run as pre-flight gates before merge/receive.
 # db-blob-refcount-drift is intentionally excluded: sync slices copy ref_count

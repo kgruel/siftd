@@ -1572,6 +1572,14 @@ Audit a database and raise PreflightError on error-severity findings.
 def run_preflight(path: Path, label: str = ...) -> None
 ```
 
+### schema_version
+
+The schema version recorded in a database: its ``user_version``.
+
+```python
+def schema_version(conn: Connection, schema: str = ...) -> int
+```
+
 ### apply_tags
 
 Apply or remove tags with shared orchestration.
@@ -1798,14 +1806,14 @@ def record_audit_event(*, db_path: Path, actor: str, action: str, target_type: s
 Merge a source database (slice) into the target database.
 
 ```python
-def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ..., user_id: str | None = ...) -> dict
+def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool | None = ..., dry_run: bool = ..., replace: bool = ..., before_commit: collections.abc.Callable[[sqlite3.Connection, dict], None] | None = ..., preflight: bool = ..., user_id: str | None = ...) -> dict
 ```
 
 **Parameters:**
 
 - `target_db`: Path to the main siftd database.
 - `source_path`: Path to the source database to merge in.
-- `rebuild_fts`: Accepted and ignored. Merged content is indexed as part of the merge (#49), so this no longer decides whether it is searchable; it used to trigger a *full* corpus rebuild on top, which the scoped write makes redundant. Kept for compatibility — removal is tracked in #74.
+- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.14.0 (#74). Merged content is indexed as part of the merge (#49), so this no longer decides whether it is searchable.
 - `dry_run`: If True, compute counts but roll back all changes.
 - `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
 - `before_commit`: Optional callback(conn, stats) invoked after merge but before commit.  Runs in the same transaction as the merge, so any writes are atomic with the merge itself.
@@ -1823,14 +1831,14 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool = ..
 Create or merge a source database into the target.
 
 ```python
-def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool = ..., user_id: str | None = ..., push_id: str | None = ..., preflight: bool = ...) -> dict
+def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool | None = ..., user_id: str | None = ..., push_id: str | None = ..., preflight: bool = ...) -> dict
 ```
 
 **Parameters:**
 
 - `source_path`: Path to the incoming database (e.g. a slice).
 - `target_db`: Path to the target siftd database.
-- `rebuild_fts`: Accepted and ignored. Received content is indexed on both paths — the merge indexes what it wrote, the create path indexes the file it copied (#49). Kept for compatibility; removal is tracked in #74.
+- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.14.0 (#74). Received content is indexed on both paths: the merge indexes what it wrote, the create path the file it copied.
 - `user_id`: Authenticated user identity to stamp as conversation owner.
 - `push_id`: Push log ID for provenance linking.
 
