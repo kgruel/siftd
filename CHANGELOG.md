@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- **`siftd serve` answers every error with its declared status, on every route.**
+  Routes outside the shared dispatcher (`/api/v1/pull`, query-parameter parsing,
+  event detail) turned everything but bad input into a generic 500. A stale or
+  misconfigured server now answers 503 or 501 with its message there too, as
+  the other routes already did. Operation failures (500) no longer put their
+  operator-facing message on the wire: the body is
+  `{"error": "internal server error"}`, and the message goes to the server
+  log. A client matching on 500 for these cases should match the declared
+  status instead. ([#58](https://github.com/kgruel/siftd/issues/58),
+  [#72](https://github.com/kgruel/siftd/issues/72))
+
 ## [0.12.3] - 2026-10-11
 
 ### Internal

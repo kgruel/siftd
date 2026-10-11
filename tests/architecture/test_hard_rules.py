@@ -645,30 +645,30 @@ class TestServeRoutesSerialization:
         violations = _find_dataclasses_asdict_calls(sample)
         assert violations == [3, 4], violations
 
-    def test_serve_dispatch_maps_missing_embeddings_to_501(self, src_dir):
-        """Serve must expose missing optional embeddings as 501, not generic 500."""
-        routes_file = src_dir / "serve" / "routes.py"
-        if not routes_file.exists():
-            pytest.skip("serve/routes.py not found")
+    def test_serve_maps_missing_embeddings_to_501(self, src_dir):
+        """Serve must expose missing optional embeddings as 501, not generic 500.
 
-        source = routes_file.read_text()
-        tree = ast.parse(source)
-        dispatch = next(
-            (
-                node for node in tree.body
-                if isinstance(node, ast.FunctionDef) and node.name == "_dispatch"
-            ),
-            None,
+        Two halves, since #72: the class declares the status, and serve's one
+        app-level handler honors `http_status` for the whole `SiftdError`
+        taxonomy. The wire behavior is pinned in tests/test_serve.py.
+        """
+        from siftd.embeddings.availability import EmbeddingsNotAvailable
+
+        assert EmbeddingsNotAvailable.http_status == 501
+
+        tree = ast.parse((src_dir / "serve" / "app.py").read_text())
+        registered = {
+            key.id
+            for node in ast.walk(tree)
+            if isinstance(node, ast.keyword) and node.arg == "exception_handlers"
+            and isinstance(node.value, ast.Dict)
+            for key in node.value.keys
+            if isinstance(key, ast.Name)
+        }
+        assert "SiftdError" in registered, (
+            "serve/app.py must register one SiftdError handler so every route maps "
+            "the taxonomy (EmbeddingsNotAvailable -> 501) instead of a generic 500"
         )
-        if dispatch is None:
-            pytest.fail("serve/routes.py must define _dispatch")
-
-        dispatch_source = ast.get_source_segment(source, dispatch) or ""
-        if "EmbeddingsNotAvailable" not in dispatch_source or "status_code=501" not in dispatch_source:
-            pytest.fail(
-                "serve/routes.py:_dispatch must map EmbeddingsNotAvailable "
-                "to HTTP 501 before the generic 500 handler"
-            )
 
 
 class TestOptionalExtraBoundaries:

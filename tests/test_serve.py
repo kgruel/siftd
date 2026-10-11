@@ -301,11 +301,10 @@ class TestSearch:
     def test_dispatch_maps_taxonomy_exceptions_to_http_status(
         self, tmp_path, monkeypatch, make_exc, expected_status
     ):
-        """`_dispatch`'s `except SiftdError: ... e.http_status` mapping, exercised per
-        branch/override — not just the two class-name-string cases the old code special
-        cased. UserInputError and a bare-SiftdError subclass pin the 400/500 defaults
-        (the latter is what keeps a slice-4 direct-root joiner at today's generic-500
-        wire behavior instead of AttributeError-ing)."""
+        """The app-level `SiftdError` handler's mapping, exercised per branch/override.
+        UserInputError and a bare-SiftdError subclass pin the 400/500 defaults; a
+        direct root joiner is an operation failure, so its operator-facing message
+        stays off the wire (#72)."""
         team_db = _make_team_db(tmp_path / "team.db", conversations=[{"external_id": "c1"}])
 
         def _build_exc():
@@ -353,12 +352,33 @@ class TestSearch:
             resp = client.get("/api/v1/search", params={"q": "hello"})
         assert resp.status_code == expected_status
         if make_exc == "SchemaUpgradeRequiredError":
-            # Privacy: its message embeds the server's absolute DB path, so
-            # _dispatch returns a generic body and logs the real message.
+            # Privacy: its message embeds the server's absolute DB path, so the
+            # wire gets a generic body and the server log the real message.
             assert resp.json()["error"] == "server database schema requires upgrade"
             assert str(exc) not in resp.json()["error"]
+        elif make_exc == "DirectSiftdError":
+            assert resp.json() == {"error": "internal server error"}
         else:
             assert str(exc) in resp.json()["error"]
+
+    def test_taxonomy_raised_outside_dispatch_keeps_its_status(self, tmp_path, monkeypatch):
+        """#58: a route that never enters `_dispatch` (here /api/v1/pull) used to
+        turn every taxonomy error but UserInputError into Litestar's generic 500.
+        A stale-schema server is a 503 with the redacted body, like any other route."""
+        from siftd.storage.sqlite import SchemaUpgradeRequiredError
+
+        team_db = _make_team_db(tmp_path / "team.db", conversations=[{"external_id": "c1"}])
+
+        def _stale(*a, **k):
+            raise SchemaUpgradeRequiredError(f"{team_db} needs a schema upgrade")
+
+        monkeypatch.setattr("siftd.api.slice.slice_database", _stale)
+        app = create_app(db_path=team_db, auth_config=None)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            resp = client.get("/api/v1/pull")
+        assert resp.status_code == 503
+        assert resp.json() == {"error": "server database schema requires upgrade"}
+        assert str(team_db) not in resp.text
 
 
 class TestAuthNoAuth:

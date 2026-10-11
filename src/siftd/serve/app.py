@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -13,8 +14,7 @@ from litestar.middleware import ASGIMiddleware
 from litestar.response import Response
 from litestar.static_files import create_static_files_router
 
-from siftd.api.conversations import AmbiguousPrefix
-from siftd.errors import UserInputError
+from siftd.errors import SiftdError
 from siftd.serve.html_routes import (
     ui_auth_config,
     ui_dashboard,
@@ -227,43 +227,28 @@ def create_app(
     if allow_live_endpoints:
         route_handlers.append(ui_follow)
 
-    def _user_input_error(_request, exc) -> Response:
-        """Honor `UserInputError.http_status` for errors raised outside `_dispatch`.
+    def _siftd_error(request, exc) -> Response:
+        """Map the whole `SiftdError` taxonomy to its declared wire status (#58, #72).
 
-        Query params are parsed while *building* the arguments to `_dispatch`,
-        so a rejected `since`/`before` is raised before that helper's own
-        `except SiftdError` can see it, and `/api/v1/pull` never goes through
-        Registered for `UserInputError` alone, which is a **scoping decision,
-        not a principle**: `errors.py` declares `http_status` across the whole
-        taxonomy as a serve contract, so widening this to `SiftdError` and
-        dissolving `_dispatch`'s inline `except` into it is the coherent end
-        state. That would also re-status errors that currently reach the client
-        as 500s — correct per the taxonomy, but a wire change no part of #32
-        needs. Tracked separately.
+        `errors.py` declares `http_status` on every branch as serve's contract,
+        and `to_dict()` as its body, so this is the one place that honors both,
+        for every route: those inside `_dispatch`, which re-raises the
+        taxonomy, and those outside it (`/api/v1/pull`, query-parameter parsing,
+        `event_detail_route`). Litestar resolves handlers through the MRO, so
+        `AmbiguousPrefix` reaches here and keeps its structured body.
         """
-        return Response(content={"error": str(exc)}, status_code=exc.http_status)
-
-    def _ambiguous_prefix_error(_request, exc) -> Response:
-        """Give routes that resolve outside `_dispatch` the same structured
-        ambiguous-prefix body `_dispatch` returns.
-
-        `event_detail_route` resolves through `api.events.get_event`, which
-        raises `AmbiguousPrefix` (#33) without passing through `_dispatch`'s
-        inline catch. Without this, it would fall to `_user_input_error` — right
-        status, but a bare `{"error": ...}` that an HTTP agent can't use to pick
-        a longer prefix.
-        """
+        if exc.http_status >= 500:
+            logging.getLogger("siftd.serve").exception(
+                "%s on %s %s", type(exc).__name__, request.method, request.url.path,
+            )
         return Response(content=exc.to_dict(), status_code=exc.http_status)
 
-    # `exc` stays unannotated in both handlers: Litestar types the mapping's
+    # `exc` stays unannotated: Litestar types the mapping's
     # values invariantly, so narrowing the parameter to the class it is keyed
     # by is a type error, not documentation.
     return Litestar(
         route_handlers=route_handlers,
-        exception_handlers={
-            UserInputError: _user_input_error,
-            AmbiguousPrefix: _ambiguous_prefix_error,
-        },
+        exception_handlers={SiftdError: _siftd_error},
         dependencies={
             "db_path": Provide(provide_db_path),
             "request_max_body_size": Provide(provide_request_max_body_size),

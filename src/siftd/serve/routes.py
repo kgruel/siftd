@@ -15,6 +15,7 @@ from litestar.params import Parameter
 from litestar.response import File, Response
 
 from siftd.api import remove_database
+from siftd.errors import SiftdError
 
 log = logging.getLogger(__name__)
 
@@ -144,11 +145,8 @@ def _dispatch(
 
     from painted import Fidelity
 
-    from siftd.api import SchemaUpgradeRequiredError
-    from siftd.api.conversations import AmbiguousPrefix
     from siftd.api.dispatch import Operation, execute, render
     from siftd.api.op_spec import spec_for_path
-    from siftd.errors import SiftdError
     from siftd.serialization import serve_fmt
 
     try:
@@ -191,6 +189,11 @@ def _dispatch(
         if findings and isinstance(rendered, dict) and "caveats" not in rendered:
             rendered["caveats"] = serve_fmt.serialize_caveats(findings)
         return rendered
+    except SiftdError:
+        # The taxonomy carries its own status and body; app.py's handler maps
+        # it for every route, inside this helper or not (#58, #72). Re-raised
+        # before the ValueError and catch-all branches below can claim it.
+        raise
     except ImportError as e:
         if "siftd.embeddings" in str(e) or "fastembed" in str(e):
             return Response(content={"error": str(e)}, status_code=501)
@@ -202,36 +205,8 @@ def _dispatch(
             "dispatch file-not-found on %s %s", method, path,
         )
         return Response(content={"error": "resource not found"}, status_code=404)
-    except AmbiguousPrefix as e:
-        # Must precede the `except SiftdError` backstop below, which would
-        # otherwise flatten this to a bare {"error": str(e)}. (Not the
-        # ValueError branch — AmbiguousPrefix is a UserInputError, not a
-        # ValueError.) The same catch is why app.py's handler cannot simply
-        # subsume this one: nothing raised inside _dispatch reaches it.
-        return Response(content=e.to_dict(), status_code=e.http_status)
     except (ValueError, KeyError) as e:
         return Response(content={"error": str(e)}, status_code=400)
-    except SchemaUpgradeRequiredError:
-        # Its message embeds the server's absolute database path (correct for
-        # the CLI, whose operator owns the filesystem) — never disclose that on
-        # the wire. Mirrors the FileNotFoundError handler above; the full
-        # message goes to the server log.
-        logging.getLogger("siftd.serve").exception(
-            "dispatch schema-upgrade-required on %s %s", method, path,
-        )
-        return Response(
-            content={"error": "server database schema requires upgrade"},
-            status_code=503,
-        )
-    except SiftdError as e:
-        # Taxonomy backstop: user-input errors (the AnchorError family,
-        # QueryError — AmbiguousPrefix is caught above for its richer
-        # structured body) and embeddings/state-drift errors
-        # (EmbeddingsNotAvailable → 501, EmbeddingConfigError/
-        # IncrementalCompatError/IndexCompatError → 503) carry their wire
-        # status on the class, so serve maps them without importing
-        # siftd.embeddings (tests/architecture/test_imports.py).
-        return Response(content={"error": str(e)}, status_code=e.http_status)
     except Exception:
         logging.getLogger("siftd.serve").exception("dispatch error on %s %s", method, path)
         return Response(
@@ -1121,6 +1096,8 @@ def search_route(
             "search", db_path,
             render_context={"debug_ids": debug_ids, "mode": mode},
         )
+    except SiftdError:
+        raise  # _dispatch re-raises the taxonomy for app.py's handler
     except Exception:
         import logging
 

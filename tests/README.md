@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3391 |
+| `tests/` | 191 | 3392 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 76 |
 | `tests/cli/` | 29 | 639 |
@@ -259,7 +259,7 @@ docstring so its row is meaningful.
 | [test_search_serializer_drift.py](test_search_serializer_drift.py) | 4 | Anti-drift tests for search dataclass serialization. |
 | [test_serialization_ingest_backfill.py](test_serialization_ingest_backfill.py) | 3 | Anti-drift tests for ingest/backfill result serialization. |
 | [test_serialization_tags.py](test_serialization_tags.py) | 3 | — |
-| [test_serve.py](test_serve.py) | 48 | Tests for siftd serve — HTTP team sync server. |
+| [test_serve.py](test_serve.py) | 49 | Tests for siftd serve — HTTP team sync server. |
 | [test_serve_app_edges.py](test_serve_app_edges.py) | 3 | — |
 | [test_serve_auth_edges.py](test_serve_auth_edges.py) | 45 | — |
 | [test_serve_auth_focus.py](test_serve_auth_focus.py) | 1 | — |

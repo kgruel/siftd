@@ -13,9 +13,9 @@ The contract a subclass signs:
   (or a classmethod constructor when one error kind has several raise sites);
   raise sites pass data, not prose.
 - Boundaries catch the *bases*. The CLI backstop (``cli/__init__.py main()``)
-  renders the message and exits — 2 for ``UserInputError``, 1 otherwise. The
-  serve dispatch maps branches to status codes instead of matching class
-  names as strings.
+  renders the message and exits — 2 for ``UserInputError``, 1 otherwise.
+  serve has one app-level handler (``serve/app.py``) that answers every route
+  with ``http_status`` and ``to_dict()``, never matching class names.
 - Carry structured attributes only when a consumer reads them (wire
   serialization, exit-code logic, test assertions). A plain message is fine
   otherwise — same contract, not same ceremony.
@@ -55,6 +55,17 @@ class SiftdError(Exception):
     # CLI-only — serve bodies carry str(e) and drop the hint.
     hint: str | None = None
 
+    def to_dict(self) -> dict[str, object]:
+        """The serve wire body for this error (#72).
+
+        A direct root joiner is an operation failure whose message is written
+        for the operator (paths, token commands, stderr), so the wire gets a
+        generic body and the server log gets the message. The input and drift
+        branches below are written for the caller and carry it. A subclass with
+        structure to carry, or a message to redact, overrides this.
+        """
+        return {"error": "internal server error"}
+
 
 class UserInputError(SiftdError):
     """The request itself is malformed or unresolvable — bad flag values,
@@ -65,6 +76,9 @@ class UserInputError(SiftdError):
     """
 
     http_status = 400
+
+    def to_dict(self) -> dict[str, object]:
+        return {"error": str(self)}
 
 
 class DriftError(SiftdError):
@@ -77,3 +91,6 @@ class DriftError(SiftdError):
     """
 
     http_status = 503
+
+    def to_dict(self) -> dict[str, object]:
+        return {"error": str(self)}
