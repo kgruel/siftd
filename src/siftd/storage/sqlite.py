@@ -2378,8 +2378,8 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     )
 
 
-# Rows per index ANALYZE samples on the bounded path. SQLite's documented
-# recommendation for `PRAGMA optimize`; measured ~3ms at 1M events.
+# Rows per index the bounded ANALYZE samples: SQLite's own recommendation.
+# Measured ~1ms on the full schema (67 indexes) at 1M events.
 _ANALYSIS_LIMIT = 400
 
 
@@ -2394,25 +2394,16 @@ def refresh_planner_stats(
     per conversation until it pinned its order with CROSS JOIN. Callers are the
     write paths that change the corpus's size: ingest, merge, receive.
 
-    - No stats yet: a bounded ``ANALYZE``. ``PRAGMA optimize`` alone cannot be
-      relied on here, because before SQLite 3.46 it only considers tables this
-      connection has already queried, so on a fresh connection it does nothing.
-    - Stats present: ``PRAGMA optimize``, a near no-op unless a table has
-      changed enough to matter (0x10000 widens it to every table on 3.46+).
-    - ``full=True``: an unbounded ``ANALYZE``, for the explicit ``db vacuum``.
+    Always a bounded ``ANALYZE`` (``analysis_limit``), never ``PRAGMA optimize``:
+    before SQLite 3.46, optimize skips a table it has never analyzed, so a table
+    that was empty at the first refresh would stay statless however much it
+    grew. ``full=True`` lifts the bound, for the explicit ``db vacuum``.
 
     Caller controls the commit, as everywhere in storage: ANALYZE writes
     ``sqlite_stat1``, so callers on a write path pass ``commit=True``.
     """
-    if full:
-        conn.execute("PRAGMA analysis_limit = 0")
-        conn.execute("ANALYZE")
-    else:
-        conn.execute(f"PRAGMA analysis_limit = {_ANALYSIS_LIMIT}")
-        has_stats = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
-        ).fetchone()
-        conn.execute("PRAGMA optimize = 0x10002" if has_stats else "ANALYZE")
+    conn.execute(f"PRAGMA analysis_limit = {0 if full else _ANALYSIS_LIMIT}")
+    conn.execute("ANALYZE")
     if commit:
         conn.commit()
 

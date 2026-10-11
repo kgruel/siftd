@@ -292,27 +292,43 @@ class TestIngestPendingCheck:
 class TestIngestErrorsCheck:
     """Tests for the ingest-errors check."""
 
-    def test_finding_names_the_remedy(self, tmp_path):
-        """A failed file is retried by the next ingest, and the finding says so (#55)."""
+    def _record(self, tmp_path, paths):
         from siftd.storage.sqlite import get_or_create_harness, open_database, record_failed_file
 
         db_path = tmp_path / "errors.db"
         with closing(open_database(db_path)) as conn:
             harness_id = get_or_create_harness(conn, "aider")
-            record_failed_file(conn, "/a.md", "h1", harness_id, "boom")
-            record_failed_file(conn, "/b.md", "h2", harness_id, "bang")
+            for i, path in enumerate(paths):
+                record_failed_file(conn, str(path), f"h{i}", harness_id, f"err{i}")
             conn.commit()
+        return IngestErrorsCheck().run(_ctx_for(db_path, tmp_path))
 
-        findings = IngestErrorsCheck().run(_ctx_for(db_path, tmp_path))
+    def test_finding_names_the_remedy(self, tmp_path):
+        """A failed file still on disk is retried by the next ingest, and the finding says so (#55)."""
+        present = tmp_path / "a.md"
+        present.write_text("x")
+
+        findings = self._record(tmp_path, [present, tmp_path / "gone.md"])
 
         assert len(findings) == 1
         f = findings[0]
         assert f.severity == "warning"
         assert f.fix_available is True
         assert f.fix_command == "siftd ingest"
-        assert "2 file(s) failed ingestion" in f.message
-        assert "retried on every ingest" in f.message
-        assert f.context == {"adapter": "aider", "count": 2, "errors": ["boom", "bang"]}
+        assert f.message == (
+            "Adapter 'aider': 2 file(s) failed ingestion "
+            "(1 retried on every ingest, 1 no longer on disk)"
+        )
+        assert f.context == {"adapter": "aider", "count": 2, "missing": 1, "errors": ["err0", "err1"]}
+
+    def test_deleted_files_get_no_fix(self, tmp_path):
+        """Re-ingesting cannot clear the row of a file that is gone, so offering
+        `siftd ingest` would make `doctor fix` loop."""
+        findings = self._record(tmp_path, [tmp_path / "gone.md"])
+
+        assert findings[0].fix_available is False
+        assert findings[0].fix_command is None
+        assert findings[0].message.endswith("(1 no longer on disk)")
 
     def test_no_errors_no_findings(self, tmp_path):
         from siftd.storage.sqlite import open_database

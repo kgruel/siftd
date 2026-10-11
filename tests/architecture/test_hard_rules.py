@@ -745,16 +745,25 @@ RAW_SQL_CLI_ALLOWLIST: dict[str, str] = {
 
 
 def _raw_sql_functions(path: Path) -> set[str]:
-    """Functions in one file whose body executes a SQL literal."""
+    """Functions in one file whose body executes a SQL literal.
+
+    A site outside every function (module or class body) is reported as
+    `<module>`, so it cannot fall through the function scoping.
+    """
     sites = {line for line, _ in find_sql_execute_calls(path)}
     if not sites:
         return set()
     owners = set()
+    covered = set()
     for node in ast.walk(ast.parse(path.read_text())):
         if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             end = node.end_lineno or node.lineno
-            if any(node.lineno <= line <= end for line in sites):
+            inside = {line for line in sites if node.lineno <= line <= end}
+            if inside:
                 owners.add(node.name)
+                covered |= inside
+    if sites - covered:
+        owners.add("<module>")
     return owners
 
 

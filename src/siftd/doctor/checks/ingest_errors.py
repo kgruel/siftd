@@ -1,3 +1,5 @@
+import os
+
 from siftd.doctor.checks import CheckContext, CheckCost, Finding
 
 
@@ -9,6 +11,10 @@ class IngestErrorsCheck:
     ``ingestion/orchestration.py``), so a failure whose cause has since been
     fixed clears on the next run. A row that survives it is a file the
     adapter still cannot parse.
+
+    That only reaches files still on disk. Nothing prunes the row of a file
+    that has since been deleted, so those are counted apart and offered no
+    fix: re-ingesting cannot clear them, and ``doctor fix`` would loop.
     """
 
     name = "ingest-errors"
@@ -25,21 +31,35 @@ class IngestErrorsCheck:
         if not errors:
             return []
 
-        by_harness: dict[str, list[str]] = {}
+        by_harness: dict[str, list[dict]] = {}
         for e in errors:
-            by_harness.setdefault(e["harness_name"], []).append(e["error"])
+            by_harness.setdefault(e["harness_name"], []).append(e)
 
-        return [
-            Finding(
-                check=self.name,
-                severity="warning",
-                message=(
-                    f"Adapter '{name}': {len(errs)} file(s) failed ingestion; "
-                    "they are retried on every ingest"
-                ),
-                fix_available=True,
-                fix_command="siftd ingest",
-                context={"adapter": name, "count": len(errs), "errors": errs[:5]},
+        findings = []
+        for name, rows in by_harness.items():
+            missing = sum(1 for r in rows if not os.path.exists(r["path"]))
+            retryable = len(rows) - missing
+            parts = []
+            if retryable:
+                parts.append(f"{retryable} retried on every ingest")
+            if missing:
+                parts.append(f"{missing} no longer on disk")
+            findings.append(
+                Finding(
+                    check=self.name,
+                    severity="warning",
+                    message=(
+                        f"Adapter '{name}': {len(rows)} file(s) failed ingestion "
+                        f"({', '.join(parts)})"
+                    ),
+                    fix_available=bool(retryable),
+                    fix_command="siftd ingest" if retryable else None,
+                    context={
+                        "adapter": name,
+                        "count": len(rows),
+                        "missing": missing,
+                        "errors": [r["error"] for r in rows[:5]],
+                    },
+                )
             )
-            for name, errs in by_harness.items()
-        ]
+        return findings

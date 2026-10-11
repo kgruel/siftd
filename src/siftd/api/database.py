@@ -3,6 +3,7 @@
 Exposes database connection management to CLI without direct storage imports.
 """
 
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -160,14 +161,24 @@ def refresh_planner_stats(
     _refresh(conn, full=full, commit=commit)
 
 
-def repair_blob_refcounts(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``.
+def refresh_planner_stats_after_write(conn: sqlite3.Connection) -> None:
+    """Refresh planner statistics at the end of a write path, and commit.
 
-    Does not commit.
+    Best-effort: the write before it has already committed, and statistics are
+    an optimization, so a failure (a busy lock held by another writer, say) is
+    logged rather than turning a successful ingest or push into an error.
     """
+    try:
+        refresh_planner_stats(conn, commit=True)
+    except sqlite3.Error as e:
+        logging.getLogger(__name__).warning("Planner statistics not refreshed: %s", e)
+
+
+def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
+    """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``."""
     from siftd.storage.sqlite import repair_blob_refcounts as _repair
 
-    return _repair(conn)
+    return _repair(conn, commit=commit)
 
 
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:

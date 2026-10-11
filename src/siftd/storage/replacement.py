@@ -150,8 +150,8 @@ def snapshot_conversation(
     # Measured on 300 conversations / 6,000 event tags with no stats: 1654µs
     # against 17µs per conversation, same rows. Write paths now refresh stats
     # as they finish (`refresh_planner_stats`, #80), but a merge's replacements
-    # run *before* its refresh, so the first push into a fresh database still
-    # executes this with none. The pin stays.
+    # run *before* its refresh: a database last written before that change, or
+    # one whose refresh failed, still reaches this with none. The pin stays.
     event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
     for row in conn.execute(
         f"""

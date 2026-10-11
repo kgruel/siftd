@@ -64,12 +64,13 @@ def receive_database(
         # database, which no later push would repair: every later push is a
         # merge, and merges never wrote the index either. There is nothing to
         # scope to — the whole file is what arrived (#49).
+        from siftd.api.database import refresh_planner_stats_after_write
         from siftd.storage.fts import rebuild_fts_index
-        from siftd.storage.sqlite import open_database, refresh_planner_stats
+        from siftd.storage.sqlite import open_database
         fts_conn = open_database(target_db)
         try:
             rebuild_fts_index(fts_conn, commit=True)
-            refresh_planner_stats(fts_conn, commit=True)
+            refresh_planner_stats_after_write(fts_conn)
         finally:
             fts_conn.close()
         if user_id:

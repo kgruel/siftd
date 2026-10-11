@@ -47,14 +47,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`siftd doctor` now tells you what to do about files that failed ingestion:**
   run `siftd ingest`, which retries them every time. Previously it reported only
-  a count. ([#55](https://github.com/kgruel/siftd/issues/55))
+  a count. Failed files that no longer exist on disk are counted separately and
+  get no fix, since re-ingesting cannot clear them.
+  ([#55](https://github.com/kgruel/siftd/issues/55))
 
 - **Databases keep their query-planner statistics without `siftd db vacuum`.**
-  Ingest, merge and receive refresh them as they finish (a bounded `ANALYZE`
-  the first time, `PRAGMA optimize` after; a few milliseconds at 1M events).
-  Fresh databases, including a receive-only server's, previously had none, so
-  some joins started from the unselective side. `siftd db vacuum` now runs a
-  full `ANALYZE`. ([#80](https://github.com/kgruel/siftd/issues/80))
+  Ingest, merge and receive finish with a bounded `ANALYZE` (about 1ms at 1M
+  events); if it fails, a warning is logged and the ingest or push still
+  succeeds. Fresh databases, including a receive-only server's, previously had
+  no statistics, so some joins started from the unselective side.
+  `siftd db vacuum` now runs a full `ANALYZE`.
+  ([#80](https://github.com/kgruel/siftd/issues/80))
 
 ## [0.12.2] - 2026-09-29
 

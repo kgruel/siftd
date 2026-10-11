@@ -1357,8 +1357,7 @@ def _fix_pending_tags(conn, db_path):
 def _fix_blob_refcount(conn, db_path):
     from siftd.api.database import repair_blob_refcounts
 
-    updated, deleted = repair_blob_refcounts(conn)
-    conn.commit()
+    updated, deleted = repair_blob_refcounts(conn, commit=True)
     return f"{updated} blob(s) repaired, {deleted} orphan(s) removed"
 
 

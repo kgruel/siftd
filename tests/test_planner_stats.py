@@ -7,7 +7,12 @@ tests pin that the write paths which change the corpus's size leave stats
 behind, and that stats are what flip that plan.
 """
 
+import logging
+import sqlite3
+
 from conftest import make_db
+
+from siftd.api.database import refresh_planner_stats_after_write
 
 from siftd.api.receive import receive_database
 from siftd.storage.sqlite import open_database, refresh_planner_stats
@@ -105,3 +110,31 @@ def test_fresh_connection_gets_stats(tmp_path):
     refresh_planner_stats(conn, commit=True)
     assert conn.execute("SELECT COUNT(*) FROM sqlite_stat1 WHERE tbl = 'tag_assignments'").fetchone()[0]
     conn.close()
+
+
+def test_table_empty_at_first_refresh_is_analyzed_once_it_grows(tmp_path):
+    """Before SQLite 3.46, PRAGMA optimize skips a table it has never analyzed,
+    so a refresh built on it left a table that was empty at the first refresh
+    statless forever. The bounded ANALYZE runs every time instead."""
+    conn = open_database(tmp_path / "t.db")
+    refresh_planner_stats(conn, commit=True)
+    assert not conn.execute("SELECT 1 FROM sqlite_stat1 WHERE tbl = 'tags'").fetchone()
+
+    for i in range(50):
+        get_or_create_tag(conn, f"tag-{i}")
+    conn.commit()
+    refresh_planner_stats(conn, commit=True)
+
+    assert conn.execute("SELECT 1 FROM sqlite_stat1 WHERE tbl = 'tags'").fetchone()
+    conn.close()
+
+
+def test_write_path_refresh_is_best_effort(tmp_path, caplog):
+    """The write has already committed; a stats failure must not turn it into an error."""
+    conn = sqlite3.connect(tmp_path / "t.db")
+    conn.close()  # any further use raises sqlite3.ProgrammingError
+
+    with caplog.at_level(logging.WARNING):
+        refresh_planner_stats_after_write(conn)
+
+    assert "Planner statistics not refreshed" in caplog.text
