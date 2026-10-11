@@ -1,5 +1,9 @@
 # Next steps — integration handoff
 
+> **Superseded: this candidate shipped as [0.12.2](../../CHANGELOG.md#0122---2026-09-29)**
+> on 2026-09-29. Its release holds and pending reviews are history, not open
+> work. The identity and migration decisions it lists remain open.
+
 > Current continuation: [hardening and release follow-up](release-readiness-followup.md).
 > The stage-specific pending labels below are historical: isolated integration
 > subsequently reached the Fable-approved private preflight at `eff4bf7`.

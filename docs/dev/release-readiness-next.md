@@ -1,5 +1,9 @@
 # Next release readiness — evidence candidate
 
+> **Superseded: this candidate shipped as [0.12.2](../../CHANGELOG.md#0122---2026-09-29)**
+> on 2026-09-29. Its release holds and pending reviews are history, not open
+> work. The identity and migration decisions it lists remain open.
+
 > Historical assessment of the earlier release candidate. See the
 > [current hardening and release follow-up](release-readiness-followup.md) for
 > newer implementation, compatibility wording, local matrix, and browser evidence.
