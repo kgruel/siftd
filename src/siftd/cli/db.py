@@ -415,7 +415,6 @@ def cmd_db_merge(args) -> int:
 
     from siftd.api.merge import merge_database
 
-    rebuild_fts = not args.no_fts
     dry_run = args.dry_run
     replace = not args.no_replace
 
@@ -423,7 +422,6 @@ def cmd_db_merge(args) -> int:
         result = merge_database(
             target_db=db,
             source_path=source,
-            rebuild_fts=rebuild_fts,
             dry_run=dry_run,
             replace=replace,
             preflight=not args.no_preflight,
@@ -574,9 +572,8 @@ def cmd_db_receive(args) -> int:
 
         from siftd.api.receive import receive_database
 
-        rebuild_fts = not args.no_fts
         result = receive_database(
-            tmp_path, db, rebuild_fts=rebuild_fts, preflight=not args.no_preflight
+            tmp_path, db, preflight=not args.no_preflight
         )
         print(json.dumps(result))
         return 0
@@ -1087,6 +1084,10 @@ examples:
   ssh host siftd --db /path/team.db db receive < slice.db
   ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op""",
     )
+    # PERMANENT SSH WIRE CONTRACT: every siftd client sends `--no-fts` here
+    # (api/sync.py), including to servers older than 0.12.2, where it still
+    # prevents an O(corpus) FTS rebuild. Accepted and ignored by current code.
+    # Do NOT add a deprecation warning: it would print on every SSH push.
     p_receive.add_argument("--no-fts", action="store_true",
                            help="Compatibility no-op; does not disable indexing")
     p_receive.add_argument("--stage", action="store_true",

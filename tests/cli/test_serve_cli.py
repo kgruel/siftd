@@ -60,11 +60,10 @@ class TestCmdServe:
         # Fake siftd.serve.app module to avoid litestar import
         fake_app_mod = ModuleType("siftd.serve.app")
 
-        def fake_create_app(*, db_path, auth_config, fts_rebuild,
+        def fake_create_app(*, db_path, auth_config,
                             request_max_body_size, **kwargs):
             captured["db_path"] = db_path
             captured["auth_config"] = auth_config
-            captured["fts_rebuild"] = fts_rebuild
             captured["request_max_body_size"] = request_max_body_size
             captured.update(kwargs)  # rate_limit_per_minute, allow_live_endpoints
             return "fake_app"
@@ -103,6 +102,24 @@ class TestCmdServe:
         rc = cmd_serve(args)
         assert rc == 0
         assert captured["auth_config"] == {"issuer": "https://idp"}
+
+    def test_deprecated_fts_rebuild_config_is_tolerated(self, monkeypatch, tmp_path):
+        """A leftover `[serve] fts_rebuild` key starts serve and is not forwarded.
+
+        The key is deprecated (removal in 0.13.0). An operator config that still
+        sets it must not break startup, and create_app must not receive it.
+        """
+        captured = {}
+        self._setup_serve_mocks(monkeypatch, tmp_path, captured)
+        monkeypatch.setattr(
+            "siftd.config.get_config",
+            lambda k: "on_push" if k == "serve.fts_rebuild" else None,
+        )
+
+        args = SimpleNamespace(no_auth=True, host=None, port=None, db=None)
+        rc = cmd_serve(args)
+        assert rc == 0
+        assert "fts_rebuild" not in captured
 
     def test_explicit_db_path_used(self, monkeypatch, tmp_path):
         """Explicit --db argument takes precedence over config and defaults."""

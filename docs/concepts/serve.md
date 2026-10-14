@@ -44,8 +44,9 @@ siftd serve --db /data/team.db --port 9000 --no-auth
 db = "/data/siftd/team.db"
 host = "0.0.0.0"
 port = 8484
-fts_rebuild = "on_push"    # "on_push" | "scheduled" | "off"
 ```
+
+Pushed content is indexed as part of the merge, so it is searchable as soon as the push lands. The former `serve.fts_rebuild` key is deprecated, ignored, and will be removed in 0.13.0.
 
 ## Authentication
 

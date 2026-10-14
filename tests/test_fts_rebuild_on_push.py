@@ -137,18 +137,13 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
 # --- siftd#49: the invariant, across every path a merge can arrive by --------
 
-# (label, rebuild_fts) — the value each caller actually passes.
-#   receive_database's own default; `siftd db receive` / inbox / `db pull`;
-#   and the three `serve.fts_rebuild` settings, of which only "on_push" maps
-#   to True. "scheduled" is documented as "rebuild periodically" but nothing
-#   schedules anything, so it is `off` with a friendlier name — which is why
-#   it must not be the difference between searchable and not.
+# (label, rebuild_fts) — both values the parameter can still carry. It is a
+# deprecated no-op (removal in 0.13.0), so searchability must hold for each.
+# The `serve.fts_rebuild` settings used to select between these; that plumbing
+# is gone, and the `rebuild_fts` value is now inert.
 _MERGE_CALLERS = [
     ("receive default / sync._push_local", False),
     ("db receive, inbox, db pull", True),
-    ("serve.fts_rebuild='on_push'", True),
-    ("serve.fts_rebuild='scheduled'", False),
-    ("serve.fts_rebuild='off'", False),
 ]
 
 
