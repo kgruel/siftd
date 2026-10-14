@@ -45,18 +45,16 @@ def fts_db(tmp_path):
         workspace_id=ws_id, started_at="2024-01-15T10:00:00Z",
     )
     p_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
-    p_content_id = insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
-    # Insert FTS content for search
+    insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
 
     r_id = insert_response(
         conn, conv_id, p_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
         input_tokens=10, output_tokens=100,
     )
-    r_content_id = insert_response_content(
+    insert_response_content(
         conn, r_id, 0, "text",
         '{"text": "Use try/except blocks for error handling in Python."}'
     )
-    # Insert FTS content for search
 
     # Index the event_content rows above, as ingest does for a new conversation.
     index_conversations(conn, [conv_id])
@@ -276,12 +274,12 @@ class TestFtsOnlyMode:
             workspace_id=ws1_id, started_at="2024-01-15T10:00:00Z",
         )
         p1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
-        p1_c_id = insert_prompt_content(conn, p1_id, 0, "text", '{"text": "alpha error"}')
+        insert_prompt_content(conn, p1_id, 0, "text", '{"text": "alpha error"}')
         r1_id = insert_response(
             conn, conv1_id, p1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
             input_tokens=10, output_tokens=10,
         )
-        r1_c_id = insert_response_content(conn, r1_id, 0, "text", '{"text": "alpha response"}')
+        insert_response_content(conn, r1_id, 0, "text", '{"text": "alpha response"}')
 
         # Conversation in beta about errors
         conv2_id = insert_conversation(
@@ -289,12 +287,12 @@ class TestFtsOnlyMode:
             workspace_id=ws2_id, started_at="2024-01-16T10:00:00Z",
         )
         p2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
-        p2_c_id = insert_prompt_content(conn, p2_id, 0, "text", '{"text": "beta error"}')
+        insert_prompt_content(conn, p2_id, 0, "text", '{"text": "beta error"}')
         r2_id = insert_response(
             conn, conv2_id, p2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
             input_tokens=10, output_tokens=10,
         )
-        r2_c_id = insert_response_content(conn, r2_id, 0, "text", '{"text": "beta response"}')
+        insert_response_content(conn, r2_id, 0, "text", '{"text": "beta response"}')
 
         # Index the event_content rows above, as ingest does for a new conversation.
         index_conversations(conn, [conv1_id, conv2_id])
@@ -357,12 +355,12 @@ class TestWithEmbeddingsInstalled:
             workspace_id=ws_id, started_at="2024-01-15T10:00:00Z",
         )
         p_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
-        p_c_id = insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
+        insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
         r_id = insert_response(
             conn, conv_id, p_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
             input_tokens=10, output_tokens=100,
         )
-        r_c_id = insert_response_content(
+        insert_response_content(
             conn, r_id, 0, "text",
             '{"text": "Use try/except blocks for error handling."}'
         )
