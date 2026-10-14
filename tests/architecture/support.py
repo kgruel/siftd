@@ -195,7 +195,9 @@ def call_to(names: tuple[str, ...]) -> Callable[[ast.AST, frozenset[int]], str |
     return match
 
 
-def literal_matching(pattern: re.Pattern[str]) -> Callable[[ast.AST, frozenset[int]], str | None]:
+def literal_matching(
+    pattern: re.Pattern[str], label: str
+) -> Callable[[ast.AST, frozenset[int]], str | None]:
     """Match a static string literal against `pattern`, ignoring prose.
 
     The half that catches a door bypassing the primitive entirely — a raw
@@ -204,6 +206,11 @@ def literal_matching(pattern: re.Pattern[str]) -> Callable[[ast.AST, frozenset[i
     predicate still contributes its keywords; `docstring_ids` keeps prose about
     the delete from counting as a use, which matters because the docstrings in
     `storage/` quote this exact statement.
+
+    `label` is what a match is counted under. It is supplied by the caller,
+    not derived from the matched text: the label is what a ratchet's table
+    counts, and two spellings of the same statement in one function are two
+    statements, not two kinds.
     """
     def match(node: ast.AST, prose: frozenset[int]) -> str | None:
         if id(node) in prose:
@@ -211,10 +218,6 @@ def literal_matching(pattern: re.Pattern[str]) -> Callable[[ast.AST, frozenset[i
         text = literal_text(node)
         if not text:
             return None
-        found = pattern.search(text)
-        # Labelled by the table, not by the matched text: the label is what
-        # `DESTROY_SITES` counts, and two spellings of the same delete in one
-        # function are two deletes, not two kinds.
-        return "conversations" if found else None
+        return label if pattern.search(text) else None
 
     return match

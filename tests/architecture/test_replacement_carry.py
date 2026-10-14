@@ -231,7 +231,7 @@ def test_a_conversation_is_destroyed_only_where_the_module_carries():
     review caught it.
     """
     found: dict[tuple[str, str], dict[str, int]] = {}
-    for finder in (call_to(DESTROY_PRIMITIVES), literal_matching(DESTROY_LITERAL)):
+    for finder in (call_to(DESTROY_PRIMITIVES), literal_matching(DESTROY_LITERAL, "conversations")):
         for site, per in sites_by_function(finder).items():
             for label, n in per.items():
                 found.setdefault(site, {})[label] = found.setdefault(site, {}).get(label, 0) + n
@@ -315,7 +315,7 @@ def test_the_delete_closure_has_exactly_one_home():
     """
     home = {
         scope: per
-        for (rel, scope), per in sites_by_function(literal_matching(DESTROY_LITERAL)).items()
+        for (rel, scope), per in sites_by_function(literal_matching(DESTROY_LITERAL, "conversations")).items()
         if rel == DESTROY_DEFINITION_SITE
     }
     uses = sum(n for per in home.values() for n in per.values())
