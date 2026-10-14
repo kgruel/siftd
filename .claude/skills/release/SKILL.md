@@ -14,7 +14,10 @@ what belongs in the release — don't invent changelog content.
 
 1. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - <today's date>`
    (check `currentDate` context, don't guess). Leave the rest of the section
-   content as-is.
+   content as-is. Then fix the link footer: point `[Unreleased]:` at
+   `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: …/compare/v<previous>...vX.Y.Z`
+   above the previous version's line. `tests/test_changelog.py` fails until
+   both are right.
 
 2. **Version bump**: `pyproject.toml` `[project].version = "X.Y.Z"`.
 

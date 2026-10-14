@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 190 | 3377 |
+| `tests/` | 191 | 3380 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
 | `tests/cli/` | 29 | 635 |
@@ -154,6 +154,7 @@ docstring so its row is meaningful.
 | [test_builtin_harness_stats.py](test_builtin_harness_stats.py) | 1 | Correctness guard for the harness-stats builtin query (I20). |
 | [test_caveats.py](test_caveats.py) | 120 | Tests for the caveats producer registry and dispatch threading. |
 | [test_caveats_wire.py](test_caveats_wire.py) | 6 | I5 — caveat round-trip across the delegation wire. |
+| [test_changelog.py](test_changelog.py) | 3 | CHANGELOG.md's link references stay in step with its version headings. |
 | [test_chunker.py](test_chunker.py) | 16 | Tests for token-aware chunking (schema-v2: estimator-decoupled, widened source_ids). |
 | [test_ci_lanes.py](test_ci_lanes.py) | 3 | CI runs every local pytest lane, unconditionally, with the same marker. |
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |

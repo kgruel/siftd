@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **`serve.fts_rebuild`, `siftd db merge --no-fts`, and the `rebuild_fts`
+  parameter of `merge_database`/`receive_database` are removed in 0.13.0.**
+  None has had an effect since 0.12.2. `siftd db receive --no-fts` stays:
+  siftd's own push sends it, to servers that may be older.
+  ([#74](https://github.com/kgruel/siftd/issues/74))
+
 ### Internal
+
+- Ingest indexes each stored conversation through the same SQL definition of
+  indexable text as merge and repair, replacing its per-block Python check; a
+  ratchet requires every `event_content` writer to declare the function that
+  writes its index. ([#75](https://github.com/kgruel/siftd/issues/75))
+
+- `CHANGELOG.md`'s headings for 0.6.x and 0.10.0-0.12.2 are links again, and
+  `[Unreleased]` compares from the latest release instead of v0.9.1;
+  `tests/test_changelog.py` keeps the footer in step with the headings.
 
 - The GitLab mirror's `image:build` job (the homelab `siftd serve` image) is
   tagged `homelab`, pinning it to the Docker-executor runner. Untagged, it
@@ -1929,12 +1946,24 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.12.2...HEAD
+[0.12.2]: https://github.com/kgruel/siftd/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/kgruel/siftd/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/kgruel/siftd/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/kgruel/siftd/compare/v0.10.2...v0.11.0
+[0.10.2]: https://github.com/kgruel/siftd/compare/v0.10.1...v0.10.2
+[0.10.1]: https://github.com/kgruel/siftd/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/kgruel/siftd/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/kgruel/siftd/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/kgruel/siftd/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/kgruel/siftd/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/kgruel/siftd/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/kgruel/siftd/compare/v0.6.4...v0.7.0
+[0.6.4]: https://github.com/kgruel/siftd/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/kgruel/siftd/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/kgruel/siftd/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/kgruel/siftd/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/kgruel/siftd/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/kgruel/siftd/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kgruel/siftd/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kgruel/siftd/compare/v0.5.2...v0.5.3
