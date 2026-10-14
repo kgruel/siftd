@@ -323,8 +323,8 @@ def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
     `siftd ingest --rebuild-fts` and `siftd doctor fix`, and O(corpus) on every
     push is exactly the cost that made the push paths skip indexing at all.
 
-    This test exists so removing the knob outright (#74) cannot look like a
-    behavior change: it already is one, here.
+    This test exists so removing the knob outright (in 0.13.0) cannot look like
+    a behavior change: it already is one, here.
     """
     target = _make_db(
         tmp_path / "target.db",

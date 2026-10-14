@@ -129,7 +129,6 @@ def _receive_or_sync_error(
     source: Path,
     target: Path,
     *,
-    rebuild_fts: bool = True,
     context: str = "Pull merge failed",
 ) -> None:
     """Call receive_database and convert known storage exceptions to SyncError.
@@ -141,7 +140,7 @@ def _receive_or_sync_error(
     from siftd.api.receive import receive_database
 
     try:
-        receive_database(source, target, rebuild_fts=rebuild_fts)
+        receive_database(source, target)
     except ValueError as e:
         raise SyncError(f"Pulled database is invalid: {e}") from e
     except (sqlite3.Error, RuntimeError, OSError, DriftError) as e:
@@ -432,6 +431,9 @@ async def _push_ssh(
     assert remote.host is not None
 
     remote_db = shlex.quote(remote.path)
+    # `--no-fts` is a permanent SSH wire contract, not a dead flag: remote
+    # servers older than 0.12.2 still honor it to skip an O(corpus) FTS
+    # rebuild. Current `receive` accepts and ignores it. Do not clean it up.
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
     if staged:
         receive_cmd += " --stage"
@@ -686,7 +688,6 @@ def _push_local(remote: SyncRemote, slice_path: Path, db_path: Path) -> bool:
         merge_database(
             target_db=target,
             source_path=slice_path,
-            rebuild_fts=False,
         )
     except (RuntimeError, FileNotFoundError, DriftError) as e:
         # DriftError: see sync_pull_merge — preserves the SyncError wrap for

@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3380 |
+| `tests/` | 191 | 3381 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 12 | 71 |
-| `tests/cli/` | 29 | 635 |
+| `tests/cli/` | 29 | 636 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -260,7 +260,7 @@ docstring so its row is meaningful.
 | [test_serialization_ingest_backfill.py](test_serialization_ingest_backfill.py) | 3 | Anti-drift tests for ingest/backfill result serialization. |
 | [test_serialization_tags.py](test_serialization_tags.py) | 3 | — |
 | [test_serve.py](test_serve.py) | 48 | Tests for siftd serve — HTTP team sync server. |
-| [test_serve_app_edges.py](test_serve_app_edges.py) | 3 | — |
+| [test_serve_app_edges.py](test_serve_app_edges.py) | 4 | — |
 | [test_serve_auth_edges.py](test_serve_auth_edges.py) | 45 | — |
 | [test_serve_auth_focus.py](test_serve_auth_focus.py) | 1 | — |
 | [test_serve_browser_login.py](test_serve_browser_login.py) | 9 | Browser auth-code+PKCE login surface. |
@@ -381,7 +381,7 @@ docstring so its row is meaningful.
 | [cli/test_search_around_argparse.py](cli/test_search_around_argparse.py) | 25 | Argparse-layer tests for siftd search --around and --turns flags. |
 | [cli/test_search_history_argparse.py](cli/test_search_history_argparse.py) | 13 | Argparse-layer + behavior tests for siftd search --history. |
 | [cli/test_search_noembed.py](cli/test_search_noembed.py) | 26 | Non-embeddings tests for siftd.cli.search command paths. |
-| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 12 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
+| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 13 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
 | [cli/test_sessions_cli.py](cli/test_sessions_cli.py) | 4 | Tests for siftd.cli.sessions handlers. |
 | [cli/test_show.py](cli/test_show.py) | 6 | Tests for `siftd show` — the canonical conversation reader. |
 | [cli/test_show_argparse.py](cli/test_show_argparse.py) | 21 | CLI-layer argparse tests for anchor + window flags on siftd show <id>. |

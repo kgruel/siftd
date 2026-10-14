@@ -123,9 +123,12 @@ class TestProcessInbox:
         merge_calls = []
         results: list[dict] = []
 
-        def _fake_receive_database(source_path, target_db, rebuild_fts=True,
+        # No rebuild_fts parameter: the inbox no longer passes it, so a
+        # regression that reintroduces the kwarg fails the call with TypeError
+        # before the append, and the len(merge_calls) assertion below fails.
+        def _fake_receive_database(source_path, target_db,
                                    user_id=None, push_id=None):
-            merge_calls.append((source_path, target_db, rebuild_fts))
+            merge_calls.append((source_path, target_db))
             entered_merge.set()
             assert release_merge.wait(timeout=2), "timed out waiting to release merge"
             return {"conversations": 1}

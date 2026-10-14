@@ -44,8 +44,8 @@ def merge_database(
         rebuild_fts: Accepted and ignored. Merged content is indexed as part
             of the merge (#49), so this no longer decides whether it is
             searchable; it used to trigger a *full* corpus rebuild on top,
-            which the scoped write makes redundant. Kept for compatibility —
-            removal is tracked in #74.
+            which the scoped write makes redundant. Deprecated: will be
+            removed in 0.13.0.
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
             versions from the source. If False, keep existing versions.
@@ -203,7 +203,7 @@ def merge_database(
     finally:
         conn.close()
 
-    # Rebuild the derived tier (and FTS, if requested) after a real merge.
+    # Rebuild the derived tier after a real merge.
     # The merge copies raw rows via INSERT...SELECT but never touches the
     # derived tier, so usage_by_conv_model / conversation_stats would go stale —
     # the live sync/receive path merges new conversations that would otherwise

@@ -30,8 +30,8 @@ def receive_database(
         target_db: Path to the target siftd database.
         rebuild_fts: Accepted and ignored. Received content is indexed on
             both paths — the merge indexes what it wrote, the create path
-            indexes the file it copied (#49). Kept for compatibility; removal
-            is tracked in #74.
+            indexes the file it copied (#49). Deprecated: will be removed in
+            0.13.0.
         user_id: Authenticated user identity to stamp as conversation owner.
         push_id: Push log ID for provenance linking.
         preflight: If True (default), run structural integrity checks on the
@@ -87,7 +87,6 @@ def receive_database(
 
     result = merge_database(
         target_db, source_path,
-        rebuild_fts=rebuild_fts,
         before_commit=_on_before_commit,
         preflight=False,  # source already checked above
         user_id=user_id,  # owner-partition the merge (multi-tenant write-IDOR guard)
