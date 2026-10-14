@@ -15,7 +15,7 @@ import argparse
 
 import pytest
 
-from siftd.storage.fts import insert_fts_content
+from siftd.storage.fts import index_conversations
 from siftd.storage.sqlite import (
     create_database,
     get_or_create_harness,
@@ -47,7 +47,6 @@ def fts_db(tmp_path):
     p_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
     p_content_id = insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
     # Insert FTS content for search
-    insert_fts_content(conn, p_content_id, "prompt", conv_id, "How do I handle errors?")
 
     r_id = insert_response(
         conn, conv_id, p_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
@@ -58,8 +57,9 @@ def fts_db(tmp_path):
         '{"text": "Use try/except blocks for error handling in Python."}'
     )
     # Insert FTS content for search
-    insert_fts_content(conn, r_content_id, "response", conv_id, "Use try/except blocks for error handling in Python.")
 
+    # Index the event_content rows above, as ingest does for a new conversation.
+    index_conversations(conn, [conv_id])
     conn.commit()
     conn.close()
 
@@ -277,13 +277,11 @@ class TestFtsOnlyMode:
         )
         p1_id = insert_prompt(conn, conv1_id, "p1", "2024-01-15T10:00:00Z")
         p1_c_id = insert_prompt_content(conn, p1_id, 0, "text", '{"text": "alpha error"}')
-        insert_fts_content(conn, p1_c_id, "prompt", conv1_id, "alpha error")
         r1_id = insert_response(
             conn, conv1_id, p1_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
             input_tokens=10, output_tokens=10,
         )
         r1_c_id = insert_response_content(conn, r1_id, 0, "text", '{"text": "alpha response"}')
-        insert_fts_content(conn, r1_c_id, "response", conv1_id, "alpha response")
 
         # Conversation in beta about errors
         conv2_id = insert_conversation(
@@ -292,14 +290,14 @@ class TestFtsOnlyMode:
         )
         p2_id = insert_prompt(conn, conv2_id, "p2", "2024-01-16T10:00:00Z")
         p2_c_id = insert_prompt_content(conn, p2_id, 0, "text", '{"text": "beta error"}')
-        insert_fts_content(conn, p2_c_id, "prompt", conv2_id, "beta error")
         r2_id = insert_response(
             conn, conv2_id, p2_id, model_id, None, "r2", "2024-01-16T10:00:01Z",
             input_tokens=10, output_tokens=10,
         )
         r2_c_id = insert_response_content(conn, r2_id, 0, "text", '{"text": "beta response"}')
-        insert_fts_content(conn, r2_c_id, "response", conv2_id, "beta response")
 
+        # Index the event_content rows above, as ingest does for a new conversation.
+        index_conversations(conn, [conv1_id, conv2_id])
         conn.commit()
         conn.close()
 
@@ -360,7 +358,6 @@ class TestWithEmbeddingsInstalled:
         )
         p_id = insert_prompt(conn, conv_id, "p1", "2024-01-15T10:00:00Z")
         p_c_id = insert_prompt_content(conn, p_id, 0, "text", '{"text": "How do I handle errors?"}')
-        insert_fts_content(conn, p_c_id, "prompt", conv_id, "How do I handle errors?")
         r_id = insert_response(
             conn, conv_id, p_id, model_id, None, "r1", "2024-01-15T10:00:01Z",
             input_tokens=10, output_tokens=100,
@@ -369,8 +366,9 @@ class TestWithEmbeddingsInstalled:
             conn, r_id, 0, "text",
             '{"text": "Use try/except blocks for error handling."}'
         )
-        insert_fts_content(conn, r_c_id, "response", conv_id, "Use try/except blocks for error handling.")
 
+        # Index the event_content rows above, as ingest does for a new conversation.
+        index_conversations(conn, [conv_id])
         conn.commit()
         conn.close()
 
@@ -479,7 +477,7 @@ class TestAutoSelectionHints:
         # embed_db_path doesn't exist (fts_db fixture doesn't create it)
 
         args = make_search_args(
-            query=["error"],
+            query=["nomatchanywhere"],
             db=str(fts_db["db_path"]),
             embed_db=str(fts_db["embed_db_path"]),  # This file doesn't exist
         )
@@ -488,8 +486,10 @@ class TestAutoSelectionHints:
         captured = capsys.readouterr()
 
         assert result == 0
-        # The embeddings-stale caveat surfaces both the "not indexed" note and its
-        # remediation (the caveat's fix_command, rendered as a "↳ siftd embed" hint by status.caveats) on stderr.
+        # The embeddings-stale caveat and its "siftd embed" remediation render on
+        # stderr only when the search is empty; with hits the caveat is a stdout
+        # Note with no remediation line. The query below matches nothing so this
+        # test pins the stderr path it has always asserted.
         assert "not indexed" in captured.err
         assert "siftd embed" in captured.err
 

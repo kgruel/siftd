@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3381 |
+| `tests/` | 191 | 3382 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 12 | 71 |
+| `tests/architecture/` | 13 | 75 |
 | `tests/cli/` | 29 | 636 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -187,7 +187,7 @@ docstring so its row is meaningful.
 | [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
-| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 8 | Merged content is searchable, on every path and at every setting. |
+| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
@@ -344,6 +344,7 @@ docstring so its row is meaningful.
 
 | File | Tests | Summary |
 |------|-------|---------|
+| [architecture/test_content_index_pairing.py](architecture/test_content_index_pairing.py) | 4 | Every writer of ``event_content`` is declared, and each names the function that writes its index. |
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
