@@ -1084,7 +1084,7 @@ examples:
   ssh host siftd --db /path/team.db db receive < slice.db
   ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op""",
     )
-    # PERMANENT SSH WIRE CONTRACT: every siftd client sends `--no-fts` here
+    # PERMANENT SSH WIRE CONTRACT: every client sends `--no-fts` here
     # (api/sync.py), including to servers older than 0.12.2, where it still
     # prevents an O(corpus) FTS rebuild. Accepted and ignored by current code.
     # Do NOT add a deprecation warning: it would print on every SSH push.
