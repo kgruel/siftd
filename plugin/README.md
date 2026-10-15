@@ -86,10 +86,10 @@ plugin/
 │   ├── skill-reminder.sh # Detect research intent in user prompts
 │   └── post-siftd.sh     # Contextual tips after siftd commands
 ├── commands/
-│   ├── siftd:search.md   # Direct search execution
-│   ├── siftd:query.md    # List/drill-down conversations
-│   ├── siftd:peek.md     # Live session inspection
-│   └── siftd:tag.md      # Tag with session detection feedback
+│   ├── search.md         # Direct search execution
+│   ├── query.md          # List/drill-down conversations
+│   ├── peek.md           # Live session inspection
+│   └── tag.md            # Tag with session detection feedback
 └── skills/
     └── siftd/
         ├── SKILL.md
