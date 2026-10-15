@@ -24,7 +24,7 @@ SRC = REPO / "src" / "siftd"
 
 # Whitespace is normalized before matching, so a promise wrapped across docstring
 # lines ("will be\n    removed in 0.13.0") is still one match.
-_PROMISE = re.compile(r"removed in (\d+)\.(\d+)\.(\d+)", re.IGNORECASE)
+_PROMISE = re.compile(r"removed in v?(\d+)\.(\d+)\.(\d+)", re.IGNORECASE)
 
 
 def _current_version() -> tuple[int, ...]:
@@ -59,4 +59,5 @@ def test_the_promise_matcher_reads_a_wrapped_docstring():
     wrapped = " ".join("Deprecated: will be\n            removed in 0.13.0.".split())
     assert [m.groups() for m in _PROMISE.finditer(wrapped)] == [("0", "13", "0")]
     assert _PROMISE.search("Deprecated, no effect, removed in 0.13.0: merged content")
+    assert _PROMISE.search("accepted through v0.9.x and removed in v0.10.0.")
     assert not _PROMISE.search("removed in a later release")

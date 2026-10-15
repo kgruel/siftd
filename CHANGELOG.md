@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   siftd's own push sends it, to servers that may be older.
   ([#74](https://github.com/kgruel/siftd/issues/74))
 
+- **`SearchChunk.to_render_dict(debug_ids=)` and serve's `?debug_ids=` are
+  removed in 0.13.0**, having missed their promised v0.10.0 removal.
+  ([#94](https://github.com/kgruel/siftd/issues/94))
+
 ### Internal
 
 - Ingest indexes each stored conversation through the same SQL definition of

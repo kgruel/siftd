@@ -151,16 +151,14 @@ def test_each_owner_writes_the_index():
 
 
 def test_leaf_writer_is_reached_only_through_its_owner():
-    # One sweep for every leaf: each site's counts are keyed by the callee's name.
-    callers: dict[str, set[tuple[str, str]]] = {leaf: set() for leaf in LEAF_CALLERS}
-    for site, counts in sites_by_function(call_to(tuple(LEAF_CALLERS))).items():
-        for leaf in counts:
-            callers[leaf].add(site)
-    mismatched = {
-        leaf: {"found": sorted(callers[leaf]), "declared": sorted(expected)}
-        for leaf, expected in LEAF_CALLERS.items()
-        if callers[leaf] != expected
-    }
+    # One sweep per leaf, not one for all: sites_by_function stops descending at
+    # a match, so a combined sweep would never see insert_event_content(...)
+    # nested inside an insert_prompt_content(...) argument.
+    mismatched = {}
+    for leaf, expected in LEAF_CALLERS.items():
+        callers = set(sites_by_function(call_to((leaf,))))
+        if callers != expected:
+            mismatched[leaf] = {"found": sorted(callers), "declared": sorted(expected)}
     assert not mismatched, (
         f"event_content leaf helpers called from outside the declared chain: {mismatched}. "
         f"A new caller that writes a block must be added to LEAF_CALLERS and must reach "
