@@ -47,7 +47,7 @@ def cmd_db_info(args) -> int:
         status.db_missing(db)
         return 1
 
-    from siftd.api import open_database
+    from siftd.api import open_database, schema_version
 
     # Diagnostic command — report what's on disk; don't auto-upgrade as a side effect.
     conn = open_database(db, read_only=True, auto_upgrade=False)
@@ -56,7 +56,7 @@ def cmd_db_info(args) -> int:
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
         page_count = conn.execute("PRAGMA page_count").fetchone()[0]
         journal_mode = conn.execute("PRAGMA journal_mode").fetchone()[0]
-        user_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        user_version = schema_version(conn)
 
         # Check for FTS5 table
         fts_exists = conn.execute(
@@ -100,13 +100,13 @@ def cmd_db_schema_version(args) -> int:
         status.db_missing(db)
         return 1
 
-    from siftd.api import open_database
+    from siftd.api import open_database, schema_version
     from siftd.api.migrations import get_schema_version_info
 
     # Triage command — must report the on-disk version even when stale.
     conn = open_database(db, read_only=True, auto_upgrade=False)
     try:
-        current = conn.execute("PRAGMA user_version").fetchone()[0]
+        current = schema_version(conn)
     finally:
         conn.close()
 
@@ -206,11 +206,12 @@ def cmd_db_vacuum(args) -> int:
     size_before = db.stat().st_size
 
     from siftd.api import open_database
+    from siftd.api.database import refresh_planner_stats
 
     conn = open_database(db)
     try:
         conn.execute("VACUUM")
-        conn.execute("PRAGMA optimize")
+        refresh_planner_stats(conn, full=True, commit=True)
     finally:
         conn.close()
 
@@ -276,20 +277,20 @@ def cmd_db_restore(args) -> int:
     db = resolve_db(args)
 
     if getattr(args, "dry_run", False):
-        from siftd.api import open_database
+        from siftd.api import open_database, schema_version
 
         tgt_schema_ver = None
         tgt_counts: dict[str, int] = {}
         if db.exists():
             conn2 = open_database(db, read_only=True, auto_upgrade=False)
             try:
-                tgt_schema_ver = conn2.execute("PRAGMA user_version").fetchone()[0]
+                tgt_schema_ver = schema_version(conn2)
                 tgt_counts = _table_row_counts(conn2)
             finally:
                 conn2.close()
         conn = open_database(source, read_only=True, auto_upgrade=False)
         try:
-            src_schema_ver = conn.execute("PRAGMA user_version").fetchone()[0]
+            src_schema_ver = schema_version(conn)
             src_counts = _table_row_counts(conn)
         finally:
             conn.close()
@@ -415,6 +416,11 @@ def cmd_db_merge(args) -> int:
 
     from siftd.api.merge import merge_database
 
+    if args.no_fts:
+        from siftd.api.compat import rebuild_fts_notice
+
+        message, hint = rebuild_fts_notice("--no-fts")
+        status.warning(message, hint=hint)
     dry_run = args.dry_run
     replace = not args.no_replace
 
@@ -572,9 +578,10 @@ def cmd_db_receive(args) -> int:
 
         from siftd.api.receive import receive_database
 
-        result = receive_database(
-            tmp_path, db, preflight=not args.no_preflight
-        )
+        # --no-fts is accepted and ignored without a warning: it is part of
+        # what sync clients send (api/sync.py::_push_ssh), and receive's
+        # stderr is what they show the user when a push fails.
+        result = receive_database(tmp_path, db, preflight=not args.no_preflight)
         print(json.dumps(result))
         return 0
 
@@ -1059,15 +1066,12 @@ Sync remotes:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""examples:
   siftd db merge laptop-slice.db              # merge slice into main DB
-  siftd db merge laptop-slice.db --dry-run    # preview what would be merged
-  siftd db merge laptop-slice.db --no-fts     # compatibility no-op""",
+  siftd db merge laptop-slice.db --dry-run    # preview what would be merged""",
     )
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
-    # Deprecated: a no-op since 0.12.2, removed in 0.13.0 (#74). Unlike
-    # `db receive --no-fts` below, no client sends this one.
     p_merge.add_argument("--no-fts", action="store_true",
-                         help="Compatibility no-op; does not disable indexing")
+                         help="Deprecated, no effect (removed in 0.13.0)")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.add_argument("--no-preflight", action="store_true",
@@ -1083,15 +1087,9 @@ Sync remotes:
 creates or merges it into the target database.
 
 examples:
-  ssh host siftd --db /path/team.db db receive < slice.db
-  ssh host siftd --db /path/team.db db receive --no-fts < slice.db  # compatibility no-op""",
+  ssh host siftd --db /path/team.db db receive < slice.db""",
     )
-    # PERMANENT SSH WIRE CONTRACT: every client sends `--no-fts` here
-    # (api/sync.py), including to servers older than 0.12.2, where it still
-    # prevents an O(corpus) FTS rebuild. Accepted and ignored by current code.
-    # Do NOT add a deprecation warning: it would print on every SSH push.
-    p_receive.add_argument("--no-fts", action="store_true",
-                           help="Compatibility no-op; does not disable indexing")
+    p_receive.add_argument("--no-fts", action="store_true", help=argparse.SUPPRESS)
     p_receive.add_argument("--stage", action="store_true",
                            help="Stage payload in inbox for deferred merge (fast ACK)")
     p_receive.add_argument("--no-preflight", action="store_true",

@@ -5,19 +5,7 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
-### Deprecated
-
-- **`serve.fts_rebuild`, `siftd db merge --no-fts`, and the `rebuild_fts`
-  parameter of `merge_database`/`receive_database` are removed in 0.13.0.**
-  None has had an effect since 0.12.2. `siftd db receive --no-fts` stays:
-  siftd's own push sends it, to servers that may be older.
-  ([#74](https://github.com/kgruel/siftd/issues/74))
-
-- **`SearchChunk.to_render_dict(debug_ids=)` and serve's `?debug_ids=` are
-  removed in 0.13.0**, having missed their promised v0.10.0 removal.
-  ([#94](https://github.com/kgruel/siftd/issues/94))
+## [0.12.3] - 2026-10-11
 
 ### Internal
 
@@ -30,8 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[Unreleased]` compares from the latest release instead of v0.9.1;
   `tests/test_changelog.py` keeps the footer in step with the headings.
 
-- A version bump that reaches a deprecation's stated "removed in X.Y.Z" fails
-  `./dev check` until the surface is gone (`tests/test_compat_ledger.py`).
+- A version bump that reaches a removal version in the compat ledger
+  (`siftd.api.compat`) fails `./dev check` until the surface is gone, and every
+  "removed in X.Y.Z" in the source must match a ledger entry
+  (`tests/test_compat_ledger.py`).
 
 - The GitLab mirror's `image:build` job (the homelab `siftd serve` image) is
   tagged `homelab`, pinning it to the Docker-executor runner. Untagged, it
@@ -59,6 +49,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guess; a missed condition now fails naming it. Measured on a small sample
   (one baseline run per mode, a handful after): a full run took 7s locally
   instead of 78s, and 15-21s remotely instead of 86s.
+
+- The architecture rule against raw SQL in CLI modules now runs. Its keyword
+  regex required a literal backslash and its glob matched no CLI module, so it
+  had never matched anything. The blob ref-count repair and `siftd id`'s turn
+  lookup moved into storage; `db`'s inspection commands keep their PRAGMAs
+  under a shrink-only allowlist. A positive control now guards the scanner.
+  ([#62](https://github.com/kgruel/siftd/issues/62))
+
+- One function, `schema_version(conn)`, now reads a database's schema version.
+  The read was spelled inline 13 times across five packages; an architecture
+  test keeps it single. Two `db` commands leave the raw-SQL allowlist.
+  ([#67](https://github.com/kgruel/siftd/issues/67))
+
+### Fixed
+
+- **`siftd doctor` now tells you what to do about files that failed ingestion:**
+  run `siftd ingest`, which retries them every time. Previously it reported only
+  a count. Failed files that no longer exist on disk are counted separately and
+  get no fix, since re-ingesting cannot clear them.
+  ([#55](https://github.com/kgruel/siftd/issues/55))
+
+- **Databases keep their query-planner statistics without `siftd db vacuum`.**
+  Ingest, merge and receive finish with a bounded `ANALYZE` (about 1ms at 1M
+  events); if it fails, a warning is logged and the ingest or push still
+  succeeds. Fresh databases, including a receive-only server's, previously had
+  no statistics, so some joins started from the unselective side.
+  `siftd db vacuum` now runs a full `ANALYZE`.
+  ([#80](https://github.com/kgruel/siftd/issues/80))
+
+### Deprecated
+
+These have had no effect since 0.12.2, which indexes merged content as part of
+the merge. Each now warns, and is removed in **0.13.0**.
+([#74](https://github.com/kgruel/siftd/issues/74))
+
+- `siftd db merge --no-fts`.
+- The `rebuild_fts` argument to `merge_database` and `receive_database`
+  (a `DeprecationWarning` when passed).
+- The `serve.fts_rebuild` config key: `siftd serve` warns at startup if it is
+  set. Its `"scheduled"` value was never implemented.
+
+`siftd db receive --no-fts` is unaffected and stays accepted, now hidden from
+`--help`, with no removal scheduled. Sync clients send it, so warning or
+rejecting it would break pushes from older versions. `db slice --no-fts` and
+`db send --no-fts` still work as before.
+
+`SearchChunk.to_render_dict(debug_ids=)` and serve's `?debug_ids=` are also
+removed in 0.13.0, having missed their promised v0.10.0 removal.
+([#94](https://github.com/kgruel/siftd/issues/94))
 
 ## [0.12.2] - 2026-09-29
 
@@ -1953,7 +1992,8 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.12.2...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.12.3...HEAD
+[0.12.3]: https://github.com/kgruel/siftd/compare/v0.12.2...v0.12.3
 [0.12.2]: https://github.com/kgruel/siftd/compare/v0.12.1...v0.12.2
 [0.12.1]: https://github.com/kgruel/siftd/compare/v0.12.0...v0.12.1
 [0.12.0]: https://github.com/kgruel/siftd/compare/v0.11.0...v0.12.0

@@ -14,7 +14,7 @@ class FtsIntegrityCheck:
     cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.storage.sqlite import SCHEMA_VERSION, open_database
+        from siftd.storage.sqlite import SCHEMA_VERSION, open_database, schema_version
 
         conn = ctx.get_db_conn()
         cur = conn.execute(
@@ -30,7 +30,7 @@ class FtsIntegrityCheck:
         # concurrent serve/ingest). Skip instead and let an ordinary command do
         # the upgrade. Asking the question cannot itself migrate: the version
         # comes off ctx's own read-only connection (see CheckContext._get_conn).
-        if conn.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+        if schema_version(conn) < SCHEMA_VERSION:
             return [
                 Finding(
                     check=self.name,

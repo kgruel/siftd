@@ -42,6 +42,17 @@ from siftd.storage.tags import (
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
 SCHEMA_VERSION = 12
 
+
+def schema_version(conn: sqlite3.Connection, schema: str = "main") -> int:
+    """The schema version recorded in a database: its ``user_version``.
+
+    Takes a connection the caller already holds, never opens one (#67).
+    ``schema`` names an attached database, as merge compares ``main`` to ``src``.
+    """
+    if not schema.isidentifier():
+        raise ValueError(f"not a schema name: {schema!r}")
+    return conn.execute(f"PRAGMA {schema}.user_version").fetchone()[0]
+
 # Registry of versioned migrations: version -> migration function.
 # Each function migrates the DB from version-1 to version.
 MIGRATIONS: dict[int, Callable[[sqlite3.Connection], None]] = {}
@@ -323,7 +334,7 @@ def open_database(
             # instead of tolerating it. Version 0 is an uninitialized or
             # pre-versioning file: no info, so leave it and let the caller's
             # own first query surface the real error.
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if 0 < version < SCHEMA_VERSION:
                 conn.close()
                 _migrate_stale_for_readonly(db_path, version)
@@ -375,7 +386,7 @@ def open_database(
             # pre-migration backup is needed.  backup_database() opens its own
             # source connection so it cannot run while BEGIN IMMEDIATE holds an
             # exclusive lock on the same file.
-            _version_peek = conn.execute("PRAGMA user_version").fetchone()[0]
+            _version_peek = schema_version(conn)
             if not is_new and _version_peek < SCHEMA_VERSION:
                 from datetime import date as _date
                 _bak_name = f"{db_path.stem}.bak.{_date.today():%Y%m%d}.db"
@@ -397,7 +408,7 @@ def open_database(
             conn.execute("PRAGMA foreign_keys = OFF")
             conn.execute("BEGIN IMMEDIATE")
 
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if version > SCHEMA_VERSION:
                 raise RuntimeError(
                     f"Database schema version {version} is from a newer version of siftd "
@@ -441,7 +452,7 @@ def open_database(
             conn.execute("PRAGMA foreign_keys = ON")
         else:
             # read_only: on future-version DB, warn and open (write-mode raises)
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
+            version = schema_version(conn)
             if version > SCHEMA_VERSION:
                 _logger.warning(
                     "DB stamped v%d; current install supports only v%d, opening read-only. "
@@ -2378,6 +2389,57 @@ def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     )
 
 
+# Rows per index the bounded ANALYZE samples: SQLite's own recommendation.
+# Measured ~1ms on the full schema (67 indexes) at 1M events.
+_ANALYSIS_LIMIT = 400
+
+
+def refresh_planner_stats(
+    conn: sqlite3.Connection, *, full: bool = False, commit: bool = False,
+) -> None:
+    """Keep ``sqlite_stat1`` present and roughly current, so join order is
+    chosen from the table shapes rather than from defaults (#80).
+
+    Without stats the planner can drive a join from the unselective side: the
+    replacement snapshot in ``storage/replacement.py`` scanned every event tag
+    per conversation until it pinned its order with CROSS JOIN. Callers are the
+    write paths that change the corpus's size: ingest, merge, receive.
+
+    Always a bounded ``ANALYZE`` (``analysis_limit``), never ``PRAGMA optimize``:
+    before SQLite 3.46, optimize skips a table it has never analyzed, so a table
+    that was empty at the first refresh would stay statless however much it
+    grew. ``full=True`` lifts the bound, for the explicit ``db vacuum``.
+
+    Caller controls the commit, as everywhere in storage: ANALYZE writes
+    ``sqlite_stat1``, so callers on a write path pass ``commit=True``.
+    """
+    conn.execute(f"PRAGMA analysis_limit = {0 if full else _ANALYSIS_LIMIT}")
+    conn.execute("ANALYZE")
+    if commit:
+        conn.commit()
+
+
+def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
+    """Re-derive ``content_blobs.ref_count`` from ``event_tool_call`` and sweep orphans.
+
+    Returns ``(repaired, removed)``: blobs whose count was corrected, then blobs
+    deleted because nothing references them.
+    """
+    repaired = conn.execute("""
+        UPDATE content_blobs
+        SET ref_count = COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+        WHERE ref_count != COALESCE(
+            (SELECT COUNT(*) FROM event_tool_call WHERE result_hash = content_blobs.hash), 0
+        )
+    """).rowcount
+    removed = conn.execute("DELETE FROM content_blobs WHERE ref_count = 0").rowcount
+    if commit:
+        conn.commit()
+    return repaired, removed
+
+
 def _ensure_git_remote_index(conn: sqlite3.Connection) -> None:
     """Create index on workspaces.git_remote if it doesn't exist. Idempotent."""
     conn.execute(
@@ -3384,8 +3446,9 @@ def record_failed_file(
 ) -> str:
     """Record a file that failed ingestion. Returns the record id.
 
-    Stores with conversation_id=NULL and error message so the file is tracked
-    and won't retry unless its hash changes.
+    Stores with conversation_id=NULL and error message so the file is tracked.
+    Ingest re-examines an errored row on every run, so it clears itself once
+    the cause is fixed.
     """
     from datetime import UTC, datetime
 

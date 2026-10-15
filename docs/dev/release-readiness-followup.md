@@ -1,5 +1,9 @@
 # Hardening and release-readiness follow-up
 
+> **Superseded: this candidate shipped as [0.12.2](../../CHANGELOG.md#0122---2026-09-29)**
+> on 2026-09-29. Its release holds and pending reviews are history, not open
+> work. The identity and migration decisions it lists remain open.
+
 2026-09-27 · **LOCAL CANDIDATE; PUBLICATION HOLD.** No version is chosen.
 This supersedes the current-status portions of the
 [earlier release assessment](release-readiness-next.md), not its historical evidence.

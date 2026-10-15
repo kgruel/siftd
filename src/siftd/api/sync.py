@@ -431,9 +431,9 @@ async def _push_ssh(
     assert remote.host is not None
 
     remote_db = shlex.quote(remote.path)
-    # `--no-fts` is a permanent SSH wire contract, not a dead flag: remote
-    # servers older than 0.12.2 still honor it to skip an O(corpus) FTS
-    # rebuild. Current `receive` accepts and ignores it. Do not clean it up.
+    # `--no-fts` is a no-op on servers >= 0.12.2 and still saves an older
+    # server a full index rebuild per push. `db receive` keeps accepting it
+    # (hidden) for as long as clients send it; see api/compat.py.
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
     if staged:
         receive_cmd += " --stage"

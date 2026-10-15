@@ -76,7 +76,7 @@ def _fts_sync_status(db_path):
 
 
 def test_subsequent_push_rebuilds_fts(tmp_path):
-    """receive_database with rebuild_fts=True on an existing target rebuilds content_fts."""
+    """receive_database on an existing target indexes what the push brought."""
     anchor = "smoke-test-anchor-gamma"
 
     # Seed an existing target with a different conversation
@@ -88,20 +88,20 @@ def test_subsequent_push_rebuilds_fts(tmp_path):
 
     sender = _seed(tmp_path, "sender.db", anchor)
 
-    receive_database(sender, target, rebuild_fts=True, preflight=False)
+    receive_database(sender, target, preflight=False)
 
     assert _fts_hit_count(target, anchor) >= 1, (
-        "FTS should find the anchor phrase after subsequent push with rebuild_fts=True"
+        "FTS should find the anchor phrase after a subsequent push"
     )
 
 
 def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
-    """A push that replaces a conversation retires its old text, even with rebuild_fts=False.
+    """A push that replaces a conversation retires its old text without a full rebuild.
 
     siftd#20. content_fts is virtual — no FK, no cascade, invisible to
     foreign_key_check — so the merge's stale-conversation delete has to clear it
-    explicitly. ``rebuild_fts=False`` is kept here because it is the value that
-    once skipped the rebuild; the parameter is now inert.
+    explicitly. No full rebuild follows a merge any more (#49), so nothing else
+    would.
     """
     import time
 
@@ -122,7 +122,7 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
         conversations=[{"external_id": "conv-1", "response_text": fresh_anchor}],
     )
 
-    result = receive_database(sender, target, rebuild_fts=False, preflight=False)
+    result = receive_database(sender, target, preflight=False)
     assert result["replaced_conversations"] == 1
 
     assert _fts_hit_count(target, stale_anchor) == 0, (
@@ -146,8 +146,9 @@ def test_merged_content_is_always_searchable(tmp_path, rebuild_fts):
     """
     anchor = "merge-invariant-anchor"
     target = _seed(tmp_path, "target.db", "pre-existing-text", indexed=True)
-    receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
-                     target, rebuild_fts=rebuild_fts, preflight=False)
+    with pytest.warns(DeprecationWarning):
+        receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
+                         target, rebuild_fts=rebuild_fts, preflight=False)
 
     assert _fts_sync_status(target) == {"orphaned_count": 0, "missing_count": 0}
     assert _fts_hit_count(target, anchor) >= 1
@@ -166,8 +167,9 @@ def test_first_push_is_always_searchable(tmp_path, rebuild_fts):
     """
     anchor = "first-push-invariant-anchor"
     target = tmp_path / "fresh.db"
-    receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
-                     target, rebuild_fts=rebuild_fts, preflight=False)
+    with pytest.warns(DeprecationWarning):
+        receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
+                         target, rebuild_fts=rebuild_fts, preflight=False)
 
     assert _fts_sync_status(target) == {"orphaned_count": 0, "missing_count": 0}
     assert _fts_hit_count(target, anchor) >= 1
@@ -343,7 +345,7 @@ def test_conversation_that_only_gains_events_is_indexed(tmp_path):
     finally:
         conn.close()
 
-    result = merge_database(target, source, rebuild_fts=False)
+    result = merge_database(target, source)
     assert result["new_conversation_ids"] == []
     assert result["replaced_conversation_ids"] == []
     assert result["skipped_conversations"] == 1, "the conversation row itself is untouched"

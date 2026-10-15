@@ -3,6 +3,7 @@
 Exposes database connection management to CLI without direct storage imports.
 """
 
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -11,6 +12,7 @@ from siftd.paths import db_path as _db_path
 from siftd.storage.sqlite import (
     SchemaUpgradeRequiredError,
     remove_database,
+    schema_version,
 )
 from siftd.storage.sqlite import (
     open_database as _open_database,
@@ -18,7 +20,7 @@ from siftd.storage.sqlite import (
 
 # Re-exported via siftd.api so CLI and serve can reach these without crossing
 # the cli/serve → storage boundary enforced by tests/architecture/test_imports.py.
-__all__ = ["SchemaUpgradeRequiredError", "remove_database"]
+__all__ = ["SchemaUpgradeRequiredError", "remove_database", "schema_version"]
 
 # Checks run as pre-flight gates before merge/receive.
 # db-blob-refcount-drift is intentionally excluded: sync slices copy ref_count
@@ -149,6 +151,35 @@ def recreate_blob_triggers(conn: sqlite3.Connection) -> None:
     from siftd.storage.events import ensure_event_tool_call_triggers
 
     ensure_event_tool_call_triggers(conn)
+
+
+def refresh_planner_stats(
+    conn: sqlite3.Connection, *, full: bool = False, commit: bool = False,
+) -> None:
+    """Refresh the query planner's table statistics; ``full`` analyzes exhaustively."""
+    from siftd.storage.sqlite import refresh_planner_stats as _refresh
+
+    _refresh(conn, full=full, commit=commit)
+
+
+def refresh_planner_stats_after_write(conn: sqlite3.Connection) -> None:
+    """Refresh planner statistics at the end of a write path, and commit.
+
+    Best-effort: the write before it has already committed, and statistics are
+    an optimization, so a failure (a busy lock held by another writer, say) is
+    logged rather than turning a successful ingest or push into an error.
+    """
+    try:
+        refresh_planner_stats(conn, commit=True)
+    except sqlite3.Error as e:
+        logging.getLogger(__name__).warning("Planner statistics not refreshed: %s", e)
+
+
+def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
+    """Re-derive blob ref counts and sweep orphans; returns ``(repaired, removed)``."""
+    from siftd.storage.sqlite import repair_blob_refcounts as _repair
+
+    return _repair(conn, commit=commit)
 
 
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:

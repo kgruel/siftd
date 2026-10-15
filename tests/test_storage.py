@@ -1491,3 +1491,29 @@ class TestBlobIntegrityH17:
         store_content(db, "same", commit=True)
         assert get_ref_count(db, "b" * 64) == 2
 
+
+
+class TestSchemaVersion:
+    """storage.sqlite.schema_version: the one reader of user_version (#67)."""
+
+    def test_reads_main_and_attached(self, tmp_path):
+        from siftd.storage.sqlite import SCHEMA_VERSION, open_database, schema_version
+
+        other = tmp_path / "other.db"
+        o = sqlite3.connect(other)
+        o.execute("PRAGMA user_version = 3")
+        o.close()
+
+        conn = open_database(tmp_path / "main.db")
+        conn.execute("ATTACH DATABASE ? AS src", (str(other),))
+        assert schema_version(conn) == SCHEMA_VERSION
+        assert schema_version(conn, "src") == 3
+        conn.close()
+
+    def test_rejects_a_non_identifier_schema(self, tmp_path):
+        from siftd.storage.sqlite import open_database, schema_version
+
+        conn = open_database(tmp_path / "main.db")
+        with pytest.raises(ValueError):
+            schema_version(conn, "main; DROP TABLE events")
+        conn.close()

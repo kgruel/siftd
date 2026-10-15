@@ -17,15 +17,24 @@ def test_db_help():
     assert rc == 0
 
 
-@pytest.mark.parametrize("command", ["merge", "receive"])
-def test_db_compatibility_no_fts_help(command, capsys):
+def test_db_merge_no_fts_help_says_deprecated(capsys):
     with pytest.raises(SystemExit) as exc:
-        main(["db", command, "--help"])
+        main(["db", "merge", "--help"])
     assert exc.value.code == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert "--no-fts" in output
-    assert "Compatibility no-op; does not disable indexing" in output
-    assert "Skip FTS5 index rebuild" not in output
+    assert "--no-fts Deprecated, no effect (removed in 0.13.0)" in output
+
+
+def test_db_receive_hides_no_fts_but_accepts_it(capsys):
+    """Sync clients send `db receive --no-fts`; it stays accepted, unadvertised (#74)."""
+    with pytest.raises(SystemExit) as exc:
+        main(["db", "receive", "--help"])
+    assert exc.value.code == 0
+    assert "--no-fts" not in capsys.readouterr().out
+
+    from siftd.cli import _build_parser
+
+    assert _build_parser().parse_args(["db", "receive", "--no-fts"]).no_fts is True
 
 
 def test_db_slice_no_fts_help_remains_effective(capsys):
@@ -580,8 +589,13 @@ class TestDbErrorPaths:
             def stat(self):
                 return SimpleNamespace(st_size=next(self._sizes))
 
+        executed = []
+
         class _Conn:
-            def execute(self, *_a, **_kw):
+            def execute(self, sql, *_a, **_kw):
+                executed.append(sql)
+
+            def commit(self):
                 return None
 
             def close(self):
@@ -593,6 +607,9 @@ class TestDbErrorPaths:
         rc = main(["db", "vacuum"])
         assert rc == 0
         assert "Saved" in capsys.readouterr().out
+        # The explicit command analyzes exhaustively, not bounded (#80).
+        assert executed[0] == "VACUUM"
+        assert "PRAGMA analysis_limit = 0" in executed and "ANALYZE" in executed
 
 
 class TestDbSchemaVersion:
@@ -867,3 +884,20 @@ class TestDbReceiveDryRun:
         rc = main(["--db", str(existing_db), "db", "receive", "--dry-run"])
         assert rc == 0
         assert "would merge" in capsys.readouterr().out.lower()
+
+
+def test_db_merge_no_fts_warns_and_still_merges(tmp_path, capsys):
+    """`db merge --no-fts` has done nothing since #49; it now says so (#74)."""
+    from conftest import make_db
+
+    target = make_db(tmp_path / "target.db", conversations=[{"external_id": "a"}])
+    source = make_db(tmp_path / "source.db", conversations=[{"external_id": "b"}])
+
+    rc = main(["--db", str(target), "db", "merge", str(source), "--no-fts"])
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "--no-fts is deprecated and has no effect" in err
+    assert "0.13.0" in err
+    with sqlite3.connect(target) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2

@@ -8,6 +8,7 @@ from conftest import conversation_id, tag_names
 from conftest import make_db as _make_db
 
 from siftd.api.merge import merge_database
+from siftd.api.receive import receive_database
 from siftd.cli import main
 from siftd.storage.sqlite import SCHEMA_PATH, SCHEMA_VERSION
 from siftd.storage.tags import apply_tag, get_or_create_tag
@@ -308,10 +309,26 @@ def test_fts_rebuild(tmp_path, rebuild_fts):
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
 
-    merge_database(target, source, rebuild_fts=rebuild_fts)
+    with pytest.warns(DeprecationWarning, match="removed in 0.13.0"):
+        merge_database(target, source, rebuild_fts=rebuild_fts)
 
     assert _fts_matches(target, "Python") >= 1
     assert _fts_matches(target, "Rust") >= 1
+
+
+def test_rebuild_fts_warns_only_when_passed(tmp_path):
+    """The deprecated knob (#74) warns its caller; leaving it out stays silent."""
+    import warnings
+
+    target = _make_db(tmp_path / "target.db", conversations=[{"external_id": "a"}])
+    source = _make_db(tmp_path / "source.db", conversations=[{"external_id": "b"}])
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        merge_database(target, source)
+        receive_database(source, target)
+
+    with pytest.warns(DeprecationWarning, match=r"receive_database\(rebuild_fts"):
+        receive_database(source, target, rebuild_fts=False)
 
 
 def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
@@ -336,7 +353,8 @@ def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
         tmp_path / "source.db",
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
-    merge_database(target, source, rebuild_fts=True)
+    with pytest.warns(DeprecationWarning):
+        merge_database(target, source, rebuild_fts=True)
 
     assert _fts_matches(target, "Rust") >= 1, "what the merge wrote is indexed"
     assert _fts_matches(target, "Python") == 0, "what it did not write is left alone"

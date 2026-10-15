@@ -32,8 +32,8 @@ what belongs in the release — don't invent changelog content.
 
 5. **Full check**: `./dev check` (lint + test). Must be green before
    proceeding — do not tag on red. After the bump, `tests/test_compat_ledger.py` fails on any
-   surface whose "removed in X.Y.Z" promise this version reaches: remove the
-   surface in this release, or restate the promise with a later version.
+   `siftd.api.compat` entry whose removal version this release reaches: remove
+   the surface with its entry, or restate the entry with a later version.
 
 6. **Confirm with the user before pushing** — tagging and pushing to origin
    triggers a public PyPI publish. Use AskUserQuestion if not already

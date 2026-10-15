@@ -34,6 +34,7 @@ the tag" respectively).
 | [auth.py](auth.py) | Authentication helpers for sync remotes and serve. |
 | [backfill.py](backfill.py) | Backfill API wrappers. |
 | [caveats.py](caveats.py) | Caveats — editorial annotations threaded from execute through render. |
+| [compat.py](compat.py) | Deprecated surface still accepted, each with its stated removal version. |
 | [conversations.py](conversations.py) | Conversation listing and detail API. |
 | [database.py](database.py) | Database lifecycle API for siftd. |
 | [deserialize.py](deserialize.py) | Deserializers — inverse of the wire-form serializers. |

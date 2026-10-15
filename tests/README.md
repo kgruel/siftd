@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 192 | 3384 |
+| `tests/` | 193 | 3398 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 13 | 76 |
-| `tests/cli/` | 29 | 636 |
+| `tests/architecture/` | 13 | 81 |
+| `tests/cli/` | 29 | 640 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -158,7 +158,7 @@ docstring so its row is meaningful.
 | [test_chunker.py](test_chunker.py) | 16 | Tests for token-aware chunking (schema-v2: estimator-decoupled, widened source_ids). |
 | [test_ci_lanes.py](test_ci_lanes.py) | 3 | CI runs every local pytest lane, unconditionally, with the same marker. |
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |
-| [test_compat_ledger.py](test_compat_ledger.py) | 2 | A deprecation's stated removal version is enforced by the release that reaches it. |
+| [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
@@ -167,7 +167,7 @@ docstring so its row is meaningful.
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
-| [test_doctor.py](test_doctor.py) | 121 | Tests for the doctor module. |
+| [test_doctor.py](test_doctor.py) | 125 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
@@ -211,7 +211,7 @@ docstring so its row is meaningful.
 | [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
-| [test_merge.py](test_merge.py) | 41 | Tests for siftd db merge — importing a slice into the main database. |
+| [test_merge.py](test_merge.py) | 42 | Tests for siftd db merge — importing a slice into the main database. |
 | [test_merge_blob_gc.py](test_merge_blob_gc.py) | 2 | D2 — orphan content_blob GC on merge. |
 | [test_merge_owner_scope.py](test_merge_owner_scope.py) | 3 | Multi-tenant write-IDOR guard for the merge path (S0/S1/D1). |
 | [test_migrations.py](test_migrations.py) | 67 | Tests for siftd storage migration paths. |
@@ -233,6 +233,7 @@ docstring so its row is meaningful.
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
+| [test_planner_stats.py](test_planner_stats.py) | 7 | Planner statistics are a maintained state, not something a user has to ask for (#80). |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
@@ -261,7 +262,7 @@ docstring so its row is meaningful.
 | [test_serialization_ingest_backfill.py](test_serialization_ingest_backfill.py) | 3 | Anti-drift tests for ingest/backfill result serialization. |
 | [test_serialization_tags.py](test_serialization_tags.py) | 3 | — |
 | [test_serve.py](test_serve.py) | 48 | Tests for siftd serve — HTTP team sync server. |
-| [test_serve_app_edges.py](test_serve_app_edges.py) | 4 | — |
+| [test_serve_app_edges.py](test_serve_app_edges.py) | 3 | — |
 | [test_serve_auth_edges.py](test_serve_auth_edges.py) | 45 | — |
 | [test_serve_auth_focus.py](test_serve_auth_focus.py) | 1 | — |
 | [test_serve_browser_login.py](test_serve_browser_login.py) | 9 | Browser auth-code+PKCE login surface. |
@@ -288,7 +289,7 @@ docstring so its row is meaningful.
 | [test_stats_cache.py](test_stats_cache.py) | 14 | Tests for stats cache (write at ingest, read in db stats). |
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
-| [test_storage.py](test_storage.py) | 94 | Tests for siftd storage layer coverage. |
+| [test_storage.py](test_storage.py) | 96 | Tests for siftd storage layer coverage. |
 | [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
 | [test_sync_http_streaming.py](test_sync_http_streaming.py) | 20 | Tests for Y3: HTTP streaming for sync push and pull. |
@@ -350,7 +351,7 @@ docstring so its row is meaningful.
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 28 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 33 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
@@ -369,7 +370,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
-| [cli/test_db.py](cli/test_db.py) | 52 | Tests for siftd db namespace commands. |
+| [cli/test_db.py](cli/test_db.py) | 54 | Tests for siftd db namespace commands. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
@@ -383,7 +384,7 @@ docstring so its row is meaningful.
 | [cli/test_search_around_argparse.py](cli/test_search_around_argparse.py) | 25 | Argparse-layer tests for siftd search --around and --turns flags. |
 | [cli/test_search_history_argparse.py](cli/test_search_history_argparse.py) | 13 | Argparse-layer + behavior tests for siftd search --history. |
 | [cli/test_search_noembed.py](cli/test_search_noembed.py) | 26 | Non-embeddings tests for siftd.cli.search command paths. |
-| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 13 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
+| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 15 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
 | [cli/test_sessions_cli.py](cli/test_sessions_cli.py) | 4 | Tests for siftd.cli.sessions handlers. |
 | [cli/test_show.py](cli/test_show.py) | 6 | Tests for `siftd show` — the canonical conversation reader. |
 | [cli/test_show_argparse.py](cli/test_show_argparse.py) | 21 | CLI-layer argparse tests for anchor + window flags on siftd show <id>. |

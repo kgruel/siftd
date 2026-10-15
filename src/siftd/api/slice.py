@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from siftd.storage.sqlite import SCHEMA_VERSION, open_database
+from siftd.storage.sqlite import SCHEMA_VERSION, open_database, schema_version
 
 
 def slice_database(
@@ -56,7 +56,7 @@ def slice_database(
     # is surprising and breaks on read-only filesystems. Callers must upgrade first.
     _check_conn = open_database(source_db, read_only=True, auto_upgrade=False)
     try:
-        _src_version = _check_conn.execute("PRAGMA user_version").fetchone()[0]
+        _src_version = schema_version(_check_conn)
     finally:
         _check_conn.close()
     if _src_version < SCHEMA_VERSION:

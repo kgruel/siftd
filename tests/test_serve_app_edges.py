@@ -20,16 +20,6 @@ def test_create_app_without_auth_has_no_auth_middleware(tmp_path):
     assert [type(m) for m in app.middleware] == [serve_app._SecurityHeadersMiddleware]
 
 
-def test_create_app_rejects_retired_fts_rebuild_kwarg(tmp_path):
-    # `fts_rebuild` is no longer a create_app parameter: merged content is
-    # indexed by the merge itself, so there is no knob to thread through.
-    with pytest.raises(TypeError):
-        serve_app.create_app(
-            db_path=tmp_path / "db.db", auth_config=None, fts_rebuild="off",
-            rate_limit_per_minute=0,
-        )
-
-
 def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_path):
     def marker(app):
         return app
@@ -42,6 +32,7 @@ def test_create_app_with_auth_adds_middleware_and_dependencies(monkeypatch, tmp_
     )
     assert marker in app.middleware
     assert asyncio.run(app.dependencies["db_path"].dependency()) == db
+    # serve.fts_rebuild's provider is gone with the knob it served (#74).
     assert "fts_rebuild" not in app.dependencies
 
 

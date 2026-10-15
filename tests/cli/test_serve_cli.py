@@ -82,6 +82,28 @@ class TestCmdServe:
         monkeypatch.setattr("siftd.paths.state_dir", lambda: state_dir)
         monkeypatch.setattr("siftd.paths.db_path", lambda: tmp_path / "default.db")
 
+    def test_fts_rebuild_config_key_warns(self, monkeypatch, tmp_path, capsys):
+        """serve.fts_rebuild does nothing since #49; a config that sets it is told (#74)."""
+        captured = {}
+        self._setup_serve_mocks(monkeypatch, tmp_path, captured)
+        monkeypatch.setattr(
+            "siftd.config.get_config", lambda k: "on_push" if k == "serve.fts_rebuild" else None
+        )
+
+        rc = cmd_serve(SimpleNamespace(no_auth=True, host=None, port=None, db=None))
+
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "serve.fts_rebuild is deprecated" in err
+        assert "0.13.0" in err
+
+    def test_unset_fts_rebuild_is_silent(self, monkeypatch, tmp_path, capsys):
+        captured = {}
+        self._setup_serve_mocks(monkeypatch, tmp_path, captured)
+
+        assert cmd_serve(SimpleNamespace(no_auth=True, host=None, port=None, db=None)) == 0
+        assert "deprecated" not in capsys.readouterr().err
+
     def test_no_auth_flag_sets_auth_config_none(self, monkeypatch, tmp_path):
         """--no-auth should pass auth_config=None to create_app."""
         captured = {}
