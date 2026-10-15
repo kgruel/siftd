@@ -1838,7 +1838,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool | 
 
 - `source_path`: Path to the incoming database (e.g. a slice).
 - `target_db`: Path to the target siftd database.
-- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.14.0 (#74). Received content is indexed on both paths: the merge indexes what it wrote, the create path the file it copied.
+- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.13.0 (#74). Received content is indexed on both paths: the merge indexes what it wrote, the create path the file it copied.
 - `user_id`: Authenticated user identity to stamp as conversation owner.
 - `push_id`: Push log ID for provenance linking.
 
