@@ -6,9 +6,9 @@ ST-3b: ``rebuild_fts=True`` makes ``content_fts`` searchable for phrases in
 ``event_content``, through both paths of ``receive_database`` — first-push
 (``_create_from_source``) and subsequent-push (``merge_database``).
 
-siftd#49: that flag chooses whether to pay for a *full* rebuild, and it is not
-what decides whether merged content is indexed at all. Nothing may reach a
-committed merge unindexed, whatever the caller passed — so
+siftd#49: whether merged content is indexed was never the flag's to decide.
+Nothing may reach a committed merge unindexed, whatever the caller passed — and
+since 0.12.2 the flag decides nothing at all (#74 retires it in 0.13.0) — so
 ``test_merged_content_is_always_searchable`` runs the matrix of paths and
 settings and asserts ``missing_count == 0`` across all of them. Before #49 six
 of its nine cases failed, including a *replaced* conversation, which #20's
@@ -137,24 +137,13 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
 # --- siftd#49: the invariant, across every path a merge can arrive by --------
 
-# (label, rebuild_fts) — the value each caller actually passes.
-#   receive_database's own default; `siftd db receive` / inbox / `db pull`;
-#   and the three `serve.fts_rebuild` settings, of which only "on_push" maps
-#   to True. "scheduled" is documented as "rebuild periodically" but nothing
-#   schedules anything, so it is `off` with a friendlier name — which is why
-#   it must not be the difference between searchable and not.
-_MERGE_CALLERS = [
-    ("receive default / sync._push_local", False),
-    ("db receive, inbox, db pull", True),
-    ("serve.fts_rebuild='on_push'", True),
-    ("serve.fts_rebuild='scheduled'", False),
-    ("serve.fts_rebuild='off'", False),
-]
+@pytest.mark.parametrize("rebuild_fts", [False, True])
+def test_merged_content_is_always_searchable(tmp_path, rebuild_fts):
+    """No merge may commit with its own content unindexed, at either value of the flag.
 
-
-@pytest.mark.parametrize("label,rebuild_fts", _MERGE_CALLERS, ids=[c[0] for c in _MERGE_CALLERS])
-def test_merged_content_is_always_searchable(tmp_path, label, rebuild_fts):
-    """No caller may commit a merge that leaves its own content unindexed."""
+    ``rebuild_fts`` is a deprecated no-op (removal in 0.13.0, #74); both values
+    stay covered until it is gone.
+    """
     anchor = "merge-invariant-anchor"
     target = _seed(tmp_path, "target.db", "pre-existing-text", indexed=True)
     with pytest.warns(DeprecationWarning):
@@ -187,11 +176,10 @@ def test_first_push_is_always_searchable(tmp_path, rebuild_fts):
 
 
 def test_local_path_push_indexes_the_remote(tmp_path):
-    """`siftd db push` to a local-path remote merges with rebuild_fts=False.
+    """`siftd db push` to a local-path remote indexes what it merges.
 
     Exercised through `_push_local` rather than `receive_database` because it
-    reaches `merge_database` directly — a second door onto the same merge, and
-    the one no `serve.fts_rebuild` setting can reopen.
+    reaches `merge_database` directly — a second door onto the same merge.
     """
     from siftd.api.sync import _push_local
     from siftd.domain.sync import SyncRemote
@@ -209,16 +197,15 @@ def test_local_path_push_indexes_the_remote(tmp_path):
 
 
 def test_empty_text_block_is_not_reported_as_missing(tmp_path):
-    """The index writer and ingest agree on what an empty text block is.
+    """The index writer and the drift check agree on what an empty text block is.
 
-    Ingest decides indexability in Python — `if text := block.content.get("text")`
-    (`storage/sqlite.py`) — so it writes the `event_content` row and skips the
-    FTS row for `{"text": ""}`. `_INDEXABLE` is the SQL spelling of the same
-    question, and `get_fts_sync_status` asks it to decide what is *missing*. If
-    the two disagree, every such block counts as missing forever, and #49's
-    `missing_count == 0` invariant becomes unsatisfiable on any database that
-    has one — an empty string can never match a query, so there is nothing to
-    gain by indexing it.
+    `rebuild_fts_index` writes the index from `_INDEXABLE`, and
+    `get_fts_sync_status` asks the same question to decide what is *missing*.
+    The `{"text": ""}` block is the case they could disagree on: if the writer
+    skipped it and the check counted it, every such block would be missing
+    forever, and #49's `missing_count == 0` invariant would be unsatisfiable on
+    any database that has one. Ingest's own write path is pinned to the same
+    definition by `test_ingest_index_agrees_with_the_definition`.
     """
     from siftd.storage.sqlite import (
         create_database,
@@ -236,7 +223,7 @@ def test_empty_text_block_is_not_reported_as_missing(tmp_path):
     c = insert_conversation(conn, external_id="c1", harness_id=h,
                             workspace_id=ws, started_at="2024-01-15T10:00:00Z")
     p = insert_prompt(conn, c, "p1", "2024-01-15T10:00:00Z")
-    insert_prompt_content(conn, p, 0, "text", '{"text": ""}')   # ingest writes no FTS row
+    insert_prompt_content(conn, p, 0, "text", '{"text": ""}')   # the writer skips this row
     insert_prompt_content(conn, p, 1, "text", '{"text": "real content"}')
     rebuild_fts_index(conn, commit=True)
     conn.close()
@@ -250,6 +237,56 @@ def test_empty_text_block_is_not_reported_as_missing(tmp_path):
     finally:
         conn.close()
     assert indexed == 1, "the empty-text block must not get an index row either"
+
+
+def test_ingest_index_agrees_with_the_definition(tmp_path):
+    """Ingest's index write is `_INDEXABLE` too: the real path, every block shape.
+
+    `store_conversation` used to decide indexability per block in Python and
+    `rebuild_fts_index` in SQL; #75 made `index_conversations` the one writer
+    ingest calls, so this runs the real ingest path over the block shapes that
+    could split the two — an empty text block, a text block, a block with no
+    `text` key at all (thinking), and a response-side text block — and checks
+    the index against the same questions the drift check asks.
+    """
+    from conftest import make_conversation
+
+    from siftd.domain.models import ContentBlock
+    from siftd.storage.sqlite import open_database, store_conversation
+
+    conversation = make_conversation(
+        external_id="conv-ingest-agreement",
+        prompt_text="ingested needle",
+        response_text="response needle",
+    )
+    conversation.branch = "main"  # set, so ingest never shells out to git for the branch
+    conversation.prompts[0].content += [
+        ContentBlock(block_type="text", content={"text": ""}),
+        ContentBlock(block_type="thinking", content={"thinking": "no text key here"}),
+    ]
+
+    db = tmp_path / "ingest.db"
+    conn = open_database(db)
+    try:
+        store_conversation(conn, conversation, commit=True)
+        event_content_rows = conn.execute("SELECT COUNT(*) FROM event_content").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert event_content_rows == 4, "every block is written; only the index is selective"
+    assert _fts_sync_status(db) == {"orphaned_count": 0, "missing_count": 0}
+    assert _fts_hit_count(db, "ingested needle") == 1
+    assert _fts_hit_count(db, "response needle") == 1
+
+    conn = sqlite3.connect(str(db))
+    try:
+        indexed = conn.execute("SELECT COUNT(*) FROM content_fts").fetchone()[0]
+    finally:
+        conn.close()
+    assert indexed == 2, (
+        "one index row per non-empty text block (2); the empty and the textless "
+        "blocks get none. If this is wrong, the writer and _INDEXABLE disagree"
+    )
 
 
 def test_scoped_index_write_is_idempotent(tmp_path):

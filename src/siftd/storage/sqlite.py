@@ -29,7 +29,7 @@ from siftd.storage.events import (
     insert_event_response,
     insert_event_tool_call,
 )
-from siftd.storage.fts import ensure_fts_table, insert_fts_content
+from siftd.storage.fts import ensure_fts_table, index_conversations
 from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
@@ -3066,9 +3066,7 @@ def store_conversation(
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
-            content_id = insert_prompt_content(conn, prompt_id, idx, block.block_type, json.dumps(block.content))
-            if text := block.content.get("text"):
-                insert_fts_content(conn, content_id, prompt_id, conversation_id, text)
+            insert_prompt_content(conn, prompt_id, idx, block.block_type, json.dumps(block.content))
 
         # Process responses for this prompt
         for response in prompt.responses:
@@ -3096,9 +3094,7 @@ def store_conversation(
 
             # Insert response content blocks
             for idx, block in enumerate(response.content):
-                content_id = insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
-                if text := block.content.get("text"):
-                    insert_fts_content(conn, content_id, response_id, conversation_id, text)
+                insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
 
             for attr_key, attr_value in response.attributes.items():
                 set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
@@ -3134,6 +3130,10 @@ def store_conversation(
                 tag_derivative_conversation(
                     conn, conversation_id, canonical_name, tool_call.input
                 )
+
+    # One index write for the whole conversation, after every event_content row
+    # it owns exists. Insert-only: this conversation id was minted above.
+    index_conversations(conn, [conversation_id])
 
     if commit:
         conn.commit()

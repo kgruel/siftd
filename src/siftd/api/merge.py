@@ -43,7 +43,7 @@ def merge_database(
         target_db: Path to the main siftd database.
         source_path: Path to the source database to merge in.
         rebuild_fts: Deprecated, no effect; passing it warns, and it is removed
-            in 0.14.0 (#74). Merged content is indexed as part of the merge
+            in 0.13.0 (#74). Merged content is indexed as part of the merge
             (#49), so this no longer decides whether it is searchable.
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
@@ -203,7 +203,7 @@ def merge_database(
     finally:
         conn.close()
 
-    # Rebuild the derived tier (and FTS, if requested) after a real merge.
+    # Rebuild the derived tier after a real merge.
     # The merge copies raw rows via INSERT...SELECT but never touches the
     # derived tier, so usage_by_conv_model / conversation_stats would go stale —
     # the live sync/receive path merges new conversations that would otherwise

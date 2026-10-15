@@ -309,7 +309,7 @@ def test_fts_rebuild(tmp_path, rebuild_fts):
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
 
-    with pytest.warns(DeprecationWarning, match="removed in 0.14.0"):
+    with pytest.warns(DeprecationWarning, match="removed in 0.13.0"):
         merge_database(target, source, rebuild_fts=rebuild_fts)
 
     assert _fts_matches(target, "Python") >= 1
@@ -340,8 +340,8 @@ def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
     `siftd ingest --rebuild-fts` and `siftd doctor fix`, and O(corpus) on every
     push is exactly the cost that made the push paths skip indexing at all.
 
-    This test exists so removing the knob outright (#74) cannot look like a
-    behavior change: it already is one, here.
+    This test exists so removing the knob outright (in 0.13.0) cannot look like
+    a behavior change: it already is one, here.
     """
     target = _make_db(
         tmp_path / "target.db",

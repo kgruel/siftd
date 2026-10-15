@@ -2,6 +2,8 @@
 
 import logging
 import sqlite3
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Literal
 
@@ -100,17 +102,15 @@ def ensure_fts_table(conn: sqlite3.Connection) -> None:
     rebuild_fts_index(conn)
 
 
-# What counts as indexable text for the two SQL sites that decide it: this
-# module's index writer and `get_fts_sync_status`, which asks the same question
-# to decide whether a block is *missing*. A second spelling here would make the
-# index and its own drift check disagree about which rows belong.
-#
-# Ingest decides it a third time, in Python (`storage/sqlite.py`'s
-# `if text := block.content.get("text")`), and cannot share this — it holds the
-# parsed block, not a row. The `!= ''` is what keeps the two agreeing: an empty
-# string is indexable by `IS NOT NULL` and falsy to ingest, so without it a
-# `{"text": ""}` block counts as permanently missing from an index that ingest
-# will never write. Making them one primitive is #75.
+# What counts as indexable text. This is the single definition: every writer of
+# `content_fts` (ingest via `index_conversations`, merge and slice via
+# `rebuild_fts_index`) inserts exactly the rows `_INDEX_INSERT` selects, and
+# `get_fts_sync_status` asks the same question to decide whether a block is
+# *missing*. Ingest used to decide this a second time in Python, against the
+# parsed block; it no longer does, so the index and its own drift check cannot
+# disagree about which rows belong (#75). The `!= ''` is what keeps an empty
+# string from counting as permanently missing: it is indexable by `IS NOT NULL`
+# alone, but it can never match a query, so there is nothing to gain by indexing it.
 _INDEXABLE = (
     "json_valid(ec.content)"
     " AND json_extract(ec.content, '$.text') IS NOT NULL"
@@ -131,6 +131,64 @@ _INDEX_INSERT = f"""
 """
 
 _SCOPE_TABLE = "_fts_scope"
+
+
+@contextmanager
+def _staged_scope(conn: sqlite3.Connection, conversation_ids: list[str]) -> Iterator[str]:
+    """Stage ``conversation_ids`` in a temp table; yield a SQL subquery selecting them.
+
+    The temp table, not an ``IN (?, ?, …)`` list, is the scope carrier — see
+    ``rebuild_fts_index`` for why. The table is dropped on exit whether or not
+    the caller's statements succeed.
+    """
+    conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
+    conn.execute(f"CREATE TEMP TABLE {_SCOPE_TABLE} (id TEXT PRIMARY KEY)")
+    try:
+        conn.executemany(
+            f"INSERT OR IGNORE INTO {_SCOPE_TABLE} VALUES (?)",
+            [(cid,) for cid in conversation_ids],
+        )
+        yield f"(SELECT id FROM {_SCOPE_TABLE})"
+    finally:
+        conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
+
+
+def _insert_index_rows(conn: sqlite3.Connection, predicate: str | None = None, params: tuple = ()) -> None:
+    """Run the one index insert, optionally restricted by ``predicate``.
+
+    ``predicate`` is an SQL condition over ``e`` (events) and ``ec`` (event_content),
+    ANDed onto the indexability filter. ``None`` inserts every indexable row. Every
+    writer goes through here, so the insert half of the index has exactly one spelling.
+    """
+    sql = _INDEX_INSERT if predicate is None else f"{_INDEX_INSERT} AND {predicate}"
+    conn.execute(sql, params)
+
+
+def index_conversations(conn: sqlite3.Connection, conversation_ids: list[str]) -> None:
+    """Insert index rows for ``conversation_ids``' indexable content. Never deletes.
+
+    Precondition: none of these conversations may already have ``content_fts``
+    rows. That holds for a conversation ``store_conversation`` just created —
+    it always mints a fresh ULID, so nothing can be indexed under that id yet.
+    Callers that may re-index an existing conversation must use
+    ``rebuild_fts_index(conversation_ids=...)``, which deletes first; calling
+    this on one would duplicate its rows.
+
+    Why insert-only: ``content_fts.conversation_id`` is an FTS5 ``UNINDEXED``
+    column, so any delete predicate on it scans the whole index (#52). Paying
+    that scan once per ingested conversation would make bulk ingest cost
+    conversations × index size. The insert half is driven by
+    ``idx_events_conversation_kind`` and does not have that problem.
+
+    Does not commit; the caller controls the transaction.
+    """
+    if not conversation_ids:
+        return
+    if len(conversation_ids) == 1:
+        _insert_index_rows(conn, "e.conversation_id = ?", (conversation_ids[0],))
+        return
+    with _staged_scope(conn, conversation_ids) as scope:
+        _insert_index_rows(conn, f"e.conversation_id IN {scope}")
 
 
 def rebuild_fts_index(
@@ -166,20 +224,11 @@ def rebuild_fts_index(
 
     if conversation_ids is None:
         conn.execute("DELETE FROM content_fts")
-        conn.execute(_INDEX_INSERT)
+        _insert_index_rows(conn)
     elif conversation_ids:
-        conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
-        conn.execute(f"CREATE TEMP TABLE {_SCOPE_TABLE} (id TEXT PRIMARY KEY)")
-        try:
-            conn.executemany(
-                f"INSERT OR IGNORE INTO {_SCOPE_TABLE} VALUES (?)",
-                [(cid,) for cid in conversation_ids],
-            )
-            scope = f"(SELECT id FROM {_SCOPE_TABLE})"
+        with _staged_scope(conn, conversation_ids) as scope:
             conn.execute(f"DELETE FROM content_fts WHERE conversation_id IN {scope}")
-            conn.execute(f"{_INDEX_INSERT} AND e.conversation_id IN {scope}")
-        finally:
-            conn.execute(f"DROP TABLE IF EXISTS temp.{_SCOPE_TABLE}")
+            _insert_index_rows(conn, f"e.conversation_id IN {scope}")
 
     if commit:
         conn.commit()
@@ -212,20 +261,6 @@ def get_fts_sync_status(conn: sqlite3.Connection) -> dict:
         "orphaned_count": orphaned_count,
         "missing_count": missing_count,
     }
-
-
-def insert_fts_content(
-    conn: sqlite3.Connection,
-    event_content_id: str,
-    event_id: str,
-    conversation_id: str,
-    text: str,
-) -> None:
-    """Insert a single text entry into the FTS index."""
-    conn.execute(
-        "INSERT INTO content_fts (text_content, event_content_id, event_id, conversation_id) VALUES (?, ?, ?, ?)",
-        (text, event_content_id, event_id, conversation_id),
-    )
 
 
 # SQLite caps bound parameters (SQLITE_MAX_VARIABLE_NUMBER). Below this many

@@ -111,7 +111,14 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
     assert bad.status_code == 400
 
     # push success path with mocks
-    monkeypatch.setattr("siftd.api.receive.receive_database", lambda *a, **k: {"status": "created", "conversations": 2})
+    received_kwargs: dict = {}
+
+    def _fake_receive(*a, **k):
+        # The push no longer passes rebuild_fts: merged content is indexed by the merge.
+        received_kwargs.update(k)
+        return {"status": "created", "conversations": 2}
+
+    monkeypatch.setattr("siftd.api.receive.receive_database", _fake_receive)
     monkeypatch.setattr(routes, "_get_push_identity", lambda _r: "u")
     monkeypatch.setattr(routes, "_record_push_log", lambda *a, **k: None)
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: (_ for _ in ()).throw(RuntimeError("cache")))
@@ -119,6 +126,7 @@ def test_push_and_pull_light_paths(monkeypatch, tmp_path):
     ok_req = _Req(b"x" * 32, client=SimpleNamespace(host="127.0.0.1"))
     ok = _run(routes.push.fn(ok_req, db))
     assert ok.status_code == 201
+    assert "rebuild_fts" not in received_kwargs
 
     # pull empty slice path
     monkeypatch.setattr("siftd.api.slice.slice_database", lambda **k: {"conversations": 0})

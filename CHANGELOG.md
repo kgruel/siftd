@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- Ingest indexes each stored conversation through the same SQL definition of
+  indexable text as merge and repair, replacing its per-block Python check; a
+  ratchet requires every `event_content` writer to declare the function that
+  writes its index. ([#75](https://github.com/kgruel/siftd/issues/75))
+
+- `CHANGELOG.md`'s headings for 0.6.x and 0.10.0-0.12.2 are links again, and
+  `[Unreleased]` compares from the latest release instead of v0.9.1;
+  `tests/test_changelog.py` keeps the footer in step with the headings.
+
+- A version bump that reaches a removal version in the compat ledger
+  (`siftd.api.compat`) fails `./dev check` until the surface is gone, and every
+  "removed in X.Y.Z" in the source must match a ledger entry
+  (`tests/test_compat_ledger.py`).
+
 - The GitLab mirror's `image:build` job (the homelab `siftd serve` image) is
   tagged `homelab`, pinning it to the Docker-executor runner. Untagged, it
   could be picked up by the instance's macOS shell runner, which ignores
@@ -67,7 +81,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Deprecated
 
 These have had no effect since 0.12.2, which indexes merged content as part of
-the merge. Each now warns, and is removed in **0.14.0**.
+the merge. Each now warns, and is removed in **0.13.0**.
 ([#74](https://github.com/kgruel/siftd/issues/74))
 
 - `siftd db merge --no-fts`.
@@ -80,6 +94,10 @@ the merge. Each now warns, and is removed in **0.14.0**.
 `--help`, with no removal scheduled. Sync clients send it, so warning or
 rejecting it would break pushes from older versions. `db slice --no-fts` and
 `db send --no-fts` still work as before.
+
+`SearchChunk.to_render_dict(debug_ids=)` and serve's `?debug_ids=` are also
+removed in 0.13.0, having missed their promised v0.10.0 removal.
+([#94](https://github.com/kgruel/siftd/issues/94))
 
 ## [0.12.2] - 2026-09-29
 
@@ -1974,12 +1992,25 @@ Initial public release.
 
 ---
 
-[Unreleased]: https://github.com/kgruel/siftd/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/kgruel/siftd/compare/v0.12.3...HEAD
+[0.12.3]: https://github.com/kgruel/siftd/compare/v0.12.2...v0.12.3
+[0.12.2]: https://github.com/kgruel/siftd/compare/v0.12.1...v0.12.2
+[0.12.1]: https://github.com/kgruel/siftd/compare/v0.12.0...v0.12.1
+[0.12.0]: https://github.com/kgruel/siftd/compare/v0.11.0...v0.12.0
+[0.11.0]: https://github.com/kgruel/siftd/compare/v0.10.2...v0.11.0
+[0.10.2]: https://github.com/kgruel/siftd/compare/v0.10.1...v0.10.2
+[0.10.1]: https://github.com/kgruel/siftd/compare/v0.10.0...v0.10.1
+[0.10.0]: https://github.com/kgruel/siftd/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/kgruel/siftd/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/kgruel/siftd/compare/v0.8.1...v0.9.0
 [0.8.1]: https://github.com/kgruel/siftd/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/kgruel/siftd/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/kgruel/siftd/compare/v0.6.4...v0.7.0
+[0.6.4]: https://github.com/kgruel/siftd/compare/v0.6.3...v0.6.4
+[0.6.3]: https://github.com/kgruel/siftd/compare/v0.6.2...v0.6.3
+[0.6.2]: https://github.com/kgruel/siftd/compare/v0.6.1...v0.6.2
+[0.6.1]: https://github.com/kgruel/siftd/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/kgruel/siftd/compare/v0.5.5...v0.6.0
 [0.5.5]: https://github.com/kgruel/siftd/compare/v0.5.4...v0.5.5
 [0.5.4]: https://github.com/kgruel/siftd/compare/v0.5.3...v0.5.4
 [0.5.3]: https://github.com/kgruel/siftd/compare/v0.5.2...v0.5.3

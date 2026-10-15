@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 191 | 3391 |
+| `tests/` | 193 | 3398 |
 | `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 12 | 76 |
-| `tests/cli/` | 29 | 639 |
+| `tests/architecture/` | 13 | 81 |
+| `tests/cli/` | 29 | 640 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -154,9 +154,11 @@ docstring so its row is meaningful.
 | [test_builtin_harness_stats.py](test_builtin_harness_stats.py) | 1 | Correctness guard for the harness-stats builtin query (I20). |
 | [test_caveats.py](test_caveats.py) | 120 | Tests for the caveats producer registry and dispatch threading. |
 | [test_caveats_wire.py](test_caveats_wire.py) | 6 | I5 — caveat round-trip across the delegation wire. |
+| [test_changelog.py](test_changelog.py) | 3 | CHANGELOG.md's link references stay in step with its version headings. |
 | [test_chunker.py](test_chunker.py) | 16 | Tests for token-aware chunking (schema-v2: estimator-decoupled, widened source_ids). |
 | [test_ci_lanes.py](test_ci_lanes.py) | 3 | CI runs every local pytest lane, unconditionally, with the same marker. |
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |
+| [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
@@ -186,7 +188,7 @@ docstring so its row is meaningful.
 | [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
-| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 8 | Merged content is searchable, on every path and at every setting. |
+| [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
@@ -344,6 +346,7 @@ docstring so its row is meaningful.
 
 | File | Tests | Summary |
 |------|-------|---------|
+| [architecture/test_content_index_pairing.py](architecture/test_content_index_pairing.py) | 5 | Every writer of ``event_content`` is declared, and each names the function that writes its index. |
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
@@ -381,7 +384,7 @@ docstring so its row is meaningful.
 | [cli/test_search_around_argparse.py](cli/test_search_around_argparse.py) | 25 | Argparse-layer tests for siftd search --around and --turns flags. |
 | [cli/test_search_history_argparse.py](cli/test_search_history_argparse.py) | 13 | Argparse-layer + behavior tests for siftd search --history. |
 | [cli/test_search_noembed.py](cli/test_search_noembed.py) | 26 | Non-embeddings tests for siftd.cli.search command paths. |
-| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 14 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
+| [cli/test_serve_cli.py](cli/test_serve_cli.py) | 15 | Tests for siftd cli serve — cmd_serve startup logic and build_serve_parser. |
 | [cli/test_sessions_cli.py](cli/test_sessions_cli.py) | 4 | Tests for siftd.cli.sessions handlers. |
 | [cli/test_show.py](cli/test_show.py) | 6 | Tests for `siftd show` — the canonical conversation reader. |
 | [cli/test_show_argparse.py](cli/test_show_argparse.py) | 21 | CLI-layer argparse tests for anchor + window flags on siftd show <id>. |

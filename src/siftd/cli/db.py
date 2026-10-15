@@ -1071,7 +1071,7 @@ Sync remotes:
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
     p_merge.add_argument("--no-fts", action="store_true",
-                         help="Deprecated, no effect (removed in 0.14.0)")
+                         help="Deprecated, no effect (removed in 0.13.0)")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.add_argument("--no-preflight", action="store_true",

@@ -43,4 +43,7 @@ observers {
   "kyle/fable" {
     key "GlMa67gI+oMg7lyyK2R8JjOYigo7lisqKJuxQaT6nB4="
   }
+  "kyle/opus" {
+    key "yh8CoEiQsdfRin6lwRkkphgjy4lJhACTcaKm+ZTjQD4="
+  }
 }

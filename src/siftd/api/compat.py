@@ -21,7 +21,7 @@ import warnings
 # api/sync.py::_push_ssh sends it to the remote, so dropping it breaks pushes
 # from every client that predates the drop. It is accepted silently and hidden
 # from --help; a warning would reach the client's error report on a failed push.
-REBUILD_FTS_REMOVAL = "0.14.0"
+REBUILD_FTS_REMOVAL = "0.13.0"
 
 
 def rebuild_fts_notice(subject: str) -> tuple[str, str]:
@@ -38,3 +38,11 @@ def warn_rebuild_fts_deprecated(func: str, value: bool | None) -> None:
         return
     message, hint = rebuild_fts_notice(f"{func}(rebuild_fts=...)")
     warnings.warn(f"{message}. {hint}", DeprecationWarning, stacklevel=3)
+
+
+# --- debug_ids (#94) ---------------------------------------------------------
+# The `--debug-ids` CLI flag went in v0.10.0 as promised; its trail did not:
+#   - `debug_ids=` on domain.search_types.SearchChunk.to_render_dict
+#   - serve's `?debug_ids=` query parameter on search (accepted, ignored)
+# Missed its v0.10.0 removal; restated here so a release can enforce it.
+DEBUG_IDS_REMOVAL = "0.13.0"

@@ -22,7 +22,7 @@ def test_db_merge_no_fts_help_says_deprecated(capsys):
         main(["db", "merge", "--help"])
     assert exc.value.code == 0
     output = " ".join(capsys.readouterr().out.split())
-    assert "--no-fts Deprecated, no effect (removed in 0.14.0)" in output
+    assert "--no-fts Deprecated, no effect (removed in 0.13.0)" in output
 
 
 def test_db_receive_hides_no_fts_but_accepts_it(capsys):
@@ -898,6 +898,6 @@ def test_db_merge_no_fts_warns_and_still_merges(tmp_path, capsys):
     assert rc == 0
     err = capsys.readouterr().err
     assert "--no-fts is deprecated and has no effect" in err
-    assert "0.14.0" in err
+    assert "0.13.0" in err
     with sqlite3.connect(target) as conn:
         assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2

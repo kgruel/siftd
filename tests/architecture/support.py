@@ -21,6 +21,9 @@ directory has an `__init__.py`)::
 """
 
 import ast
+import re
+from collections.abc import Callable
+from functools import cache
 from pathlib import Path
 
 # The package under analysis, and the repo root the ratchets render paths
@@ -91,3 +94,130 @@ def docstring_ids(tree: ast.Module) -> set[int]:
         if isinstance(first, ast.Expr):
             ids.add(id(first.value))
     return ids
+
+
+@cache
+def parsed_sources() -> tuple[tuple[str, ast.Module, frozenset[int]], ...]:
+    """Every source under `src/siftd` as (module, tree, docstring node ids).
+
+    Cached because this module sweeps the package four times and the parse is
+    the expensive third of it. The docstring ids ride along rather than being
+    recomputed per sweep: they are `id()` values, so they are only meaningful
+    while the tree they came from is alive, and keeping the two in one tuple is
+    what guarantees that.
+    """
+    return tuple(
+        (path.relative_to(SRC).as_posix(), tree, frozenset(docstring_ids(tree)))
+        for path in source_files()
+        if (tree := ast.parse(path.read_text()))
+    )
+
+
+def sites_by_function(
+    match: Callable[[ast.AST, frozenset[int]], str | None], *, exclude: str | None = None
+) -> dict[tuple[str, str], dict[str, int]]:
+    """Where `match` fires across `src/siftd`, keyed by (module, enclosing function).
+
+    Swept over the whole package rather than a named file — a ratchet that
+    reads one module can only ever confirm that module, which is what let
+    `api/merge.py` be a replacement door nothing here could see.
+
+    Two things about the traversal are load-bearing, and both were learned by
+    getting them wrong. Scope is rebound at each nested `FunctionDef` rather
+    than walking the whole subtree per function, so a match inside a nested
+    function is attributed to exactly one scope. And a matched node **stops the
+    descent**: an f-string's constant segments would otherwise each match again
+    under the `JoinedStr` that already did, scoring one statement twice.
+    `test_readonly_opens.py::_sites` carries the same two rules for the same
+    reasons — a third copy of this walker is what #79's review found, and
+    consolidating all of them is filed rather than done here.
+
+    `match` returns the label to count under, or None. Taking a callable rather
+    than writing the walker twice is not only shorter: the first cut had a call
+    version and a literal version, and only the call version had the
+    stop-descent rule, so an f-stringed `DELETE FROM conversations` counted as
+    two homes.
+    """
+    sites: dict[tuple[str, str], dict[str, int]] = {}
+    for rel, tree, prose in parsed_sources():
+        if rel == exclude:
+            continue
+        counts: dict[str, dict[str, int]] = {}
+
+        def visit(node: ast.AST, scope: str, counts: dict = counts, prose: frozenset = prose) -> None:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef):
+                    visit(child, child.name, counts, prose)
+                    continue
+                label = match(child, prose)
+                if label is not None:
+                    per = counts.setdefault(scope, {})
+                    per[label] = per.get(label, 0) + 1
+                    continue
+                visit(child, scope, counts, prose)
+
+        visit(tree, "<module>")
+        for scope, per in counts.items():
+            sites[(rel, scope)] = per
+    return sites
+
+
+def call_to(names: tuple[str, ...]) -> Callable[[ast.AST, frozenset[int]], str | None]:
+    """Match a call to any of `names`, in either spelling: `f()` and `mod.f()`.
+
+    Only the bare spelling was matched until #79, which is a hole precisely
+    where it costs the most — the delete guard is a *name* sweep, and
+    `sq.delete_conversation(...)` is a live spelling in this repo. A door
+    reaching the primitive through its module would carry no bare name and no
+    SQL literal, so both halves of that guard would have missed it.
+
+    Matching on `.attr` alone is deliberately loose: it counts an unrelated
+    method that happens to share the name, which fails *loudly* into the
+    declared population rather than silently out of it. #79's own trigger was
+    the opposite trade — a name collision resolved by renaming
+    `storage/embeddings.py`'s function, not by teaching this to resolve
+    imports.
+    """
+
+    def match(node: ast.AST, _prose: frozenset[int]) -> str | None:
+        if not isinstance(node, ast.Call):
+            return None
+        func = node.func
+        called = (
+            func.id
+            if isinstance(func, ast.Name)
+            else func.attr
+            if isinstance(func, ast.Attribute)
+            else None
+        )
+        return called if called in names else None
+
+    return match
+
+
+def literal_matching(
+    pattern: re.Pattern[str], label: str
+) -> Callable[[ast.AST, frozenset[int]], str | None]:
+    """Match a static string literal against `pattern`, ignoring prose.
+
+    The half that catches a door bypassing the primitive entirely — a raw
+    `conn.execute("DELETE FROM conversations ...")` carries no call the sweep
+    would recognise. `literal_text` reads through f-strings, so an interpolated
+    predicate still contributes its keywords; `docstring_ids` keeps prose about
+    the delete from counting as a use, which matters because the docstrings in
+    `storage/` quote this exact statement.
+
+    `label` is what a match is counted under. It is supplied by the caller,
+    not derived from the matched text: the label is what a ratchet's table
+    counts, and two spellings of the same statement in one function are two
+    statements, not two kinds.
+    """
+    def match(node: ast.AST, prose: frozenset[int]) -> str | None:
+        if id(node) in prose:
+            return None
+        text = literal_text(node)
+        if not text:
+            return None
+        return label if pattern.search(text) else None
+
+    return match

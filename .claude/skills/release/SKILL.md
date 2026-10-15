@@ -14,7 +14,10 @@ what belongs in the release — don't invent changelog content.
 
 1. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - <today's date>`
    (check `currentDate` context, don't guess). Leave the rest of the section
-   content as-is.
+   content as-is. Then fix the link footer: point `[Unreleased]:` at
+   `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: …/compare/v<previous>...vX.Y.Z`
+   above the previous version's line. `tests/test_changelog.py` fails until
+   both are right.
 
 2. **Version bump**: `pyproject.toml` `[project].version = "X.Y.Z"`.
 
@@ -28,7 +31,9 @@ what belongs in the release — don't invent changelog content.
    not auto-staged; stage those yourself if their spans changed).
 
 5. **Full check**: `./dev check` (lint + test). Must be green before
-   proceeding — do not tag on red.
+   proceeding — do not tag on red. After the bump, `tests/test_compat_ledger.py` fails on any
+   `siftd.api.compat` entry whose removal version this release reaches: remove
+   the surface with its entry, or restate the entry with a later version.
 
 6. **Confirm with the user before pushing** — tagging and pushing to origin
    triggers a public PyPI publish. Use AskUserQuestion if not already

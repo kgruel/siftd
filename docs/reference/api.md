@@ -1813,7 +1813,7 @@ def merge_database(target_db: Path, source_path: Path, *, rebuild_fts: bool | No
 
 - `target_db`: Path to the main siftd database.
 - `source_path`: Path to the source database to merge in.
-- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.14.0 (#74). Merged content is indexed as part of the merge (#49), so this no longer decides whether it is searchable.
+- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.13.0 (#74). Merged content is indexed as part of the merge (#49), so this no longer decides whether it is searchable.
 - `dry_run`: If True, compute counts but roll back all changes.
 - `replace`: If True (default), replace stale conversations with newer versions from the source. If False, keep existing versions.
 - `before_commit`: Optional callback(conn, stats) invoked after merge but before commit.  Runs in the same transaction as the merge, so any writes are atomic with the merge itself.
@@ -1838,7 +1838,7 @@ def receive_database(source_path: Path, target_db: Path, *, rebuild_fts: bool | 
 
 - `source_path`: Path to the incoming database (e.g. a slice).
 - `target_db`: Path to the target siftd database.
-- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.14.0 (#74). Received content is indexed on both paths: the merge indexes what it wrote, the create path the file it copied.
+- `rebuild_fts`: Deprecated, no effect; passing it warns, and it is removed in 0.13.0 (#74). Received content is indexed on both paths: the merge indexes what it wrote, the create path the file it copied.
 - `user_id`: Authenticated user identity to stamp as conversation owner.
 - `push_id`: Push log ID for provenance linking.
 

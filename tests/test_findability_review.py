@@ -1,6 +1,9 @@
+import json
 import sqlite3
 
 import pytest
+
+from siftd.storage.events import insert_event_content
 
 
 def _create_minimal_content_tables(conn: sqlite3.Connection) -> None:
@@ -69,20 +72,43 @@ def test_ensure_fts_table_upgrades_to_porter_and_rebuilds():
         conn.close()
 
 
+def _add_text_conversation(conn: sqlite3.Connection, conversation_id: str, text: str) -> None:
+    """One event with one text block, in the minimal events/event_content shape.
+
+    The FTS row is not written here: the test indexes these conversations through
+    ``index_conversations``, the same path ingest uses.
+    """
+    event_id = f"ev_{conversation_id}"
+    conn.execute(
+        "INSERT INTO events (id, kind, conversation_id) VALUES (?, 'prompt', ?)",
+        (event_id, conversation_id),
+    )
+    insert_event_content(
+        conn,
+        content_id=f"ec_{conversation_id}",
+        event_id=event_id,
+        block_index=0,
+        block_type="text",
+        content=json.dumps({"text": text}),
+    )
+
+
 def test_fts5_recall_conversations_falls_back_to_or_when_and_too_small():
-    from siftd.storage.fts import ensure_fts_table, fts5_recall_conversations, insert_fts_content
+    from siftd.storage.fts import ensure_fts_table, fts5_recall_conversations, index_conversations
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     try:
+        _create_minimal_content_tables(conn)
         ensure_fts_table(conn)
 
         # 1 conversation matches AND; many match only one term.
-        insert_fts_content(conn, "ec_and", "ev_and", "c_and", "token refresh")
-        for i in range(6):
-            insert_fts_content(conn, f"ec_t_{i}", f"ev_t_{i}", f"c_token_{i}", "token")
-        for i in range(6):
-            insert_fts_content(conn, f"ec_r_{i}", f"ev_r_{i}", f"c_refresh_{i}", "refresh")
+        conversations = [("c_and", "token refresh")]
+        conversations += [(f"c_token_{i}", "token") for i in range(6)]
+        conversations += [(f"c_refresh_{i}", "refresh") for i in range(6)]
+        for conversation_id, text in conversations:
+            _add_text_conversation(conn, conversation_id, text)
+        index_conversations(conn, [conversation_id for conversation_id, _ in conversations])
         conn.commit()
 
         ids, mode = fts5_recall_conversations(conn, "token refresh", limit=80)
@@ -94,15 +120,18 @@ def test_fts5_recall_conversations_falls_back_to_or_when_and_too_small():
 
 
 def test_fts5_recall_conversations_keeps_and_when_enough_hits():
-    from siftd.storage.fts import ensure_fts_table, fts5_recall_conversations, insert_fts_content
+    from siftd.storage.fts import ensure_fts_table, fts5_recall_conversations, index_conversations
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     try:
+        _create_minimal_content_tables(conn)
         ensure_fts_table(conn)
 
-        for i in range(10):
-            insert_fts_content(conn, f"ec_{i}", f"ev_{i}", f"c_{i}", "token refresh")
+        conversation_ids = [f"c_{i}" for i in range(10)]
+        for conversation_id in conversation_ids:
+            _add_text_conversation(conn, conversation_id, "token refresh")
+        index_conversations(conn, conversation_ids)
         conn.commit()
 
         ids, mode = fts5_recall_conversations(conn, "token refresh", limit=80)
