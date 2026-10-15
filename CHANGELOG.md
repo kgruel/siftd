@@ -26,6 +26,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `[Unreleased]` compares from the latest release instead of v0.9.1;
   `tests/test_changelog.py` keeps the footer in step with the headings.
 
+- A version bump that reaches a deprecation's stated "removed in X.Y.Z" fails
+  `./dev check` until the surface is gone (`tests/test_compat_ledger.py`).
+
 - The GitLab mirror's `image:build` job (the homelab `siftd serve` image) is
   tagged `homelab`, pinning it to the Docker-executor runner. Untagged, it
   could be picked up by the instance's macOS shell runner, which ignores

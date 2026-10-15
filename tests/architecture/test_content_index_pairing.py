@@ -14,13 +14,15 @@ sits in, and each entry names the function that owns the paired index write.
 A new site fails until it is declared with its owner; a vanished site fails
 until its entry is removed, so a sweep that stops finding anything cannot pass.
 
-Three properties, which fail differently:
+Four properties, which fail differently:
 
 - **the sites** — the literal population, by equality of counts;
 - **the owners** — each owner's body calls an index writer;
 - **the leaves** — the helpers that write a block are reached only from the
   declared chain, so a new caller of a helper is caught even when the helper
-  itself is unchanged.
+  itself is unchanged;
+- **the chain** — each declared owner sits above its writer in that call
+  graph, so the two tables cannot name different owners for one writer.
 
 The SQL matcher is pinned by a table of spellings it must and must not match,
 so a regex that quietly stops matching ``INSERT OR REPLACE`` or a schema-qualified
@@ -149,15 +151,49 @@ def test_each_owner_writes_the_index():
 
 
 def test_leaf_writer_is_reached_only_through_its_owner():
-    mismatched = {}
-    for leaf, expected in LEAF_CALLERS.items():
-        callers = set(sites_by_function(call_to((leaf,))))
-        if callers != expected:
-            mismatched[leaf] = {"found": sorted(callers), "declared": sorted(expected)}
+    # One sweep for every leaf: each site's counts are keyed by the callee's name.
+    callers: dict[str, set[tuple[str, str]]] = {leaf: set() for leaf in LEAF_CALLERS}
+    for site, counts in sites_by_function(call_to(tuple(LEAF_CALLERS))).items():
+        for leaf in counts:
+            callers[leaf].add(site)
+    mismatched = {
+        leaf: {"found": sorted(callers[leaf]), "declared": sorted(expected)}
+        for leaf, expected in LEAF_CALLERS.items()
+        if callers[leaf] != expected
+    }
     assert not mismatched, (
         f"event_content leaf helpers called from outside the declared chain: {mismatched}. "
         f"A new caller that writes a block must be added to LEAF_CALLERS and must reach "
         f"store_conversation, which indexes it; otherwise route it through store_conversation."
+    )
+
+
+def _declared_ancestors(function: str) -> set[tuple[str, str]]:
+    """Every (module, function) above ``function`` in the LEAF_CALLERS graph."""
+    seen: set[tuple[str, str]] = set()
+    frontier = [function]
+    while frontier:
+        for caller in LEAF_CALLERS.get(frontier.pop(), set()) - seen:
+            seen.add(caller)
+            frontier.append(caller[1])
+    return seen
+
+
+def test_each_owner_is_above_its_writer_in_the_declared_chain():
+    """The two tables declare one relation; this keeps them from disagreeing.
+
+    ``EVENT_CONTENT_WRITERS`` names an owner and ``LEAF_CALLERS`` names the
+    edges that reach it. Without this, an owner could be any function that
+    happens to call an index writer, and the owners test would still pass.
+    """
+    unreached = {
+        site: w.owner
+        for site, w in EVENT_CONTENT_WRITERS.items()
+        if w.owner is not None and w.owner not in _declared_ancestors(site[1])
+    }
+    assert not unreached, (
+        f"these writers name an owner that LEAF_CALLERS does not place above them: {unreached}. "
+        f"Declare the call chain from the writer to its owner in LEAF_CALLERS."
     )
 
 

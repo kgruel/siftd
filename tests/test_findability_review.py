@@ -3,6 +3,8 @@ import sqlite3
 
 import pytest
 
+from siftd.storage.events import insert_event_content
+
 
 def _create_minimal_content_tables(conn: sqlite3.Connection) -> None:
     conn.executescript(
@@ -81,10 +83,13 @@ def _add_text_conversation(conn: sqlite3.Connection, conversation_id: str, text:
         "INSERT INTO events (id, kind, conversation_id) VALUES (?, 'prompt', ?)",
         (event_id, conversation_id),
     )
-    conn.execute(
-        "INSERT INTO event_content (id, event_id, block_index, block_type, content)"
-        " VALUES (?, ?, 0, 'text', ?)",
-        (f"ec_{conversation_id}", event_id, json.dumps({"text": text})),
+    insert_event_content(
+        conn,
+        content_id=f"ec_{conversation_id}",
+        event_id=event_id,
+        block_index=0,
+        block_type="text",
+        content=json.dumps({"text": text}),
     )
 
 

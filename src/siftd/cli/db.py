@@ -1064,6 +1064,8 @@ Sync remotes:
     )
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
+    # Deprecated: a no-op since 0.12.2, removed in 0.13.0 (#74). Unlike
+    # `db receive --no-fts` below, no client sends this one.
     p_merge.add_argument("--no-fts", action="store_true",
                          help="Compatibility no-op; does not disable indexing")
     p_merge.add_argument("--no-replace", action="store_true",

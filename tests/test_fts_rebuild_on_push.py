@@ -6,9 +6,9 @@ ST-3b: ``rebuild_fts=True`` makes ``content_fts`` searchable for phrases in
 ``event_content``, through both paths of ``receive_database`` — first-push
 (``_create_from_source``) and subsequent-push (``merge_database``).
 
-siftd#49: that flag chooses whether to pay for a *full* rebuild, and it is not
-what decides whether merged content is indexed at all. Nothing may reach a
-committed merge unindexed, whatever the caller passed — so
+siftd#49: whether merged content is indexed was never the flag's to decide.
+Nothing may reach a committed merge unindexed, whatever the caller passed — and
+since 0.12.2 the flag decides nothing at all (#74 retires it in 0.13.0) — so
 ``test_merged_content_is_always_searchable`` runs the matrix of paths and
 settings and asserts ``missing_count == 0`` across all of them. Before #49 six
 of its nine cases failed, including a *replaced* conversation, which #20's
@@ -100,8 +100,8 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
     siftd#20. content_fts is virtual — no FK, no cascade, invisible to
     foreign_key_check — so the merge's stale-conversation delete has to clear it
-    explicitly. rebuild_fts=False is the only setting under which that matters,
-    and it is this function's default and what every sync caller passes.
+    explicitly. ``rebuild_fts=False`` is kept here because it is the value that
+    once skipped the rebuild; the parameter is now inert.
     """
     import time
 
@@ -137,19 +137,13 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
 # --- siftd#49: the invariant, across every path a merge can arrive by --------
 
-# (label, rebuild_fts) — both values the parameter can still carry. It is a
-# deprecated no-op (removal in 0.13.0), so searchability must hold for each.
-# The `serve.fts_rebuild` settings used to select between these; that plumbing
-# is gone, and the `rebuild_fts` value is now inert.
-_MERGE_CALLERS = [
-    ("receive default / sync._push_local", False),
-    ("db receive, inbox, db pull", True),
-]
+@pytest.mark.parametrize("rebuild_fts", [False, True])
+def test_merged_content_is_always_searchable(tmp_path, rebuild_fts):
+    """No merge may commit with its own content unindexed, at either value of the flag.
 
-
-@pytest.mark.parametrize("label,rebuild_fts", _MERGE_CALLERS, ids=[c[0] for c in _MERGE_CALLERS])
-def test_merged_content_is_always_searchable(tmp_path, label, rebuild_fts):
-    """No caller may commit a merge that leaves its own content unindexed."""
+    ``rebuild_fts`` is a deprecated no-op (removal in 0.13.0, #74); both values
+    stay covered until it is gone.
+    """
     anchor = "merge-invariant-anchor"
     target = _seed(tmp_path, "target.db", "pre-existing-text", indexed=True)
     receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
@@ -180,11 +174,10 @@ def test_first_push_is_always_searchable(tmp_path, rebuild_fts):
 
 
 def test_local_path_push_indexes_the_remote(tmp_path):
-    """`siftd db push` to a local-path remote merges with rebuild_fts=False.
+    """`siftd db push` to a local-path remote indexes what it merges.
 
     Exercised through `_push_local` rather than `receive_database` because it
-    reaches `merge_database` directly — a second door onto the same merge, and
-    the one no `serve.fts_rebuild` setting can reopen.
+    reaches `merge_database` directly — a second door onto the same merge.
     """
     from siftd.api.sync import _push_local
     from siftd.domain.sync import SyncRemote
@@ -254,31 +247,21 @@ def test_ingest_index_agrees_with_the_definition(tmp_path):
     `text` key at all (thinking), and a response-side text block — and checks
     the index against the same questions the drift check asks.
     """
-    from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response
+    from conftest import make_conversation
+
+    from siftd.domain.models import ContentBlock
     from siftd.storage.sqlite import open_database, store_conversation
 
-    timestamp = "2024-01-15T10:00:00Z"
-    conversation = Conversation(
+    conversation = make_conversation(
         external_id="conv-ingest-agreement",
-        harness=Harness(name="h", source="t", log_format="jsonl", display_name="H"),
-        started_at=timestamp,
-        workspace_path="/p",
-        branch="main",  # set, so ingest never shells out to git for the branch
-        prompts=[Prompt(
-            external_id="p1",
-            timestamp=timestamp,
-            content=[
-                ContentBlock(block_type="text", content={"text": ""}),
-                ContentBlock(block_type="text", content={"text": "ingested needle"}),
-                ContentBlock(block_type="thinking", content={"thinking": "no text key here"}),
-            ],
-            responses=[Response(
-                external_id="r1",
-                timestamp=timestamp,
-                content=[ContentBlock(block_type="text", content={"text": "response needle"})],
-            )],
-        )],
+        prompt_text="ingested needle",
+        response_text="response needle",
     )
+    conversation.branch = "main"  # set, so ingest never shells out to git for the branch
+    conversation.prompts[0].content += [
+        ContentBlock(block_type="text", content={"text": ""}),
+        ContentBlock(block_type="thinking", content={"thinking": "no text key here"}),
+    ]
 
     db = tmp_path / "ingest.db"
     conn = open_database(db)

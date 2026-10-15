@@ -133,16 +133,6 @@ _INDEX_INSERT = f"""
 _SCOPE_TABLE = "_fts_scope"
 
 
-def _event_content_exists(conn: sqlite3.Connection) -> bool:
-    # event_content may not exist yet when called from ensure_fts_table before migration 4 runs
-    return (
-        conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name='event_content'"
-        ).fetchone()
-        is not None
-    )
-
-
 @contextmanager
 def _staged_scope(conn: sqlite3.Connection, conversation_ids: list[str]) -> Iterator[str]:
     """Stage ``conversation_ids`` in a temp table; yield a SQL subquery selecting them.
@@ -192,7 +182,7 @@ def index_conversations(conn: sqlite3.Connection, conversation_ids: list[str]) -
 
     Does not commit; the caller controls the transaction.
     """
-    if not conversation_ids or not _event_content_exists(conn):
+    if not conversation_ids:
         return
     if len(conversation_ids) == 1:
         _insert_index_rows(conn, "e.conversation_id = ?", (conversation_ids[0],))
@@ -226,7 +216,10 @@ def rebuild_fts_index(
     ~6-10 s, one temp-table pass ~0.2 s. The insert half needs no help; SQLite
     drives it from ``idx_events_conversation_kind`` either way.
     """
-    if not _event_content_exists(conn):
+    # event_content may not exist yet when called from ensure_fts_table before migration 4 runs
+    if not conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='event_content'"
+    ).fetchone():
         return
 
     if conversation_ids is None:
