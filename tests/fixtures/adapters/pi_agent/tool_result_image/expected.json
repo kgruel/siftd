@@ -1,0 +1,133 @@
+[
+  {
+    "ended_at": "2026-03-17T18:52:50.061Z",
+    "external_id": "pi_agent::71fadd25-906c-40bc-9bae-c272a250b490",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 1"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0.28939750000000003"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 2"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_fM8K63Zfpm18vCMTW33UO41Y|fc_0532954b4695ccd40169b9a2f5b84c81a181159bd605fb5157",
+                  "input": {
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "gpt-5.4",
+            "provider": "openai",
+            "timestamp": "2026-03-17T18:52:38.217Z",
+            "tool_calls": [
+              {
+                "external_id": "call_fM8K63Zfpm18vCMTW33UO41Y|fc_0532954b4695ccd40169b9a2f5b84c81a181159bd605fb5157",
+                "input": {
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "content": [
+                    {
+                      "source": {
+                        "filtered_reason": "binary_content",
+                        "media_type": "image/png",
+                        "original_size": 4,
+                        "original_type": "base64",
+                        "type": "filtered"
+                      },
+                      "type": "image"
+                    }
+                  ],
+                  "output": "output 3"
+                },
+                "status": "success",
+                "timestamp": "2026-03-17T18:52:38.247Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 113023,
+              "output_tokens": 456
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0.29150500000000007"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 4"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_xDhxmCB0SyV4GRZYOY4ySKRm|fc_0532954b4695ccd40169b9a3014af881a1a27479a6660e1ae8",
+                  "input": {
+                    "limit": 220,
+                    "offset": 1,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "gpt-5.4",
+            "provider": "openai",
+            "timestamp": "2026-03-17T18:52:50.061Z",
+            "tool_calls": [
+              {
+                "external_id": "call_xDhxmCB0SyV4GRZYOY4ySKRm|fc_0532954b4695ccd40169b9a3014af881a1a27479a6660e1ae8",
+                "input": {
+                  "limit": 220,
+                  "offset": 1,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "timestamp": "2026-03-17T18:52:50.061Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 114238,
+              "output_tokens": 394
+            }
+          }
+        ],
+        "timestamp": "2026-03-17T18:52:22.052Z"
+      }
+    ],
+    "started_at": "2026-03-17T17:56:05.567Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

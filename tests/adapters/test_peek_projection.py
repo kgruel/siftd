@@ -18,7 +18,7 @@ from typing import Any
 import pytest
 from conftest import ClaudeSession
 
-from siftd.adapters import claude_code, pi_agent
+from siftd.adapters import claude_code
 from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
 from siftd.adapters.peek_projection import (
     make_peek_hooks_from_decoder,
@@ -166,7 +166,8 @@ class TestWellFormedSessions:
 
     def test_hook_signatures_match_make_peek_hooks(self, tmp_path):
         path = ClaudeSession(tmp_path, exchanges=1, name="s.jsonl").build()
-        old_scan, old_exchanges, old_tail = make_peek_hooks(pi_agent.normalize_record)
+        # Only the signatures are compared, so the record fold's normalizer can be any callable.
+        old_scan, old_exchanges, old_tail = make_peek_hooks(lambda raw: None)
         new_scan, new_exchanges, new_tail = _claude_hooks()
         for old, new in ((old_scan, new_scan), (old_exchanges, new_exchanges), (old_tail, new_tail)):
             assert str(inspect.signature(old)) == str(inspect.signature(new))

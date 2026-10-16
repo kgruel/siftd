@@ -114,7 +114,7 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 201 | 3530 |
-| `tests/adapters/` | 22 | 287 |
+| `tests/adapters/` | 22 | 318 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -344,8 +344,8 @@ docstring so its row is meaningful.
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
 | [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 21 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
-| [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
-| [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
+| [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 3 | Tests for Pi Agent adapter. |
+| [adapters/test_pi_agent_decoding.py](adapters/test_pi_agent_decoding.py) | 34 | Pi Agent decoding: each test names the placement or conversion it pins, and the defect it replaces. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
 | [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |

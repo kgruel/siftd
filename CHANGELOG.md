@@ -39,6 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **VS Code chat sessions keep their answers and tool calls.** The adapter
   read field names the real format never has, so every answer was dropped and
   every tool call was named `unknown`.
+- **Pi sessions are priced.** Each message's provider is stored instead of
+  `multi` (16,375 of 22,372 responses on one machine now match a price), cache
+  reads are counted the way pricing expects, and `siftd peek` shows pi's tool
+  calls, which it showed none of.
 - **Antigravity sessions now record their token usage**, which the adapter
   never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
 

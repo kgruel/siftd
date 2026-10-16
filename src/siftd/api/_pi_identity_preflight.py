@@ -252,8 +252,10 @@ def _parse_capture(data, path):
     parsed = None
     if not reasons:
         # Deliberately outside every decode/validation exception boundary.
-        parsed = list(pi_agent._parse_records(records, path))[0]
-        if not parsed.prompts:
+        # A file whose records make no conversation is no_events, as a conversation with no prompts is.
+        conversations = pi_agent._parse_records(records, path)
+        parsed = conversations[0] if conversations else None
+        if parsed is None or not parsed.prompts:
             reasons.add("no_events")
     return parsed, candidates, reasons
 

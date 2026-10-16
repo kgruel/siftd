@@ -268,8 +268,9 @@ def test_gemini_cli_minimal_native():
 def test_pi_agent_minimal_native():
     t = probe._native_pi_agent(_golden_input("pi_agent", "minimal"))
     assert (t.user, t.assistant, t.tool_calls, t.tool_results) == (1, 2, 1, 1)
-    # a1b2c3d7: 500/120/cacheRead 50 + cacheWrite 10; a1b2c3d9: 700/30/100 + 0.
-    assert (t.input_tokens, t.output_tokens, t.cache_tokens) == (1200, 150, 160)
+    # a1b2c3d7: 500+50 cacheRead (input excludes it), 120, cacheRead 50 + cacheWrite 10;
+    # a1b2c3d9: 700+100, 30, cacheRead 100 + 0.
+    assert (t.input_tokens, t.output_tokens, t.cache_tokens) == (1350, 150, 160)
     assert dict(t.records) == {"session": 1, "model_change": 1, "thinking_level_change": 1, "message": 4}
 
 
@@ -301,7 +302,8 @@ def test_pi_standalone_usage_record_counts_tokens_not_messages(tmp_path):
     path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     t = probe._native_pi_agent(path)
     assert (t.user, t.assistant, t.tool_calls, t.tool_results) == (0, 1, 0, 0)
-    assert (t.input_tokens, t.output_tokens, t.cache_tokens) == (12, 5, 100 + 219453 + 7)
+    # Input adds cacheRead back (pi's input excludes it): 10 + 100 and 2 + 219453.
+    assert (t.input_tokens, t.output_tokens, t.cache_tokens) == (219565, 5, 100 + 219453 + 7)
     assert t.records["usage"] == 1
 
 

@@ -1,0 +1,7 @@
+{"type": "session", "version": 3, "id": "01a0dda2-9ea5-74b0-9e90-b1b3c92785b2", "timestamp": "2026-09-26T12:13:37.317Z", "cwd": "/Users/user/project"}
+{"type": "model_change", "id": "0f87e1fc", "parentId": null, "timestamp": "2026-09-26T12:13:37.411Z", "provider": "omlx", "modelId": "jaahas/qwen3.5-uncensored:9b"}
+{"type": "thinking_level_change", "id": "0074bcf8", "parentId": "0f87e1fc", "timestamp": "2026-09-26T12:13:37.411Z", "thinkingLevel": "off"}
+{"type": "message", "id": "cc4d671a", "parentId": "0074bcf8", "timestamp": "2026-09-26T12:13:43.623Z", "message": {"role": "system", "content": "", "sections": {"preamble": "system 1"}, "timestamp": 1790424823620, "toolsAdded": []}}
+{"type": "message", "id": "a6078a2f", "parentId": "cc4d671a", "timestamp": "2026-09-26T12:13:43.624Z", "message": {"role": "user", "content": [{"type": "text", "text": "prompt 2"}], "timestamp": 1790424823619}}
+{"type": "message", "id": "2c5df9a5", "parentId": "a6078a2f", "timestamp": "2026-09-26T12:13:43.663Z", "message": {"role": "assistant", "content": [], "api": "openai-completions", "provider": "omlx", "model": "jaahas/qwen3.5-uncensored:9b", "usage": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "totalTokens": 0, "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": 0}}, "stopReason": "error", "timestamp": 1790424823644, "errorMessage": "error"}}
+{"type": "context_edit", "id": "d507b70c", "parentId": "2c5df9a5", "timestamp": "2026-09-26T12:13:43.666Z", "targetId": "2c5df9a5", "replacement": null}

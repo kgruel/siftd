@@ -50,6 +50,7 @@
               }
             ],
             "model": "claude-opus-4-6",
+            "provider": "anthropic",
             "timestamp": "2024-03-10T14:00:03Z",
             "tool_calls": [
               {
@@ -66,7 +67,7 @@
               }
             ],
             "usage": {
-              "input_tokens": 500,
+              "input_tokens": 550,
               "output_tokens": 120
             }
           },
@@ -85,9 +86,10 @@
               }
             ],
             "model": "claude-opus-4-6",
+            "provider": "anthropic",
             "timestamp": "2024-03-10T14:00:05Z",
             "usage": {
-              "input_tokens": 700,
+              "input_tokens": 800,
               "output_tokens": 30
             }
           }

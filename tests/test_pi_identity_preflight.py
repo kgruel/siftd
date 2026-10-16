@@ -284,7 +284,7 @@ def test_readonly_sql_and_forbidden_collaborators(fixture, monkeypatch):
         if name.startswith(("ensure_", "insert_", "store_", "get_or_create_")):
             monkeypatch.setattr(sqlite, name, forbidden)
     monkeypatch.setattr(sessions, "ensure_session_tables", forbidden)
-    monkeypatch.setattr(pi_agent, "load_jsonl", forbidden)
+    monkeypatch.setattr(pi_agent, "read_jsonl", forbidden)
     monkeypatch.setattr(pi_agent, "discover", forbidden)
     for module in (config, plugin_discovery):
         for name in dir(module):

@@ -404,13 +404,16 @@ def _native_pi_agent(path: Path) -> Tally:
     # tool calls live on assistant messages. A standalone "usage" record (cache
     # warming, kind cache_warm) is billed tokens with no message behind it: its
     # tokens are summed, and it is not an assistant message.
+    # pi's input excludes cache reads (totalTokens is input + output + cacheRead
+    # + cacheWrite on every record), so the native input adds cacheRead back,
+    # as siftd stores it: the same normalization the antigravity counter makes.
     t = Tally()
     for record in _jsonl(path, t):
         kind = str(record.get("type"))
         t.records[kind] += 1
         if kind == "usage":
             usage = _obj(record.get("usage"))
-            t.input_tokens += _num(usage.get("input"))
+            t.input_tokens += _num(usage.get("input")) + _num(usage.get("cacheRead"))
             t.output_tokens += _num(usage.get("output"))
             t.cache_tokens += _num(usage.get("cacheRead")) + _num(usage.get("cacheWrite"))
             continue
@@ -424,7 +427,7 @@ def _native_pi_agent(path: Path) -> Tally:
             t.assistant += 1
             t.tool_calls += sum(1 for b in _blocks(message.get("content")) if b.get("type") == "toolCall")
             usage = _obj(message.get("usage"))
-            t.input_tokens += _num(usage.get("input"))
+            t.input_tokens += _num(usage.get("input")) + _num(usage.get("cacheRead"))
             t.output_tokens += _num(usage.get("output"))
             t.cache_tokens += _num(usage.get("cacheRead")) + _num(usage.get("cacheWrite"))
         elif role == "toolResult":
