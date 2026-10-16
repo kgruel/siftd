@@ -1,0 +1,267 @@
+[
+  {
+    "attributes": {
+      "content.revision": "c11df23000b3d61699c27928df8c08166359085214b5ac31f23a91fe7d8a8bb2"
+    },
+    "ended_at": "2026-02-18T01:51:19.986000+00:00",
+    "external_id": "opencode::ses_3918e95c8ffectIpYfC6WAQ9sE",
+    "harness": {
+      "display_name": "OpenCode",
+      "log_format": "sqlite",
+      "name": "opencode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Sample text text."
+            }
+          }
+        ],
+        "external_id": "opencode::msg_c6e716a3e001fE6xwnVaYXbgV7",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "2055",
+              "cost": "0",
+              "reasoning_output_tokens": "29"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_function_6xvdt88rfynw_1",
+                  "name": "bash"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_function_6xvdt88rfynw_2",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_c6e716a52002c3elFteAmVwiHj",
+            "model": "big-pickle",
+            "timestamp": "2026-02-18T01:50:52.498000+00:00",
+            "tool_calls": [
+              {
+                "external_id": "call_function_6xvdt88rfynw_1",
+                "input": {
+                  "command": "sample",
+                  "description": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "status": "success",
+                "timestamp": "2026-02-18T01:50:56.808000+00:00",
+                "tool_name": "bash"
+              },
+              {
+                "external_id": "call_function_6xvdt88rfynw_2",
+                "input": {
+                  "command": "sample",
+                  "description": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "status": "success",
+                "timestamp": "2026-02-18T01:50:56.841000+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 10867,
+              "output_tokens": 111
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "12922",
+              "cost": "0",
+              "reasoning_output_tokens": "33"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_function_6p2k3vww9p17_1",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_c6e717b97002JKVRNIYAmiPYmd",
+            "model": "big-pickle",
+            "timestamp": "2026-02-18T01:50:56.919000+00:00",
+            "tool_calls": [
+              {
+                "external_id": "call_function_6p2k3vww9p17_1",
+                "input": {
+                  "command": "sample",
+                  "description": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "status": "success",
+                "timestamp": "2026-02-18T01:51:00.724000+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 1838,
+              "output_tokens": 78
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "14835",
+              "cost": "0",
+              "reasoning_output_tokens": "25"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_function_ljv059ni2hva_1",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_c6e718ac8002gQY3uBnQzMIUGG",
+            "model": "big-pickle",
+            "timestamp": "2026-02-18T01:51:00.808000+00:00",
+            "tool_calls": [
+              {
+                "external_id": "call_function_ljv059ni2hva_1",
+                "input": {
+                  "command": "sample",
+                  "description": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "status": "success",
+                "timestamp": "2026-02-18T01:51:03.980000+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 35,
+              "output_tokens": 69
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "14936",
+              "cost": "0",
+              "reasoning_output_tokens": "32"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_function_ovkoejwjz4yl_1",
+                  "name": "read"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_c6e719771002niBISt4PZyoTQl",
+            "model": "big-pickle",
+            "timestamp": "2026-02-18T01:51:04.049000+00:00",
+            "tool_calls": [
+              {
+                "external_id": "call_function_ovkoejwjz4yl_1",
+                "input": {
+                  "filePath": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "status": "success",
+                "timestamp": "2026-02-18T01:51:07.103000+00:00",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 307,
+              "output_tokens": 75
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "14760",
+              "cost": "0",
+              "reasoning_output_tokens": "19"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              }
+            ],
+            "external_id": "opencode::msg_c6e71a3b8002PfauUPkrfONlzl",
+            "model": "big-pickle",
+            "timestamp": "2026-02-18T01:51:07.192000+00:00",
+            "usage": {
+              "input_tokens": 3418,
+              "output_tokens": 304
+            }
+          }
+        ],
+        "timestamp": "2026-02-18T01:50:52.488000+00:00"
+      }
+    ],
+    "started_at": "2026-02-18T01:50:52.471000+00:00",
+    "workspace_path": "/Users/user/work/1"
+  }
+]

@@ -54,6 +54,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are stored, token lines count as usage, a history file scanned under two
   spellings of its path is one conversation, and a session that grows is
   re-read.
+- **OpenCode sessions stay current.** Writes still in SQLite's write-ahead log
+  are seen, a session whose content changes is re-read even when its timestamp
+  does not move, and one malformed row no longer aborts every session in the
+  database. Peek does not preview OpenCode yet.
 - **Antigravity tool results pair with the right calls.** Reminders and API
   errors no longer take a tool declaration (545 results had junk names), a
   turn's errors stay on that turn, and more sessions get a workspace.

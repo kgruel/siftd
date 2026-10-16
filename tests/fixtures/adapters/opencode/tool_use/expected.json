@@ -1,5 +1,8 @@
 [
   {
+    "attributes": {
+      "content.revision": "7f7a681599770683a48d0704de9cd092753d798041934fa3919c574428513604"
+    },
     "ended_at": "2024-03-10T14:01:00+00:00",
     "external_id": "opencode::ses_golden_001",
     "harness": {
@@ -18,6 +21,7 @@
             }
           }
         ],
+        "external_id": "opencode::m1",
         "responses": [
           {
             "attributes": {
@@ -41,6 +45,7 @@
                 }
               }
             ],
+            "external_id": "opencode::m2",
             "model": "claude-3-opus-20240229",
             "timestamp": "2024-03-10T14:00:20+00:00",
             "tool_calls": [

@@ -53,6 +53,24 @@ class Disposition(StrEnum):
     UNKNOWN = "unknown"  # the decoder did not recognize the unit
 
 
+#: Conversation attribute a session states to name its content revision: a
+#: digest that changes whenever any of the rows the session was read from
+#: changes. A revision orders nothing, so it is trusted only with its source:
+#: ingest replaces a stored session whose revision differs when both copies were
+#: read from the same source (:data:`CONTENT_SOURCE_ATTRIBUTE`). That is the
+#: detector for a container whose ``ended_at`` cannot tell a change apart (a
+#: message appended before the session's last update leaves it unmoved). A copy
+#: read from another source competes on ``ended_at`` alone.
+CONTENT_REVISION_ATTRIBUTE = "content.revision"
+
+#: Conversation attribute ingest names alongside a revision: the source path the
+#: conversation was read from. Ingest sets it, not the adapter, because the path
+#: is ingest's identity for a source. Two sources can hold copies of one session
+#: (a backup beside the live file); this is what tells a changed revision of the
+#: same source apart from an older competing copy.
+CONTENT_SOURCE_ATTRIBUTE = "content.source"
+
+
 @dataclass(frozen=True, kw_only=True)
 class Session:
     """Opens (or names) a conversation.

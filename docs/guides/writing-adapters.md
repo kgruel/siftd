@@ -69,6 +69,16 @@ left alone with its tags and ownership. A session that reports **no**
 which is correct for a live session and wasteful for a finished one. Emit an
 `ended_at` for every session your format can bound.
 
+`ended_at` cannot see every change: a message stamped before the session's last
+update leaves the end where it was. A session can therefore also state a
+`content.revision` attribute (`records.CONTENT_REVISION_ATTRIBUTE`), a digest of
+its source rows. Ingest replaces the stored copy when the revision differs and
+both copies came from the same source path, whatever the end time says. It names
+that path itself as `content.source` (`records.CONTENT_SOURCE_ATTRIBUTE`). A
+digest orders nothing, so a copy from another source (a backup beside the live
+file) competes on `ended_at` alone: an older copy cannot overwrite a newer one.
+OpenCode does this.
+
 ## External ID
 
 `external_id` is the stable, unique identifier for a conversation. It must:
@@ -144,6 +154,14 @@ The rules a decoder follows:
 
 `claude_code.ClaudeDecoder` is the worked example, including the table that
 names what every record type in the tool's log becomes.
+
+A container source (`DEDUP_STRATEGY = "session"`) is also a row-level reader:
+`opencode.read_rows` yields each session, message and part row, and
+`opencode.OpencodeDecoder` decodes them. Where a database keeps recent commits
+in a write-ahead log, the adapter declares its change files with an optional
+`change_paths(source)` returning the paths whose change means the source may
+have changed (`opencode.change_paths` names `opencode.db` and `opencode.db-wal`).
+Without it, the source's own file is the whole change signal.
 
 ## Timestamps
 

@@ -24,6 +24,7 @@ file with a second session failed permanently (#36).
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -32,11 +33,13 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple, Protocol
 
+from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE
 from siftd.adapters.sdk import AdapterParseError
 from siftd.dateparse import to_utc
 from siftd.domain import Conversation, Source
+from siftd.storage.attributes import get_attribute
 from siftd.storage.replacement import (
     ConversationCarryover,
     release_carryover,
@@ -128,7 +131,7 @@ def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
     return to_utc(new_ts) > to_utc(existing_ts)
 
 
-def _stat_unchanged(existing_info, st: os.stat_result) -> bool:
+def _stat_unchanged(existing_info, st: _StatLike) -> bool:
     """Whether the cheap skip applies: same mtime and size, nothing unresolved.
 
     Both dedup branches open with this and then with :func:`_hash_unchanged`,
@@ -163,13 +166,107 @@ def _hash_unchanged(existing_info, current_hash: str) -> bool:
     )
 
 
-def _session_should_replace(new_ended: str | None, existing_ended: str | None) -> bool:
+class _StatLike(Protocol):
+    """The two stat fields the skip checks and the file markers read.
+
+    ``os.stat_result`` satisfies it, and so does a session source's combined
+    change signal (:class:`_ChangeStat`).
+    """
+
+    st_mtime: float
+    st_size: int
+
+
+class _ChangeStat(NamedTuple):
+    """The stat of a session source's change files: newest mtime, total size."""
+
+    st_mtime: float
+    st_size: int
+
+
+def _change_files(adapter: AdapterModule, source: Source) -> list[Path]:
+    """The files whose bytes decide whether a session source changed.
+
+    An adapter declares its change files with ``change_paths(source)`` when its
+    store has companions (SQLite's write-ahead log). Without one the source's own
+    file is the whole signal, exactly as before. The source's file is always
+    first, so a missing source still fails at the stat, as it always did.
+    """
+    declared = getattr(adapter, "change_paths", None)
+    if declared is None:
+        return [source.as_path]
+    paths = [source.as_path]
+    paths += [p for p in declared(source) if p != source.as_path and p.exists()]
+    return paths
+
+
+def _change_stat(paths: list[Path]) -> _ChangeStat:
+    stats = [p.stat() for p in paths]
+    return _ChangeStat(max(s.st_mtime for s in stats), sum(s.st_size for s in stats))
+
+
+def _change_hash(paths: list[Path]) -> str:
+    """One digest for the change files: the file's own digest, or a digest of the digests."""
+    digests = [compute_file_hash(p) for p in paths]
+    if len(digests) == 1:
+        return digests[0]
+    return hashlib.sha256("".join(digests).encode()).hexdigest()
+
+
+def _with_content_source(conversation, file_path: str):
+    """The conversation with the source it was read from named, when it states a revision.
+
+    A revision is meaningful only within the source it was read from, and the
+    source is ingest's to name: ``ingested_files`` keys a source by its path. The
+    adapter states the revision; ingest states where it came from. The adapter's
+    output therefore carries no machine-specific path.
+    """
+    if CONTENT_REVISION_ATTRIBUTE not in conversation.attributes:
+        return conversation
+    return replace(
+        conversation,
+        attributes={**conversation.attributes, CONTENT_SOURCE_ATTRIBUTE: file_path},
+    )
+
+
+def _revision_moved(conn, conversation, stored_id: str) -> bool:
+    """Whether the stored copy is an older read of this same source's content.
+
+    A revision is a digest: it says the content changed, not which way. Two
+    databases can hold copies of one session (a backup beside the live file), and
+    a digest cannot tell the newer copy from the older one. So a revision is
+    trusted only when both copies came from the same source; a copy from another
+    source competes on ``ended_at`` alone, which keeps latest-wins across sources.
+
+    A conversation that declares no revision has no detector here. A stored copy
+    with no revision (stored before the adapter declared one) has no source to
+    match, so it too competes on ``ended_at``: an older copy cannot overwrite it.
+    """
+    revision = conversation.attributes.get(CONTENT_REVISION_ATTRIBUTE)
+    if revision is None:
+        return False
+    stored_revision = get_attribute(conn, "conversation", stored_id, CONTENT_REVISION_ATTRIBUTE)
+    if stored_revision is None or stored_revision == revision:
+        return False
+    source = conversation.attributes.get(CONTENT_SOURCE_ATTRIBUTE)
+    stored_source = get_attribute(conn, "conversation", stored_id, CONTENT_SOURCE_ATTRIBUTE)
+    return source is not None and source == stored_source
+
+
+def _session_should_replace(
+    new_ended: str | None,
+    existing_ended: str | None,
+    *,
+    revision_moved: bool = False,
+) -> bool:
     """Whether a re-parsed session should replace the copy already stored.
 
     `ended_at` is this branch's per-conversation change detector: a container
     source re-parses every session it holds, and only the ones that actually
     moved are worth the delete-then-insert (which costs new ULIDs, a tag
-    snapshot/restore, and the conversation's ownership rows).
+    snapshot/restore, and the conversation's ownership rows). An end time cannot
+    show every change, so a session whose content revision moved within its own
+    source (see :func:`_revision_moved`) replaces whatever its end time says.
 
     A conversation reporting no `ended_at` is not "unchanged" — it is a
     session with no detector at all, and `newer than` is false forever, which
@@ -177,7 +274,7 @@ def _session_should_replace(new_ended: str | None, existing_ended: str | None) -
     here because the file's content hash changed, so the honest reading of
     "no detector" is that the re-parsed file wins.
     """
-    if new_ended is None:
+    if revision_moved or new_ended is None:
         return True
     return _compare_timestamps(new_ended, existing_ended)
 
@@ -638,7 +735,7 @@ def ingest_all(
         # below — the error handlers reuse it rather than re-stat and re-hash.
         # Reset per source: these are loop-scoped names in Python, so a value
         # left by the previous file would otherwise be stamped onto this one.
-        st: os.stat_result | None = None
+        st: _StatLike | None = None
         current_hash: str | None = None
 
         # Initialize per-harness stats
@@ -756,15 +853,15 @@ def ingest_all(
             elif dedup_strategy == "session":
                 # Fast path: stat-only skip for unchanged session files
                 existing_file_info = get_ingested_file_info(conn, file_path)
-                location = source.as_path
+                change_files = _change_files(adapter, source)
                 if existing_file_info:
-                    st = location.stat()
+                    st = _change_stat(change_files)
 
                     if _stat_unchanged(existing_file_info, st):
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
-                    current_hash = compute_file_hash(location)
+                    current_hash = _change_hash(change_files)
                     if _hash_unchanged(existing_file_info, current_hash):
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
@@ -778,18 +875,24 @@ def ingest_all(
                 # ingested_files row is a single per-file hash/mtime marker with
                 # conversation_id=NULL, so replacing any one session does not
                 # cascade-delete the marker (see record_session_file).
+                # The marker is measured before the parse, so it describes what
+                # was read. Measured after, a commit that lands during the parse
+                # would be stamped as ingested without having been read, and the
+                # next run would skip it.
+                if st is None:
+                    st = _change_stat(change_files)
+                file_hash = current_hash or _change_hash(change_files)
                 recorded = replace(
                     source,
                     metadata={**source.metadata, "recorded_locations": _recorded_locations(conn, harness_name)},
                 )
-                conversations = _parse_source_conversations(recorded, adapter, file_path)
+                conversations = [
+                    _with_content_source(c, file_path)
+                    for c in _parse_source_conversations(recorded, adapter, file_path)
+                ]
                 if not conversations:
                     _count_file_skipped(source, "skipped (empty)", stats, on_file, emit_event)
                     continue
-
-                if st is None:
-                    st = location.stat()
-                file_hash = current_hash or compute_file_hash(location)
 
                 file_harness_id = None
                 file_ingested = False
@@ -833,7 +936,9 @@ def ingest_all(
                         # equal/older one is left untouched (preserving its
                         # tags, ownership, and manual state).
                         if _session_should_replace(
-                            conversation.ended_at, existing["ended_at"]
+                            conversation.ended_at,
+                            existing["ended_at"],
+                            revision_moved=_revision_moved(conn, conversation, existing["id"]),
                         ):
                             # Same delete-then-insert shape as the file branch,
                             # so it loses tags the same way and takes the same
@@ -1021,7 +1126,7 @@ def _record_file_error(
     emit_event: Callable[[str, object | None], None] | None,
     *,
     known_hash: str | None = None,
-    known_stat: os.stat_result | None = None,
+    known_stat: _StatLike | None = None,
 ) -> None:
     """Record a file that failed ingestion, without discarding a live pointer.
 

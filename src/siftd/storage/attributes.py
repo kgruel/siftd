@@ -40,3 +40,17 @@ def get_attributes(
         "SELECT * FROM attributes WHERE target_kind = ? AND target_id = ?",
         (target_kind, target_id),
     ).fetchall()
+
+
+def get_attribute(
+    conn: sqlite3.Connection,
+    target_kind: str,
+    target_id: str,
+    key: str,
+) -> str | None:
+    """The value of one attribute on a target, or None when the target has no such key."""
+    row = conn.execute(
+        "SELECT value FROM attributes WHERE target_kind = ? AND target_id = ? AND key = ?",
+        (target_kind, target_id, key),
+    ).fetchone()
+    return None if row is None else row[0]
