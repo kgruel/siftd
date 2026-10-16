@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 201 | 3539 |
-| `tests/adapters/` | 22 | 351 |
+| `tests/` | 201 | 3540 |
+| `tests/adapters/` | 22 | 363 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -209,7 +209,7 @@ docstring so its row is meaningful.
 | [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 52 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
@@ -331,7 +331,7 @@ docstring so its row is meaningful.
 |------|-------|---------|
 | [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
-| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
+| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 54 | Tests for Antigravity CLI adapter. |
 | [adapters/test_assembly.py](adapters/test_assembly.py) | 48 | The shared assembler places every record and accounts for every one. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |

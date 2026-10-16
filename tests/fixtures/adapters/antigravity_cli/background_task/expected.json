@@ -1,0 +1,142 @@
+[
+  {
+    "ended_at": "2026-09-18T18:02:05Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Redacted user request."
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "946:0",
+                  "input": {
+                    "CommandLine": "redacted",
+                    "Cwd": "/Users/user/project/.config",
+                    "WaitMsBeforeAsync": 20000,
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "run_command"
+                }
+              }
+            ],
+            "timestamp": "2026-09-18T18:01:46Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-947"
+                },
+                "external_id": "946:0",
+                "input": {
+                  "CommandLine": "redacted",
+                  "Cwd": "/Users/user/project/.config",
+                  "WaitMsBeforeAsync": 20000,
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "The command exited with code 0.\n\t\t\t\tOutput:\n\t\t\t\tRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-09-18T18:02:03Z",
+                "tool_name": "run_command"
+              }
+            ]
+          },
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "948:0",
+                  "input": {
+                    "DurationSeconds": 10,
+                    "Prompt": "redacted",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "schedule"
+                }
+              }
+            ],
+            "timestamp": "2026-09-18T18:02:01Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-949"
+                },
+                "external_id": "948:0",
+                "input": {
+                  "DurationSeconds": 10,
+                  "Prompt": "redacted",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: redacted\nTool is running as a background task with task id: 970b4ec9-c38e-4fb3-8663-293bc444608c/task-949\nTask Description: redacted\nTask logs are available at: file:///Users/user/.gemini/antigravity-cli/brain/970b4ec9-c38e-4fb3-8663-293bc444608c/.system_generated/tasks/task-949.log\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS: redacted."
+                },
+                "timestamp": "2026-09-18T18:02:03Z",
+                "tool_name": "schedule"
+              }
+            ]
+          },
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "951:0",
+                  "input": {
+                    "CommandLine": "redacted",
+                    "Cwd": "/Users/user/project/.config",
+                    "WaitMsBeforeAsync": 5000,
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "run_command"
+                }
+              }
+            ],
+            "timestamp": "2026-09-18T18:02:03Z",
+            "tool_calls": [
+              {
+                "external_id": "951:0",
+                "input": {
+                  "CommandLine": "redacted",
+                  "Cwd": "/Users/user/project/.config",
+                  "WaitMsBeforeAsync": 5000,
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-09-18T13:02:05-05:00\nCompleted At: 2026-09-18T13:02:07-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-09-18T18:02:05Z",
+                "tool_name": "run_command"
+              }
+            ]
+          }
+        ],
+        "timestamp": "2026-09-18T18:01:46Z"
+      }
+    ],
+    "started_at": "2026-09-18T18:01:46Z"
+  }
+]

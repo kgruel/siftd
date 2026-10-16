@@ -1,0 +1,363 @@
+[
+  {
+    "ended_at": "2026-10-03T18:19:40Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "preamble": [
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "1:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/img",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:12Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) cannot view \"/Users/user/project/scratchpad/agytest/img\": path is a directory, not a file"
+            },
+            "external_id": "1:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/img",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:13-05:00\nCompleted At: 2026-10-03T13:19:13-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:13Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 6772,
+          "output_tokens": 435
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "3:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/README.md",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:13Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/README.md: no such file or directory"
+            },
+            "external_id": "3:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/README.md",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:16-05:00\nCompleted At: 2026-10-03T13:19:16-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:16Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 7390,
+          "output_tokens": 458
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "5:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/.DS_Store",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:16Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/img/.DS_Store: no such file or directory"
+            },
+            "external_id": "5:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/.DS_Store",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:20-05:00\nCompleted At: 2026-10-03T13:19:20-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:20Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 8034,
+          "output_tokens": 696
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "7:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/HEAD",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:20Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/.git/HEAD: no such file or directory"
+            },
+            "external_id": "7:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/HEAD",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:25-05:00\nCompleted At: 2026-10-03T13:19:25-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:25Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 8918,
+          "output_tokens": 1724
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "9:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/README.md",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:25Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/Code/sgov/README.md: no such file or directory"
+            },
+            "external_id": "9:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/README.md",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:27-05:00\nCompleted At: 2026-10-03T13:19:27-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:27Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 10828,
+          "output_tokens": 238
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "11:0",
+              "input": {
+                "AbsolutePath": "/Users/user/project/test.png",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "view_file"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:27Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/img/test.png: no such file or directory"
+            },
+            "external_id": "11:0",
+            "input": {
+              "AbsolutePath": "/Users/user/project/test.png",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:31-05:00\nCompleted At: 2026-10-03T13:19:31-05:00\n\nRedacted output."
+            },
+            "status": "error",
+            "timestamp": "2026-10-03T18:19:31Z",
+            "tool_name": "view_file"
+          }
+        ],
+        "usage": {
+          "input_tokens": 11201,
+          "output_tokens": 937
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "13:0",
+              "input": {
+                "Message": "redacted",
+                "Recipient": "redacted",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "send_message"
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:31Z",
+        "tool_calls": [
+          {
+            "external_id": "13:0",
+            "input": {
+              "Message": "redacted",
+              "Recipient": "redacted",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-10-03T13:19:40-05:00\nCompleted At: 2026-10-03T13:19:40-05:00\n\nRedacted output."
+            },
+            "status": "success",
+            "timestamp": "2026-10-03T18:19:40Z",
+            "tool_name": "send_message"
+          }
+        ],
+        "usage": {
+          "input_tokens": 12326,
+          "output_tokens": 2425
+        }
+      },
+      {
+        "attributes": {
+          "cache_read_input_tokens": "0"
+        },
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Redacted model text."
+            }
+          }
+        ],
+        "timestamp": "2026-10-03T18:19:40Z",
+        "usage": {
+          "input_tokens": 14864,
+          "output_tokens": 25
+        }
+      }
+    ],
+    "started_at": "2026-10-03T18:19:12Z"
+  }
+]

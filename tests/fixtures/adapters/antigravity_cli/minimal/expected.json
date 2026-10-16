@@ -36,6 +36,7 @@
               {
                 "block_type": "tool_use",
                 "content": {
+                  "id": "2:0",
                   "input": {
                     "DirectoryPath": "/repo",
                     "Recursive": false
@@ -47,6 +48,7 @@
             "timestamp": "2026-07-06T15:01:00Z",
             "tool_calls": [
               {
+                "external_id": "2:0",
                 "input": {
                   "DirectoryPath": "/repo",
                   "Recursive": false

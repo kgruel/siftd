@@ -1312,14 +1312,20 @@ def _update_stats_for_conversation(
     stats.conversations += 1
     stats.by_harness[harness_name]["conversations"] += 1
 
+    def count_response(response) -> None:
+        stats.responses += 1
+        stats.by_harness[harness_name]["responses"] += 1
+        stats.tool_calls += len(response.tool_calls)
+        stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
+
+    # A preamble's responses came before any prompt. They are stored, so they are counted.
+    for response in conversation.preamble:
+        count_response(response)
     for prompt in conversation.prompts:
         stats.prompts += 1
         stats.by_harness[harness_name]["prompts"] += 1
         for response in prompt.responses:
-            stats.responses += 1
-            stats.by_harness[harness_name]["responses"] += 1
-            stats.tool_calls += len(response.tool_calls)
-            stats.by_harness[harness_name]["tool_calls"] += len(response.tool_calls)
+            count_response(response)
 
 
 def _restore_carryover_after_replacement(

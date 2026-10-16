@@ -1,0 +1,149 @@
+[
+  {
+    "ended_at": "2026-08-15T23:20:49Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "preamble": [
+      {
+        "content": [
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "43:0",
+              "input": {
+                "CaseInsensitive": false,
+                "IsRegex": false,
+                "MatchPerLine": true,
+                "Query": "redacted",
+                "SearchPath": "redacted",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "grep_search"
+            }
+          }
+        ],
+        "timestamp": "2026-08-15T23:20:14Z",
+        "tool_calls": [
+          {
+            "external_id": "43:0",
+            "input": {
+              "CaseInsensitive": false,
+              "IsRegex": false,
+              "MatchPerLine": true,
+              "Query": "redacted",
+              "SearchPath": "redacted",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-08-15T18:20:16-05:00\nCompleted At: 2026-08-15T18:20:16-05:00\n\nRedacted output."
+            },
+            "status": "success",
+            "timestamp": "2026-08-15T23:20:16Z",
+            "tool_name": "grep_search"
+          }
+        ]
+      },
+      {
+        "attributes": {
+          "error": "There was a problem parsing the tool call. \nError Message: model output error: invalid tool call error (invalid_args) /Users/user/Code/loops-wt-arch-split/tests/architecture/__init__.py is not a valid artifact path; artifacts must be in /Users/user/.gemini/antigravity-cli/brain/628f6b61-2d51-4276-ae64-a29b690c0629/ \nGuidance: You are trying to correct your previous tool call error, you must focus on fixing the failed tool call with sequential tool calls and try again. Do not do parallel tool calls and if you are fixing multiple tool calls, do them one at a time. Do not apologize. \nRetries remaining: 4."
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "text": "Redacted reasoning."
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "45:0",
+              "input": {
+                "ArtifactMetadata": {
+                  "RequestFeedback": false,
+                  "Summary": "Initialize tests/architecture package",
+                  "UserFacing": false
+                },
+                "CodeContent": "redacted",
+                "Description": "Redacted",
+                "Overwrite": true,
+                "TargetFile": "/Users/user/project/__init__.py",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "write_to_file"
+            }
+          }
+        ],
+        "timestamp": "2026-08-15T23:20:16Z",
+        "tool_calls": [
+          {
+            "external_id": "45:0",
+            "input": {
+              "ArtifactMetadata": {
+                "RequestFeedback": false,
+                "Summary": "Initialize tests/architecture package",
+                "UserFacing": false
+              },
+              "CodeContent": "redacted",
+              "Description": "Redacted",
+              "Overwrite": true,
+              "TargetFile": "/Users/user/project/__init__.py",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "timestamp": "2026-08-15T23:20:16Z",
+            "tool_name": "write_to_file"
+          }
+        ]
+      },
+      {
+        "content": [
+          {
+            "block_type": "tool_use",
+            "content": {
+              "id": "47:0",
+              "input": {
+                "CodeContent": "redacted",
+                "Description": "Redacted",
+                "Overwrite": true,
+                "TargetFile": "/Users/user/project/__init__.py",
+                "toolAction": "Redacted",
+                "toolSummary": "Redacted"
+              },
+              "name": "write_to_file"
+            }
+          }
+        ],
+        "timestamp": "2026-08-15T23:20:43Z",
+        "tool_calls": [
+          {
+            "external_id": "47:0",
+            "input": {
+              "CodeContent": "redacted",
+              "Description": "Redacted",
+              "Overwrite": true,
+              "TargetFile": "/Users/user/project/__init__.py",
+              "toolAction": "Redacted",
+              "toolSummary": "Redacted"
+            },
+            "result": {
+              "output": "Created At: 2026-08-15T18:20:49-05:00\nCompleted At: 2026-08-15T18:20:49-05:00\n\nRedacted output."
+            },
+            "status": "success",
+            "timestamp": "2026-08-15T23:20:49Z",
+            "tool_name": "write_to_file"
+          }
+        ]
+      }
+    ],
+    "started_at": "2026-08-15T23:20:14Z"
+  }
+]

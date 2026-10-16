@@ -1,0 +1,269 @@
+[
+  {
+    "ended_at": "2026-10-04T12:10:32Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Redacted user request."
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_read_input_tokens": "0",
+              "error": "API error (attempt 1): request failed: Post \"https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse\": read tcp redacted: read: connection reset by peer"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "1:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514671627999379610.png",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T11:54:59Z",
+            "tool_calls": [
+              {
+                "external_id": "1:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514671627999379610.png",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T06:55:01-05:00\nCompleted At: 2026-10-04T06:55:01-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T11:55:01Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 15360,
+              "output_tokens": 142
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "4:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514671926834892840.png",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T12:10:17Z",
+            "tool_calls": [
+              {
+                "external_id": "4:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514671926834892840.png",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T07:10:20-05:00\nCompleted At: 2026-10-04T07:10:20-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T12:10:20Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 16680,
+              "output_tokens": 142
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "12210"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "6:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514672090194907136.png",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T12:10:20Z",
+            "tool_calls": [
+              {
+                "external_id": "6:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514672090194907136.png",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T07:10:22-05:00\nCompleted At: 2026-10-04T07:10:22-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T12:10:22Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 18008,
+              "output_tokens": 142
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "16276"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "8:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514672585097482361.png",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T12:10:22Z",
+            "tool_calls": [
+              {
+                "external_id": "8:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514672585097482361.png",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T07:10:25-05:00\nCompleted At: 2026-10-04T07:10:25-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T12:10:25Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 19328,
+              "output_tokens": 142
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "16273"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "10:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514672864492523591.jpeg",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T12:10:25Z",
+            "tool_calls": [
+              {
+                "external_id": "10:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514672864492523591.jpeg",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T07:10:27-05:00\nCompleted At: 2026-10-04T07:10:27-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T12:10:27Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 20620,
+              "output_tokens": 142
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "16270"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "12:0",
+                  "input": {
+                    "AbsolutePath": "/Users/user/project/1514673511354994688.png",
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "view_file"
+                }
+              }
+            ],
+            "timestamp": "2026-10-04T12:10:27Z",
+            "tool_calls": [
+              {
+                "external_id": "12:0",
+                "input": {
+                  "AbsolutePath": "/Users/user/project/1514673511354994688.png",
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-10-04T07:10:32-05:00\nCompleted At: 2026-10-04T07:10:32-05:00\n\nRedacted output."
+                },
+                "status": "success",
+                "timestamp": "2026-10-04T12:10:32Z",
+                "tool_name": "view_file"
+              }
+            ],
+            "usage": {
+              "input_tokens": 21940,
+              "output_tokens": 142
+            }
+          }
+        ],
+        "timestamp": "2026-10-04T11:54:59Z"
+      }
+    ],
+    "started_at": "2026-10-04T11:54:59Z"
+  }
+]

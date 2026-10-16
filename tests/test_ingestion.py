@@ -6,6 +6,7 @@ import pytest
 
 from siftd.adapters.sdk import AdapterParseError
 from siftd.storage.events import get_last_event_id, get_prompt_by_index
+from siftd.ingestion import IngestStats
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
@@ -13,6 +14,7 @@ from siftd.ingestion.orchestration import (
     _normalize_status,
     _summarize_conversation,
     _truncate_summary,
+    _update_stats_for_conversation,
 )
 
 
@@ -1107,3 +1109,26 @@ class TestBookkeepingRecovery:
         info = get_ingested_file_info(conn, str(source))
         assert info["error"] is None
         assert self._indexed(conn, "second") == 1
+
+
+class TestIngestStatsCountPreamble:
+    def test_a_preamble_is_counted_as_responses_and_their_calls(self):
+        """The preamble is stored, so the ingest summary must count it. A count that walked only prompts would
+        report fewer responses and tool calls than were written."""
+        from siftd.adapters.sdk import build_harness
+        from siftd.domain import Conversation, Prompt, Response, ToolCall
+
+        conversation = Conversation(
+            external_id="x::1",
+            harness=build_harness("x", "google", "jsonl", "X"),
+            started_at="T1",
+            ended_at="T2",
+            preamble=[Response(timestamp="T1", tool_calls=[ToolCall(tool_name="a", input={})])],
+            prompts=[Prompt(timestamp="T2", responses=[Response(timestamp="T2")])],
+        )
+        # The caller opens the harness's row before counting, as ingest does.
+        row = {"conversations": 0, "prompts": 0, "responses": 0, "tool_calls": 0, "replaced": 0, "errors": 0}
+        stats = IngestStats(by_harness={"x": row})
+        _update_stats_for_conversation(stats, "x", conversation)
+        assert (stats.prompts, stats.responses, stats.tool_calls) == (1, 2, 1)
+        assert stats.by_harness["x"]["responses"] == 2

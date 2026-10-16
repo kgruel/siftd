@@ -1,83 +1,86 @@
 """Antigravity CLI adapter for siftd.
 
-Pure parser: reads transcript JSONL files and yields Conversation domain
-objects. No storage coupling.
+Pure parser. The adapter only decodes: :class:`AntigravityDecoder` turns each
+transcript step into canonical records, and the shared assembler
+(:mod:`siftd.adapters.assembly`) decides where they attach.
 
 Antigravity CLI writes one growing JSONL transcript per conversation at
-``brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl``.
-Each line is a "step": a user turn, a model turn (declaring zero or more
-tool calls), or the executed result of a declared tool call. The format
-carries no call id to correlate a declaration with its result -- pairing is
-purely positional (a step type generally follows the PLANNER_RESPONSE step
-that declared it). Session identity and workspace are not in the transcript
-itself; workspace is recovered from a sibling ``history.jsonl`` at the
-Antigravity CLI root, keyed by conversation id.
+``brain/<conversation-id>/.system_generated/logs/transcript_full.jsonl``. Each
+line is a step: a user turn, a model turn (``PLANNER_RESPONSE``, declaring zero
+or more tool calls), the executed result of a declared call, or harness
+scaffolding (reminders, checkpoints, error notices, inter-task messages).
 
-Token usage: a PLANNER_RESPONSE step may carry ``input_tokens``,
-``cache_read_tokens`` and ``output_tokens`` (present in 253 of 496 corpus
-transcripts, all from 2026-10 onward; absent otherwise). Each such step
-becomes ``Response.usage`` on the Response that step itself creates, so
-attribution is 1:1 by construction; result steps carry no usage. Antigravity
-reports ``input_tokens`` EXCLUSIVE of cache reads: ``input_tokens`` is below
-``cache_read_tokens`` in 4,105 of 4,934 corpus records, which an inclusive
-count cannot produce. The stored ``input_tokens`` is the INCLUSIVE total,
-because ``uncached_input_sql`` reads a ``google``-source row that way; the
-native input is recovered as ``total - cache_read``. The cache read is stored
-as the ``cache_read_input_tokens`` response attribute, the key ``cost.sql`` and
-the usage rollup read. No cache-creation count is reported.
+Pairing is positional, because the format carries no call id. A result step
+consumes the oldest declaration not yet resulted; the decoder names each
+declaration ``<step_index>:<n>`` and gives its result that name. Only steps that
+run a tool consume a declaration. ``ERROR_MESSAGE``, ``EPHEMERAL_MESSAGE`` and
+``SYSTEM_MESSAGE`` never do. A reminder or API error that took a declaration
+hands that call the next real result, which is the wrong one. A declaration still
+unresolved when the next model or user turn begins stays a
+``pending`` call with no result. A result with no declaration at all is an
+orphan, named and counted by the ledger rather than stored as a call.
 
-Known gaps:
-    - No model id in the transcript JSONL itself. Model identity IS recoverable
-      from the sibling per-conversation SQLite DB (``conversations/<conversation-id>.db``,
-      table ``gen_metadata``, protobuf blobs) and is extracted here when that DB
-      is readable; the blobs are not mined for token counts. When the DB is
-      missing or unreadable, behavior degrades to JSONL-only (model=None).
-      Most corpus responses carry a ``MODEL_PLACEHOLDER_*`` enum rather than a
-      display name; every model string the adapter emits in the corpus is
-      unpriced (no pricing row matches it), so token rows store but cost NULL.
-    - Tool calls declared but never resolved before the transcript ends
-      (e.g. a backgrounded run_command the user interrupted) surface as
-      status="pending" ToolCalls with no result, same fallback used by
-      codex_cli's flush_pending_calls.
+A backgrounded call is a result step with status RUNNING whose content names a
+task id. Its output is interim (``final=False``) and the call stays open. Its
+completion arrives later as a ``SYSTEM_MESSAGE`` naming the same task id, which
+the decoder maps back to the call.
 
-Backgrounded tool calls (a RUN_COMMAND step whose status is RUNNING rather
-than DONE) are a further wrinkle: the transcript records them as started,
-then their actual completion arrives later as a free-text SYSTEM_MESSAGE
-step, correlated by a task id embedded in both steps' prose -- not a
-structured field. This is genuinely new ground: no other adapter in this
-codebase does cross-event-type deferred correlation (ToolCallLinker and
-flush_pending_calls in sdk.py both assume a clean structured id shared by a
-declare/resolve pair of the *same* event shape, e.g. codex_cli's call_id).
-Solved locally here (_open_background_tasks / _resolve_background_task)
-rather than generalized into the SDK -- there's exactly one data point.
+Token usage: a PLANNER_RESPONSE carries ``input_tokens``, ``cache_read_tokens``
+and ``output_tokens`` in 253 of 496 corpus transcripts (all from 2026-10 on).
+Antigravity reports ``input_tokens`` EXCLUSIVE of cache reads: it is below
+``cache_read_tokens`` in 4,105 of 4,934 corpus records, which an inclusive count
+cannot produce. The stored input is the inclusive total, because
+``uncached_input_sql`` reads a ``google``-source row that way and recovers the
+native input as ``total - cache_read``. The cache read is stored as the
+``cache_read_input_tokens`` response attribute, which ``cost.sql`` and the usage
+rollup read. No cache-creation count is reported.
+
+Workspace: the transcript does not name one. It is recovered from the Antigravity
+CLI root in two places, first ``history.jsonl`` (the workspace of a submitted
+message, by conversation id), then ``conversation_summaries.db`` (the first entry
+of ``workspace_uris``). The two agree wherever both name one.
+
+Model: the transcript does not name one either. It is recovered from the sibling
+per-conversation SQLite DB (``conversations/<conversation-id>.db``, table
+``gen_metadata``, protobuf blobs). When the DB is missing or unreadable, or its
+rows disagree, the model is None.
+
+Known gaps, each named where it is decided:
+    - Step media (screenshots and other images on GENERIC steps) is not stored.
+    - RUN_COMMAND exit codes are not stored.
+    - CHECKPOINT summaries of truncated context are skipped by name.
+    - SYSTEM_MESSAGE notices that are not a task's completion are skipped by name,
+      including cancellation notices: a canceled background call keeps its
+      interim output and stays pending.
 """
 
 import functools
 import json
 import re
 import sqlite3
-from collections.abc import Iterable, Iterator
+from collections import deque
+from collections.abc import Iterable
 from pathlib import Path
-from typing import NamedTuple
+from urllib.parse import unquote, urlparse
 
-from siftd.adapters._jsonl import load_jsonl, now_iso
-from siftd.adapters.sdk import (
-    NormalizedRecord,
-    build_harness,
-    iter_jsonl,
-    make_peek_hooks,
-    open_external_db,
-    yield_conversation,
+from siftd.adapters._jsonl import load_jsonl
+from siftd.adapters.assembly import assemble, read_jsonl
+from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.records import (
+    Ignored,
+    Malformed,
+    Meta,
+    PatchRec,
+    PromptRec,
+    Record,
+    ResponseRec,
+    Session,
+    ToolCallRec,
+    ToolResultRec,
+    Unknown,
 )
-from siftd.domain import (
-    ContentBlock,
-    Conversation,
-    Prompt,
-    Response,
-    Source,
-    ToolCall,
-    Usage,
-)
+from siftd.adapters.sdk import build_harness, open_external_db
+from siftd.domain import ContentBlock, Conversation, Source, Usage
 
 # Adapter self-description
 ADAPTER_INTERFACE_VERSION = 1
@@ -108,27 +111,31 @@ TOOL_ALIASES: dict[str, str] = {
     "list_dir": "file.glob",
 }
 
-# Result-step type -> the raw tool name it executes, for the rare orphan case
-# (a result step with no preceding declared tool_calls entry to pair with,
-# e.g. a log truncated mid-turn). Keeps orphaned tool calls eligible for
-# TOOL_ALIASES canonicalization instead of falling through as e.g.
-# "list_directory" (from LIST_DIRECTORY.lower()), which TOOL_ALIASES doesn't
-# recognize. GENERIC has no single underlying tool (list_permissions and
-# others all surface as GENERIC) so it's deliberately left unmapped.
-_RESULT_TYPE_TOOL_NAMES = {
-    "VIEW_FILE": "view_file",
-    "RUN_COMMAND": "run_command",
-    "GREP_SEARCH": "grep_search",
-    "LIST_DIRECTORY": "list_dir",
-    "CODE_ACTION": "write_to_file",
+# Step types that are the executed result of a tool call a PLANNER_RESPONSE declared.
+_TOOL_RESULT_STEPS = frozenset({
+    "GENERIC",
+    "RUN_COMMAND",
+    "VIEW_FILE",
+    "CODE_ACTION",
+    "GREP_SEARCH",
+    "LIST_DIRECTORY",
+    "SEARCH_WEB",
+    "READ_URL_CONTENT",
+})
+
+# Step types that are not conversation content, each with the reason it is skipped.
+_IGNORED_STEPS: dict[str, str] = {
+    "CONVERSATION_HISTORY": "conversation-history",
+    "CHECKPOINT": "checkpoint",
+    "EPHEMERAL_MESSAGE": "ephemeral-message",
 }
 
-# Step types that are scaffolding, not conversation turns: context-truncation
-# summaries and the session-open marker. Every other step type is either
-# USER_INPUT, PLANNER_RESPONSE, SYSTEM_MESSAGE (handled separately -- it may
-# carry a background task's result), or the executed result of a tool call
-# PLANNER_RESPONSE just declared.
-_SKIP_TYPES = {"CHECKPOINT", "CONVERSATION_HISTORY"}
+_KNOWN_STEPS = _TOOL_RESULT_STEPS | frozenset(_IGNORED_STEPS) | {
+    "USER_INPUT",
+    "PLANNER_RESPONSE",
+    "SYSTEM_MESSAGE",
+    "ERROR_MESSAGE",
+}
 
 _USER_REQUEST_RE = re.compile(r"<USER_REQUEST>\n(.*?)\n</USER_REQUEST>", re.DOTALL)
 
@@ -181,232 +188,224 @@ def can_handle(source: Source) -> bool:
     return "brain" in parts and ".system_generated" in parts and "logs" in parts
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse an Antigravity CLI transcript JSONL file into a Conversation."""
-    path = Path(source.location)
-    records = load_jsonl(path)
-    if not records:
-        return
-
-    session_id = _session_id(path)
-    workspace_path = source.metadata.get("workspace_path") or _resolve_workspace(path)
-    model = _resolve_model(path)
-
-    started_at: str | None = None
-    ended_at: str | None = None
-    for record in records:
-        ts = record.get("created_at")
-        if ts is None:
-            continue
-        if started_at is None or ts < started_at:
-            started_at = ts
-        if ended_at is None or ts > ended_at:
-            ended_at = ts
-
-    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
-
-    conversation = Conversation(
-        external_id=f"{NAME}::{session_id}",
-        harness=harness,
-        started_at=started_at or now_iso(),
-        ended_at=ended_at,
-        workspace_path=workspace_path,
-    )
-
-    current_prompt: Prompt | None = None
-    current_response: Response | None = None
-    # Tool calls declared by the most recent PLANNER_RESPONSE, matched
-    # positionally against the next step -- the raw format has no call id.
-    pending_tool_calls: list[tuple[str, dict]] = []
-    # Backgrounded tool calls (RUNNING, not DONE), keyed by the task id
-    # embedded in their content, waiting for a later SYSTEM_MESSAGE step to
-    # report completion under that same id. Unlike pending_tool_calls, these
-    # are already appended to a response (as status="pending") by the time
-    # they're registered here -- resolution mutates them in place.
-    open_background_tasks: dict[str, ToolCall] = {}
-
-    def flush_pending() -> None:
-        if not pending_tool_calls or current_response is None:
-            pending_tool_calls.clear()
-            return
-        for tool_name, tool_input in pending_tool_calls:
-            current_response.tool_calls.append(
-                ToolCall(tool_name=tool_name, input=tool_input, result=None, status="pending")
-            )
-        pending_tool_calls.clear()
-
-    for record in records:
-        step_type = record.get("type")
-        timestamp = record.get("created_at") or conversation.started_at
-
-        if step_type in _SKIP_TYPES:
-            continue
-
-        if step_type == "USER_INPUT":
-            flush_pending()
-            current_prompt = Prompt(
-                timestamp=timestamp,
-                content=[
-                    ContentBlock(
-                        block_type="text",
-                        content={"text": _extract_user_text(record.get("content", ""))},
-                    )
-                ],
-            )
-            conversation.prompts.append(current_prompt)
-            current_response = None
-            continue
-
-        if step_type == "PLANNER_RESPONSE":
-            flush_pending()
-            if current_prompt is None:
-                current_prompt = Prompt(timestamp=timestamp)
-                conversation.prompts.append(current_prompt)
-            current_response = Response(timestamp=timestamp, model=model)
-            current_prompt.responses.append(current_response)
-            _attach_planner_usage(current_response, record)
-
-            thinking = record.get("thinking")
-            if thinking:
-                current_response.content.append(
-                    ContentBlock(block_type="thinking", content={"text": thinking})
-                )
-            text = record.get("content")
-            if text:
-                current_response.content.append(ContentBlock(block_type="text", content={"text": text}))
-
-            for tc in record.get("tool_calls") or []:
-                tool_name = tc.get("name", "unknown")
-                tool_input = _parse_tool_args(tc.get("args") or {})
-                current_response.content.append(
-                    ContentBlock(
-                        block_type="tool_use",
-                        content={"name": tool_name, "input": tool_input},
-                    )
-                )
-                pending_tool_calls.append((tool_name, tool_input))
-            continue
-
-        if step_type == "SYSTEM_MESSAGE":
-            _resolve_background_task(record.get("content", ""), open_background_tasks)
-            continue
-
-        # Any other step type is the executed result of a tool call the
-        # preceding PLANNER_RESPONSE declared.
-        if current_response is None:
-            if current_prompt is None:
-                current_prompt = Prompt(timestamp=timestamp)
-                conversation.prompts.append(current_prompt)
-            current_response = Response(timestamp=timestamp, model=model)
-            current_prompt.responses.append(current_response)
-
-        if pending_tool_calls:
-            tool_name, tool_input = pending_tool_calls.pop(0)
-        else:
-            # Result step with no declared tool call to pair with (e.g. a
-            # truncated log). Keep the content rather than dropping it.
-            if isinstance(step_type, str):
-                tool_name = _RESULT_TYPE_TOOL_NAMES.get(step_type, step_type.lower())
-            else:
-                tool_name = "unknown"
-            tool_input = {}
-
-        content = record.get("content", "")
-        status = "success" if record.get("status") == "DONE" else "pending"
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=tool_input,
-            result={"output": content},
-            status=status,
-            timestamp=timestamp,
-        )
-        current_response.tool_calls.append(tool_call)
-
-        if record.get("status") == "RUNNING":
-            started = _TASK_STARTED_RE.search(content)
-            if started:
-                tool_call.attributes["background_task_id"] = started.group(1)
-                open_background_tasks[started.group(1)] = tool_call
-
-    flush_pending()
-
-    yield from yield_conversation(conversation)
+HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 
-class _PlannerTokens(NamedTuple):
-    """One PLANNER_RESPONSE's token counts, in siftd's stored convention.
+class AntigravityDecoder:
+    """Turns each transcript step into canonical records.
 
-    ``input_tokens`` is the inclusive total (native input + cache read);
-    ``cache_read`` is the cached part of it; ``output_tokens`` is native.
+    Every step ``type`` in the corpus (21,129 steps across 496 transcripts) is
+    classified here; a type this table does not name is ``Unknown``. A decoder
+    holds only decoding state: the declarations not yet resulted, the background
+    tasks still open, whether a model turn has begun since the last user turn, and
+    the model the sibling DB names.
+
+    | Step | Becomes | Why |
+    |---|---|---|
+    | `USER_INPUT` | PromptRec | A human turn. The `<USER_REQUEST>` wrapper is stripped. |
+    | `PLANNER_RESPONSE` | ResponseRec, then one ToolCallRec per declared call | A model turn: thinking, text, the declared calls. Its tokens are the response's usage snapshot. |
+    | `GENERIC`, `RUN_COMMAND`, `VIEW_FILE`, `CODE_ACTION`, `GREP_SEARCH`, `LIST_DIRECTORY`, `SEARCH_WEB`, `READ_URL_CONTENT` | ToolResultRec | The result of the oldest declaration not yet resulted. DONE is success, ERROR is error. RUNNING is interim: it leaves the call open. A result with no declaration gets a call id no call has, so the assembler counts it as an orphan. |
+    | `SYSTEM_MESSAGE`, a task's completion | ToolResultRec on the call that task id names | The completion of a backgrounded call. The log file is read when the notice points at one. |
+    | `SYSTEM_MESSAGE`, anything else | Meta (time) + Ignored (`system-message:other`) | Inter-task messages and cancellation notices. A notice for a task this file never declared is Ignored (`system-message:unknown-task`). |
+    | `ERROR_MESSAGE` | PatchRec (`error` attribute) on the turn's response | An API or stream error that interrupted the turn. Before the turn's first response there is none to describe: Ignored (`error-message:before-response`). |
+    | `EPHEMERAL_MESSAGE` | Meta (time) + Ignored (`ephemeral-message`) | Reminders the harness shows the model. Not a user turn, and not a tool result. |
+    | `CHECKPOINT` | Meta (time) + Ignored (`checkpoint`) | A summary of context the harness truncated. |
+    | `CONVERSATION_HISTORY` | Meta (time) + Ignored (`conversation-history`) | A marker that earlier history was loaded. |
+
+    Time. Every step that states a time gives it to the conversation's span, skipped,
+    unknown or not, as the span has always covered every step. Ignored and Unknown
+    records carry no time, so a step's time travels in a Meta beside them.
+
+    Identity. The steps name no session. The conversation is named for its brain
+    directory by :func:`_default_session`.
     """
 
-    input_tokens: int
-    cache_read: int
-    output_tokens: int
+    def __init__(self, source: Source):
+        path = source.as_path
+        self._model = _resolve_model(path)
+        # Declarations not yet resulted, as call ids, oldest first.
+        self._pending: deque[str] = deque()
+        # Background task id -> the call id it was declared under, until it completes.
+        self._open_tasks: dict[str, str] = {}
+        # Has a model turn begun since the latest user turn?
+        self._responded = False
+
+    def decode(self, unit: dict) -> list[Record]:
+        at = unit.get("created_at") or None
+        kind = unit.get("type")
+        if not isinstance(kind, str):
+            return _timed(at, Unknown(reason="no type"))
+        if kind not in _KNOWN_STEPS:
+            return _timed(at, Unknown(reason=f"type:{kind}"))
+        if kind == "USER_INPUT":
+            return self._user(unit, at)
+        if kind == "PLANNER_RESPONSE":
+            return self._planner(unit, at)
+        if kind == "SYSTEM_MESSAGE":
+            return self._system(unit, at)
+        if kind == "ERROR_MESSAGE":
+            return self._error(unit, at)
+        if kind in _TOOL_RESULT_STEPS:
+            return self._result(unit, at)
+        return _skipped(at, _IGNORED_STEPS[kind])
+
+    # -- user and model turns --
+
+    def _user(self, unit: dict, at: str | None) -> list[Record]:
+        # A declaration still unresolved at a user turn will never get a result.
+        self._pending.clear()
+        self._responded = False
+        text = _extract_user_text(unit.get("content", ""))
+        return [PromptRec(at=at, content=[ContentBlock(block_type="text", content={"text": text})])]
+
+    def _planner(self, unit: dict, at: str | None) -> list[Record]:
+        step = unit.get("step_index")
+        if not isinstance(step, int):
+            return _timed(at, Unknown(reason="PLANNER_RESPONSE:no-step_index"))
+        # Declarations the previous turn never resulted stay unresolved.
+        self._pending.clear()
+        self._responded = True
+
+        content: list[ContentBlock] = []
+        if thinking := unit.get("thinking"):
+            content.append(ContentBlock(block_type="thinking", content={"text": thinking}))
+        if text := unit.get("content"):
+            content.append(ContentBlock(block_type="text", content={"text": text}))
+        calls: list[Record] = []
+        for n, tc in enumerate(unit.get("tool_calls") or []):
+            name = tc.get("name", "unknown")
+            tool_input = _parse_tool_args(tc.get("args") or {})
+            call_id = f"{step}:{n}"
+            # The block carries its call's id, so peek shows the call once, at the block's position.
+            content.append(
+                ContentBlock(block_type="tool_use", content={"id": call_id, "name": name, "input": tool_input})
+            )
+            self._pending.append(call_id)
+            calls.append(ToolCallRec(at=at, name=name, input=tool_input, call_id=call_id))
+        usage, usage_details = _planner_usage(unit)
+        return [
+            ResponseRec(
+                at=at,
+                content=content,
+                model=self._model,
+                usage=usage,
+                usage_details=usage_details,
+            ),
+            *calls,
+        ]
+
+    def _error(self, unit: dict, at: str | None) -> list[Record]:
+        text = unit.get("error") or unit.get("content") or ""
+        if not text:
+            return _skipped(at, "error-message:empty")
+        if not self._responded:
+            return _skipped(at, "error-message:before-response")
+        # Every response is a model turn, so the latest one is this turn's.
+        return [PatchRec(at=at, attributes={"error": str(text)})]
+
+    # -- tool results and their completions --
+
+    def _result(self, unit: dict, at: str | None) -> list[Record]:
+        step = unit.get("step_index")
+        if not isinstance(step, int):
+            return _timed(at, Unknown(reason="result:no-step_index"))
+        call_id = self._pending.popleft() if self._pending else f"{step}:result"
+        status = unit.get("status")
+        content = unit.get("content") or ""
+        attributes: dict[str, str] = {}
+        if error := unit.get("error"):
+            attributes["error"] = str(error)
+        result = {"output": content}
+        if status == "DONE":
+            return [ToolResultRec(at=at, call_id=call_id, result=result, status="success", attributes=attributes)]
+        if status == "ERROR":
+            return [ToolResultRec(at=at, call_id=call_id, result=result, status="error", attributes=attributes)]
+        # RUNNING, or a status not yet seen: the call is still in flight.
+        if status == "RUNNING" and (started := _TASK_STARTED_RE.search(content)):
+            attributes["background_task_id"] = started.group(1)
+            self._open_tasks[started.group(1)] = call_id
+        return [
+            ToolResultRec(
+                at=at, call_id=call_id, result=result, status="pending", attributes=attributes, final=False
+            )
+        ]
+
+    def _system(self, unit: dict, at: str | None) -> list[Record]:
+        content = unit.get("content") or ""
+        finished = _TASK_FINISHED_RE.search(content)
+        if finished is None:
+            return _skipped(at, "system-message:other")
+        task_id, inline_output, log_path = finished.group(1), finished.group(2), finished.group(3)
+        call_id = self._open_tasks.pop(task_id, None)
+        if call_id is None:
+            return _skipped(at, "system-message:unknown-task")
+        output = _task_log(log_path) if log_path else None
+        if output is None:
+            output = inline_output.strip()
+        return [ToolResultRec(at=at, call_id=call_id, result={"output": output}, status="success")]
 
 
-def _planner_tokens(record: dict) -> _PlannerTokens | None:
-    """Read a PLANNER_RESPONSE's token fields, or None when the step carries none.
+def _read_steps(source: Source) -> list:
+    """The transcript's units in step order, not file order.
 
-    Antigravity's native ``input_tokens`` EXCLUDES cache reads, so the stored
-    input is the sum. ``uncached_input_sql`` (the default branch for a
-    ``google``-source row) subtracts ``cache_read`` again, which recovers the
-    native input exactly. Storing the native value would make the cost path
-    subtract the cached part a second time and under-count uncached input.
+    A transcript is appended as steps complete, so when a model turn calls several
+    tools at once their results can be written before the turn itself (29 corpus
+    transcripts; 152 out-of-order lines). ``step_index`` is the order the turn
+    happened in, and pairing a result to its declaration depends on it. A unit
+    stating no index keeps the place it had in the file.
     """
-    if "input_tokens" not in record:
+    keyed = []
+    key = -1
+    for pos, unit in enumerate(read_jsonl(source)):
+        if not isinstance(unit, Malformed):
+            step = unit.get("step_index")
+            if isinstance(step, int):
+                key = step
+        keyed.append((key, pos, unit))
+    keyed.sort(key=lambda item: (item[0], item[1]))
+    return [unit for _, _, unit in keyed]
+
+
+def _timed(at: str | None, record: Record) -> list[Record]:
+    """A record that carries no time of its own, with its step's time as evidence when it states one.
+
+    Ignored and Unknown steps both lend their time to the span through a Meta beside
+    them, so an unfamiliar step at either end of a transcript still bounds it.
+    """
+    out: list[Record] = [Meta(at=at)] if at is not None else []
+    out.append(record)
+    return out
+
+
+def _skipped(at: str | None, reason: str) -> list[Record]:
+    """An Ignored step, with its time as evidence when it states one (see the decoder table)."""
+    return _timed(at, Ignored(reason=reason))
+
+
+def _planner_usage(unit: dict) -> tuple[Usage | None, dict[str, int]]:
+    """A PLANNER_RESPONSE's usage snapshot, in siftd's stored convention, or nothing when it carries none.
+
+    Antigravity's native ``input_tokens`` EXCLUDES cache reads, so the stored input is
+    the sum. ``uncached_input_sql`` (the default branch for a ``google``-source row)
+    subtracts ``cache_read`` again, which recovers the native input exactly. Storing
+    the native value would make the cost path subtract the cached part a second time
+    and under-count uncached input.
+    """
+    if "input_tokens" not in unit:
+        return None, {}
+    native_input = unit.get("input_tokens") or 0
+    cache_read = unit.get("cache_read_tokens") or 0
+    usage = Usage(input_tokens=native_input + cache_read, output_tokens=unit.get("output_tokens") or 0)
+    # Zero is stored too: a turn that read nothing from cache says so.
+    return usage, {"cache_read_input_tokens": int(cache_read)}
+
+
+def _task_log(log_path: str) -> str | None:
+    """The full output of a finished background task, from the log file its notice names, if still on disk."""
+    try:
+        return Path(log_path).read_text(encoding="utf-8", errors="replace")
+    except OSError:
         return None
-    native_input = record.get("input_tokens") or 0
-    cache_read = record.get("cache_read_tokens") or 0
-    return _PlannerTokens(
-        input_tokens=native_input + cache_read,
-        cache_read=cache_read,
-        output_tokens=record.get("output_tokens") or 0,
-    )
-
-
-def _attach_planner_usage(response: Response, record: dict) -> None:
-    """Attach a PLANNER_RESPONSE's tokens to the Response that step created.
-
-    Attribution is 1:1 by construction: every PLANNER_RESPONSE opens its own
-    Response, and result steps never carry usage. The counts therefore land on
-    the model turn that spent them, not on a later tool result.
-    """
-    tokens = _planner_tokens(record)
-    if tokens is None:
-        return
-    response.usage = Usage(input_tokens=tokens.input_tokens, output_tokens=tokens.output_tokens)
-    response.attributes["cache_read_input_tokens"] = str(tokens.cache_read)
-
-
-def _resolve_background_task(content: str, open_tasks: dict[str, ToolCall]) -> None:
-    """Resolve a backgrounded tool call from its completion SYSTEM_MESSAGE.
-
-    Reads the full untruncated log file when the message points at one and
-    it's still on disk; falls back to the (possibly truncated) inline text
-    otherwise. No-op if the message isn't a task-completion notice, or names
-    a task id we never saw declared (e.g. from a run that predates this
-    transcript slice).
-    """
-    match = _TASK_FINISHED_RE.search(content)
-    if not match:
-        return
-    task_id, inline_output, log_path = match.group(1), match.group(2), match.group(3)
-    tool_call = open_tasks.pop(task_id, None)
-    if tool_call is None:
-        return
-
-    output = inline_output.strip()
-    if log_path:
-        try:
-            log_text = Path(log_path).read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            log_text = None
-        if log_text is not None:
-            output = log_text
-
-    tool_call.result = {"output": output}
-    tool_call.status = "success"
 
 
 def _session_id(transcript_path: Path) -> str:
@@ -444,6 +443,28 @@ def _parse_tool_args(raw_args: dict) -> dict:
     return parsed
 
 
+def _default_session(source: Source) -> Session:
+    """The conversation of a transcript: named for its brain directory, with the workspace it ran in."""
+    path = source.as_path
+    workspace = source.metadata.get("workspace_path") or _resolve_workspace(path)
+    return Session(external_id=f"{NAME}::{_session_id(path)}", workspace_path=workspace)
+
+
+def _peek_session(path: Path) -> Session:
+    return _default_session(Source(kind="file", location=path))
+
+
+def parse(source: Source) -> Iterable[Conversation]:
+    """Parse an Antigravity CLI transcript JSONL file into a Conversation."""
+    return assemble(
+        source,
+        read=_read_steps,
+        decoder=AntigravityDecoder,
+        harness=HARNESS,
+        default_session=_default_session(source),
+    ).conversations
+
+
 @functools.cache
 def _load_history_workspaces(root: Path) -> dict[str, str]:
     """Map conversationId -> workspace from the Antigravity CLI history.jsonl.
@@ -464,13 +485,44 @@ def _load_history_workspaces(root: Path) -> dict[str, str]:
     return workspaces
 
 
+@functools.cache
+def _load_summary_workspaces(root: Path) -> dict[str, str]:
+    """Map conversation id -> the first workspace in conversation_summaries.db's workspace_uris.
+
+    The list is the conversation's workspace roots, and its first entry is the one
+    history.jsonl names wherever both record a conversation. Read once per root and
+    cached for the process, as the history is.
+    """
+    db_path = root / "conversation_summaries.db"
+    if not db_path.is_file():
+        return {}
+    try:
+        conn = open_external_db(db_path)
+        try:
+            rows = conn.execute("SELECT conversation_id, workspace_uris FROM conversation_summaries").fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    workspaces: dict[str, str] = {}
+    for row in rows:
+        try:
+            first = json.loads(row["workspace_uris"] or "[]")[0]
+        except (ValueError, IndexError, TypeError):
+            continue
+        if isinstance(first, str) and first.startswith("file://"):
+            workspaces.setdefault(row["conversation_id"], unquote(urlparse(first).path))
+    return workspaces
+
+
 def _resolve_workspace(transcript_path: Path) -> str | None:
-    """Resolve a transcript's workspace via the sibling history.jsonl."""
+    """Resolve a transcript's workspace from the Antigravity CLI root: history first, then the summaries."""
     try:
         root = transcript_path.parents[4]
     except IndexError:
         return None
-    return _load_history_workspaces(root).get(_session_id(transcript_path))
+    conv_id = _session_id(transcript_path)
+    return _load_history_workspaces(root).get(conv_id) or _load_summary_workspaces(root).get(conv_id)
 
 
 # =============================================================================
@@ -487,7 +539,7 @@ def _resolve_workspace(transcript_path: Path) -> str | None:
 # degrades to model=None, i.e. the pre-existing JSONL-only behavior.
 
 
-def _iter_proto_fields(buf: bytes) -> Iterator[tuple[int, int, int | bytes]]:
+def _iter_proto_fields(buf: bytes):
     """Walk protobuf wire-format fields: yields (field_no, wire_type, value).
 
     Wire types: 0 varint (int), 1 fixed64 (bytes), 2 len-delimited (bytes),
@@ -598,88 +650,12 @@ def _resolve_model(transcript_path: Path) -> str | None:
     return None
 
 
-# =============================================================================
-# Record normalization — enables SDK-derived peek support
-# =============================================================================
-
-
-def iter_antigravity_records(path: Path) -> Iterator[dict]:
-    """Iterate transcript records, prefixed with a synthetic metadata record.
-
-    The transcript itself carries no session id or workspace path -- those
-    are recovered here (session id from the directory layout, workspace from
-    the sibling history.jsonl) so normalize_record can surface them.
-    """
-    yield {
-        "_kind": "metadata",
-        "session_id": _session_id(path),
-        "workspace_path": _resolve_workspace(path),
-    }
-    yield from iter_jsonl(path)
-
-
-def normalize_record(raw: dict) -> NormalizedRecord | None:
-    """Map an Antigravity CLI transcript record to NormalizedRecord.
-
-    Step types:
-        "_kind": "metadata"  → metadata (session id, workspace)
-        "USER_INPUT"         → user (text, unwrapped from <USER_REQUEST>)
-        "PLANNER_RESPONSE"   → assistant (thinking, text, declared tool_calls,
-                                and the same token counts parse() attaches)
-        anything else        → None (executed tool-call results aren't
-                                surfaced separately in peek, same as the
-                                declaration-only treatment codex_cli uses)
-    """
-    if raw.get("_kind") == "metadata":
-        return NormalizedRecord(
-            kind="metadata",
-            session_id=raw.get("session_id"),
-            workspace_path=raw.get("workspace_path"),
-        )
-
-    step_type = raw.get("type")
-    timestamp = raw.get("created_at")
-
-    if step_type == "USER_INPUT":
-        text = _extract_user_text(raw.get("content", ""))
-        return NormalizedRecord(
-            kind="user",
-            timestamp=timestamp,
-            content_blocks=[{"type": "text", "text": text}] if text else [],
-        )
-
-    if step_type == "PLANNER_RESPONSE":
-        content_blocks: list[dict] = []
-        thinking = raw.get("thinking")
-        if thinking:
-            content_blocks.append({"type": "thinking", "text": thinking})
-        text = raw.get("content")
-        if text:
-            content_blocks.append({"type": "text", "text": text})
-        for tc in raw.get("tool_calls") or []:
-            content_blocks.append({
-                "type": "tool_use",
-                "name": tc.get("name", "unknown"),
-                "input": _parse_tool_args(tc.get("args") or {}),
-            })
-        tokens = _planner_tokens(raw)
-        if tokens is None:
-            return NormalizedRecord(kind="assistant", timestamp=timestamp, content_blocks=content_blocks)
-        return NormalizedRecord(
-            kind="assistant",
-            timestamp=timestamp,
-            content_blocks=content_blocks,
-            input_tokens=tokens.input_tokens,
-            output_tokens=tokens.output_tokens,
-        )
-
-    return None
-
-
-# Peek hooks — derived from normalizer with a custom record iterator that
-# injects session/workspace identity (the transcript itself has neither).
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
-    normalize_record,
+# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
+# ingest classify each step once.
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
+    _read_steps,
+    AntigravityDecoder,
+    HARNESS,
+    default_session_for=_peek_session,
     tool_aliases=TOOL_ALIASES,
-    record_iterator=iter_antigravity_records,
 )
