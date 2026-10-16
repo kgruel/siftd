@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`./dev probe` reports what each adapter drops.** A read-only comparison of
+  every adapter's raw files with its parsed output, for development.
+
 ### Deprecated
 
 - **The `gemini_cli` adapter is deprecated and removed in 0.13.0.** Gemini CLI
