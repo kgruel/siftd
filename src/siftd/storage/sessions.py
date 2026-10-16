@@ -329,6 +329,37 @@ def delete_pending_tag(
     return removed
 
 
+def rekey_pending_tags(
+    conn: sqlite3.Connection,
+    superseded_keys: Iterable[str],
+    key: str,
+) -> int:
+    """Move queued rows held under superseded external_ids to ``key``. Returns the count.
+
+    An adapter that re-keys its conversations (gemini_cli: sessionId to chat
+    file) leaves queued tags under the old key, and the doctor resolver matches
+    queue keys against external_id, so they would stop resolving. The caller
+    passes the key only when the stored row under it was adopted by the
+    replacement, which makes the move unambiguous: the replacement is the
+    conversation those rows named.
+
+    Matches the same forms :func:`_covered_keys` expands a superseded key to,
+    and nothing else. ``OR IGNORE`` because the queue is unique per
+    (session, tag, target): a row that would collide stays queued under the old
+    key, where doctor reports it, rather than being deleted. Caller commits.
+    """
+    forms = list(dict.fromkeys(form for old in superseded_keys for form in _covered_keys(old)))
+    if not forms:
+        return 0
+    placeholders = ",".join("?" * len(forms))
+    cur = conn.execute(
+        f"UPDATE OR IGNORE pending_tags SET harness_session_id = ? "
+        f"WHERE harness_session_id IN ({placeholders})",
+        (key, *forms),
+    )
+    return cur.rowcount
+
+
 def get_pending_tags(
     conn: sqlite3.Connection,
     harness_session_id: str,

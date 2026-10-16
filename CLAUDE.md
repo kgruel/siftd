@@ -11,7 +11,7 @@ Personal LLM usage analytics. Ingests conversation logs from CLI coding tools in
 
 - Claude Code (`~/.claude/projects`)
 - Aider (`~/.aider`)
-- Gemini CLI (`~/.gemini/tmp`)
+- Gemini CLI (`~/.gemini/tmp`) — deprecated, removed in 0.13.0; use Antigravity CLI
 - Antigravity CLI (`~/.gemini/antigravity-cli`)
 - Codex CLI (`~/.codex/sessions`)
 - VSCode Chat (`~/.config/Code/User/History/chat/`)

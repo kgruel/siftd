@@ -1,4 +1,4 @@
-"""Gemini CLI adapter for siftd.
+"""Gemini CLI adapter for siftd. Deprecated: removed in 0.13.0; antigravity_cli is its successor.
 
 Pure parser: reads session JSON files and yields Conversation domain objects.
 No storage coupling.
@@ -7,6 +7,7 @@ No storage coupling.
 import functools
 import hashlib
 import json
+import re
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
@@ -33,7 +34,7 @@ ADAPTER_INTERFACE_VERSION = 1
 SUPPORT_TIER = "frozen"
 NAME = "gemini_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/tmp"]
-DEDUP_STRATEGY = "session"  # one conversation per session, latest wins
+DEDUP_STRATEGY = "file"  # one chat file is one conversation; a changed file replaces it
 
 # Glob pattern for peek discovery (JSON files in chats/ subdirectory)
 PEEK_GLOB_PATTERNS = ["*/chats/*.json"]
@@ -111,16 +112,24 @@ def parse(source: Source) -> Iterable[Conversation]:
     # Build harness
     harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
-    # Build external_id
-    external_id = f"{NAME}::{session_id}"
+    # Identity is the chat file. Gemini CLI reuses one sessionId across several
+    # chat files (24 ids span 61 files locally), and a conversation is unique per
+    # (harness, external_id), so keying on sessionId kept one file of each group
+    # and dropped the rest (#93). The sessionId-keyed row a previous release
+    # stored is named as superseded so ingest can adopt it rather than duplicate.
+    external_id = f"{NAME}::{path.stem}"
+    legacy_external_id = f"{NAME}::{session_id}"
+    superseded = (legacy_external_id,) if legacy_external_id != external_id else ()
 
-    # Create conversation
+    # Create conversation. A chat file without startTime still needs a started_at
+    # that every parse reproduces, or a re-parse could never match its own row.
     conversation = Conversation(
         external_id=external_id,
         harness=harness,
-        started_at=start_time or now_iso(),
+        started_at=start_time or _started_from_chat_name(path) or now_iso(),
         ended_at=last_updated,
         workspace_path=workspace_path,
+        superseded_external_ids=superseded,
     )
 
     # Process messages
@@ -234,6 +243,23 @@ def parse(source: Source) -> Iterable[Conversation]:
     yield from yield_conversation(conversation)
 
 
+_CHAT_NAME_RE = re.compile(r"^session-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-")
+
+
+def _started_from_chat_name(path: Path) -> str | None:
+    """Minute-precision start read from the chat file name, or None.
+
+    Gemini names a chat ``session-<start with colons as dashes>-<sessionId[:8]>.json``.
+    The name does not change over the file's life, so unlike the parse-time clock it
+    gives the same started_at on every parse.
+    """
+    match = _CHAT_NAME_RE.match(path.name)
+    if not match:
+        return None
+    day, hour, minute = match.groups()
+    return f"{day}T{hour}:{minute}:00.000Z"
+
+
 def _load_json(path: Path) -> dict | None:
     """Load JSON file, returning None on error."""
     from siftd.safecall import load_json
@@ -323,7 +349,9 @@ def iter_gemini_records(path: Path) -> Iterator[dict]:
     project_hash = data.get("projectHash")
     yield {
         "_kind": "metadata",
-        "sessionId": data.get("sessionId", path.stem),
+        # The chat file, not the shared sessionId: peek must name each file the
+        # way ingest keys it, or sibling files report one ambiguous id (#93).
+        "sessionId": path.stem,
         "startTime": data.get("startTime"),
         "lastUpdated": data.get("lastUpdated"),
         "projectHash": project_hash,

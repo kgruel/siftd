@@ -29,7 +29,7 @@ class TestGeminiCliAdapter:
     def test_parse_full(self, tmp_path):
         gemini_source = fixture_source(tmp_path, "gemini_cli_minimal.json", "chats")
         conv = list(gemini_cli.parse(gemini_source))[0]
-        assert conv.external_id == "gemini_cli::gemini-session-1"
+        assert conv.external_id == "gemini_cli::gemini_cli_minimal"  # per chat file, not sessionId
         assert conv.harness.name == "gemini_cli" and conv.harness.source == "google"
         assert len(conv.prompts) == 1
         prompt = conv.prompts[0]

@@ -68,7 +68,7 @@ siftd ships with adapters for:
 |---------|------|--------------|--------|
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
-| `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
+| `gemini_cli` | Gemini CLI (deprecated: removed in 0.13.0; use `antigravity_cli`) | `~/.gemini/tmp/` | JSON |
 | `antigravity_cli` | Antigravity CLI | `~/.gemini/antigravity-cli/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
@@ -84,7 +84,7 @@ log format is tracked:
 - **contrib** — best-effort; parse errors are possible when the tool's format
   drifts. This is the default for drop-in adapters.
 - **frozen** — kept working as-is; upstream format changes may not be tracked
-  (`gemini_cli`, `aider`).
+  (`aider`, and `gemini_cli` until it is removed in 0.13.0).
 
 Tiers show up in the `siftd adapters` listing, and ingest tags file-error
 warnings from non-core adapters with their tier.
@@ -100,6 +100,30 @@ gemini_cli       builtin  frozen  ~/.gemini/tmp
 antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
 codex_cli        builtin  core    ~/.codex/sessions
 ```
+
+`siftd adapters` also prints a deprecation line under any deprecated adapter. At
+present that is `gemini_cli`: removed in 0.13.0, successor `antigravity_cli`. Ingest
+prints the same line whenever `gemini_cli` contributes sources.
+
+#### Recovering Gemini CLI conversations from before the chat-file key
+
+Releases before the chat-file key stored one Gemini conversation per `sessionId`,
+so every chat file that shared a session except one was never stored. A plain
+`siftd ingest` does not recover them: it skips a file whose hash is unchanged, and
+no existing ingest option forces a re-parse. To recover them, back up the database,
+clear the `gemini_cli` bookkeeping, and ingest again:
+
+```sh
+DB=~/.local/share/siftd/siftd.db   # your database file (default shown)
+cp "$DB" "$DB.bak"
+sqlite3 "$DB" "DELETE FROM ingested_files WHERE harness_id IN (SELECT id FROM harnesses WHERE name='gemini_cli');"
+siftd --db "$DB" ingest --adapter gemini_cli
+```
+
+The legacy conversation for each chat file is replaced by its chat-file
+conversation, and the tags on it carry over. Running the commands again is safe.
+This adapter reads only the `.json` chat files; the newer Gemini `.jsonl` logs are
+not discovered.
 
 ### Disabling an adapter
 
@@ -149,7 +173,7 @@ Adapters declare how they handle re-ingesting the same content:
 One conversation per file. If the file hasn't changed, skip it; if it has, the conversation is replaced. Most tools work this way — each session gets its own log file. A parse that yields more than one conversation fails the source.
 
 **Session-based deduplication** (`DEDUP_STRATEGY = "session"`):
-Conversations are deduped independently by `external_id` rather than by the file that produced them. Use this when a source can hold several sessions or grow new ones over its life — a SQLite database of chats (OpenCode), or a markdown history file every session is appended to (aider) — and also when a source holds one conversation that is re-exported as it changes, so a re-parse should update rather than duplicate (Gemini CLI).
+Conversations are deduped independently by `external_id` rather than by the file that produced them. Use this when a source can hold several sessions or grow new ones over its life — a SQLite database of chats (OpenCode), or a markdown history file every session is appended to (aider).
 
 The deduplication strategy ensures `siftd ingest` is idempotent — run it as often as you want without creating duplicate conversations.
 

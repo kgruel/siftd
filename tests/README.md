@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 196 | 3417 |
+| `tests/` | 198 | 3440 |
 | `tests/adapters/` | 22 | 259 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 641 |
@@ -190,6 +190,7 @@ docstring so its row is meaningful.
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
+| [test_gemini_cli_deprecation.py](test_gemini_cli_deprecation.py) | 9 | gemini_cli is deprecated, and the notice reaches users where they meet the adapter. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
@@ -203,6 +204,7 @@ docstring so its row is meaningful.
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 7 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 14 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
 | [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |

@@ -163,7 +163,16 @@ INGEST_REPLACEMENT_DOORS = {
     ("ingestion/orchestration.py", "ingest_all"): {
         "_take_conversation_for_replacement": 2,
     },
+    # Two doors: the orphan found by external_id, and a legacy row under a
+    # superseded external_id (gemini_cli chat identity, #93). Same wrapper, same
+    # refusal, settled the same way; the second is the one a refusal used to
+    # slip past into a second stored copy.
     ("ingestion/orchestration.py", "_reingest_file"): {
+        "_take_conversation_for_replacement": 2,
+    },
+    # A new file adopting a row stored under a superseded external_id (gemini_cli
+    # chat identity, #93). Same wrapper, same refusal, so the same ratchet shape.
+    ("ingestion/orchestration.py", "_ingest_file"): {
         "_take_conversation_for_replacement": 1,
     },
 }

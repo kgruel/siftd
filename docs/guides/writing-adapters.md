@@ -42,7 +42,8 @@ external_id = f"{NAME}::{path.stem}"  # file-based ID
 Use when:
 - Each log file represents a single session
 - Files are append-only or immutable
-- Examples: Claude Code, Codex CLI
+- Examples: Claude Code, Codex CLI, Gemini CLI (one chat JSON per session;
+  its `external_id` is the file stem, not the `sessionId` it reuses)
 
 ### `session`
 The source is a *container* of conversations. Each is deduped independently by
@@ -59,8 +60,7 @@ Use when:
 - Re-ingesting should update, not duplicate
 - The harness exports session IDs
 - Examples: OpenCode (many sessions per SQLite database), aider (one markdown
-  history file accumulates every session for a project), Gemini CLI (one
-  conversation per chat JSON, re-exported as the session goes on)
+  history file accumulates every session for a project)
 
 Ingest decides *which* sessions moved from `ended_at`: a re-parsed session
 replaces the stored copy when its `ended_at` is newer, and an unchanged one is

@@ -1,7 +1,7 @@
 [
   {
     "ended_at": "2024-01-15T10:00:05Z",
-    "external_id": "gemini_cli::gemini-session-1",
+    "external_id": "gemini_cli::input",
     "harness": {
       "display_name": "Gemini CLI",
       "log_format": "json",
@@ -76,6 +76,9 @@
         "timestamp": "2024-01-15T10:00:00Z"
       }
     ],
-    "started_at": "2024-01-15T10:00:00Z"
+    "started_at": "2024-01-15T10:00:00Z",
+    "superseded_external_ids": [
+      "gemini_cli::gemini-session-1"
+    ]
   }
 ]

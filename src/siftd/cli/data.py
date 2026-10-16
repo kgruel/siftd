@@ -551,6 +551,28 @@ def cmd_ingest(args) -> int:
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
+    # Deprecated adapters that contributed sources. Shown even in quiet mode, as
+    # `db merge --no-fts` warns: a deprecation is a standing instruction, not chatter.
+    from siftd.api.compat import adapter_deprecation
+
+    deprecated = [
+        (name, d)
+        for name in stats.by_harness
+        if (d := adapter_deprecation(name))
+    ]
+    for name, d in deprecated:
+        if json_mode:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "deprecated",
+                "adapter": name,
+                "removed_in": d.removed_in,
+                "successor": d.successor,
+                "message": d.message(name),
+            })
+        else:
+            status.warning(d.message(name), hint=d.hint())
+
     _render_auto_index(result.auto_index, json_mode=json_mode, quiet=quiet, renderer=renderer)
     return 0
 

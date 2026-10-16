@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Deprecated
+
+- **The `gemini_cli` adapter is deprecated and removed in 0.13.0.** Gemini CLI
+  became Antigravity; use `antigravity_cli`. `siftd adapters` and `siftd ingest`
+  say so when it has sources.
+
 ### Fixed
 
 - **Claude Code token and cost totals count each message once.** A streamed
@@ -15,6 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex token and cost totals count every API call.** Each call's usage
   overwrote the last, so about 19% of tokens were kept; stored conversations
   correct on re-ingest. ([#98](https://github.com/kgruel/siftd/issues/98))
+- **Gemini CLI chat files that shared a session id are stored separately.**
+  124 prompts on one machine were never stored; an existing database recovers
+  them with the steps in the adapters concept page.
 - **Antigravity sessions now record their token usage**, which the adapter
   never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
 

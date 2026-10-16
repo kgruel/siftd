@@ -460,6 +460,8 @@ def cmd_adapters(args) -> int:
             status.info("No adapters found.")
         return 0
 
+    from siftd.api.compat import adapter_deprecation
+
     # JSON output
     if args.json:
         out = [
@@ -470,6 +472,11 @@ def cmd_adapters(args) -> int:
                 "locations": a.locations,
                 "source_path": a.source_path,
                 "entrypoint": a.entrypoint,
+                "deprecated": (
+                    {"removed_in": d.removed_in, "successor": d.successor}
+                    if (d := adapter_deprecation(a.name))
+                    else None
+                ),
             }
             for a in adapters
         ]
@@ -483,6 +490,11 @@ def cmd_adapters(args) -> int:
         for a in adapters
     ]
     print_table(["NAME", "ORIGIN", "TIER", "LOCATIONS"], str_rows)
+
+    # Deprecations are named under the listing, where the adapter is shown.
+    for a in adapters:
+        if deprecation := adapter_deprecation(a.name):
+            status.warning(deprecation.message(a.name), hint=deprecation.hint())
 
     return 0
 

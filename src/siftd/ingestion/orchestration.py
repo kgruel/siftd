@@ -7,16 +7,15 @@ conversation. Which of the two branches below a source takes decides what that
 row means:
 
 - `"file"`: one conversation per source (JSONL session logs, single-transcript
-  exports). The row points at it, and a content change replaces it outright.
+  exports, a Gemini CLI chat JSON). The row points at it, and a content change
+  replaces it outright.
   A parse yielding more than one conversation is an adapter bug and fails the
   source.
 - `"session"`: conversations are deduped by external_id rather than by the
   file that produced them. That covers a source holding many at once (an
   OpenCode SQLite DB, an aider history file accumulating every session for a
-  project) and a source holding one that is re-exported as it changes (a
-  Gemini CLI chat JSON). The row is a hash/mtime marker with
-  `conversation_id = NULL`, so replacing any one conversation does not
-  cascade the marker away.
+  project). The row is a hash/mtime marker with `conversation_id = NULL`, so
+  replacing any one conversation does not cascade the marker away.
 
 An adapter whose source grows new conversations over its life belongs on
 `"session"`, whatever its storage format. `aider` did not, and every history
@@ -29,7 +28,7 @@ import logging
 import os
 import sqlite3
 from collections import Counter
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
@@ -43,6 +42,7 @@ from siftd.storage.replacement import (
 )
 from siftd.storage.sessions import (
     drain_pending_tags,
+    rekey_pending_tags,
     resolve_session_conversation,
     unregister_session,
 )
@@ -68,6 +68,11 @@ from siftd.storage.sqlite import (
 from .discovery import discover_all
 
 logger = logging.getLogger(__name__)
+
+# Returned by _ingest_file and _reingest_file when the file settled as a second
+# copy of a legacy row that another path claims. Nothing was stored; the caller
+# counts the file as a skipped duplicate.
+_SETTLED_DUPLICATE = object()
 
 if TYPE_CHECKING:
     from siftd.ingestion import AdapterModule
@@ -172,6 +177,74 @@ def _session_should_replace(new_ended: str | None, existing_ended: str | None) -
     if new_ended is None:
         return True
     return _compare_timestamps(new_ended, existing_ended)
+
+
+def _message_key(kind: str, external_id: str | None, timestamp: str | None) -> tuple | None:
+    """Identity of one prompt or response for adoption, or None when it has none.
+
+    The adapter's message id is the identity when there is one. A message without
+    an id (Gemini chat JSON does not guarantee one) falls back to its kind and its
+    timestamp, which every parse reproduces. The fallback is unambiguous on the
+    local corpus: no (kind, timestamp) pair appears in two files of one sessionId.
+    """
+    if external_id:
+        return ("id", external_id)
+    if timestamp:
+        return ("at", kind, timestamp)
+    return None
+
+
+def _message_keys(messages: Iterable[tuple[str, str | None, str | None]]) -> set[tuple]:
+    """Keys of ``(kind, external_id, timestamp)`` messages, skipping those with none."""
+    keys = (_message_key(kind, external_id, timestamp) for kind, external_id, timestamp in messages)
+    return {key for key in keys if key is not None}
+
+
+def _stored_message_keys(conn, conversation_id: str) -> set[tuple]:
+    """Message keys of a stored conversation's prompts and responses."""
+    return _message_keys(
+        (row["kind"], row["external_id"], row["timestamp"])
+        for row in conn.execute(
+            "SELECT kind, external_id, timestamp FROM events "
+            "WHERE conversation_id = ? AND kind IN ('prompt', 'response')",
+            (conversation_id,),
+        )
+    )
+
+
+def _parsed_message_keys(conversation) -> set[tuple]:
+    """Message keys of a parsed conversation's prompts and responses."""
+    return _message_keys(
+        [("prompt", p.external_id, p.timestamp) for p in conversation.prompts]
+        + [("response", r.external_id, r.timestamp) for r in conversation.preamble]
+        + [
+            ("response", r.external_id, r.timestamp)
+            for p in conversation.prompts
+            for r in p.responses
+        ]
+    )
+
+
+def _superseded_conversation(conn, harness_id, conversation) -> dict | None:
+    """The stored row this conversation replaces under a superseded external_id.
+
+    An adapter that re-keys its conversations names the old keys on the
+    conversation. A key alone cannot adopt a row, because a superseded key can be
+    shared by several sources (a sessionId across Gemini chat files). The row must
+    also hold one of this conversation's own messages, matched by message id or,
+    for a message without one, by kind and timestamp (see _message_key). Start
+    instant is not the discriminator: a row a previous release stored for a file
+    without startTime carries a parse-time stamp that no later parse reproduces.
+    """
+    keys = conversation.superseded_external_ids
+    if not keys:
+        return None
+    mine = _parsed_message_keys(conversation)
+    for key in keys:
+        found = find_conversation_by_external_id(conn, harness_id, key)
+        if found and _stored_message_keys(conn, found["id"]) & mine:
+            return found
+    return None
 
 
 def _get_single_conversation(
@@ -496,6 +569,11 @@ def ingest_all(
                         carryover=carryover,
                         resolve_orphan=not existing_info["conversation_id"],
                     )
+                    if conv is _SETTLED_DUPLICATE:
+                        _count_file_skipped(
+                            source, "skipped (duplicate)", stats, on_file, emit_event
+                        )
+                        continue
                     if on_file:
                         on_file(source, "updated")
                     emit_event("updated", conversation=conv)
@@ -503,6 +581,11 @@ def ingest_all(
 
                 # New file - ingest normally
                 conv = _ingest_file(conn, source, adapter, file_path, stats, filter_binary, _workspace_cache=_workspace_cache)
+                if conv is _SETTLED_DUPLICATE:
+                    _count_file_skipped(
+                        source, "skipped (duplicate)", stats, on_file, emit_event
+                    )
+                    continue
                 if on_file:
                     on_file(source, "ingested")
                 emit_event("ingested", conversation=conv)
@@ -975,7 +1058,25 @@ def _ingest_file(
         stats.files_ingested += 1
         return None
 
+    # A row stored under a superseded external_id is this file's conversation
+    # (a previous release keyed it differently). Take it for replacement so its
+    # tags carry over and no second copy is stored beside it. If another path
+    # already claims that row, this file is a second copy of it: settle it as one.
+    harness_id = harness_id_for_conversation(conn, conversation)
+    carryover: ConversationCarryover | None = None
+    superseded = _superseded_conversation(conn, harness_id, conversation)
+    if superseded:
+        carryover = _take_conversation_for_replacement(conn, superseded["id"], file_path)
+        if carryover is None:
+            _settle_duplicate_path(
+                conn, file_path, superseded["id"], file_hash, st,
+                external_id=conversation.external_id,
+            )
+            return _SETTLED_DUPLICATE
+        rekey_pending_tags(conn, conversation.superseded_external_ids, conversation.external_id)
+
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+    _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
     _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
@@ -1068,6 +1169,23 @@ def _reingest_file(
             carryover = _take_conversation_for_replacement(
                 conn, orphan["id"], file_path
             )
+        else:
+            # A legacy row under a superseded key is this file's conversation. A
+            # refusal cannot be left to a collision: the new key does not collide
+            # with the legacy one, so the store would write a second copy. Settle
+            # it as a duplicate of the claimed row instead.
+            superseded = _superseded_conversation(conn, harness_id, conversation)
+            if superseded:
+                carryover = _take_conversation_for_replacement(
+                    conn, superseded["id"], file_path
+                )
+                if carryover is None:
+                    _settle_duplicate_path(
+                        conn, file_path, superseded["id"], file_hash, file_stat,
+                        external_id=conversation.external_id,
+                    )
+                    return _SETTLED_DUPLICATE
+                rekey_pending_tags(conn, conversation.superseded_external_ids, conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 

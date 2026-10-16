@@ -95,3 +95,11 @@ class Conversation:
     # with derived facts that have no first-class column — e.g. the Claude Code
     # sub-agent type/description read from the agent-<id>.meta.json sidecar.
     attributes: dict[str, str] = field(default_factory=dict)
+    # external_ids this conversation was stored under before its adapter re-keyed
+    # it (e.g. a sessionId shared by several chat files). Ingest adopts a stored
+    # row under one of these only when the row holds one of this conversation's
+    # own messages, matched by message external_id or, for a message without one,
+    # by kind and timestamp. Matching started_at would not do: a sibling sharing
+    # the key can share a start instant, and a legacy row may carry a parse-time
+    # stamp no later parse reproduces. A superseded key alone never claims a row.
+    superseded_external_ids: tuple[str, ...] = ()
