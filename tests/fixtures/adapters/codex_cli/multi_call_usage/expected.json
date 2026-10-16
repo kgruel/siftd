@@ -42,18 +42,24 @@
         ],
         "responses": [
           {
-            "attributes": {
-              "cache_read_input_tokens": "82304",
-              "cached_input_tokens": "82304",
-              "reasoning_output_tokens": "1472"
-            },
             "content": [
               {
                 "block_type": "thinking",
                 "content": {
                   "thinking": "redacted text"
                 }
-              },
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:48.805Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "6656",
+              "cached_input_tokens": "6656",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
               {
                 "block_type": "tool_use",
                 "content": {
@@ -61,94 +67,10 @@
                   "input": {},
                   "name": "exec_command"
                 }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
-                  "input": {},
-                  "name": "exec_command"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
-                  "input": {},
-                  "name": "exec_command"
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
-                  "input": {},
-                  "name": "exec_command"
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_do5y7RZK0OYtfMp77togGaPl",
-                  "input": {},
-                  "name": "exec_command"
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
-                  "input": {},
-                  "name": "exec_command"
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "thinking": "redacted text"
-                }
-              },
-              {
-                "block_type": "tool_use",
-                "content": {
-                  "id": "call_07CG5JWmjup6OtC0ZU2XMp35",
-                  "input": {},
-                  "name": "exec_command"
-                }
               }
             ],
             "model": "gpt-5.2-codex",
-            "timestamp": "2026-02-02T03:18:48.805Z",
+            "timestamp": "2026-02-02T03:18:49.011Z",
             "tool_calls": [
               {
                 "external_id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
@@ -159,7 +81,44 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:18:49.288Z",
                 "tool_name": "exec_command"
-              },
+              }
+            ],
+            "usage": {
+              "input_tokens": 11350,
+              "output_tokens": 40
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:53.857Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "11264",
+              "cached_input_tokens": "11264",
+              "reasoning_output_tokens": "64"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:53.936Z",
+            "tool_calls": [
               {
                 "external_id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
                 "input": {},
@@ -169,7 +128,32 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:18:54.215Z",
                 "tool_name": "exec_command"
-              },
+              }
+            ],
+            "usage": {
+              "input_tokens": 12247,
+              "output_tokens": 99
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "12288",
+              "cached_input_tokens": "12288",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:56.442Z",
+            "tool_calls": [
               {
                 "external_id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
                 "input": {},
@@ -179,7 +163,44 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:18:56.712Z",
                 "tool_name": "exec_command"
-              },
+              }
+            ],
+            "usage": {
+              "input_tokens": 14178,
+              "output_tokens": 30
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:59.343Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "14080",
+              "cached_input_tokens": "14080",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:59.490Z",
+            "tool_calls": [
               {
                 "external_id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
                 "input": {},
@@ -189,7 +210,44 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:18:59.741Z",
                 "tool_name": "exec_command"
-              },
+              }
+            ],
+            "usage": {
+              "input_tokens": 15148,
+              "output_tokens": 49
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:01.309Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "15104",
+              "cached_input_tokens": "15104",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_do5y7RZK0OYtfMp77togGaPl",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:01.392Z",
+            "tool_calls": [
               {
                 "external_id": "call_do5y7RZK0OYtfMp77togGaPl",
                 "input": {},
@@ -199,7 +257,50 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:19:01.698Z",
                 "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 15300,
+              "output_tokens": 38
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
               },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:27.360Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "7680",
+              "cached_input_tokens": "7680",
+              "reasoning_output_tokens": "1408"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:27.505Z",
+            "tool_calls": [
               {
                 "external_id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
                 "input": {},
@@ -209,7 +310,44 @@
                 "status": "success",
                 "timestamp": "2026-02-02T03:19:27.910Z",
                 "tool_name": "exec_command"
-              },
+              }
+            ],
+            "usage": {
+              "input_tokens": 16119,
+              "output_tokens": 1490
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:30.239Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "15232",
+              "cached_input_tokens": "15232",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_07CG5JWmjup6OtC0ZU2XMp35",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:19:30.475Z",
+            "tool_calls": [
               {
                 "external_id": "call_07CG5JWmjup6OtC0ZU2XMp35",
                 "input": {},
@@ -222,8 +360,8 @@
               }
             ],
             "usage": {
-              "input_tokens": 102011,
-              "output_tokens": 1797
+              "input_tokens": 17669,
+              "output_tokens": 51
             }
           }
         ],

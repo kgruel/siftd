@@ -82,7 +82,16 @@ REPLACEMENT_SITES = {
     },
     ("api/merge.py", "_replace_stale_conversations"): {"snapshot_conversation": 1},
     ("api/merge.py", "_merge_attached"): {"restore_and_report": 1},
+    # A move, not a replacement: the row another path claims stays, and the
+    # assignments its transcript owns are released from it and re-attached to
+    # the conversation stored beside it. That conversation is restored through
+    # `_restore_carryover_after_replacement`, which every ingest door calls, so
+    # this snapshot has no restore of its own (see SPLIT_SNAPSHOT_SITES).
+    ("ingestion/orchestration.py", "_split_carryover"): {"snapshot_conversation": 1},
 }
+# Snapshot sites whose carryover is moved to a conversation the caller stores
+# and restores, rather than restored by the function that snapshots.
+SPLIT_SNAPSHOT_SITES = {("ingestion/orchestration.py", "_split_carryover")}
 CARRY_PRIMITIVES = ("snapshot_conversation", "restore_and_report")
 DEFINITION_SITE = "storage/replacement.py"
 
@@ -373,13 +382,19 @@ def test_the_listed_sites_snapshot_and_restore_in_equal_number():
     `REPLACEMENT_SITES` to match a change — the moment a half-carry gets
     written down as expected, which is what both #54 and #77 were.
     """
-    snapshots = sum(c.get("snapshot_conversation", 0) for c in REPLACEMENT_SITES.values())
+    snapshots = sum(
+        c.get("snapshot_conversation", 0)
+        for site, c in REPLACEMENT_SITES.items()
+        if site not in SPLIT_SNAPSHOT_SITES
+    )
     restores = sum(c.get("restore_and_report", 0) for c in REPLACEMENT_SITES.values())
     assert snapshots == restores, (
         f"{snapshots} snapshot site(s) listed against {restores} restore site(s). "
         "If a door really does snapshot without restoring, say why here — "
         "silently is how the carryover gets dropped."
     )
+    unpaired = SPLIT_SNAPSHOT_SITES - set(REPLACEMENT_SITES)
+    assert not unpaired, f"split site(s) {unpaired} are not listed in REPLACEMENT_SITES"
 
 
 def test_every_ingest_replacement_door_is_accounted_for():

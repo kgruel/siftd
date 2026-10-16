@@ -697,3 +697,21 @@ def test_tokens_in_equal_tokens_out_across_placements():
     total += sum(r.usage.input_tokens for r in conv.preamble if r.usage)
     # The snapshot (10) counts once; increments 1 + 2 + 4 all land.
     assert total == 17
+
+
+# --- identity that a re-keyed conversation carries ---------------------------------
+
+
+def test_superseded_keys_a_session_names_carry_to_the_conversation():
+    """A decoder that re-keys a conversation names the old key; ingest adopts the stored row only through it."""
+    conv = only(run(Session(external_id="t::new", superseded_external_ids=("t::old",)), PromptRec(at="2026-01-01T00:00:00Z")))
+    assert conv.superseded_external_ids == ("t::old",)
+
+
+def test_superseded_keys_from_restated_sessions_accumulate_once_each():
+    out = run(
+        Session(external_id="t::new", superseded_external_ids=("t::a",)),
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        Session(external_id="t::new", superseded_external_ids=("t::a", "t::b")),
+    )
+    assert only(out).superseded_external_ids == ("t::a", "t::b")

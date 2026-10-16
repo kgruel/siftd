@@ -117,11 +117,13 @@ class Conversation:
     attributes: dict[str, str] = field(default_factory=dict)
     # external_ids this conversation was stored under before its adapter re-keyed
     # it (e.g. a sessionId shared by several chat files). Ingest adopts a stored
-    # row under one of these only when the row holds one of this conversation's
-    # own messages, matched by message external_id or, for a message without one,
-    # by kind and timestamp. Matching started_at would not do: a sibling sharing
-    # the key can share a start instant, and a legacy row may carry a parse-time
-    # stamp no later parse reproduces. A superseded key alone never claims a row.
+    # row under one of these only when the row holds this conversation's
+    # transcript: every prompt the row stores is one of this conversation's
+    # prompts, matched by message external_id, by text, or for a prompt with
+    # neither by kind and timestamp. Matching started_at would not do: a sibling
+    # sharing the key can share a start instant, and a legacy row may carry a
+    # parse-time stamp no later parse reproduces. A superseded key alone never
+    # claims a row.
     superseded_external_ids: tuple[str, ...] = ()
     # The conversations this one belongs to and continues: at most one per
     # relation (where it ran, CONTAINMENT_KINDS; what it continues, the rest).

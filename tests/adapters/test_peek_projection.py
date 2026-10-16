@@ -60,19 +60,19 @@ class _Identity:
         return [unit]
 
 
-def _hooks_over(records: list):
+def _hooks_over(records: list, session_id: str = "s1"):
     """Peek hooks over an exact record stream, as (scan, exchanges, tail)."""
     return make_peek_hooks_from_decoder(
         read=lambda source: records,
         decoder=lambda source: _Identity(),
         harness=HARNESS,
-        default_session_for=lambda path: Session(external_id=f"{NAME}::s1"),
+        default_session_for=lambda path: Session(external_id=f"{NAME}::{session_id}"),
     )
 
 
-def _scripted(tmp_path: Path, records: list):
+def _scripted(tmp_path: Path, records: list, session_id: str = "s1"):
     """Hooks over an exact record stream, with the assembler's default session."""
-    scan, exchanges, _ = _hooks_over(records)
+    scan, exchanges, _ = _hooks_over(records, session_id)
     path = tmp_path / "scripted.jsonl"
     return scan(path), exchanges(path, 10)
 
@@ -307,8 +307,22 @@ class TestCorrections:
     def test_parent_session_comes_from_the_lineage_record(self, tmp_path):
         """Parent identity is the assembler's lineage record, not a per-record session id, and is shaped as a session id.
 
-        A subagent lineage also spells the session ``parent:own-id``, as a subagent is shown everywhere in peek.
+        A subagent whose identity is nested under its parent is spelled ``parent:agent``, as peek has always shown it.
         """
+        scan, _ = _scripted(
+            tmp_path,
+            [
+                LineageRec(at=None, kind="subagent", parent=f"{NAME}::parent-sid"),
+                PromptRec(at="2026-01-01T00:00:01Z", content=_text("go"), key="u1"),
+            ],
+            session_id="parent-sid::agent::agent-1",
+        )
+        assert scan is not None
+        assert scan.parent_session_id == "parent-sid"
+        assert scan.session_id == "parent-sid:agent-1"
+
+    def test_a_subagent_with_its_own_identity_is_shown_by_that_identity(self, tmp_path):
+        """A Codex subagent's thread id is its own: peek shows it, and its file name carries it."""
         scan, _ = _scripted(
             tmp_path,
             [
@@ -318,7 +332,7 @@ class TestCorrections:
         )
         assert scan is not None
         assert scan.parent_session_id == "parent-sid"
-        assert scan.session_id == "parent-sid:s1"
+        assert scan.session_id == "s1"
 
     def test_a_fork_names_its_parent_but_keeps_its_own_session_id(self, tmp_path):
         """Only a subagent is spelled ``parent:own-id``; any other lineage still sets the parent."""

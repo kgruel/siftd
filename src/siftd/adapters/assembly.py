@@ -44,7 +44,8 @@ Placement rules, which are the decisions the adapters each used to make alone:
   failing that the nearest later one, and the bounds span all of them.
   Parsing never reads the wall clock, so it is a pure function of the source.
 - **Identity.** ``Session`` records open conversations; a restated
-  ``Session`` fills only what is still unknown. A source with no ``Session``
+  ``Session`` fills only what is still unknown, and the keys it names as
+  superseded accumulate onto the conversation. A source with no ``Session``
   uses the caller's ``default_session``, whose fields sit beneath anything
   the stream stated; with neither, assembly fails loudly. ``ended_at`` is
   inferred from event times unless a Session says the source cannot know it
@@ -211,6 +212,7 @@ class _Build:
         self.workspace_path: str | None = None
         self.branch: str | None = None
         self.attributes: dict[str, str] = {}
+        self.superseded: list[str] = []
         # Context for later responses (a later Meta replaces it).
         self.model: str | None = None
         self.provider: str | None = None

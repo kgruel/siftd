@@ -7,7 +7,6 @@ from conftest import ClaudeSession, CodexSession, write_jsonl
 import siftd.adapters.sdk as sdk
 from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, pi_agent, vscode
 from siftd.adapters.claude_code import _is_injected_user_record, effective_role, message_id_of
-from siftd.adapters.codex_cli import normalize_record as codex_norm
 from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
 from siftd.adapters.sdk import NormalizedRecord
 from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
@@ -204,7 +203,7 @@ class TestSDK:
         def _recs(f):
             return list(sdk.iter_jsonl(f))
         assert sdk.peek_scan_from_records(_recs(ClaudeSession(tmp_path, exchanges=2).build()), claude_norm, default_session_id="test").exchange_count == 2
-        r2 = sdk.peek_scan_from_records(_recs(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()), codex_norm, default_session_id="fb")
+        r2 = codex_cli.peek_scan(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build())
         assert r2.workspace_path == "/proj" and r2.model == "gpt-4"
         assert sdk.peek_scan_from_records([], claude_norm, default_session_id="x") is None
         # assistant-before-user → exchange_count=1 (L644), unknown records skipped (L620)
@@ -224,7 +223,7 @@ class TestSDK:
         assert path_sub.parent_session_id == "s1"
         ex = sdk.peek_exchanges_from_records(_recs(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()), claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
         assert len(ex) == 2 and ex[0].prompt_text and len(ex[0].tool_calls) >= 1
-        assert sdk.peek_exchanges_from_records(_recs(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()), codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
+        assert codex_cli.peek_exchanges(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build(), 5)[0].input_tokens > 0
         assert sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)[0].prompt_text is None
         # last_n < 1 clamps to 1 (L711)
         assert len(sdk.peek_exchanges_from_records([

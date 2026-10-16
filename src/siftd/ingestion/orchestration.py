@@ -29,15 +29,17 @@ import logging
 import os
 import sqlite3
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from siftd.adapters.sdk import AdapterParseError
 from siftd.dateparse import to_utc
-from siftd.domain import Source
+from siftd.domain import Conversation, Source
 from siftd.storage.replacement import (
     ConversationCarryover,
+    release_carryover,
     restore_and_report,
     snapshot_conversation,
 )
@@ -231,25 +233,28 @@ def _stored_text(raw: str | None) -> str | None:
     return text if isinstance(text, str) and text else None
 
 
-def _stored_prompt_keys(conn, conversation_id: str) -> set[tuple]:
-    """Message keys of a stored conversation's prompts."""
-    return _message_keys(
-        (row["kind"], row["external_id"], row["timestamp"], _stored_text(row["content"]))
-        for row in conn.execute(
-            "SELECT e.kind, e.external_id, e.timestamp, ec.content FROM events e "
-            "LEFT JOIN event_content ec ON ec.event_id = e.id AND ec.block_index = 0 "
-            "WHERE e.conversation_id = ? AND e.kind = 'prompt'",
-            (conversation_id,),
-        )
-    )
-
-
 def _parsed_text(content) -> str | None:
     """The text of a parsed message's first content block, or None."""
     if not content or not isinstance(content[0].content, dict):
         return None
     text = content[0].content.get("text")
     return text if isinstance(text, str) and text else None
+
+
+def _stored_message_keys(
+    conn, conversation_id: str, kinds: tuple[str, ...] = ("prompt", "response")
+) -> set[tuple]:
+    """Message keys of a stored conversation's prompts and/or responses."""
+    placeholders = ",".join("?" * len(kinds))
+    return _message_keys(
+        (row["kind"], row["external_id"], row["timestamp"], _stored_text(row["content"]))
+        for row in conn.execute(
+            "SELECT e.kind, e.external_id, e.timestamp, ec.content FROM events e "
+            "LEFT JOIN event_content ec ON ec.event_id = e.id AND ec.block_index = 0 "
+            f"WHERE e.conversation_id = ? AND e.kind IN ({placeholders})",
+            (conversation_id, *kinds),
+        )
+    )
 
 
 def _parsed_prompt_keys(conversation) -> set[tuple]:
@@ -259,6 +264,46 @@ def _parsed_prompt_keys(conversation) -> set[tuple]:
     )
 
 
+def _parsed_message_keys(conversation) -> set[tuple]:
+    """Message keys of a parsed conversation's prompts and responses."""
+    responses = [*conversation.preamble, *(r for p in conversation.prompts for r in p.responses)]
+    return _parsed_prompt_keys(conversation) | _message_keys(
+        ("response", r.external_id, r.timestamp, _parsed_text(r.content)) for r in responses
+    )
+
+
+def _holds_transcript_of(conn, conversation_id: str, conversation) -> bool:
+    """Whether a stored row holds ``conversation``'s transcript rather than another's.
+
+    Every prompt the row stores must be one of this parse's prompts, matched by
+    message id, by text, or (for a prompt with neither) by kind and timestamp (see
+    _message_key). The file is append-only, so a row a previous release stored
+    from it holds a subset of its prompts, and a row from a different file holds
+    at least one prompt this parse does not have. A row with no prompt shares none
+    to test, so it is not shown to hold anything.
+
+    Prompts are the evidence because they are what the user typed. Responses are
+    not: a session's replies are often generic text that another session shares
+    too, so a shared reply says nothing about which file a row came from.
+    """
+    stored = _stored_message_keys(conn, conversation_id, ("prompt",))
+    return bool(stored) and stored <= _parsed_prompt_keys(conversation)
+
+
+def _stores_all_of(conn, conversation_id: str, conversation) -> bool:
+    """Whether a stored row holds every prompt ``conversation`` has: its transcript is in the row.
+
+    The converse of _holds_transcript_of, which asks that the row has nothing this
+    parse lacks. Together they say the row stores this transcript, rather than a
+    prefix of it (a parent's history under a forked child). Prompts decide it for
+    the reason given there; a parse with no prompt falls back to its message keys.
+    """
+    parsed = _parsed_prompt_keys(conversation)
+    if parsed:
+        return parsed <= _stored_message_keys(conn, conversation_id, ("prompt",))
+    return _parsed_message_keys(conversation) <= _stored_message_keys(conn, conversation_id)
+
+
 def _superseded_conversation(conn, harness_id, conversation) -> tuple[dict, str] | None:
     """The stored row this conversation replaces, and the superseded key it was found under.
 
@@ -266,31 +311,19 @@ def _superseded_conversation(conn, harness_id, conversation) -> tuple[dict, str]
     refused names a different file, so its queue stays where it is.
 
     An adapter that re-keys its conversations names the old keys on the
-    conversation, and a key names a file only as well as its spelling does, so a
-    key alone cannot adopt a row. The row must be this conversation's own: every
-    prompt it stores must be one of this conversation's prompts, matched by message
-    id, by text, or (for a prompt with neither) by kind and timestamp (see
-    _message_key). The file is append-only, so a row a previous release stored from
-    it holds a subset of its prompts, and a row from a different file holds at
-    least one prompt this file does not have.
-
-    Prompts are the evidence because they are what the user typed. Responses are
-    not: a session's replies are often generic text that another session shares
-    too, so a shared reply says nothing about which file a row came from. Start
-    instant is not the discriminator either: a row a previous release stored for a
-    file without startTime carries a parse-time stamp that no later parse
-    reproduces, and sessions opened in the same second share it.
+    conversation, and a key names a file only as well as its spelling does (a
+    sessionId shared by several chat files, a forked child and its parent under
+    the parent's legacy id, a relative path), so a key alone cannot adopt a row.
+    The row must also hold this conversation's transcript (see
+    _holds_transcript_of). Start instant is not the discriminator: a row a
+    previous release stored for a file without startTime carries a parse-time
+    stamp that no later parse reproduces, and sessions opened in the same second
+    share it.
     """
-    keys = conversation.superseded_external_ids
-    if not keys:
-        return None
-    mine = _parsed_prompt_keys(conversation)
-    for key in keys:
+    for key in conversation.superseded_external_ids or ():
         found = find_conversation_by_external_id(conn, harness_id, key)
-        if found:
-            stored = _stored_prompt_keys(conn, found["id"])
-            if stored and stored <= mine:
-                return found, key
+        if found and _holds_transcript_of(conn, found["id"], conversation):
+            return found, key
     return None
 
 
@@ -312,6 +345,50 @@ def _recorded_locations(conn, harness_name: str) -> list[str]:
             (harness_name,),
         )
     ]
+
+
+def _claimant_conversations(
+    conn, adapter, conversation_id: str, file_path: str
+) -> Iterator[Conversation | None]:
+    """What each other path claiming a row parses to; None for one that cannot be read.
+
+    Both questions a refused claim raises (is this file a copy of the claimant, or
+    does the claimant also hold the row's transcript) are answered from the
+    claimant's own parse, so the claimants are read in one place.
+    """
+    paths = [
+        row["path"]
+        for row in conn.execute(
+            "SELECT path FROM ingested_files WHERE conversation_id = ? AND path != ?",
+            (conversation_id, file_path),
+        )
+    ]
+    for path in paths:
+        try:
+            yield _parse_source_conversation(Source(kind="file", location=Path(path)), adapter, path)
+        except Exception:
+            yield None
+
+
+def _split_carryover(
+    conn, adapter, conversation_id: str, file_path: str, conversation
+) -> ConversationCarryover | None:
+    """The assignments a row another path claims gives up to ``conversation``, when they are its transcript's.
+
+    A refused replacement leaves the row where it is, for its claimant, so its tags
+    stay on the row unless they move. They move only when the row's transcript is
+    this conversation's and no claimant's: a claimant that also holds the row's
+    transcript makes the row ambiguous (a parent and its child share a prefix), and
+    an ambiguous row keeps its assignments. Ownership is decided by content, never
+    by who holds the claim. Returns None when nothing moves.
+    """
+    if not _holds_transcript_of(conn, conversation_id, conversation):
+        return None
+    for other in _claimant_conversations(conn, adapter, conversation_id, file_path):
+        # An unreadable claimant may hold the row too: keep the assignments.
+        if other is None or _holds_transcript_of(conn, conversation_id, other):
+            return None
+    return release_carryover(conn, conversation_id, snapshot_conversation(conn, conversation_id))
 
 
 def _get_single_conversation(
@@ -603,7 +680,15 @@ def ingest_all(
                         carryover = _take_conversation_for_replacement(
                             conn, existing_info["conversation_id"], file_path
                         )
+                        parsed = None
                         if carryover is None:
+                            parsed = _parse_source_conversation(source, adapter, file_path)
+                        if carryover is None and (
+                            parsed is None
+                            or _refused_claim_is_a_copy(
+                                conn, adapter, existing_info["conversation_id"], file_path, parsed
+                            )
+                        ):
                             # Two paths carry one session and this one changed.
                             # Settle exactly as the collision repair settles
                             # its loser: keep the link, stamp this file's hash
@@ -621,6 +706,16 @@ def ingest_all(
                                 source, "skipped (duplicate)", stats, on_file, emit_event
                             )
                             continue
+                        if carryover is None:
+                            # The link is a legacy collision: this file's
+                            # conversation is a different one, filed under
+                            # another's id. Release the link; the re-ingest
+                            # below stores the file under its own key, and
+                            # takes the assignments its transcript owns.
+                            carryover = _split_carryover(
+                                conn, adapter, existing_info["conversation_id"], file_path, parsed
+                            )
+                            clear_ingested_file_error(conn, file_path)
                     else:
                         # No conversation recorded (empty file, errored file, or
                         # a row whose pointer was discarded by an older siftd).
@@ -1008,6 +1103,40 @@ def _conversation_claimed_elsewhere(
     ).fetchone() is not None
 
 
+def _refused_claim_is_a_copy(
+    conn: sqlite3.Connection,
+    adapter: AdapterModule,
+    conversation_id: str,
+    file_path: str,
+    conversation,
+) -> bool:
+    """Whether a refused claim on ``conversation_id`` is a second copy of ``conversation``.
+
+    A refusal means another path's bookkeeping row names the row. That path is a
+    second copy of this file only if it holds this conversation's identity, and
+    the row actually stores its transcript (see _stores_all_of). A shared identity
+    alone shows two files are copies of each other, not that either was stored: a
+    backup of a forked child can claim the row holding only the parent's history,
+    and settling this file against it would leave the child with no conversation
+    at all. That claim is not storage, so the file is stored under its own key,
+    once, and its copies then resolve against it. A claimant whose copy the row
+    does hold leaves this file's own change unstored, as a duplicate's is.
+
+    A claimant that parses to a different identity owns a different conversation:
+    a forked child keeps its parent's history, so a legacy collision filed the
+    child under the parent's id, and a sibling chat that shared a session id was
+    filed the same way. For those, storing this file under its own key is the
+    lossless answer, because nothing is a copy of it. A claimant that cannot be
+    parsed is not shown to differ, so it keeps the claim as a copy.
+    """
+    for other in _claimant_conversations(conn, adapter, conversation_id, file_path):
+        if other is None:  # an unreadable claimant is not shown to be a different conversation
+            return True
+        if other.external_id == conversation.external_id and _stores_all_of(conn, conversation_id, other):
+            return True
+    return False
+
+
 def _settle_duplicate_path(
     conn: sqlite3.Connection,
     file_path: str,
@@ -1157,7 +1286,8 @@ def _ingest_file(
     # A row stored under a superseded external_id is this file's conversation
     # (a previous release keyed it differently). Take it for replacement so its
     # tags carry over and no second copy is stored beside it. If another path
-    # already claims that row, this file is a second copy of it: settle it as one.
+    # already claims that row, it is settled as a copy only when that path holds
+    # this conversation's identity (see _refused_claim_is_a_copy).
     harness_id = harness_id_for_conversation(conn, conversation)
     carryover: ConversationCarryover | None = None
     superseded = _superseded_conversation(conn, harness_id, conversation)
@@ -1165,12 +1295,18 @@ def _ingest_file(
         legacy_row, legacy_key = superseded
         carryover = _take_conversation_for_replacement(conn, legacy_row["id"], file_path)
         if carryover is None:
-            _settle_duplicate_path(
-                conn, file_path, legacy_row["id"], file_hash, st,
-                external_id=conversation.external_id,
-            )
-            return _SETTLED_DUPLICATE
-        rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
+            if _refused_claim_is_a_copy(conn, adapter, legacy_row["id"], file_path, conversation):
+                _settle_duplicate_path(
+                    conn, file_path, legacy_row["id"], file_hash, st,
+                    external_id=conversation.external_id,
+                )
+                return _SETTLED_DUPLICATE
+            # The legacy row belongs to another conversation: store this one under its own key,
+            # and take the assignments its transcript owns. The key's queued tags stay queued:
+            # a refused row names a different file, so its queue is not this conversation's.
+            carryover = _split_carryover(conn, adapter, legacy_row["id"], file_path, conversation)
+        else:
+            rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
     _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
@@ -1269,8 +1405,9 @@ def _reingest_file(
         else:
             # A legacy row under a superseded key is this file's conversation. A
             # refusal cannot be left to a collision: the new key does not collide
-            # with the legacy one, so the store would write a second copy. Settle
-            # it as a duplicate of the claimed row instead.
+            # with the legacy one, so the store would write a second copy. So a
+            # refused claim settles as a copy when its holder is this conversation
+            # (see _refused_claim_is_a_copy), and otherwise the file is stored.
             superseded = _superseded_conversation(conn, harness_id, conversation)
             if superseded:
                 legacy_row, legacy_key = superseded
@@ -1278,12 +1415,17 @@ def _reingest_file(
                     conn, legacy_row["id"], file_path
                 )
                 if carryover is None:
-                    _settle_duplicate_path(
-                        conn, file_path, legacy_row["id"], file_hash, file_stat,
-                        external_id=conversation.external_id,
-                    )
-                    return _SETTLED_DUPLICATE
-                rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
+                    if _refused_claim_is_a_copy(conn, adapter, legacy_row["id"], file_path, conversation):
+                        _settle_duplicate_path(
+                            conn, file_path, legacy_row["id"], file_hash, file_stat,
+                            external_id=conversation.external_id,
+                        )
+                        return _SETTLED_DUPLICATE
+                    # The legacy row belongs to another conversation: store this one under its own key,
+                    # and take the assignments its transcript owns.
+                    carryover = _split_carryover(conn, adapter, legacy_row["id"], file_path, conversation)
+                else:
+                    rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 

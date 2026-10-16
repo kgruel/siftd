@@ -1,0 +1,95 @@
+[
+  {
+    "ended_at": "2026-08-27T18:52:51.339Z",
+    "external_id": "codex_cli::01a04491-4a41-7c90-a1ef-446dedada163",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "lineage": [
+      {
+        "kind": "subagent",
+        "parent": "codex_cli::01a04485-3b2a-7e10-9a61-9dee4fe55c0b"
+      },
+      {
+        "kind": "fork",
+        "parent": "codex_cli::01a04485-3b2a-7e10-9a61-9dee4fe55c0b"
+      }
+    ],
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "environment_context",
+              "meta_text": "<environment_context>redacted text</environment_context>"
+            }
+          }
+        ],
+        "timestamp": "2026-08-27T18:52:47.581Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "duration_ms": "313547",
+              "time_to_first_token_ms": "2083"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.6-sol",
+            "timestamp": "2026-08-27T18:52:47.581Z"
+          }
+        ],
+        "timestamp": "2026-08-27T18:52:47.581Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.6-terra",
+            "timestamp": "2026-08-27T18:52:51.339Z"
+          }
+        ],
+        "timestamp": "2026-08-27T18:52:47.581Z"
+      }
+    ],
+    "started_at": "2026-08-27T18:52:47.581Z",
+    "superseded_external_ids": [
+      "codex_cli::01a04485-3b2a-7e10-9a61-9dee4fe55c0b"
+    ],
+    "workspace_path": "/Users/user/Code/brezza"
+  }
+]

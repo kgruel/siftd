@@ -1,0 +1,74 @@
+[
+  {
+    "ended_at": "2026-01-07T21:14:18.506Z",
+    "external_id": "codex_cli::019b9972-25b8-7db0-b6fc-cd418bf516fa",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "AGENTS.md",
+              "meta_text": "# AGENTS.md instructions for /Users/user/project\n\nredacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_read_input_tokens": "75520",
+              "cached_input_tokens": "75520",
+              "reasoning_output_tokens": "64"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "redacted text"
+                }
+              }
+            ],
+            "timestamp": "2026-01-07T21:12:54.070Z",
+            "usage": {
+              "input_tokens": 75744,
+              "output_tokens": 108
+            }
+          }
+        ],
+        "timestamp": "2026-01-07T17:12:33.473Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          },
+          {
+            "block_type": "input_image",
+            "content": {
+              "source": {
+                "filtered_reason": "binary_content",
+                "media_type": "image/png",
+                "original_size": 96,
+                "original_type": "base64",
+                "type": "filtered"
+              },
+              "type": "input_image"
+            }
+          }
+        ],
+        "timestamp": "2026-01-07T21:14:18.505Z"
+      }
+    ],
+    "started_at": "2026-01-07T17:12:33.473Z",
+    "workspace_path": "/Users/user/Code/gruel.network"
+  }
+]

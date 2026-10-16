@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 201 | 3540 |
-| `tests/adapters/` | 22 | 377 |
+| `tests/` | 202 | 3551 |
+| `tests/adapters/` | 22 | 413 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -160,7 +160,7 @@ docstring so its row is meaningful.
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |
 | [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
-| [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
+| [test_content_filters.py](test_content_filters.py) | 38 | Tests for binary content filtering. |
 | [test_conversation_links.py](test_conversation_links.py) | 33 | conversation_links: lineage as a first-class edge, resolved at read time. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
 | [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
@@ -206,6 +206,7 @@ docstring so its row is meaningful.
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 13 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 10 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
 | [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
@@ -225,7 +226,7 @@ docstring so its row is meaningful.
 | [test_model_names.py](test_model_names.py) | 4 | Tests for model name parsing. |
 | [test_model_names_edges.py](test_model_names_edges.py) | 1 | — |
 | [test_narrative.py](test_narrative.py) | 13 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
-| [test_normalizers.py](test_normalizers.py) | 4 | Cross-format normalizer validation tests. |
+| [test_normalizers.py](test_normalizers.py) | 2 | Cross-format normalizer validation tests. |
 | [test_op_route_parity.py](test_op_route_parity.py) | 7 | Contract tests: CLI Operation params must be accepted by their serve route. |
 | [test_output_common.py](test_output_common.py) | 32 | Tests for siftd.output.common — pure formatting helpers. |
 | [test_output_format_registry.py](test_output_format_registry.py) | 1 | — |
@@ -332,10 +333,10 @@ docstring so its row is meaningful.
 | [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 54 | Tests for Antigravity CLI adapter. |
-| [adapters/test_assembly.py](adapters/test_assembly.py) | 48 | The shared assembler places every record and accounts for every one. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 50 | The shared assembler places every record and accounts for every one. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
-| [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 29 | Tests for Codex CLI adapter. |
+| [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
@@ -343,7 +344,7 @@ docstring so its row is meaningful.
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
-| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 21 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
+| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 22 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
 | [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 3 | Tests for Pi Agent adapter. |
 | [adapters/test_pi_agent_decoding.py](adapters/test_pi_agent_decoding.py) | 34 | Pi Agent decoding: each test names the placement or conversion it pins, and the defect it replaces. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |

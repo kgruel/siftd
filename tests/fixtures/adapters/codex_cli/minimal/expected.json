@@ -20,18 +20,24 @@
         ],
         "responses": [
           {
-            "attributes": {
-              "cache_read_input_tokens": "10",
-              "cached_input_tokens": "10",
-              "reasoning_output_tokens": "5"
-            },
             "content": [
               {
                 "block_type": "text",
                 "content": {
                   "text": "I'll run the ls command for you."
                 }
-              },
+              }
+            ],
+            "model": "gpt-4o",
+            "timestamp": "2024-01-15T10:00:02Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "10",
+              "cached_input_tokens": "10",
+              "reasoning_output_tokens": "5"
+            },
+            "content": [
               {
                 "block_type": "tool_use",
                 "content": {
@@ -44,7 +50,7 @@
               }
             ],
             "model": "gpt-4o",
-            "timestamp": "2024-01-15T10:00:02Z",
+            "timestamp": "2024-01-15T10:00:03Z",
             "tool_calls": [
               {
                 "external_id": "call-001",

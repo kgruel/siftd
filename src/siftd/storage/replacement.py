@@ -26,7 +26,7 @@ replaces on the same natural key, hand-rolled ownership through a pair of temp
 tables while hard-deleting the target's tag assignments (#77). Each looked
 complete from inside, because neither had a list to be incomplete against.
 
-Two sites use this, and they differ only in how they get their ids:
+Two sites replace a conversation with this snapshot, and they differ only in how they get their ids:
 
 - ``ingestion.orchestration._take_conversation_for_replacement`` — the door in
   ingest, which guards, snapshots and deletes together; the replacement keeps
@@ -40,6 +40,13 @@ rather than stylistic: the ``tr_polymorphic_*_cleanup`` triggers are AFTER
 DELETE triggers, so they fire whatever the ``foreign_keys`` pragma is set to,
 and a post-delete read finds nothing to carry.
 
+A third site moves rather than replaces. A row another path claims cannot be
+deleted, so when its transcript belongs to a conversation stored beside it,
+``release_carryover`` takes the carried assignments off the row and the
+caller re-attaches them to the new conversation. It removes exactly the rows a
+snapshot selects, and reports the synthetic and block assignments it leaves
+behind as neither carried nor dropped, because they stay where they are.
+
 `tests/architecture/test_replacement_carry.py` holds this list to its
 population, asking the schema directly rather than trusting a registry (the
 one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones),
@@ -50,6 +57,7 @@ door stayed invisible until #77.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import re
 import sqlite3
@@ -210,6 +218,42 @@ def snapshot_conversation(
         ]
 
     return carryover
+
+
+def release_carryover(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    carryover: ConversationCarryover,
+) -> ConversationCarryover:
+    """Take what ``carryover`` holds off a conversation that is kept, and return what was taken.
+
+    The counterpart of a replacement for a row that cannot be deleted: a row
+    another path claims must stay, so its assignments move instead, to the
+    conversation that now holds its transcript (the caller re-attaches the
+    returned carryover). Only what the snapshot carries is removed, the same
+    rows it selected: synthetic-event and block assignments were never carried,
+    so they stay on the row, and the returned carryover reports them as neither
+    dropped nor carried.
+    """
+    conn.execute(
+        "DELETE FROM tag_assignments WHERE target_kind = 'conversation' AND target_id = ?",
+        (conversation_id,),
+    )
+    event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
+    conn.execute(
+        f"""
+        DELETE FROM tag_assignments
+        WHERE target_kind IN ({event_kinds})
+          AND target_id IN (
+              SELECT id FROM events
+              WHERE conversation_id = ? AND external_id IS NOT NULL
+          )
+        """,
+        (*sorted(EVENT_TAG_KINDS), conversation_id),
+    )
+    if carryover.owners and has_conversation_owners_table(conn):
+        conn.execute("DELETE FROM conversation_owners WHERE conversation_id = ?", (conversation_id,))
+    return dataclasses.replace(carryover, dropped_events=0, dropped_blocks=0)
 
 
 def _find_event(

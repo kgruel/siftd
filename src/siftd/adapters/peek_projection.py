@@ -31,9 +31,12 @@ What the projection shows:
   response text's ``[tool: name]`` placeholders keep the raw name, also as
   the folds did. The assembler stores raw names, so aliases are an explicit
   input here, not something the conversation carries.
-- A subagent is shown as ``<parent>:<agent>``, the spelling peek has always
-  used for subagent sessions. The subagent relation comes from the lineage
-  record, the same fact that names the parent session.
+- A subagent whose own identity is nested under its parent's (Claude Code:
+  ``<parent>::agent::<agent>``) is shown as ``<parent>:<agent>``, the spelling
+  peek has always used. A subagent whose identity is its own (Codex: its thread
+  id) is shown by that id, which is also what its file name carries. The
+  containment comes from the lineage record and is carried as
+  ``parent_session_id`` either way.
 - Token counts are the response's usage, which the assembler keeps as one
   total per message, so streamed chunks of one message are not summed.
 """
@@ -192,17 +195,21 @@ def _session_part(harness: Harness, external_id: str) -> str:
 def _session_id(conversation: Conversation) -> str:
     """The session identity peek shows for a conversation.
 
-    A subagent's external id carries its parent and its own id after the
-    parent (Claude Code: ``<harness>::<parent>::agent::<agent>``), and peek has
-    always shown that as ``<parent>:<agent>``. The agent is the id's last
-    segment. Only the lineage record marks a subagent, so the parent named here
+    A subagent whose external id nests under its parent's
+    (``<harness>::<parent>::agent::<agent>``, Claude Code) is shown as
+    ``<parent>:<agent>``, the agent being the id's last segment. Any other
+    subagent is shown by its own id, because that is the id its stored identity
+    and its file name carry: a Codex subagent's thread id is not built from its
+    parent's. Only the lineage record marks a subagent, so the parent named here
     and in ``parent_session_id`` come from the same fact.
     """
+    own = _session_part(conversation.harness, conversation.external_id)
     subagent = conversation.parent("subagent")
     if subagent is not None:
-        own_id = conversation.external_id.rsplit("::", 1)[-1]
-        return f"{_session_part(conversation.harness, subagent.parent)}:{own_id}"
-    return _session_part(conversation.harness, conversation.external_id)
+        parent = _session_part(conversation.harness, subagent.parent)
+        if own.startswith(f"{parent}::"):
+            return f"{parent}:{own.rsplit('::', 1)[-1]}"
+    return own
 
 
 def _responses(conversation: Conversation) -> Iterator[Response]:

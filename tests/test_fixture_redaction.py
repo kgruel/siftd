@@ -24,6 +24,9 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 # /home is presumed to be the capturing machine's real account.
 _PLACEHOLDER_USERS = {"user", "test", "dev", "example", "alice", "bob", "me"}
 _HOME = re.compile(r"(?:/Users/|/home/|C:\\\\Users\\\\|C:\\Users\\)([A-Za-z0-9._-]+)")
+# A home directory encoded with dashes, as Claude Code and Codex name project folders
+# (-Users-<name>-Code-...). It names the same account as the path it was encoded from.
+_DASHED_HOME = re.compile(r"-Users-([A-Za-z0-9._]+)-")
 
 _EMAIL = re.compile(r"\b[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)\b")
 # RFC 2606 reserved domains, plus addresses that name no person.
@@ -49,6 +52,9 @@ def _findings(text: str) -> list[str]:
     for m in _HOME.finditer(text):
         if m.group(1).lower() not in _PLACEHOLDER_USERS:
             found.append(f"home path {m.group(0)!r}")
+    for m in _DASHED_HOME.finditer(text):
+        if m.group(1).lower() not in _PLACEHOLDER_USERS:
+            found.append(f"dashed home path {m.group(0)!r}")
     for m in _EMAIL.finditer(text):
         local = m.group(0).split("@", 1)[0].lower()
         if m.group(1).lower() not in _ALLOWED_EMAIL_DOMAINS and local not in _ALLOWED_EMAIL_LOCALS:
@@ -77,6 +83,7 @@ def test_the_scanner_sees_what_it_checks():
     must_flag = [
         "/Users/kaygee/Code/siftd",
         "/home/jdoe/.claude",
+        "/Users/user/.subtask/workspaces/-Users-kaygee-Code-gruel.network--2",
         "mail jane.doe@gmail.com",
         "sk-ant-api03-abcdefghijklmnopqrstuv",
         "ghp_abcdefghijklmnopqrstuvwxyz0123456789",

@@ -1,0 +1,74 @@
+[
+  {
+    "ended_at": "2026-02-10T20:26:40.621Z",
+    "external_id": "codex_cli::019c493b-c7b5-71c0-99a5-110d6fc4fb70",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "AGENTS.md",
+              "meta_text": "# AGENTS.md instructions for /Users/user/project\n\nredacted text"
+            }
+          }
+        ],
+        "timestamp": "2026-02-10T20:26:20.477Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "environment_context",
+              "meta_text": "<environment_context>redacted text</environment_context>"
+            }
+          }
+        ],
+        "timestamp": "2026-02-10T20:26:20.477Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_read_input_tokens": "7680",
+              "cached_input_tokens": "7680",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-10T20:26:40.615Z",
+            "usage": {
+              "input_tokens": 8913,
+              "output_tokens": 962
+            }
+          }
+        ],
+        "timestamp": "2026-02-10T20:26:20.477Z"
+      }
+    ],
+    "started_at": "2026-02-10T20:26:20.476Z",
+    "workspace_path": "/Users/user/Code/gruel.network"
+  }
+]

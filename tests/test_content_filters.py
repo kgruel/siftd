@@ -6,6 +6,7 @@ from siftd.content.filters import (
     filter_binary_block,
     filter_tool_result_binary,
     has_large_base64,
+    inline_image_media_type,
     is_base64_image_block,
     is_binary_content,
 )
@@ -219,6 +220,29 @@ class TestFilterBinaryBlock:
         assert filtered["id"] == "block_123"
         assert filtered["source"]["type"] == "filtered"
         assert "data" not in filtered["source"]
+
+
+class TestInlineImageDataUri:
+    """Codex writes images as an OpenAI ``input_image`` with a base64 data URI, not an Anthropic source."""
+
+    def test_a_data_uri_image_is_filtered_to_the_same_placeholder(self):
+        payload = "iVBORw0KGgo" + "A" * 2000
+        block = {"type": "input_image", "image_url": f"data:image/png;base64,{payload}", "detail": "high"}
+        out = filter_binary_block(block)
+        assert "image_url" not in out and out["detail"] == "high"
+        assert out["source"] == {"type": "filtered", "original_type": "base64", "media_type": "image/png",
+                                 "original_size": len(payload), "filtered_reason": "binary_content"}
+        assert payload not in json.dumps(out)
+
+    def test_a_plain_url_image_is_left_alone(self):
+        block = {"type": "input_image", "image_url": "https://example.com/a.png"}
+        assert filter_binary_block(block) is block
+        assert inline_image_media_type(block) is None
+
+    def test_a_data_uri_on_another_block_type_is_not_an_image(self):
+        block = {"type": "input_text", "image_url": "data:image/png;base64,AAAA"}
+        assert inline_image_media_type(block) is None
+        assert filter_binary_block(block) is block
 
 
 class TestFilterToolResultBinary:

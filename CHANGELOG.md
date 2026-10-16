@@ -30,6 +30,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Claude Code token and cost totals count each message once.** A streamed
   message repeats its usage on every record, and every copy was summed (about
   2.3x the real figure); stored conversations correct on re-ingest. ([#97](https://github.com/kgruel/siftd/issues/97))
+- **Codex sessions keep what they hold.** A forked child session has its own
+  identity instead of colliding with its parent (11 shared ids), injected
+  AGENTS.md and environment text is kept out of prompt search, each turn's
+  model is the one it ran on, and embedded images no longer store raw base64.
 - **Codex token and cost totals count every API call.** Each call's usage
   overwrote the last, so about 19% of tokens were kept; stored conversations
   correct on re-ingest. ([#98](https://github.com/kgruel/siftd/issues/98))
