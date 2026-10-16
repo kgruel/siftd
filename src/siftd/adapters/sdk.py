@@ -494,6 +494,27 @@ def extract_tool_hint(
     return None
 
 
+def peek_tool_hint(input_dict: dict | None) -> str | None:
+    """The one-line input summary peek shows for a tool call, or None.
+
+    Shared by the record folds and the assembled-conversation projection so a
+    tool call reads the same in both.
+    """
+    if not input_dict:
+        return None
+    return (
+        str(
+            input_dict.get("description")
+            or input_dict.get("command")
+            or input_dict.get("file_path")
+            or input_dict.get("path")
+            or input_dict.get("pattern")
+            or ""
+        )
+        or None
+    )
+
+
 def peek_jsonl_tail(
     path: Path, lines: int, *, parse_json: bool = True
 ) -> Iterator[dict | str]:
@@ -794,22 +815,9 @@ def peek_exchanges_from_records(
                         if isinstance(block.get("input"), dict)
                         else {}
                     )
-                    hint = None
-                    if input_dict:
-                        hint = (
-                            str(
-                                input_dict.get("description")
-                                or input_dict.get("command")
-                                or input_dict.get("file_path")
-                                or input_dict.get("path")
-                                or input_dict.get("pattern")
-                                or ""
-                            )
-                            or None
-                        )
                     tool_use_id = block.get("id") or block.get("tool_use_id") or block.get("call_id")
                     pending_tool_blocks.append(
-                        PeekToolCall(tool_name=tool_name, input=hint, external_id=tool_use_id),
+                        PeekToolCall(tool_name=tool_name, input=peek_tool_hint(input_dict), external_id=tool_use_id),
                     )
                     if tool_use_id:
                         current_exchange.tool_use_ids.append(str(tool_use_id))

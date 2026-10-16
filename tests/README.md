@@ -114,7 +114,7 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 196 | 3404 |
-| `tests/adapters/` | 21 | 218 |
+| `tests/adapters/` | 22 | 238 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 640 |
 | `tests/snapshots/` | 1 | 5 |
@@ -338,6 +338,7 @@ docstring so its row is meaningful.
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
+| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 20 | Peek built from the assembler agrees with today's record folds where they were right. |
 | [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
 | [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
