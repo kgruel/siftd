@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 198 | 3441 |
+| `tests/` | 199 | 3471 |
 | `tests/adapters/` | 22 | 266 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 641 |
@@ -241,6 +241,7 @@ docstring so its row is meaningful.
 | [test_portable_filenames.py](test_portable_filenames.py) | 1 | Every tracked path is a legal filename on every platform siftd ships to. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
+| [test_probe.py](test_probe.py) | 30 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |
 | [test_push_error_mapping.py](test_push_error_mapping.py) | 5 | I1 — push failures surface a structured, actionable error (client side). |
