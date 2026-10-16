@@ -223,8 +223,12 @@ def find_session_file(session_id_prefix: str) -> Path | None:
         # Fast path: skip files where prefix can't appear in path
         # This handles subagent files where session ID is in parent directory
         # (e.g., .../a344e65f-0fe4-4be0-a472-06cf15cbef21/subagents/...)
+        # The fast path assumes the session id is part of the path. An adapter
+        # whose id is derived from it (aider: a digest of the path) declares
+        # SESSION_ID_IN_PATH = False, and every file is scanned for its id.
         path_str = str(file_info.path).lower()
-        if prefix_lower not in path_str:
+        id_in_path = getattr(file_info.adapter_module, "SESSION_ID_IN_PATH", True)
+        if id_in_path and prefix_lower not in path_str:
             continue
 
         # Then try scanning for the real session_id

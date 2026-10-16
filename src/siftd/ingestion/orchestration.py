@@ -24,12 +24,13 @@ file with a second session failed permanently (#36).
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from siftd.adapters.sdk import AdapterParseError
@@ -179,72 +180,138 @@ def _session_should_replace(new_ended: str | None, existing_ended: str | None) -
     return _compare_timestamps(new_ended, existing_ended)
 
 
-def _message_key(kind: str, external_id: str | None, timestamp: str | None) -> tuple | None:
+def _instant(timestamp: str | None) -> object | None:
+    """The instant a timestamp names, so two spellings of one time are one key.
+
+    A timestamp that does not parse is kept as the text it was written as.
+    """
+    if not timestamp:
+        return None
+    try:
+        return to_utc(timestamp)
+    except ValueError:
+        return timestamp
+
+
+def _message_key(kind: str, external_id: str | None, timestamp: str | None, text: str | None = None) -> tuple | None:
     """Identity of one prompt or response for adoption, or None when it has none.
 
     The adapter's message id is the identity when there is one. A message without
-    an id (Gemini chat JSON does not guarantee one) falls back to its kind and its
-    timestamp, which every parse reproduces. The fallback is unambiguous on the
-    local corpus: no (kind, timestamp) pair appears in two files of one sessionId.
+    an id is identified by its text and its time together. The text says what the
+    message is; the time says which message it is. Text alone is not enough: one
+    prompt ("continue") is typed in many sessions, and a session opened later must
+    not claim the row an earlier one stored. Some sources stamp every message of a
+    session with the session's start (aider), so there the time only separates
+    sessions by when they opened, and the text does the rest. A message with no
+    id and no text is identified by its time alone.
     """
     if external_id:
         return ("id", external_id)
+    if text:
+        return ("text", kind, text, _instant(timestamp))
     if timestamp:
-        return ("at", kind, timestamp)
+        return ("at", kind, _instant(timestamp))
     return None
 
 
-def _message_keys(messages: Iterable[tuple[str, str | None, str | None]]) -> set[tuple]:
-    """Keys of ``(kind, external_id, timestamp)`` messages, skipping those with none."""
-    keys = (_message_key(kind, external_id, timestamp) for kind, external_id, timestamp in messages)
+def _message_keys(messages: Iterable[tuple[str, str | None, str | None, str | None]]) -> set[tuple]:
+    """Keys of ``(kind, external_id, timestamp, text)`` messages, skipping those with none."""
+    keys = (_message_key(kind, external_id, timestamp, text) for kind, external_id, timestamp, text in messages)
     return {key for key in keys if key is not None}
 
 
-def _stored_message_keys(conn, conversation_id: str) -> set[tuple]:
-    """Message keys of a stored conversation's prompts and responses."""
+def _stored_text(raw: str | None) -> str | None:
+    """The text of a stored first content block (``json.dumps`` of its dict), or None."""
+    if not raw:
+        return None
+    try:
+        text = json.loads(raw).get("text")
+    except (ValueError, AttributeError):
+        return None
+    return text if isinstance(text, str) and text else None
+
+
+def _stored_prompt_keys(conn, conversation_id: str) -> set[tuple]:
+    """Message keys of a stored conversation's prompts."""
     return _message_keys(
-        (row["kind"], row["external_id"], row["timestamp"])
+        (row["kind"], row["external_id"], row["timestamp"], _stored_text(row["content"]))
         for row in conn.execute(
-            "SELECT kind, external_id, timestamp FROM events "
-            "WHERE conversation_id = ? AND kind IN ('prompt', 'response')",
+            "SELECT e.kind, e.external_id, e.timestamp, ec.content FROM events e "
+            "LEFT JOIN event_content ec ON ec.event_id = e.id AND ec.block_index = 0 "
+            "WHERE e.conversation_id = ? AND e.kind = 'prompt'",
             (conversation_id,),
         )
     )
 
 
-def _parsed_message_keys(conversation) -> set[tuple]:
-    """Message keys of a parsed conversation's prompts and responses."""
+def _parsed_text(content) -> str | None:
+    """The text of a parsed message's first content block, or None."""
+    if not content or not isinstance(content[0].content, dict):
+        return None
+    text = content[0].content.get("text")
+    return text if isinstance(text, str) and text else None
+
+
+def _parsed_prompt_keys(conversation) -> set[tuple]:
+    """Message keys of a parsed conversation's prompts."""
     return _message_keys(
-        [("prompt", p.external_id, p.timestamp) for p in conversation.prompts]
-        + [("response", r.external_id, r.timestamp) for r in conversation.preamble]
-        + [
-            ("response", r.external_id, r.timestamp)
-            for p in conversation.prompts
-            for r in p.responses
-        ]
+        ("prompt", p.external_id, p.timestamp, _parsed_text(p.content)) for p in conversation.prompts
     )
 
 
-def _superseded_conversation(conn, harness_id, conversation) -> dict | None:
-    """The stored row this conversation replaces under a superseded external_id.
+def _superseded_conversation(conn, harness_id, conversation) -> tuple[dict, str] | None:
+    """The stored row this conversation replaces, and the superseded key it was found under.
+
+    Only that key's queued tags belong to the replacement: a candidate that was
+    refused names a different file, so its queue stays where it is.
 
     An adapter that re-keys its conversations names the old keys on the
-    conversation. A key alone cannot adopt a row, because a superseded key can be
-    shared by several sources (a sessionId across Gemini chat files). The row must
-    also hold one of this conversation's own messages, matched by message id or,
-    for a message without one, by kind and timestamp (see _message_key). Start
-    instant is not the discriminator: a row a previous release stored for a file
-    without startTime carries a parse-time stamp that no later parse reproduces.
+    conversation, and a key names a file only as well as its spelling does, so a
+    key alone cannot adopt a row. The row must be this conversation's own: every
+    prompt it stores must be one of this conversation's prompts, matched by message
+    id, by text, or (for a prompt with neither) by kind and timestamp (see
+    _message_key). The file is append-only, so a row a previous release stored from
+    it holds a subset of its prompts, and a row from a different file holds at
+    least one prompt this file does not have.
+
+    Prompts are the evidence because they are what the user typed. Responses are
+    not: a session's replies are often generic text that another session shares
+    too, so a shared reply says nothing about which file a row came from. Start
+    instant is not the discriminator either: a row a previous release stored for a
+    file without startTime carries a parse-time stamp that no later parse
+    reproduces, and sessions opened in the same second share it.
     """
     keys = conversation.superseded_external_ids
     if not keys:
         return None
-    mine = _parsed_message_keys(conversation)
+    mine = _parsed_prompt_keys(conversation)
     for key in keys:
         found = find_conversation_by_external_id(conn, harness_id, key)
-        if found and _stored_message_keys(conn, found["id"]) & mine:
-            return found
+        if found:
+            stored = _stored_prompt_keys(conn, found["id"])
+            if stored and stored <= mine:
+                return found, key
     return None
+
+
+def _recorded_locations(conn, harness_name: str) -> list[str]:
+    """The paths earlier ingests recorded for this harness, as each was spelled.
+
+    A session-strategy source is keyed by how its path was spelled when it was
+    scanned, and a relative spelling names a file only relative to the directory
+    it was scanned from. Nothing records that directory, but the bookkeeping does
+    record the spelling: every marker is written under the path as scanned. The
+    adapter reads these as candidates for its legacy ids (see
+    ``Source.metadata["recorded_locations"]``), and ingest verifies any row they
+    name against the file's own prompts before adopting it.
+    """
+    return [
+        row["path"]
+        for row in conn.execute(
+            "SELECT f.path FROM ingested_files f JOIN harnesses h ON h.id = f.harness_id WHERE h.name = ?",
+            (harness_name,),
+        )
+    ]
 
 
 def _get_single_conversation(
@@ -616,7 +683,11 @@ def ingest_all(
                 # ingested_files row is a single per-file hash/mtime marker with
                 # conversation_id=NULL, so replacing any one session does not
                 # cascade-delete the marker (see record_session_file).
-                conversations = _parse_source_conversations(source, adapter, file_path)
+                recorded = replace(
+                    source,
+                    metadata={**source.metadata, "recorded_locations": _recorded_locations(conn, harness_name)},
+                )
+                conversations = _parse_source_conversations(recorded, adapter, file_path)
                 if not conversations:
                     _count_file_skipped(source, "skipped (empty)", stats, on_file, emit_event)
                     continue
@@ -637,7 +708,32 @@ def ingest_all(
                     existing = find_conversation_by_external_id(
                         conn, harness_id, conversation.external_id
                     )
-                    if existing:
+                    # A row stored under an id the adapter has since re-keyed is
+                    # this session. Adopt it, as the file branch does, so its
+                    # tags carry over instead of a second copy being stored.
+                    superseded = None if existing else _superseded_conversation(conn, harness_id, conversation)
+                    if superseded:
+                        legacy_row, legacy_key = superseded
+                        carryover = _take_conversation_for_replacement(
+                            conn, legacy_row["id"], file_path
+                        )
+                        if carryover is None:
+                            logger.warning(
+                                f"{file_path}: another path's bookkeeping row points at "
+                                f"{conversation.external_id}; leaving it as ingested"
+                            )
+                            continue
+                        rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
+                        conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
+                        _restore_carryover_after_replacement(
+                            conn, conv_id, carryover, conversation.external_id
+                        )
+                        _apply_pending_tags(conn, adapter, conversation, conv_id)
+                        _update_stats_for_conversation(stats, harness_name, conversation)
+                        stats.by_harness[harness_name]["replaced"] += 1
+                        file_replaced = True
+                        last_conversation = conversation
+                    elif existing:
                         # Only a moved session triggers replacement; an
                         # equal/older one is left untouched (preserving its
                         # tags, ownership, and manual state).
@@ -1066,14 +1162,15 @@ def _ingest_file(
     carryover: ConversationCarryover | None = None
     superseded = _superseded_conversation(conn, harness_id, conversation)
     if superseded:
-        carryover = _take_conversation_for_replacement(conn, superseded["id"], file_path)
+        legacy_row, legacy_key = superseded
+        carryover = _take_conversation_for_replacement(conn, legacy_row["id"], file_path)
         if carryover is None:
             _settle_duplicate_path(
-                conn, file_path, superseded["id"], file_hash, st,
+                conn, file_path, legacy_row["id"], file_hash, st,
                 external_id=conversation.external_id,
             )
             return _SETTLED_DUPLICATE
-        rekey_pending_tags(conn, conversation.superseded_external_ids, conversation.external_id)
+        rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
     _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
@@ -1176,16 +1273,17 @@ def _reingest_file(
             # it as a duplicate of the claimed row instead.
             superseded = _superseded_conversation(conn, harness_id, conversation)
             if superseded:
+                legacy_row, legacy_key = superseded
                 carryover = _take_conversation_for_replacement(
-                    conn, superseded["id"], file_path
+                    conn, legacy_row["id"], file_path
                 )
                 if carryover is None:
                     _settle_duplicate_path(
-                        conn, file_path, superseded["id"], file_hash, file_stat,
+                        conn, file_path, legacy_row["id"], file_hash, file_stat,
                         external_id=conversation.external_id,
                     )
                     return _SETTLED_DUPLICATE
-                rekey_pending_tags(conn, conversation.superseded_external_ids, conversation.external_id)
+                rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 

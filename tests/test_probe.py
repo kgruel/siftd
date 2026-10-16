@@ -388,10 +388,12 @@ def test_parsed_tally_counts_unresulted_calls_and_empty_conversations():
     assert (t.input_tokens, t.output_tokens) == (3, 4)
 
 
-def test_parsed_tally_falls_back_to_aider_approx_attributes():
-    """Aider keeps approximate tokens as attributes; the table must not show a phantom Usage gap."""
-    response = Response(timestamp="t", attributes={"approx_input_tokens": "2100", "approx_output_tokens": "256"})
-    t = probe.parsed_tally([_conversation([response])])
+def test_parsed_tally_counts_usage_and_nothing_else():
+    """Token counts come from Usage alone. Aider's token lines are Usage now, so a response
+    whose usage is absent is a gap the table shows, not a value read from an attribute."""
+    counted = Response(timestamp="t", usage=Usage(input_tokens=2100, output_tokens=256))
+    gap = Response(timestamp="t", attributes={"approx_input_tokens": "9999", "approx_output_tokens": "9999"})
+    t = probe.parsed_tally([_conversation([counted, gap])])
     assert (t.input_tokens, t.output_tokens) == (2100, 256)
 
 
@@ -488,3 +490,15 @@ def test_main_rejects_non_positive_limit(capsys):
         probe.main(["--limit", "0"])
     assert excinfo.value.code == 2
     assert "--limit" in capsys.readouterr().err
+
+
+def test_parsed_tally_counts_the_preamble():
+    """Responses before the first prompt are parsed output. A tally that skipped them would show a drop as no drop."""
+    harness = Harness(name="x", source="x", log_format="x")
+    conversation = Conversation(
+        external_id="x", harness=harness, started_at="2024-01-01T00:00:00Z",
+        preamble=[Response(timestamp="t", usage=Usage(input_tokens=5, output_tokens=6))],
+    )
+    t = probe.parsed_tally([conversation])
+    assert (t.conversations_no_prompts, t.conversations_no_responses) == (1, 0)
+    assert (t.assistant, t.input_tokens, t.output_tokens) == (1, 5, 6)

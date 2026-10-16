@@ -225,7 +225,10 @@ def load_golden_input(adapter: str, case: str, tmp_path=None):
     ]
     if not candidates:
         raise FileNotFoundError(f"No input fixture for {adapter}/{case}")
-    return Source(kind="file", location=candidates[0])
+    # The identity path is stated as the CWD-relative spelling, so an adapter
+    # whose ids come from the file's absolute path (aider) still produces the
+    # same expected.json on every machine. Adapters that do not read it ignore it.
+    return Source(kind="file", location=candidates[0], metadata={"identity_path": str(candidates[0])})
 
 
 def load_golden_expected(adapter: str, case: str) -> list[dict]:

@@ -538,18 +538,22 @@ def _attr_num(attributes: dict[str, str], key: str) -> int:
 
 def _add_parsed_usage(t: Tally, response: Response) -> None:
     usage = response.usage
-    if usage is not None and usage.input_tokens is not None:
-        t.input_tokens += usage.input_tokens
-    else:
-        # Aider records approximate tokens as attributes, not as Usage. They
-        # are counted here so the table shows Usage gaps, not attribute layout.
-        t.input_tokens += _attr_num(response.attributes, "approx_input_tokens")
-    if usage is not None and usage.output_tokens is not None:
-        t.output_tokens += usage.output_tokens
-    else:
-        t.output_tokens += _attr_num(response.attributes, "approx_output_tokens")
+    if usage is not None:
+        t.input_tokens += usage.input_tokens or 0
+        t.output_tokens += usage.output_tokens or 0
     t.cache_tokens += _attr_num(response.attributes, "cache_read_input_tokens")
     t.cache_tokens += _attr_num(response.attributes, "cache_creation_input_tokens")
+
+
+def _add_parsed_response(t: Tally, response: Response) -> None:
+    t.assistant += 1
+    _add_parsed_usage(t, response)
+    for call in response.tool_calls:
+        t.tool_calls += 1
+        if call.result is None:
+            t.tool_calls_no_result += 1
+        else:
+            t.tool_results += 1
 
 
 def parsed_tally(conversations: Iterable[Conversation]) -> Tally:
@@ -559,18 +563,16 @@ def parsed_tally(conversations: Iterable[Conversation]) -> Tally:
         if not conversation.prompts:
             t.conversations_no_prompts += 1
         responses = 0
+        # Responses before the first prompt are stored in the preamble; they are
+        # parsed output like any other, so they are counted here too.
+        for response in conversation.preamble:
+            responses += 1
+            _add_parsed_response(t, response)
         for prompt in conversation.prompts:
             t.user += 1
             for response in prompt.responses:
                 responses += 1
-                t.assistant += 1
-                _add_parsed_usage(t, response)
-                for call in response.tool_calls:
-                    t.tool_calls += 1
-                    if call.result is None:
-                        t.tool_calls_no_result += 1
-                    else:
-                        t.tool_results += 1
+                _add_parsed_response(t, response)
         if responses == 0:
             t.conversations_no_responses += 1
     return t

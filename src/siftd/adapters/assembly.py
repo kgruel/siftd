@@ -48,7 +48,9 @@ Placement rules, which are the decisions the adapters each used to make alone:
   uses the caller's ``default_session``, whose fields sit beneath anything
   the stream stated; with neither, assembly fails loudly. ``ended_at`` is
   inferred from event times unless a Session says the source cannot know it
-  (``infer_end=False``).
+  (``infer_end=False``). Ids a ``Session`` names as superseded are carried to
+  ``Conversation.superseded_external_ids``, so ingest can adopt the row stored
+  under an id the adapter no longer uses.
 - **Lineage.** A conversation has at most one parent per relation: where it
   ran (``subagent``) and what it continues (``fork``, ``resume``, ``branch``),
   so a forked subagent keeps both. Each becomes a ``Conversation.lineage`` link
@@ -243,6 +245,8 @@ class _Build:
         self.results_on_unplaced: dict[int, list[ToolResultRec]] = {}
         self.placed: set[int] = set()
         self.lineage: list[Lineage] = []
+        # Ids the conversation was stored under before a re-key, first stated first.
+        self.superseded: list[str] = []
 
         # Every record's timestamp in arrival order, with the event it created
         # (or None for records that only lend their time: merged chunks,
@@ -349,6 +353,7 @@ class Assembler:
                 branch=build.branch or (default.branch if default else None),
                 attributes={**(default.attributes if default else {}), **build.attributes},
                 lineage=tuple(build.lineage),
+                superseded_external_ids=tuple(old for old in build.superseded if old != external_id),
             )
         )
 
@@ -371,6 +376,9 @@ class Assembler:
         build.branch = build.branch or rec.branch
         for k, v in rec.attributes.items():
             build.attributes.setdefault(k, v)
+        for old in rec.superseded_external_ids:
+            if old not in build.superseded:
+                build.superseded.append(old)
         self.ledger.record(rec, Disposition.META)
 
     def _on_meta(self, rec: Meta) -> None:

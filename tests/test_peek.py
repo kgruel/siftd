@@ -1036,3 +1036,31 @@ class TestSubagentFiltering:
         # All should have parent-123 as parent
         for s in sessions:
             assert s["parent_session_id"] == "parent-123"
+
+
+class TestFindAiderSessionByListedId:
+    """Review round 2, finding 4: an id peek lists must be an id a lookup finds.
+
+    Aider's id is a digest of the file's path, so the id never appears in the
+    path. ``find_session_file`` skips a file whose path lacks the prefix, which
+    made every listed aider session "not found".
+    """
+
+    def test_listed_id_and_its_digest_prefix_find_the_file(self, tmp_path, monkeypatch):
+        from siftd.adapters import aider
+
+        history = tmp_path / "scan" / "proj" / ".aider.chat.history.md"
+        history.parent.mkdir(parents=True)
+        history.write_text(
+            "# aider chat started at 2025-07-15 14:32:01\n\n"
+            "#### write a hello world script\n\nHere it is.\n"
+        )
+        monkeypatch.setattr(aider, "DEFAULT_LOCATIONS", [str(tmp_path / "scan")])
+        plugin = PluginInfo(name="aider", origin="builtin", module=aider)
+        monkeypatch.setattr("siftd.peek.scanner.load_all_adapters", lambda: [plugin])
+
+        listed = aider.peek_scan(history).session_id
+        assert listed.endswith("::2025-07-15 14:32:01")
+        assert find_session_file(listed) == history
+        digest_prefix = listed.split("::", 1)[0]
+        assert find_session_file(digest_prefix) == history

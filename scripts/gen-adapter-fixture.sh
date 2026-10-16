@@ -67,7 +67,8 @@ def make_source(tmp_dir):
     if not candidates:
         print(f"ERROR: No input fixture in {case_dir}", file=sys.stderr)
         sys.exit(1)
-    return Source(kind="file", location=candidates[0])
+    # Same identity path the golden test states (see tests/conftest.py).
+    return Source(kind="file", location=candidates[0], metadata={"identity_path": str(candidates[0])})
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     source = make_source(tmp_dir)

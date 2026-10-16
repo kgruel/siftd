@@ -161,7 +161,10 @@ DESTROY_SITES = {
 # should be the alarm rather than something the query silently discards.
 INGEST_REPLACEMENT_DOORS = {
     ("ingestion/orchestration.py", "ingest_all"): {
-        "_take_conversation_for_replacement": 2,
+        # One more than before: the session branch adopts a row stored under a
+        # superseded external_id (aider's path-identity re-key), the same door the
+        # file branch has for gemini_cli. Same wrapper, same refusal.
+        "_take_conversation_for_replacement": 3,
     },
     # Two doors: the orphan found by external_id, and a legacy row under a
     # superseded external_id (gemini_cli chat identity, #93). Same wrapper, same

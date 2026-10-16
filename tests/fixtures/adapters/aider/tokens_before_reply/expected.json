@@ -1,0 +1,68 @@
+[
+  {
+    "external_id": "aider::5fd5dbec05cf::2025-07-15 16:00:00",
+    "harness": {
+      "display_name": "Aider",
+      "log_format": "markdown",
+      "name": "aider",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "run the tests"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "approx_cost": "0.00"
+            },
+            "content": [
+              {
+                "block_type": "tool_output",
+                "content": {
+                  "text": "Run pytest? [Y/n] y"
+                }
+              }
+            ],
+            "timestamp": "2025-07-15T16:00:00+00:00",
+            "usage": {
+              "input_tokens": 300,
+              "output_tokens": 12
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Tests pass."
+                }
+              }
+            ],
+            "timestamp": "2025-07-15T16:00:00+00:00"
+          }
+        ],
+        "timestamp": "2025-07-15T16:00:00+00:00"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "thanks"
+            }
+          }
+        ],
+        "timestamp": "2025-07-15T16:00:00+00:00"
+      }
+    ],
+    "started_at": "2025-07-15T16:00:00+00:00",
+    "workspace_path": "tests/fixtures/adapters/aider/tokens_before_reply"
+  }
+]

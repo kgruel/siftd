@@ -1,0 +1,134 @@
+[
+  {
+    "ended_at": "2025-07-15T15:10:00+00:00",
+    "external_id": "aider::6badc985e48b::2025-07-15 14:32:01",
+    "harness": {
+      "display_name": "Aider",
+      "log_format": "markdown",
+      "name": "aider",
+      "source": "multi"
+    },
+    "preamble": [
+      {
+        "content": [
+          {
+            "block_type": "tool_output",
+            "content": {
+              "text": "Aider v0.50.1\nModel: claude-3-5-sonnet-20240620 with diff edit format\nGit repo: .git with 12 files\nRepo-map: using 4096 tokens, auto refresh"
+            }
+          }
+        ],
+        "timestamp": "2025-07-15T14:32:01+00:00"
+      }
+    ],
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "add retry to the fetch helper"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "approx_cost": "0.01"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I'll add a retry loop to `fetch`.\n\n```python\ndef fetch(url):\n    for _ in range(3):\n        ...\n```"
+                }
+              },
+              {
+                "block_type": "tool_output",
+                "content": {
+                  "text": "Applied edit to src/fetch.py\nCommit 1a2b3c4 feat: retry fetch"
+                }
+              }
+            ],
+            "timestamp": "2025-07-15T14:32:01+00:00",
+            "usage": {
+              "input_tokens": 2100,
+              "output_tokens": 256
+            }
+          },
+          {
+            "attributes": {
+              "approx_cost": "0.00"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "I also want to note the timeout in the docstring."
+                }
+              }
+            ],
+            "timestamp": "2025-07-15T14:32:01+00:00",
+            "usage": {
+              "input_tokens": 900,
+              "output_tokens": 40
+            }
+          }
+        ],
+        "timestamp": "2025-07-15T14:32:01+00:00"
+      }
+    ],
+    "started_at": "2025-07-15T14:32:01+00:00",
+    "workspace_path": "tests/fixtures/adapters/aider/banner_turns"
+  },
+  {
+    "external_id": "aider::6badc985e48b::2025-07-15 15:10:00",
+    "harness": {
+      "display_name": "Aider",
+      "log_format": "markdown",
+      "name": "aider",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "fix the bug in auth.py"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "approx_cost": "0.05"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Looking at the refresh path now."
+                }
+              },
+              {
+                "block_type": "tool_output",
+                "content": {
+                  "text": "Applied edit to src/auth.py"
+                }
+              }
+            ],
+            "timestamp": "2025-07-15T15:10:00+00:00",
+            "usage": {
+              "input_tokens": 4500,
+              "output_tokens": 1200
+            }
+          }
+        ],
+        "timestamp": "2025-07-15T15:10:00+00:00"
+      }
+    ],
+    "started_at": "2025-07-15T15:10:00+00:00",
+    "workspace_path": "tests/fixtures/adapters/aider/banner_turns"
+  }
+]

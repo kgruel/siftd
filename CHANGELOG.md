@@ -46,6 +46,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Copilot CLI sub-agent turns name the call that spawned them,** tool calls
   keep the order the model requested them in, and a session with no messages
   is no longer stored as an empty conversation.
+- **Aider sessions keep what they hold.** Text and tool output before a prompt
+  are stored, token lines count as usage, a history file scanned under two
+  spellings of its path is one conversation, and a session that grows is
+  re-read.
 - **Antigravity sessions now record their token usage**, which the adapter
   never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
 

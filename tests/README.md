@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 201 | 3530 |
-| `tests/adapters/` | 22 | 337 |
+| `tests/` | 201 | 3539 |
+| `tests/adapters/` | 22 | 351 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -205,8 +205,8 @@ docstring so its row is meaningful.
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
-| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 7 | Regression tests for #36: aider history files with more than one session. |
-| [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 14 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
+| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 13 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
 | [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |
@@ -235,7 +235,7 @@ docstring so its row is meaningful.
 | [test_output_painted_bridge_edges.py](test_output_painted_bridge_edges.py) | 2 | — |
 | [test_output_terminal_fmt.py](test_output_terminal_fmt.py) | 1 | — |
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
-| [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
+| [test_peek.py](test_peek.py) | 46 | Tests for the peek module. |
 | [test_peek_follow.py](test_peek_follow.py) | 44 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
 | [test_planner_stats.py](test_planner_stats.py) | 7 | Planner statistics are a maintained state, not something a user has to ask for (#80). |
@@ -243,7 +243,7 @@ docstring so its row is meaningful.
 | [test_portable_filenames.py](test_portable_filenames.py) | 1 | Every tracked path is a legal filename on every platform siftd ships to. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
-| [test_probe.py](test_probe.py) | 30 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
+| [test_probe.py](test_probe.py) | 31 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |
 | [test_push_error_mapping.py](test_push_error_mapping.py) | 5 | I1 — push failures surface a structured, actionable error (client side). |
@@ -329,7 +329,7 @@ docstring so its row is meaningful.
 
 | File | Tests | Summary |
 |------|-------|---------|
-| [adapters/test_aider.py](adapters/test_aider.py) | 9 | Tests for Aider adapter. |
+| [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
 | [adapters/test_assembly.py](adapters/test_assembly.py) | 48 | The shared assembler places every record and accounts for every one. |

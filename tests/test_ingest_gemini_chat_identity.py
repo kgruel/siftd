@@ -523,3 +523,38 @@ def test_idless_sibling_does_not_claim_the_legacy_row(tmp_path):
     assert _prompt_texts(conn, by_start[START_B]["id"]) == ["bravo only"]
     assert tag in tag_names(conn, "conversation", by_start[START_A]["id"])
     assert tag not in tag_names(conn, "conversation", by_start[START_B]["id"])
+
+
+def test_idless_sibling_a_month_later_with_the_same_prompt_does_not_claim_the_legacy_row(tmp_path):
+    """Review round 2, finding 1: an id-less message is matched by text AND time.
+
+    A and B share a sessionId and both prompt "continue", but B opened a month
+    after A. Matching id-less messages by text alone let B adopt A's legacy row,
+    deleting A's conversation and moving its tag to B. The timestamp is evidence
+    too: B's message is not A's message.
+    """
+    project = tmp_path / "proj"
+    B_START = "2026-01-28T16:42:00.000Z"
+    a = _write_chat(
+        project, "session-2025-12-28T16-42-2c1f6a0e",
+        session_id=SESSION, start=START_A, last_updated="2025-12-28T17:00:00.000Z",
+        prompts=["continue"], idless=True,
+    )
+    b = _write_chat(
+        project, "session-2026-01-28T16-42-2c1f6a0e",
+        session_id=SESSION, start=B_START,
+        last_updated="2026-01-28T17:00:00.000Z",
+        prompts=["continue"], idless=True,
+    )
+    conn = create_database(tmp_path / "siftd.db")
+    legacy_id = _store_superseded_row(conn, a, f"{gemini_cli.NAME}::{SESSION}")
+    tag = _tag(conn, legacy_id)
+    conn.execute("DELETE FROM ingested_files WHERE path = ?", (str(a),))
+    conn.commit()
+
+    _ingest(conn, tmp_path, order=[b, a])
+
+    by_start = _conversations_by_start(conn)
+    assert len(by_start) == 2, "B's ingest deleted A's legacy conversation"
+    assert tag in tag_names(conn, "conversation", by_start[START_A]["id"]), "A's tag moved to B"
+    assert tag not in tag_names(conn, "conversation", by_start[B_START]["id"])

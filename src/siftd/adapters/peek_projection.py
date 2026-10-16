@@ -15,7 +15,8 @@ them. The text, placeholder and hint helpers it reuses stay in ``sdk.py``.
 
 Peek reads one file, so one file must yield one conversation. A source that
 yields several raises :class:`~siftd.adapters.assembly.AssemblyError` rather
-than showing an arbitrary one.
+than showing an arbitrary one, unless the adapter names which one is live
+(``last_of_many``, aider's history file).
 
 What the projection shows:
 
@@ -118,6 +119,7 @@ def make_peek_hooks_from_decoder(
     harness: Harness,
     default_session_for: Callable[[Path], Session | None],
     tool_aliases: Mapping[str, str] | None = None,
+    last_of_many: bool = False,
 ) -> tuple[
     Callable[[Path], PeekScanResult | None],
     Callable[..., list[PeekExchange]],
@@ -130,19 +132,26 @@ def make_peek_hooks_from_decoder(
     decoder states none (usually ``Session(external_id=f"{NAME}::{path.stem}")``),
     and ``tool_aliases``, the adapter's ``TOOL_ALIASES``. Passing the adapter's
     aliases is what keeps peek's tool names the ones the record folds showed.
+    ``last_of_many`` is for a container source (aider's history file, which
+    every session is appended to). Peek shows its last conversation, the live
+    one, instead of refusing a file that holds several.
+
     Returns ``(peek_scan, peek_exchanges, peek_tail)`` with the signatures
     :func:`siftd.adapters.sdk.make_peek_hooks` returns, so an adapter switches
     by replacing that call.
     """
 
     def assembled(path: Path) -> Assembly:
-        return assemble(
+        assembly = assemble(
             Source(kind="file", location=path),
             read=read,
             decoder=decoder,
             harness=harness,
             default_session=default_session_for(path),
         )
+        if last_of_many and assembly.conversations:
+            return Assembly(conversations=assembly.conversations[-1:], ledger=assembly.ledger)
+        return assembly
 
     def peek_scan(path: Path) -> PeekScanResult | None:
         return peek_scan_from_assembly(assembled(path))

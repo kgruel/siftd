@@ -21,9 +21,7 @@
         "responses": [
           {
             "attributes": {
-              "approx_cost": "0.01",
-              "approx_input_tokens": "2100",
-              "approx_output_tokens": "256"
+              "approx_cost": "0.01"
             },
             "content": [
               {
@@ -35,11 +33,15 @@
               {
                 "block_type": "tool_output",
                 "content": {
-                  "text": "Tokens: 2.1k sent, 256 received. Cost: $0.01\nApplied edit to hello.py\nCommit abc1234 feat: add hello world script"
+                  "text": "Applied edit to hello.py\nCommit abc1234 feat: add hello world script"
                 }
               }
             ],
-            "timestamp": "2025-07-15T14:32:01+00:00"
+            "timestamp": "2025-07-15T14:32:01+00:00",
+            "usage": {
+              "input_tokens": 2100,
+              "output_tokens": 256
+            }
           }
         ],
         "timestamp": "2025-07-15T14:32:01+00:00"
@@ -56,9 +58,7 @@
         "responses": [
           {
             "attributes": {
-              "approx_cost": "0.02",
-              "approx_input_tokens": "3200",
-              "approx_output_tokens": "512"
+              "approx_cost": "0.02"
             },
             "content": [
               {
@@ -70,11 +70,15 @@
               {
                 "block_type": "tool_output",
                 "content": {
-                  "text": "Tokens: 3.2k sent, 512 received. Cost: $0.02\nApplied edit to hello.py"
+                  "text": "Applied edit to hello.py"
                 }
               }
             ],
-            "timestamp": "2025-07-15T14:32:01+00:00"
+            "timestamp": "2025-07-15T14:32:01+00:00",
+            "usage": {
+              "input_tokens": 3200,
+              "output_tokens": 512
+            }
           }
         ],
         "timestamp": "2025-07-15T14:32:01+00:00"
@@ -104,9 +108,7 @@
         "responses": [
           {
             "attributes": {
-              "approx_cost": "0.05",
-              "approx_input_tokens": "4500",
-              "approx_output_tokens": "1200"
+              "approx_cost": "0.05"
             },
             "content": [
               {
@@ -118,11 +120,15 @@
               {
                 "block_type": "tool_output",
                 "content": {
-                  "text": "Tokens: 4.5k sent, 1.2k received. Cost: $0.05\nApplied edit to src/auth.py"
+                  "text": "Applied edit to src/auth.py"
                 }
               }
             ],
-            "timestamp": "2025-07-15T15:10:00+00:00"
+            "timestamp": "2025-07-15T15:10:00+00:00",
+            "usage": {
+              "input_tokens": 4500,
+              "output_tokens": 1200
+            }
           }
         ],
         "timestamp": "2025-07-15T15:10:00+00:00"
