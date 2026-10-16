@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Antigravity sessions now record their token usage**, which the adapter
+  never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
+
 ## [0.12.4] - 2026-10-15
 
 0.12.3 was tagged but never published: its package build failed. This release

@@ -140,6 +140,11 @@ def uncached_input_sql(response_alias: str = "r") -> str:
     where it matters: a ``cache_read`` exceeding ``input_tokens`` can only be the
     exclusive convention.
 
+    The default branch is the inclusive form, so every row that reaches it must
+    store ``input_tokens`` INCLUSIVE. An adapter whose native input is exclusive
+    but whose source falls through to this branch normalizes at parse time:
+    ``antigravity_cli`` (source ``google``) stores native input + cache_read.
+
     The caller's flatten MUST expose ``{r}.input_tokens``, ``{r}.cache_read`` and
     ``{r}.source`` as columns. Returns a non-negative scalar expression.
     """

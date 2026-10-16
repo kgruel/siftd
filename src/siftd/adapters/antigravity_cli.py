@@ -13,13 +13,28 @@ that declared it). Session identity and workspace are not in the transcript
 itself; workspace is recovered from a sibling ``history.jsonl`` at the
 Antigravity CLI root, keyed by conversation id.
 
+Token usage: a PLANNER_RESPONSE step may carry ``input_tokens``,
+``cache_read_tokens`` and ``output_tokens`` (present in 253 of 496 corpus
+transcripts, all from 2026-10 onward; absent otherwise). Each such step
+becomes ``Response.usage`` on the Response that step itself creates, so
+attribution is 1:1 by construction; result steps carry no usage. Antigravity
+reports ``input_tokens`` EXCLUSIVE of cache reads: ``input_tokens`` is below
+``cache_read_tokens`` in 4,105 of 4,934 corpus records, which an inclusive
+count cannot produce. The stored ``input_tokens`` is the INCLUSIVE total,
+because ``uncached_input_sql`` reads a ``google``-source row that way; the
+native input is recovered as ``total - cache_read``. The cache read is stored
+as the ``cache_read_input_tokens`` response attribute, the key ``cost.sql`` and
+the usage rollup read. No cache-creation count is reported.
+
 Known gaps:
-    - No token usage or model id anywhere in the transcript JSONL itself.
-      Model identity IS recoverable from the sibling per-conversation SQLite
-      DB (``conversations/<conversation-id>.db``, table ``gen_metadata``,
-      protobuf blobs) and is extracted here when that DB is readable; token
-      usage extraction from the same blobs is not attempted. When the DB is
+    - No model id in the transcript JSONL itself. Model identity IS recoverable
+      from the sibling per-conversation SQLite DB (``conversations/<conversation-id>.db``,
+      table ``gen_metadata``, protobuf blobs) and is extracted here when that DB
+      is readable; the blobs are not mined for token counts. When the DB is
       missing or unreadable, behavior degrades to JSONL-only (model=None).
+      Most corpus responses carry a ``MODEL_PLACEHOLDER_*`` enum rather than a
+      display name; every model string the adapter emits in the corpus is
+      unpriced (no pricing row matches it), so token rows store but cost NULL.
     - Tool calls declared but never resolved before the transcript ends
       (e.g. a backgrounded run_command the user interrupted) surface as
       status="pending" ToolCalls with no result, same fallback used by
@@ -43,6 +58,7 @@ import re
 import sqlite3
 from collections.abc import Iterable, Iterator
 from pathlib import Path
+from typing import NamedTuple
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
 from siftd.adapters.sdk import (
@@ -60,6 +76,7 @@ from siftd.domain import (
     Response,
     Source,
     ToolCall,
+    Usage,
 )
 
 # Adapter self-description
@@ -247,6 +264,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 conversation.prompts.append(current_prompt)
             current_response = Response(timestamp=timestamp, model=model)
             current_prompt.responses.append(current_response)
+            _attach_planner_usage(current_response, record)
 
             thinking = record.get("thinking")
             if thinking:
@@ -313,6 +331,52 @@ def parse(source: Source) -> Iterable[Conversation]:
     flush_pending()
 
     yield from yield_conversation(conversation)
+
+
+class _PlannerTokens(NamedTuple):
+    """One PLANNER_RESPONSE's token counts, in siftd's stored convention.
+
+    ``input_tokens`` is the inclusive total (native input + cache read);
+    ``cache_read`` is the cached part of it; ``output_tokens`` is native.
+    """
+
+    input_tokens: int
+    cache_read: int
+    output_tokens: int
+
+
+def _planner_tokens(record: dict) -> _PlannerTokens | None:
+    """Read a PLANNER_RESPONSE's token fields, or None when the step carries none.
+
+    Antigravity's native ``input_tokens`` EXCLUDES cache reads, so the stored
+    input is the sum. ``uncached_input_sql`` (the default branch for a
+    ``google``-source row) subtracts ``cache_read`` again, which recovers the
+    native input exactly. Storing the native value would make the cost path
+    subtract the cached part a second time and under-count uncached input.
+    """
+    if "input_tokens" not in record:
+        return None
+    native_input = record.get("input_tokens") or 0
+    cache_read = record.get("cache_read_tokens") or 0
+    return _PlannerTokens(
+        input_tokens=native_input + cache_read,
+        cache_read=cache_read,
+        output_tokens=record.get("output_tokens") or 0,
+    )
+
+
+def _attach_planner_usage(response: Response, record: dict) -> None:
+    """Attach a PLANNER_RESPONSE's tokens to the Response that step created.
+
+    Attribution is 1:1 by construction: every PLANNER_RESPONSE opens its own
+    Response, and result steps never carry usage. The counts therefore land on
+    the model turn that spent them, not on a later tool result.
+    """
+    tokens = _planner_tokens(record)
+    if tokens is None:
+        return
+    response.usage = Usage(input_tokens=tokens.input_tokens, output_tokens=tokens.output_tokens)
+    response.attributes["cache_read_input_tokens"] = str(tokens.cache_read)
 
 
 def _resolve_background_task(content: str, open_tasks: dict[str, ToolCall]) -> None:
@@ -560,7 +624,8 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
     Step types:
         "_kind": "metadata"  → metadata (session id, workspace)
         "USER_INPUT"         → user (text, unwrapped from <USER_REQUEST>)
-        "PLANNER_RESPONSE"   → assistant (thinking, text, declared tool_calls)
+        "PLANNER_RESPONSE"   → assistant (thinking, text, declared tool_calls,
+                                and the same token counts parse() attaches)
         anything else        → None (executed tool-call results aren't
                                 surfaced separately in peek, same as the
                                 declaration-only treatment codex_cli uses)
@@ -597,7 +662,16 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
                 "name": tc.get("name", "unknown"),
                 "input": _parse_tool_args(tc.get("args") or {}),
             })
-        return NormalizedRecord(kind="assistant", timestamp=timestamp, content_blocks=content_blocks)
+        tokens = _planner_tokens(raw)
+        if tokens is None:
+            return NormalizedRecord(kind="assistant", timestamp=timestamp, content_blocks=content_blocks)
+        return NormalizedRecord(
+            kind="assistant",
+            timestamp=timestamp,
+            content_blocks=content_blocks,
+            input_tokens=tokens.input_tokens,
+            output_tokens=tokens.output_tokens,
+        )
 
     return None
 

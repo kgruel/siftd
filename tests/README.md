@@ -114,7 +114,7 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 195 | 3401 |
-| `tests/adapters/` | 20 | 165 |
+| `tests/adapters/` | 20 | 171 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 640 |
 | `tests/snapshots/` | 1 | 5 |
@@ -325,7 +325,7 @@ docstring so its row is meaningful.
 |------|-------|---------|
 | [adapters/test_aider.py](adapters/test_aider.py) | 9 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
-| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 36 | Tests for Antigravity CLI adapter. |
+| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 21 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 15 | Tests for Codex CLI adapter. |

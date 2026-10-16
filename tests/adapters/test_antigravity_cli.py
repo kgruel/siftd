@@ -1,6 +1,7 @@
 """Tests for Antigravity CLI adapter."""
 
 import json
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -8,8 +9,12 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import antigravity_cli
+from siftd.api.database import create_database
 from siftd.domain import ToolCall
 from siftd.domain.source import Source
+from siftd.storage.sql_helpers import uncached_input_sql
+from siftd.storage.sqlite import get_or_create_model, get_or_create_provider, store_conversation
+from siftd.storage.usage_rollup import rebuild_rollups
 
 
 @pytest.fixture(autouse=True)
@@ -639,3 +644,109 @@ class TestAntigravityCliModelIdentity:
         _write_conversations_db(root, "conv-1", [_gen_metadata_blob()])
         conv = self._parse_one(path)
         assert conv.prompts[0].responses[0].model == "Gemini 3.5 Flash (Medium)"
+
+
+# --- Token usage (PLANNER_RESPONSE token fields) ----------------------------
+
+_TOKEN_FIXTURE = FIXTURES_DIR / "adapters" / "antigravity_cli" / "tokens" / "input.jsonl"
+
+
+def _native_planner_tokens(path: Path) -> tuple[int, int, int]:
+    """Raw-JSON sums of the native PLANNER token fields: what the adapter must conserve."""
+    native_input = cache_read = output = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        record = json.loads(line)
+        if record.get("type") == "PLANNER_RESPONSE" and "input_tokens" in record:
+            native_input += record["input_tokens"]
+            cache_read += record.get("cache_read_tokens") or 0
+            output += record.get("output_tokens") or 0
+    return native_input, cache_read, output
+
+
+def _parse_responses(path: Path):
+    (conv,) = antigravity_cli.parse(Source(kind="file", location=path))
+    return conv, [r for p in conv.prompts for r in p.responses]
+
+
+class TestAntigravityCliTokenUsage:
+    def test_planner_tokens_attach_to_the_response_that_step_creates(self):
+        _, responses = _parse_responses(_TOKEN_FIXTURE)
+        # One Response per PLANNER_RESPONSE step; the result steps between them add none.
+        assert [r.usage.output_tokens for r in responses] == [122, 122, 222, 107]
+        # Stored input is the inclusive total: native 2110 + cache_read 16282.
+        assert responses[1].usage.input_tokens == 2110 + 16282
+        assert responses[1].attributes["cache_read_input_tokens"] == "16282"
+
+    def test_parsed_usage_conserves_native_planner_tokens(self):
+        native_input, cache_read, output = _native_planner_tokens(_TOKEN_FIXTURE)
+        _, responses = _parse_responses(_TOKEN_FIXTURE)
+        assert sum(r.usage.input_tokens for r in responses) == native_input + cache_read
+        assert sum(int(r.attributes["cache_read_input_tokens"]) for r in responses) == cache_read
+        assert sum(r.usage.output_tokens for r in responses) == output
+
+    @pytest.mark.parametrize("native_input,cache_read", [(2110, 16282), (22630, 20381)])
+    def test_stored_convention_recovers_native_input_in_cost_sql(self, native_input, cache_read):
+        # google-source rows take uncached_input_sql's default branch (input - cache_read).
+        # Storing the native input there would subtract cache_read a second time.
+        conn = sqlite3.connect(":memory:")
+        try:
+            (uncached,) = conn.execute(
+                f"SELECT {uncached_input_sql('r')} FROM "
+                "(SELECT ? AS input_tokens, ? AS cache_read, 'google' AS source) r",
+                (native_input + cache_read, cache_read),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert uncached == native_input
+
+    def test_cost_path_bills_native_input_and_cache_read_separately(self, tmp_path):
+        conv, responses = _parse_responses(_TOKEN_FIXTURE)
+        for response in responses:
+            response.model = "gemini-3.1-pro"  # canonical name, so a pricing row can bill it
+        conn = create_database(tmp_path / "usage.db")
+        try:
+            model_id = get_or_create_model(conn, "gemini-3.1-pro")
+            provider_id = get_or_create_provider(conn, "google")
+            conn.execute(
+                "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+                "VALUES ('pr-test', ?, ?, 2.0, 12.0)",
+                (model_id, provider_id),
+            )
+            store_conversation(conn, conv, commit=True)
+            rebuild_rollups(conn)
+            conn.commit()
+            row = conn.execute(
+                "SELECT input_tokens, output_tokens, cache_read_tokens, cost FROM usage_by_conv_model"
+            ).fetchone()
+        finally:
+            conn.close()
+        native_input, cache_read, output = _native_planner_tokens(_TOKEN_FIXTURE)
+        assert (row["input_tokens"], row["output_tokens"], row["cache_read_tokens"]) == (
+            native_input + cache_read,
+            output,
+            cache_read,
+        )
+        # Uncached input at the input rate, cache read at the 0.1x default, output at the output rate.
+        expected = (native_input * 2.0 + cache_read * 2.0 * 0.1 + output * 12.0) / 1_000_000
+        assert row["cost"] == pytest.approx(expected)
+
+    def test_peek_tokens_agree_with_parse(self):
+        _, responses = _parse_responses(_TOKEN_FIXTURE)
+        peek_input = peek_output = 0
+        for record in antigravity_cli.iter_antigravity_records(_TOKEN_FIXTURE):
+            normalized = antigravity_cli.normalize_record(record)
+            if normalized is not None and normalized.kind == "assistant":
+                peek_input += normalized.input_tokens
+                peek_output += normalized.output_tokens
+        assert peek_input == sum(r.usage.input_tokens for r in responses)
+        assert peek_output == sum(r.usage.output_tokens for r in responses)
+
+    def test_planner_without_token_fields_has_no_usage(self, tmp_path):
+        records = [
+            {"type": "USER_INPUT", "created_at": "T1", "content": "hi"},
+            {"type": "PLANNER_RESPONSE", "created_at": "T2", "content": "hello"},
+        ]
+        path = _write_transcript(tmp_path / "antigravity-cli", "conv-1", records)
+        _, responses = _parse_responses(path)
+        assert responses[0].usage is None
+        assert "cache_read_input_tokens" not in responses[0].attributes
