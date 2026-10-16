@@ -123,6 +123,16 @@ class TestSDK:
         assert h.display_name == "Test" and h.name == "test"
         assert sdk.build_harness("t", "s", "j", display_name="X").display_name == "X"
 
+    def test_a_file_reached_through_a_symlinked_location_is_discovered_once(self, tmp_path):
+        """~/.claude symlinked to ~/.config/claude: both default locations name every file."""
+        real = tmp_path / "config" / "projects"
+        (real / "p").mkdir(parents=True)
+        (real / "p" / "s.jsonl").write_text("{}\n")
+        link = tmp_path / "home-claude"
+        link.symlink_to(tmp_path / "config")
+        found = list(sdk.discover_files(None, [str(real), str(link / "projects")], ["**/*.jsonl"]))
+        assert [s.location for s in found] == [real / "p" / "s.jsonl"]
+
     def test_yield_conversation(self):
         from siftd.domain import ContentBlock, Conversation, Prompt
         h = sdk.build_harness("test", "src", "jsonl")

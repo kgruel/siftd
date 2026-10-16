@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 from siftd.adapters.assembly import Ledger
 from siftd.adapters.contract import adapt, decodes
 from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE, Disposition
-from siftd.adapters.sdk import AdapterParseError, spells
+from siftd.adapters.sdk import AdapterParseError, same_file, spells
 from siftd.dateparse import to_utc
 from siftd.domain import Conversation, Source
 from siftd.storage.attributes import get_attribute
@@ -1282,7 +1282,7 @@ class _Plan:
     superseded_key: str | None = None
     """REPLACE of a row found under a superseded key: that key's queued tags move to the conversation."""
     released: tuple[str, ...] = ()
-    """REPLACE in a session source: other spellings of this source whose leftover pointer is cleared first."""
+    """REPLACE: other paths to this source (for a session source, other spellings) whose pointer is cleared first."""
     moves: bool = False
     """SPLIT: the target's transcript is this conversation's alone, so its assignments move."""
 
@@ -1294,12 +1294,13 @@ def _plan(conn, adapter, conversation, target: _Target | None, *, file_path: str
     DELETE CASCADE``, so their bookkeeping would go with it). This source then
     settles as a copy of it, or stores beside it (taking the assignments its
     transcript owns); a row under the conversation's own key is always settled
-    against, since storing beside it would collide. The one exception is a
-    session source's own spellings: its bookkeeping never points at a
-    conversation, so a pointer from another spelling of this file
-    (:func:`~siftd.adapters.sdk.spells`) is a file-strategy leftover (pre-#36
-    aider), released rather than honoured, or the session would stay frozen
-    under a key no parse produces again.
+    against, since storing beside it would collide. The exception is another
+    path to this same file (a symlinked log directory), which is this source,
+    not another: its pointer is released rather than honoured, or the row could
+    never be replaced. A session source also releases its other spellings
+    (:func:`~siftd.adapters.sdk.spells`): its bookkeeping never points at a
+    conversation, so such a pointer is a file-strategy leftover (pre-#36 aider),
+    and honouring it would freeze the session under a key no parse produces again.
 
     A file's own key can hold a row its bookkeeping does not name (a new file
     after the bookkeeping was cleared, a legacy collision). That row is linked,
@@ -1315,7 +1316,9 @@ def _plan(conn, adapter, conversation, target: _Target | None, *, file_path: str
         plan = _Plan(_Action.REFUSE, target.row)
     else:
         claimants = ingested_paths_for_conversation(conn, target.row, excluding=file_path)
-        released = tuple(path for path in claimants if session and spells(path, file_path))
+        released = tuple(
+            path for path in claimants if (spells(path, file_path) if session else same_file(path, file_path))
+        )
         others = [path for path in claimants if path not in released]
         if others:
             parsed = _claimant_conversations(adapter, others)

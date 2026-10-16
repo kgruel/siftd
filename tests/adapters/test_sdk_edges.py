@@ -22,14 +22,14 @@ class TestDiscoverFilesContainment:
     def test_symlink_inside_base_is_yielded(self, tmp_path):
         base = tmp_path / "adapter"
         base.mkdir()
-        real = base / "real.jsonl"
+        # The target is not itself matched, so the link is the only path to it.
+        real = base / "real.txt"
         real.write_text("{}")
         link = base / "linked.jsonl"
         link.symlink_to(real)
 
         results = list(sdk.discover_files([base], [], ["*.jsonl"]))
-        locations = [s.location for s in results]
-        assert any("linked" in str(loc) for loc in locations)
+        assert [s.location for s in results] == [link]
 
     def test_regular_file_is_yielded(self, tmp_path):
         base = tmp_path / "adapter"

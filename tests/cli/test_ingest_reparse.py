@@ -432,6 +432,34 @@ class TestReparseRecoversLegacyGeminiRows:
 # ---------------------------------------------------------------------------
 
 
+class TestReparseOneFileUnderTwoPaths:
+    def test_a_conversation_both_spellings_point_at_is_replaced(self, tmp_path, run_cli):
+        """A log directory reached through a symlink recorded each file under two paths.
+
+        The other spelling is this source, not a copy held elsewhere: honouring it
+        settled every such conversation, so --reparse never applied a parser fix to it.
+        """
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        source = _write_source(tmp_path / "real" / "s.jsonl")
+        run_cli([_adapter([source, tmp_path / "link" / "s.jsonl"])])  # how discovery listed it before
+        cid = _conversation_id(run_cli.db, "conv-1")
+        conn = open_database(run_cli.db)
+        pointers = conn.execute("SELECT COUNT(*) FROM ingested_files WHERE conversation_id = ?", (cid,)).fetchone()[0]
+        conn.close()
+        assert pointers == 2, "precondition: both spellings point at the conversation"
+        _tag(run_cli.db, "conversation", cid, "kept")
+
+        rc, events = run_cli([_adapter(source)], "--reparse")
+
+        assert rc == 0
+        summary = _reparse_event(events)
+        assert (summary["replaced"], summary["skipped_for_tags"]) == (1, [])
+        new = _conversation_id(run_cli.db, "conv-1")
+        assert new != cid
+        assert "kept" in _conversation_tags(run_cli.db, new)
+
+
 class TestReparseFlags:
     def test_adapter_filter_limits_reparse(self, tmp_path, run_cli):
         alpha_src = _write_source(tmp_path / "alpha.jsonl")

@@ -46,6 +46,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   that followed them.
 - **Grouped session lists show a sub-agent whose parent belongs to another
   user.**
+- **Logs reached through a symlinked folder are read once.** With `~/.claude`
+  linked to `~/.config/claude`, every Claude Code file was recorded twice,
+  which also kept `--reparse` from updating those conversations.
 - **Responses stored before a conversation's first prompt are shown.** A forked
   sub-agent's transcript rendered empty in `show`, export and the web folio; it
   now reads as a "Continued from" turn, and every surface counts turns the same
