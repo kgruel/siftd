@@ -27,7 +27,7 @@ Every adapter must export:
 | `HARNESS_SOURCE` | `str` | Provider name |
 | `discover(locations=None)` | callable | Find log sources |
 | `can_handle(source)` | callable | Check if adapter handles source |
-| `parse(source)` | callable | Parse source into conversations |
+| `parse(source)` | callable | Parse source into conversations (see [Decoding to records](#decoding-to-records)) |
 
 ## Deduplication Strategy
 
@@ -89,6 +89,61 @@ external_id = f"{NAME}::{session_id}"
 # With sub-sessions (e.g., Claude Code agents)
 external_id = f"{NAME}::{session_id}::agent::{agent_id}"
 ```
+
+## Decoding to records
+
+An adapter's only tool-specific job is decoding. A reader yields raw units (a
+JSONL line, a JSON message, a database row); a decoder turns each unit into
+the canonical records in `siftd.adapters.records`; the shared assembler in
+`siftd.adapters.assembly` does the rest, once, for every adapter: it decides
+where each record attaches, merges streamed chunks of one message, pairs tool
+results with their calls in either order, places a response that precedes
+every prompt in `Conversation.preamble`, and counts every record in a ledger.
+`parse()` is then one call:
+
+```python
+from siftd.adapters.assembly import assemble, read_jsonl
+from siftd.adapters.records import Ignored, PromptRec, ResponseRec, Session, ToolCallRec, ToolResultRec
+
+class MyDecoder:
+    def __init__(self, source):  # state is allowed, but only decoding state
+        ...
+
+    def decode(self, unit: dict) -> list:
+        ...  # one unit in, the records it means out
+
+    def finish(self) -> list:  # optional: what only the end of the stream settles
+        return []
+
+def parse(source):
+    return assemble(
+        source,
+        read=read_jsonl,
+        decoder=MyDecoder,
+        harness=HARNESS,
+        default_session=Session(external_id=f"{NAME}::{source.as_path.stem}"),
+    ).conversations
+```
+
+The rules a decoder follows:
+
+- **Classify every unit.** Return `Ignored(reason=...)` for a unit that is
+  deliberately not stored, and never return nothing: an empty return is
+  counted `Unknown`, which is how a new record type in the tool's log shows up
+  instead of vanishing. Say why each ignored type is ignored in the decoder's
+  docstring.
+- **Decode, don't decide structure.** Do not look for "the current prompt" or
+  invent one for a response that arrives first; emit `PromptRec`,
+  `ResponseRec`, `ToolCallRec` and `ToolResultRec` and let the assembler place
+  them. A message identity (`key=`) merges chunks that describe one message;
+  usage on a response is a snapshot of the message's total, and a `UsageRec`
+  is an increment.
+- **Dates are evidence.** Give a record `at=` only when its time belongs in
+  the conversation's span; a bookkeeping record that lands hours later gets
+  `at=None`.
+
+`claude_code.ClaudeDecoder` is the worked example, including the table that
+names what every record type in the tool's log becomes.
 
 ## Timestamps
 
@@ -217,7 +272,32 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
 | `input_tokens` | `int` | Input token count |
 | `output_tokens` | `int` | Output token count |
 
-### SDK Helpers for Peek
+### Peek Hooks From a Decoder
+
+An adapter that decodes to records gets its peek hooks from the same decoder,
+so peek and ingest classify each record once:
+
+```python
+from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
+    read_jsonl,
+    MyDecoder,
+    HARNESS,
+    default_session_for=lambda path: Session(external_id=f"{NAME}::{path.stem}"),
+    tool_aliases=TOOL_ALIASES,
+)
+```
+
+Peek assembles the whole file, then projects the conversation, so a session
+peek shows is a session ingest would store. A file that yields several
+conversations is an error for peek, not a guess. A subagent is shown as
+`<parent>:<agent>`, derived from its `LineageRec(kind="subagent", ...)`.
+
+### SDK Helpers for Peek (Record Folds)
+
+The adapters not yet ported derive their hooks from a record normalizer
+instead:
 
 ```python
 from siftd.adapters.sdk import (

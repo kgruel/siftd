@@ -6,11 +6,85 @@ from conftest import ClaudeSession, CodexSession, write_jsonl
 
 import siftd.adapters.sdk as sdk
 from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, pi_agent, vscode
-from siftd.adapters.claude_code import normalize_record as claude_norm
+from siftd.adapters.claude_code import _is_injected_user_record, effective_role, message_id_of
 from siftd.adapters.codex_cli import normalize_record as codex_norm
 from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
+from siftd.adapters.sdk import NormalizedRecord
 from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
 from siftd.domain import Response
+
+
+def claude_norm(raw: dict) -> NormalizedRecord | None:
+    """A Claude-shaped normalizer, to exercise the SDK's record folds.
+
+    claude_code no longer has one (its peek is built from its decoder); the folds
+    still serve the adapters that have not been ported, and these tests need a
+    normalizer that emits every record kind.
+    """
+    role = effective_role(raw)
+    ts = raw.get("timestamp")
+
+    if role not in ("user", "assistant"):
+        return None
+
+    msg = raw.get("message") or {}
+    content = msg.get("content")
+    # Normalize content to list
+    if content is None:
+        content_blocks = []
+    elif isinstance(content, str):
+        content_blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        content_blocks = content
+    else:
+        content_blocks = []
+
+    if role == "user":
+        # Check if this is a tool_result message
+        has_tool_result = any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content_blocks
+        )
+        if has_tool_result:
+            return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+        # Injected content (isMeta / non-user promptSource) is not a real
+        # user prompt — surface it as metadata so peek exchange counts and
+        # prompt previews only reflect what the human actually typed.
+        if _is_injected_user_record(raw):
+            return NormalizedRecord(
+                kind="metadata",
+                timestamp=ts,
+                session_id=raw.get("sessionId"),
+                workspace_path=raw.get("cwd"),
+            )
+
+        extra: dict = {}
+        agent_id = raw.get("agentId")
+        if agent_id is not None:
+            extra["agent_id"] = agent_id
+
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+            session_id=raw.get("sessionId"),
+            workspace_path=raw.get("cwd"),
+            extra=extra,
+        )
+
+    # assistant. Usage is reported on every record and keyed by message_id so
+    # the SDK's exchange aggregation counts a streamed message once (#97).
+    usage = msg.get("usage") or {}
+    return NormalizedRecord(
+        kind="assistant",
+        timestamp=ts,
+        content_blocks=content_blocks,
+        model=msg.get("model"),
+        input_tokens=usage.get("input_tokens", 0) or 0,
+        output_tokens=usage.get("output_tokens", 0) or 0,
+        message_id=message_id_of(raw),
+    )
 
 
 class TestValidateAdapter:

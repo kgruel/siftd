@@ -10,7 +10,7 @@ from conftest import FIXTURES_DIR
 
 from siftd.adapters import claude_code
 from siftd.adapters.claude_code import TOOL_ALIASES, TOOL_HINT_KEYS
-from siftd.adapters.sdk import extract_tool_hint, peek_exchanges_from_records
+from siftd.adapters.sdk import extract_tool_hint
 from siftd.peek.follow import (
     FollowEvent,
     account_record,
@@ -584,7 +584,7 @@ class TestChargeUsage:
     @pytest.mark.parametrize("include_thinking", [False, True])
     def test_golden_stream_matches_peek_exchanges(self, include_thinking):
         records = _streamed_records()
-        exchanges = peek_exchanges_from_records(records, claude_code.normalize_record, last_n=5)
+        exchanges = claude_code.peek_exchanges(_STREAMED_FIXTURE, 5)
         peek_totals = (sum(x.input_tokens for x in exchanges), sum(x.output_tokens for x in exchanges))
         assert _charged_totals(records, include_thinking=include_thinking) == peek_totals == (2, 176)
 

@@ -20,6 +20,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Claude Code sessions keep everything they hold.** A forked sub-agent's
+  transcript, which was dropped whole, is stored; tool results written before
+  their call are paired; a message streamed over several records is one
+  response; `siftd peek` shows what ingest stores.
 - **Claude Code token and cost totals count each message once.** A streamed
   message repeats its usage on every record, and every copy was summed (about
   2.3x the real figure); stored conversations correct on re-ingest. ([#97](https://github.com/kgruel/siftd/issues/97))

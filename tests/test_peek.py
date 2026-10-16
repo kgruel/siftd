@@ -163,19 +163,27 @@ class TestPeekScan:
         empty.write_text("")
         assert peek_scan(empty) is None
 
-    def test_peek_scan_no_user_records_returns_none(self, session_dir):
-        from siftd.adapters.claude_code import peek_scan
+    def test_peek_scan_assistant_only_session_is_one_promptless_exchange(self, session_dir):
+        """The record fold hid a session with no user record from the scan while the exchange list showed it;
+        the scan now agrees with the list (and with ingest, which keeps those responses in the preamble)."""
+        from siftd.adapters.claude_code import peek_exchanges, peek_scan
 
         path = session_dir / "no-users.jsonl"
         records = [_make_assistant_record("Solo response")]
         _write_session(path, records)
-        assert peek_scan(path) is None
+        result = peek_scan(path)
+        assert result is not None and result.exchange_count == 1
+        (exchange,) = peek_exchanges(path, 5)
+        assert exchange.prompt_text is None and exchange.response_text == "Solo response"
 
     def test_peek_scan_handles_malformed_json(self, session_dir):
         from siftd.adapters.claude_code import peek_scan
 
         path = session_dir / "bad.jsonl"
-        path.write_text('{"type":"user","cwd":"/test","sessionId":"s1","message":{"role":"user","content":"hi"}}\n{broken json\n')
+        path.write_text(
+            '{"type":"user","cwd":"/test","sessionId":"s1","timestamp":"2025-01-20T10:00:00Z",'
+            '"message":{"role":"user","content":"hi"}}\n{broken json\n'
+        )
         result = peek_scan(path)
         assert result is not None
         assert result.exchange_count == 1
@@ -187,6 +195,7 @@ class TestPeekScan:
         record = {
             "type": "user",
             "cwd": "/test",
+            "timestamp": "2025-01-20T10:00:00Z",
             "message": {"role": "user", "content": "hi"},
         }
         _write_session(path, [record])
@@ -287,13 +296,13 @@ class TestPeekScan:
         result = peek_scan(path)
         assert result is not None
         assert result.parent_session_id == "parent-session-123"
-        assert result.attributes == {}
+        assert not {"agent_name", "agent_type", "agent_model", "spawn_depth"} & set(result.attributes)
 
         # Malformed meta: same outcome
         (sub_dir / "agent-y-2.meta.json").write_text("{not json")
         result = peek_scan(path)
         assert result is not None
-        assert result.attributes == {}
+        assert not {"agent_name", "agent_type", "agent_model", "spawn_depth"} & set(result.attributes)
 
 
 class TestReadSessionDetail:

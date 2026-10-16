@@ -173,6 +173,8 @@ class LineageRec:
     ``kind`` is one of ``subagent``, ``fork``, ``resume``, ``branch``.
     ``parent`` is the parent conversation's identity as the source spells it;
     ``anchor`` is the parent record the child continues from, when known.
+    A conversation has one parent per relation: where it ran (``subagent``) and
+    what it continues (the other kinds), so a forked sub-agent states both.
     """
 
     at: str | None

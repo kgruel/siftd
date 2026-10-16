@@ -5,7 +5,7 @@ test_gen_docs_*.py loads gen_docs.py. Native counters are checked against the
 golden adapter inputs, with expected values read from those inputs by hand (not
 copied from probe output). The claude split-message case is a real capture: one
 assistant message spans several streamed records, and the probe must count it
-once per message.id, while parse() counts it once per record.
+once per message.id, as parse() now does by merging them.
 
 Nothing here reads the real home-directory corpus. Measurement is driven with
 fixture paths and a fake adapter module.

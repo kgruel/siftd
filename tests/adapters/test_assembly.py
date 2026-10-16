@@ -11,7 +11,15 @@ import itertools
 
 import pytest
 
-from siftd.adapters.assembly import END_OF_STREAM, AssemblyError, Assembler, assemble, decode, read_jsonl
+from siftd.adapters.assembly import (
+    END_OF_STREAM,
+    Assembler,
+    AssemblyError,
+    assemble,
+    decode,
+    lineage_parent,
+    read_jsonl,
+)
 from siftd.adapters.records import (
     Disposition,
     Ignored,
@@ -331,6 +339,23 @@ def test_lineage_is_carried_as_attributes_and_a_second_parent_is_ignored():
     assert attrs == {"lineage.kind": "fork", "lineage.parent": "sess-parent", "lineage.anchor": "rec-9"}
     assert d(out, Disposition.LINEAGE) == 1
     assert out.ledger.reasons[(Disposition.IGNORED, "conversation already has a parent")] == 1
+
+
+def test_a_subagent_that_is_also_a_fork_keeps_both_parents():
+    """Containment (where it ran) and ancestry (what it continues) are different relations. The first stated takes
+    the bare keys, the other is qualified by kind, and lineage_parent reads either, in either arrival order."""
+    for order in (("fork", "subagent"), ("subagent", "fork")):
+        recs = {
+            "fork": LineageRec(at=None, kind="fork", parent="sess-a", anchor="rec-9"),
+            "subagent": LineageRec(at=None, kind="subagent", parent="sess-b"),
+        }
+        out = run(S, *(recs[k] for k in order), ResponseRec(at="2026-01-01T00:00:00Z"))
+        attrs = only(out).attributes
+        assert lineage_parent(attrs, "fork") == "sess-a" and lineage_parent(attrs, "subagent") == "sess-b"
+        assert lineage_parent(attrs, "resume") is None
+        assert d(out, Disposition.LINEAGE) == 2
+        assert out.ledger.reasons.get((Disposition.IGNORED, "conversation already has a parent")) is None
+    assert attrs["lineage.fork.anchor"] == "rec-9"  # the second order stored the fork qualified
 
 
 # --- time ----------------------------------------------------------------------

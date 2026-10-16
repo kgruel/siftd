@@ -1,23 +1,24 @@
-"""Peek built from the assembler agrees with today's record folds where they were right.
+"""Peek built from the assembler: the projection's own contract, and claude_code's hooks over it.
 
 Each test that names a defect asserts the corrected behavior and says in its
 docstring what the record fold did instead. The hooks under test are built by
 :func:`siftd.adapters.peek_projection.make_peek_hooks_from_decoder` over the
-real assembler; the decoders here are synthetic, so no adapter is switched.
+real assembler. claude_code's decoder is the real one; the tests that script an
+exact record stream use a synthetic decoder, so they pin the projection and not
+an adapter.
 """
 
 from __future__ import annotations
 
 import inspect
 import json
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conftest import ClaudeSession
 
-from siftd.adapters import claude_code
+from siftd.adapters import claude_code, pi_agent
 from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
 from siftd.adapters.peek_projection import (
     make_peek_hooks_from_decoder,
@@ -33,12 +34,7 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import (
-    iter_jsonl,
-    make_peek_hooks,
-    peek_exchanges_from_records,
-    peek_scan_from_records,
-)
+from siftd.adapters.sdk import make_peek_hooks
 from siftd.domain import ContentBlock, Harness, Usage
 from siftd.domain.source import Source
 
@@ -46,75 +42,13 @@ NAME = "synthetic_claude"
 HARNESS = Harness(name=NAME, source="test", log_format="jsonl")
 
 
-def _blocks(content: list[dict]) -> list[ContentBlock]:
-    return [ContentBlock(block_type=b.get("type", "unknown"), content=b) for b in content]
-
-
-class ClaudeShapedDecoder:
-    """Decodes the Claude Code JSONL shape that the ClaudeSession builder writes.
-
-    Identity follows ``claude_code.parse``: the first ``agentId`` seen names a
-    subagent, whose external id is ``<harness>::<parent>::agent::<agent>``, and
-    whose lineage record names the parent.
-    """
-
-    def __init__(self) -> None:
-        self._agent: str | None = None
-        self._lineage_seen = False
-
-    def decode(self, unit: dict) -> list:
-        out: list = []
-        at = unit.get("timestamp")
-        sid = unit.get("sessionId")
-        if sid is not None:
-            if self._agent is None:
-                self._agent = unit.get("agentId")
-            external_id = f"{NAME}::{sid}::agent::{self._agent}" if self._agent else f"{NAME}::{sid}"
-            out.append(Session(external_id=external_id, workspace_path=unit.get("cwd")))
-            if self._agent and not self._lineage_seen:
-                self._lineage_seen = True
-                out.append(LineageRec(at=None, kind="subagent", parent=f"{NAME}::{sid}"))
-        msg = unit.get("message") or {}
-        content = msg.get("content") or []
-        if unit.get("type") == "user":
-            results = [b for b in content if b.get("type") == "tool_result"]
-            if results:
-                out.extend(
-                    ToolResultRec(at=at, call_id=b["tool_use_id"], result={"content": b.get("content")})
-                    for b in results
-                )
-                return out
-            out.append(PromptRec(at=at, content=_blocks(content), external_id=unit["uuid"], key=unit["uuid"]))
-            return out
-        if unit.get("type") == "assistant":
-            key = unit["uuid"]
-            usage = msg.get("usage") or {}
-            out.append(
-                ResponseRec(
-                    at=at,
-                    content=_blocks(content),
-                    external_id=f"{NAME}::{key}",
-                    key=key,
-                    model=msg.get("model"),
-                    usage=Usage(input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens")),
-                )
-            )
-            out.extend(
-                ToolCallRec(at=at, name=b["name"], input=b.get("input") or {}, call_id=b["id"], parent_key=key)
-                for b in content
-                if b.get("type") == "tool_use"
-            )
-            return out
-        return []
-
-
 def _claude_hooks():
-    """Hooks over the Claude-shaped decoder, with the aliases claude_code's hooks use."""
+    """Hooks over claude_code's decoder with its aliases, without the sidecar enrichment of its peek_scan."""
     return make_peek_hooks_from_decoder(
         read=read_jsonl,
-        decoder=lambda source: ClaudeShapedDecoder(),
-        harness=HARNESS,
-        default_session_for=lambda path: Session(external_id=f"{NAME}::{path.stem}"),
+        decoder=claude_code.ClaudeDecoder,
+        harness=claude_code.HARNESS,
+        default_session_for=lambda path: Session(external_id=f"{claude_code.NAME}::{path.stem}"),
         tool_aliases=claude_code.TOOL_ALIASES,
     )
 
@@ -153,35 +87,33 @@ def _write_jsonl(tmp_path: Path, records: list[dict], name: str = "s.jsonl") -> 
     return path
 
 
-def _comparable(exchange) -> dict:
-    """The fields the record fold also produced; the projection adds external ids."""
-    d = asdict(exchange)
-    d.pop("prompt_external_id")
-    d.pop("response_external_ids")
-    return d
+def _records(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text().splitlines()]
 
 
-# --- parity with today's record folds on well-formed sessions ------------------
+# --- well-formed sessions: what the projection shows for claude_code ----------
 
 
-class TestParityWithRecordFolds:
+class TestWellFormedSessions:
     @pytest.mark.parametrize(
         "exchanges, tools",
         [(1, []), (3, []), (3, ["Read", "Bash"])],
         ids=["one-plain", "three-plain", "three-with-tools"],
     )
-    def test_scan_matches_the_record_fold(self, tmp_path, exchanges, tools):
-        path = ClaudeSession(tmp_path, exchanges=exchanges, name="s.jsonl").with_tools(tools).build()
-        old = peek_scan_from_records(iter_jsonl(path), claude_code.normalize_record, default_session_id=path.stem)
-        new = _claude_hooks()[0](path)
-        assert new is not None and old is not None
-        assert new.session_id == old.session_id
-        assert new.workspace_path == old.workspace_path
-        assert new.model == old.model
-        assert new.exchange_count == old.exchange_count == exchanges
-        assert new.started_at == old.started_at
-        assert new.last_activity_at == old.last_activity_at
-        assert new.parent_session_id is None and old.parent_session_id is None
+    def test_scan(self, tmp_path, exchanges, tools):
+        path = (
+            ClaudeSession(tmp_path, exchanges=exchanges, name="s.jsonl", session_id="sess-1", cwd="/p")
+            .with_tools(tools)
+            .build()
+        )
+        records = _records(path)
+        scan = _claude_hooks()[0](path)
+        assert scan is not None
+        assert (scan.session_id, scan.workspace_path, scan.exchange_count) == ("sess-1", "/p", exchanges)
+        assert scan.model == "claude-3-opus-20240229"
+        assert scan.started_at == min(r["timestamp"] for r in records)
+        assert scan.last_activity_at == max(r["timestamp"] for r in records)
+        assert scan.parent_session_id is None
 
     @pytest.mark.parametrize(
         "exchanges, tools",
@@ -189,39 +121,33 @@ class TestParityWithRecordFolds:
         ids=["one-plain", "three-plain", "three-with-tools"],
     )
     @pytest.mark.parametrize("last_n", [5, 2, 0])
-    def test_exchanges_match_the_record_fold(self, tmp_path, exchanges, tools, last_n):
+    def test_exchanges(self, tmp_path, exchanges, tools, last_n):
         path = ClaudeSession(tmp_path, exchanges=exchanges, name="s.jsonl").with_tools(tools).build()
-        old = peek_exchanges_from_records(
-            iter_jsonl(path), claude_code.normalize_record, last_n, tool_aliases=claude_code.TOOL_ALIASES
-        )
-        new = _claude_hooks()[1](path, last_n)
-        assert [_comparable(e) for e in new] == [_comparable(e) for e in old]
+        tokens = [
+            (r["message"]["usage"]["input_tokens"], r["message"]["usage"]["output_tokens"])
+            for r in _records(path)
+            if r["type"] == "assistant"
+        ]
+        shown = _claude_hooks()[1](path, last_n)
+        want = min(max(last_n, 1), exchanges)
+        assert [(e.input_tokens, e.output_tokens) for e in shown] == tokens[-want:]
+        assert all(e.prompt_text and e.response_text for e in shown)
+        assert all(e.tool_calls == [(claude_code.TOOL_ALIASES[t], 1) for t in tools] for e in shown)
 
-    def test_subagent_scan_and_exchanges_match_the_record_fold(self, tmp_path):
+    def test_subagent_scan_and_exchanges(self, tmp_path):
         path = (
             ClaudeSession(tmp_path, exchanges=2, name="agent.jsonl", session_id="parent-session-1")
             .with_subagent("sub-agent-1")
             .with_tools(["Read"])
             .build()
         )
-        old = peek_scan_from_records(
-            iter_jsonl(path),
-            claude_code.normalize_record,
-            default_session_id=path.stem,
-            subagent_path_marker=claude_code.SUBAGENT_PATH_MARKER,
-            file_path=path,
-        )
-        new = _claude_hooks()[0](path)
-        assert new is not None and old is not None
-        assert new.session_id == old.session_id == "parent-session-1:sub-agent-1"
-        assert new.parent_session_id == old.parent_session_id == "parent-session-1"
-        assert new.exchange_count == old.exchange_count == 2
-
-        old_ex = peek_exchanges_from_records(
-            iter_jsonl(path), claude_code.normalize_record, 5, tool_aliases=claude_code.TOOL_ALIASES
-        )
-        new_ex = _claude_hooks()[1](path, 5)
-        assert [_comparable(e) for e in new_ex] == [_comparable(e) for e in old_ex]
+        scan = _claude_hooks()[0](path)
+        assert scan is not None
+        assert scan.session_id == "parent-session-1:sub-agent-1"
+        assert scan.parent_session_id == "parent-session-1"
+        assert scan.exchange_count == 2
+        shown = _claude_hooks()[1](path, 5)
+        assert len(shown) == 2 and all(e.tool_calls == [("file.read", 1)] for e in shown)
 
     def test_tool_calls_and_external_ids_come_from_the_assembled_calls(self, tmp_path):
         path = ClaudeSession(tmp_path, exchanges=1, name="s.jsonl").with_tools(["Read"]).build()
@@ -231,8 +157,8 @@ class TestParityWithRecordFolds:
         assert ex.narrative[-1].block_type == "tool_calls"
         assert ex.narrative[-1].tool_calls[0].tool_name == "file.read"
         assert ex.narrative[-1].tool_calls[0].external_id == "tool-0-Read"
-        assert ex.prompt_external_id == "u-0"
-        assert ex.response_external_ids == [f"{NAME}::a-0"]
+        assert ex.prompt_external_id == "claude_code::u-0"
+        assert ex.response_external_ids == ["claude_code::a-0"]
 
     def test_the_tail_is_the_raw_last_lines(self, tmp_path):
         path = _write_jsonl(tmp_path, [{"n": 1}, {"n": 2}, {"n": 3}])
@@ -240,7 +166,7 @@ class TestParityWithRecordFolds:
 
     def test_hook_signatures_match_make_peek_hooks(self, tmp_path):
         path = ClaudeSession(tmp_path, exchanges=1, name="s.jsonl").build()
-        old_scan, old_exchanges, old_tail = make_peek_hooks(claude_code.normalize_record)
+        old_scan, old_exchanges, old_tail = make_peek_hooks(pi_agent.normalize_record)
         new_scan, new_exchanges, new_tail = _claude_hooks()
         for old, new in ((old_scan, new_scan), (old_exchanges, new_exchanges), (old_tail, new_tail)):
             assert str(inspect.signature(old)) == str(inspect.signature(new))
@@ -277,9 +203,9 @@ class TestIdentityAndNames:
         path = ClaudeSession(tmp_path, exchanges=1, name="s.jsonl").with_tools(["Read"]).build()
         _, exchanges, _ = make_peek_hooks_from_decoder(
             read=read_jsonl,
-            decoder=lambda source: ClaudeShapedDecoder(),
+            decoder=claude_code.ClaudeDecoder,
             harness=HARNESS,
-            default_session_for=lambda p: Session(external_id=f"{NAME}::{p.stem}"),
+            default_session_for=lambda p: Session(external_id=f"{claude_code.NAME}::{p.stem}"),
         )
         (ex,) = exchanges(path, 5)
         assert ex.tool_calls == [("Read", 1)]

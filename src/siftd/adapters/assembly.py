@@ -43,6 +43,10 @@ Placement rules, which are the decisions the adapters each used to make alone:
   create no event. An undated event takes the nearest earlier time, or
   failing that the nearest later one, and the bounds span all of them.
   Parsing never reads the wall clock, so it is a pure function of the source.
+- **Lineage.** A conversation has one parent per relation: where it ran
+  (``subagent``) and what it continues (``fork``, ``resume``, ``branch``). A
+  second parent of the same relation is ignored by name. Both relations are
+  carried as attributes; ``lineage_parent`` reads a kind from either.
 - **Identity.** ``Session`` records open conversations; a restated
   ``Session`` fills only what is still unknown. A source with no ``Session``
   uses the caller's ``default_session``, whose fields sit beneath anything
@@ -59,7 +63,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -82,6 +86,11 @@ from siftd.adapters.records import (
 from siftd.domain import Conversation, Harness, Prompt, Response, ToolCall, Usage
 from siftd.domain.source import Source
 from siftd.errors import SiftdError
+
+#: Lineage kinds that say where a conversation ran (a subagent runs inside its
+#: parent session). Every other kind says what it continues. A conversation
+#: has one parent of each relation, so a forked subagent keeps both.
+CONTAINMENT_KINDS = frozenset({"subagent"})
 
 #: Origin of records a decoder returns from ``finish()`` rather than for a unit.
 END_OF_STREAM = -1
@@ -234,7 +243,8 @@ class _Build:
         # PATCH once it is placed, ORPHAN if it never is.
         self.results_on_unplaced: dict[int, list[ToolResultRec]] = {}
         self.placed: set[int] = set()
-        self.has_lineage = False
+        # Which lineage relations the conversation already states (see CONTAINMENT_KINDS)
+        self.lineage_relations: set[str] = set()
 
         # Every record's timestamp in arrival order, with the event it created
         # (or None for records that only lend their time: merged chunks,
@@ -557,15 +567,20 @@ class Assembler:
     def _on_lineage(self, rec: LineageRec) -> None:
         build = self._current()
         build.anchor(rec.at)
-        if build.has_lineage:
+        relation = "containment" if rec.kind in CONTAINMENT_KINDS else "ancestry"
+        if relation in build.lineage_relations:
             self.ledger.record(rec, Disposition.IGNORED, "conversation already has a parent")
             return
-        build.has_lineage = True
-        # Carried as attributes until conversation_links exists (P3).
-        build.attributes["lineage.kind"] = rec.kind
-        build.attributes["lineage.parent"] = rec.parent
+        # Carried as attributes until conversation_links exists (P3). The first
+        # relation stated takes the bare keys; the other, if any, is qualified
+        # by its kind. ``lineage_parent`` reads either.
+        prefix = "lineage" if not build.lineage_relations else f"lineage.{rec.kind}"
+        build.lineage_relations.add(relation)
+        if prefix == "lineage":
+            build.attributes["lineage.kind"] = rec.kind
+        build.attributes[f"{prefix}.parent"] = rec.parent
         if rec.anchor is not None:
-            build.attributes["lineage.anchor"] = rec.anchor
+            build.attributes[f"{prefix}.anchor"] = rec.anchor
         self.ledger.record(rec, Disposition.LINEAGE)
 
     def _on_ignored(self, rec: Ignored) -> None:
@@ -587,6 +602,13 @@ class Assembler:
         Ignored: _on_ignored,
         Unknown: _on_unknown,
     }
+
+
+def lineage_parent(attributes: Mapping[str, str], kind: str) -> str | None:
+    """The parent a conversation's lineage names for ``kind``, whichever relation stated it first."""
+    if attributes.get("lineage.kind") == kind:
+        return attributes.get("lineage.parent")
+    return attributes.get(f"lineage.{kind}.parent")
 
 
 def _apply_result(call: ToolCall, rec: ToolResultRec) -> None:

@@ -6,12 +6,14 @@ from conftest import ClaudeSession, CodexSession, CopilotSession, PiAgentSession
 from siftd.adapters import claude_code, codex_cli, copilot_cli, pi_agent
 from siftd.adapters.sdk import iter_jsonl, peek_exchanges_from_records, peek_scan_from_records
 
+# Adapters that still peek through a normalize_record() record fold.
 JSONL_ADAPTERS = [
-    pytest.param(ClaudeSession, claude_code, id="claude_code"),
     pytest.param(CodexSession, codex_cli, id="codex_cli"),
     pytest.param(PiAgentSession, pi_agent, id="pi_agent"),
     pytest.param(CopilotSession, copilot_cli, id="copilot_cli"),
 ]
+# Every adapter with module-level peek hooks, whether folded or built from a decoder.
+PEEK_ADAPTERS = [pytest.param(ClaudeSession, claude_code, id="claude_code"), *JSONL_ADAPTERS]
 
 
 def _collect_normalized(path, adapter_module):
@@ -57,7 +59,7 @@ class TestNormalizerPeekIntegration:
 
 
 class TestMakePeekHooksIntegration:
-    @pytest.mark.parametrize("builder_cls, adapter", JSONL_ADAPTERS)
+    @pytest.mark.parametrize("builder_cls, adapter", PEEK_ADAPTERS)
     def test_generated_hooks(self, tmp_path, builder_cls, adapter):
         """Adapter's module-level peek_scan/peek_exchanges work correctly."""
         path = builder_cls(tmp_path, exchanges=3).build()

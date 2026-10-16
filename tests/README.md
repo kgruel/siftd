@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 199 | 3471 |
-| `tests/adapters/` | 22 | 266 |
+| `tests/` | 199 | 3473 |
+| `tests/adapters/` | 22 | 286 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -147,7 +147,7 @@ docstring so its row is meaningful.
 | [test_auth.py](test_auth.py) | 4 | Tests for siftd.api.auth — token acquisition. |
 | [test_auto_index_hook.py](test_auto_index_hook.py) | 22 | Tests for the post-ingest auto-index hook (base lane — collaborators stubbed). |
 | [test_auto_index_integration.py](test_auto_index_integration.py) | 2 | Real-backend integration for the post-ingest auto-index hook (embed lane — fastembed). |
-| [test_backfill.py](test_backfill.py) | 29 | Tests for siftd.backfill module. |
+| [test_backfill.py](test_backfill.py) | 31 | Tests for siftd.backfill module. |
 | [test_blobs.py](test_blobs.py) | 0 | Blob storage tests — now in test_storage.py. |
 | [test_browser_smoke_remote.py](test_browser_smoke_remote.py) | 13 | Unit coverage for the opt-in Browserless T3 transport and containment. |
 | [test_browser_smoke_waits.py](test_browser_smoke_waits.py) | 15 | Unit coverage for the T3 smoke's condition waits, driven by a scripted CDP wire. |
@@ -330,8 +330,8 @@ docstring so its row is meaningful.
 | [adapters/test_aider.py](adapters/test_aider.py) | 9 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
-| [adapters/test_assembly.py](adapters/test_assembly.py) | 47 | The shared assembler places every record and accounts for every one. |
-| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 26 | Tests for Claude Code adapter. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 48 | The shared assembler places every record and accounts for every one. |
+| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 29 | Tests for Codex CLI adapter. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 7 | Tests for Copilot CLI adapter. |
@@ -341,7 +341,7 @@ docstring so its row is meaningful.
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
-| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 20 | Peek built from the assembler agrees with today's record folds where they were right. |
+| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 20 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
 | [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
 | [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
