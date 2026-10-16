@@ -216,7 +216,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         tool_chars: int
         no_header: bool
     """
-    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, preamble_heading
     from siftd.output.narrative import HtmlEmitter
     from siftd.serialization.narrative import walk_narrative
 
@@ -286,6 +286,10 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         nav += "</span>"
 
         parts.append(f'<section class="turn" id="{turn_id}">')
+
+        heading = preamble_heading(turn)
+        if heading:
+            parts.append(f'<p class="turn__preamble">{escape(heading)}</p>')
 
         prompt_text = getattr(turn, "prompt_text", None)
         if prompt_text:
@@ -410,7 +414,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         if depth >= 1:
             model = fmt_model(c.model) if c.model else ""
             parts.append(f'<td class="model">{escape(model)}</td>')
-            parts.append(f'<td class="metric">{c.prompt_count}</td>')
+            parts.append(f'<td class="metric">{c.turn_count}</td>')
             parts.append(f'<td class="metric">{escape(fmt_tokens(c.total_tokens))}</td>')
         if depth >= 3:
             if c.cost is None:
@@ -1014,10 +1018,12 @@ class _FolioEmitter:
         return "\n".join(self.parts)
 
 
-def _folio_rail_item(n: int, role: str, label: str, time: str, anchor: str) -> str:
+def _folio_rail_item(turn_no: int, role: str, label: str, time: str, anchor: str) -> str:
+    """One rail row. ``turn_no`` is the turn's number (the exchange number
+    ``--at-turn`` and ``siftd id`` use); a turn's user and assistant rows share it."""
     return (
         f'<a class="turn-item" data-role="{role}" href="#{anchor}">'
-        f'<span class="turn-item__n">{n:02d}</span>'
+        f'<span class="turn-item__n">{turn_no:02d}</span>'
         f'<span class="turn-item__role">{label}</span>'
         f'<span class="turn-item__t">{escape(time)}</span></a>'
     )
@@ -1118,13 +1124,18 @@ def _render_turn_blocks(
       ``get_conversation`` only populates tool input/result when it does), so
       ``mode`` and ``fidelity`` are resolved together at the route.
 
+    A turn is the fold's turn (one ``Turn``, the preamble included), not a rendered
+    block: a turn renders up to two blocks, whose anchors (``t-1``, ``t-2``...)
+    count blocks so each stays unique, while the rail numbers and the Activity
+    registry carry the turn's number.
+
     Returns ``(body, rail, n, tool_counter, tool_seq)``: the body divs, the rail
-    items (empty unless ``id_prefix``), the rail-item count (= the folio's
-    "Turns N"), the tool-call ``Counter`` (the reading-mode aggregate ledger),
+    items (empty unless ``id_prefix``), the number of turns (= the folio's
+    "Turns N", the same count the listing and API report), the tool-call ``Counter`` (the reading-mode aggregate ledger),
     and ``tool_seq`` — the chronological Activity registry (trace mode only;
     each entry {id, name, target, status, turn} anchors a body ``.tool-call``).
     """
-    from siftd.output.common import fmt_timestamp
+    from siftd.output.common import fmt_timestamp, preamble_heading
     from siftd.output.narrative import HtmlEmitter
     from siftd.serialization.narrative import walk_narrative
 
@@ -1134,22 +1145,27 @@ def _render_turn_blocks(
     rail: list[str] = []
     tool_counter: Counter[str] = Counter()
     tool_seq: list[dict] = []
-    n = 0
+    blocks = 0  # rendered user/assistant blocks: anchor ids only, never a count of turns
 
     for i, turn in enumerate(turns):
+        turn_no = i + 1
         amark = " is-anchor" if anchor_pos is not None and i == anchor_pos else ""
         t_time = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True) or ""
         prompt_text = getattr(turn, "prompt_text", None)
         narrative = getattr(turn, "narrative", []) or []
         summaries = getattr(turn, "tool_call_summaries", []) or []
+        # The turn before the first prompt has no user block to open it; it says
+        # what it is under its assistant header.
+        heading = preamble_heading(turn)
+        heading_html = f'<p class="turn__preamble">{escape(heading)}</p>' if heading else ""
 
         if prompt_text:
-            n += 1
+            blocks += 1
             idattr = ""
             if id_prefix:
-                anchor = f"{id_prefix}-{n}"
+                anchor = f"{id_prefix}-{blocks}"
                 idattr = f' id="{anchor}"'
-                rail.append(_folio_rail_item(n, "user", "User", t_time, anchor))
+                rail.append(_folio_rail_item(turn_no, "user", "User", t_time, anchor))
             # A prompt is a single event: anchor the whole user div by its
             # prompt_id (a ULID) so the search → folio jump can scroll/highlight
             # it. The assistant body's events are anchored inside, by the emitter.
@@ -1171,7 +1187,7 @@ def _render_turn_blocks(
             )
 
         if narrative:
-            n += 1
+            blocks += 1
             tool_parts: list[str] = []
             for s in summaries:
                 tool_counter[s.tool_name] += s.count
@@ -1185,9 +1201,9 @@ def _render_turn_blocks(
             )
             idattr = ""
             if id_prefix:
-                anchor = f"{id_prefix}-{n}"
+                anchor = f"{id_prefix}-{blocks}"
                 idattr = f' id="{anchor}"'
-                rail.append(_folio_rail_item(n, "assistant", "Assistant", t_time, anchor))
+                rail.append(_folio_rail_item(turn_no, "assistant", "Assistant", t_time, anchor))
             # Only the folio (id_prefix set) collects the Activity registry +
             # emits evt-N ids: the inline search-context slice has no aside and
             # can coexist with other slices, so it must not mint colliding ids.
@@ -1196,7 +1212,7 @@ def _render_turn_blocks(
                 HtmlEmitter(
                     target_event_id,
                     tool_seq=tool_seq if collect else None,
-                    turn_no=n,
+                    turn_no=turn_no,
                     event_tags=event_tags,
                     block_tags=block_tags,
                     interactive_tags=interactive_tags,
@@ -1227,12 +1243,13 @@ def _render_turn_blocks(
                 f'<div class="turn{amark}" data-role="assistant"{idattr}>'
                 f'<header class="turn__head"><span class="turn__role">Assistant</span>'
                 f'<span class="turn__time">{escape(t_time)}</span>{tools_html}</header>'
+                f'{heading_html}'
                 f'<div class="turn__text">{emitter.to_html()}</div>'
                 f'{assistant_tags}'
                 f"</div>"
             )
 
-    return body, rail, n, tool_counter, tool_seq
+    return body, rail, len(turns), tool_counter, tool_seq
 
 
 def folio_detail_from_session(detail: Any) -> Any:
@@ -1255,6 +1272,8 @@ def folio_detail_from_session(detail: Any) -> Any:
             timestamp=ex.timestamp,
             prompt_text=ex.prompt_text,
             narrative=ex.narrative,
+            preamble=ex.preamble,
+            continued_from=ex.continued_from,
             tool_call_summaries=[
                 SimpleNamespace(tool_name=name, count=count)
                 for name, count in (ex.tool_calls or [])
@@ -1402,9 +1421,9 @@ def render_folio(detail: Any, fidelity: Fidelity, **context: Any) -> str:
         aside_label, aside_count = "Tool ledger", sum(tool_counter.values())
         aside_body = f'<ul class="ledger">{"".join(ledger_rows)}</ul>'
 
-    # The count is rail items (each User / Assistant message is a turn), so the
-    # "Turns N" header matches the rail length — not the exchange count, which
-    # would under-report by ~half (one exchange renders two turns).
+    # The count is the fold's turns (preamble included), the same number the
+    # listing and the API report. The rail has up to two rows per turn (user and
+    # assistant), numbered by turn, so its length is not the count.
     turn_count = n
     kick = context.get("kick") or (f"{escape(short)} · folio" if short else "folio")
     view = context.get("view", "transcript")
@@ -1704,7 +1723,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
             f'<div class="entry__meta">{escape(model)}</div></div>'
             f'<div class="entry__figures">'
             f'<span class="figure"><span class="figure__n figure__n--dim">'
-            f'{getattr(c, "prompt_count", 0)}</span><span class="figure__k">turns</span></span>'
+            f'{getattr(c, "turn_count", 0)}</span><span class="figure__k">turns</span></span>'
             f'<span class="figure"><span class="figure__n">{escape(tok)}</span>'
             f'<span class="figure__k">tok</span></span>'
             f'<span class="figure"><span class="figure__n">{row_cost_str}</span>'
@@ -2928,7 +2947,7 @@ def render_workspace_detail(detail: Any, fidelity: Fidelity, **context: Any) -> 
             f'<li class="row"{_hx_detail(detail_base, c.id, shell_base)}>'
             f'<span class="row__ws">{escape(when)}</span>'
             f'<span class="row__model">{escape(model)}</span>'
-            f'<span class="row__turns">{getattr(c, "prompt_count", 0)}</span>'
+            f'<span class="row__turns">{getattr(c, "turn_count", 0)}</span>'
             f'<span class="row__tok">{escape(fmt_tokens(getattr(c, "total_tokens", 0) or 0))}</span>'
             f'<span class="cost">{rc_str}</span>'
             f"</li>"

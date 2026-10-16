@@ -2,11 +2,13 @@
 
 import re
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.safecall import parse_json
-from siftd.storage.sql_helpers import event_order
+from siftd.storage.sql_helpers import batched_in_query
+from siftd.storage.turns import TurnSpan, load_turns
 
 
 @dataclass
@@ -52,44 +54,47 @@ def _extract_file_content(result_json: str | None) -> str | None:
     return None
 
 
-def fetch_file_refs(
+_FILE_OPS = {"file.read": "r", "file.write": "w", "file.edit": "e"}
+
+
+def fetch_turn_file_refs(
     conn: sqlite3.Connection,
-    source_ids: list[str],
-) -> dict[str, list[FileRef]]:
-    """Batch query: prompt_ids → file references from tool calls.
+    conversation_id: str,
+    ordinals: Sequence[int],
+    *,
+    turns: Sequence[TurnSpan] | None = None,
+) -> dict[int, list[FileRef]]:
+    """File references of the turns at ``ordinals`` of one conversation, keyed by ordinal.
 
-    Args:
-        conn: Database connection with row_factory set.
-        source_ids: List of prompt IDs to fetch file refs for.
-
-    Returns:
-        Dict mapping prompt_id to list of FileRef for file.read/write/edit calls.
+    A turn's calls are those of its responses (:mod:`siftd.storage.turns`), in
+    the order they were made, so the preamble turn's calls are found like any
+    other's. Every requested ordinal is a key; a turn with no file calls maps
+    to an empty list. A caller that already folded the conversation passes its
+    ``turns`` so the transcript is not read and folded again.
     """
-    if not source_ids:
-        return {}
-
-    placeholders = ",".join("?" * len(source_ids))
-    rows = conn.execute(
+    if turns is None:
+        turns = load_turns(conn, conversation_id)
+    wanted = {o: turns[o].tool_call_ids for o in ordinals if 0 <= o < len(turns)}
+    call_ids = [cid for ids in wanted.values() for cid in ids]
+    marks = ",".join("?" * len(_FILE_OPS))
+    rows = batched_in_query(
+        conn,
         f"""
-        SELECT e_r.parent_id AS prompt_id, t.name AS tool_name,
+        SELECT e.id AS tool_call_id, t.name AS tool_name,
                etc.input AS input_json,
                cb.content AS result_json
         FROM events e
         JOIN event_tool_call etc ON etc.event_id = e.id
-        JOIN events e_r ON e_r.id = e.parent_id AND e_r.kind = 'response'
         JOIN tools t ON t.id = etc.tool_id
         LEFT JOIN content_blobs cb ON etc.result_hash = cb.hash
-        WHERE e_r.parent_id IN ({placeholders})
-          AND e.kind = 'tool_call'
-          AND t.name IN ('file.read', 'file.write', 'file.edit')
-        ORDER BY {event_order("e")}
-    """,
-        source_ids,
-    ).fetchall()
+        WHERE e.id IN ({{placeholders}})
+          AND t.name IN ({marks})
+        """,
+        call_ids,
+        suffix_params=tuple(_FILE_OPS),
+    )
 
-    refs_by_prompt: dict[str, list[FileRef]] = {}
-    op_map = {"file.read": "r", "file.write": "w", "file.edit": "e"}
-
+    ref_of_call: dict[str, FileRef] = {}
     for row in rows:
         input_data = parse_json(row["input_json"], fallback={}) if row["input_json"] else {}
 
@@ -97,13 +102,49 @@ def fetch_file_refs(
         if not path:
             continue
 
-        op = op_map.get(row["tool_name"], "?")
-        ref = FileRef(
+        ref_of_call[row["tool_call_id"]] = FileRef(
             path=path,
             basename=Path(path).name,
-            op=op,
+            op=_FILE_OPS.get(row["tool_name"], "?"),
             content=_extract_file_content(row["result_json"]),
         )
-        refs_by_prompt.setdefault(row["prompt_id"], []).append(ref)
+    return {o: [ref_of_call[cid] for cid in ids if cid in ref_of_call] for o, ids in wanted.items()}
 
+
+def fetch_file_refs(
+    conn: sqlite3.Connection,
+    source_ids: list[str],
+) -> dict[str, list[FileRef]]:
+    """Batch query: prompt_ids → file references from the tool calls of each prompt's turn.
+
+    Args:
+        conn: Database connection with row_factory set.
+        source_ids: List of prompt IDs to fetch file refs for. An id that is not
+            a prompt has no entry (a response or preamble turn is reached by
+            ordinal, through :func:`fetch_turn_file_refs`).
+
+    Returns:
+        Dict mapping prompt_id to list of FileRef for file.read/write/edit calls.
+    """
+    if not source_ids:
+        return {}
+
+    events = batched_in_query(
+        conn,
+        "SELECT id, kind, conversation_id FROM events WHERE id IN ({placeholders})",
+        source_ids,
+    )
+    by_conv: dict[str, list[str]] = {}
+    for row in events:
+        if row["kind"] == "prompt":
+            by_conv.setdefault(row["conversation_id"], []).append(row["id"])
+
+    refs_by_prompt: dict[str, list[FileRef]] = {}
+    for conv_id, prompt_ids in by_conv.items():
+        wanted = set(prompt_ids)
+        ordinal_of = {t.prompt_id: o for o, t in enumerate(load_turns(conn, conv_id)) if t.prompt_id in wanted}
+        refs = fetch_turn_file_refs(conn, conv_id, list(ordinal_of.values()))
+        for pid, ordinal in ordinal_of.items():
+            if refs[ordinal]:
+                refs_by_prompt[pid] = refs[ordinal]
     return refs_by_prompt

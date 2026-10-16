@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import pytest
 
 from siftd.adapters.sdk import AdapterParseError
-from siftd.storage.events import get_last_event_id, get_prompt_by_index
+from siftd.domain import Conversation
 from siftd.ingestion import IngestStats
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
@@ -16,6 +16,8 @@ from siftd.ingestion.orchestration import (
     _truncate_summary,
     _update_stats_for_conversation,
 )
+from siftd.storage.events import get_last_event_id
+from siftd.storage.turns import turn_at_exchange
 
 
 class TestCompareTimestamps:
@@ -132,8 +134,12 @@ class _MockPrompt:
 
 
 class _MockConversation:
+    # The real property, so the mock counts turns by the rule the summary reads.
+    turn_count = Conversation.turn_count
+
     def __init__(self, prompts=None, workspace_path="/proj"):
         self.prompts = prompts or []
+        self.preamble = []
         self.workspace_path = workspace_path
 
 
@@ -167,7 +173,7 @@ class TestSummarizeConversation:
         assert result["exchange_count"] == 0
 
 
-class TestGetPromptByIndex:
+class TestTurnAtExchange:
     """Index validation happens before any lookup, so an empty DB is enough."""
 
     @pytest.fixture
@@ -181,18 +187,18 @@ class TestGetPromptByIndex:
             conn.close()
 
     def test_zero_raises_value_error(self, conn):
-        """get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+        """turn_at_exchange rejects exchange_index=0 (0-based index, API is 1-based)."""
         with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-            get_prompt_by_index(conn, "any-conv-id", 0)
+            turn_at_exchange(conn, "any-conv-id", 0)
 
     def test_negative_raises_value_error(self, conn):
-        """get_prompt_by_index rejects negative exchange_index."""
+        """turn_at_exchange rejects negative exchange_index."""
         with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-            get_prompt_by_index(conn, "any-conv-id", -1)
+            turn_at_exchange(conn, "any-conv-id", -1)
 
     def test_none_returns_none(self, conn):
-        """get_prompt_by_index returns None when exchange_index is None."""
-        assert get_prompt_by_index(conn, "any-conv-id", None) is None
+        """turn_at_exchange returns None when exchange_index is None."""
+        assert turn_at_exchange(conn, "any-conv-id", None) is None
 
 
 class TestGetLastEventId:

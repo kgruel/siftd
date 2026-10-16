@@ -69,7 +69,7 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
         turns: override which turns to render (default: result.turns)
         no_header: bool — omit session header (default: False)
     """
-    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace
+    from siftd.output.common import fmt_model, fmt_timestamp, fmt_tokens, fmt_workspace, preamble_heading
     from siftd.output.narrative import MarkdownEmitter
     from siftd.serialization.narrative import walk_narrative
 
@@ -114,6 +114,11 @@ def render_detail(result: Any, fidelity: Fidelity, **context: Any) -> str:
     for turn in turns:
         ts = fmt_timestamp(getattr(turn, "timestamp", None), time_only=True)
         ts_prefix = f"{ts} — " if ts else ""
+
+        heading = preamble_heading(turn)
+        if heading:
+            lines.append(f"*{heading}*")
+            lines.append("")
 
         prompt_text = getattr(turn, "prompt_text", None)
         if prompt_text:
@@ -172,7 +177,7 @@ def render_list(summaries: list, fidelity: Fidelity, **context: Any) -> str:
         if depth >= 1:
             row += [
                 fmt_model(c.model) if c.model else "",
-                str(c.prompt_count),
+                str(c.turn_count),
                 fmt_tokens(c.total_tokens),
             ]
         if depth >= 3:

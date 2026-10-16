@@ -21,8 +21,10 @@ than showing an arbitrary one, unless the adapter names which one is live
 What the projection shows:
 
 - A preamble (responses with no prompt before the first one) is one exchange
-  with ``prompt_text`` None, placed first. It is counted in ``exchange_count``,
-  so the scan and the exchanges always agree.
+  with ``prompt_text`` None, placed first, marked ``preamble`` and, when the
+  conversation continues another, ``continued_from`` (the stored read's header
+  words, with the parent spelled as the source gave it). It is counted in
+  ``exchange_count``, so the scan and the exchanges always agree.
 - A response's tool calls come from ``Response.tool_calls``. A ``tool_use``
   content block that matches a call by id marks that call's position in the
   text; calls without a matching block follow the content.
@@ -58,6 +60,7 @@ from siftd.adapters.sdk import (
     peek_tool_hint,
 )
 from siftd.domain import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
+from siftd.domain.models import continued_link
 from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, PeekScanResult, PeekToolCall
 from siftd.domain.source import Source
 
@@ -78,7 +81,7 @@ def peek_scan_from_assembly(assembly: Assembly) -> PeekScanResult | None:
         session_id=_session_id(conversation),
         workspace_path=conversation.workspace_path,
         model=model,
-        exchange_count=len(conversation.prompts) + (1 if conversation.preamble else 0),
+        exchange_count=conversation.turn_count,
         started_at=conversation.started_at,
         last_activity_at=conversation.ended_at,
         parent_session_id=(_session_part(conversation.harness, link.parent) if link is not None else None),
@@ -102,7 +105,12 @@ def peek_exchanges_from_assembly(
 
     exchanges: list[PeekExchange] = []
     if conversation.preamble:
-        preamble = PeekExchange(timestamp=conversation.preamble[0].timestamp or None)
+        link = continued_link(conversation.lineage)
+        preamble = PeekExchange(
+            timestamp=conversation.preamble[0].timestamp or None,
+            preamble=True,
+            continued_from=f"{link.parent} ({link.kind})" if link is not None else None,
+        )
         _fill_exchange(preamble, conversation.preamble, include_thinking=include_thinking, tool_aliases=tool_aliases)
         exchanges.append(preamble)
     for prompt in conversation.prompts:

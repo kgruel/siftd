@@ -21,20 +21,17 @@ from siftd.storage.events import (
     get_event_position,
     get_event_tree,
     get_last_event_id,
-    get_preceding_prompt_id,
-    get_prompt_by_index,
     get_prompts_for_conv,
     get_responses_for_prompt,
     get_tool_calls_for_response,
 )
-from siftd.storage.fts import fts5_event_turn_index
 from siftd.storage.queries import (
-    fetch_event_turn_number,
     fetch_prompts_for_conversation,
     fetch_responses_for_conversation,
     fetch_tool_calls_for_conversation,
 )
 from siftd.storage.sqlite import SCHEMA_VERSION, create_database, open_database, store_conversation
+from siftd.storage.turns import event_turn_ordinal, exchange_number, turn_at_exchange
 
 SAME_INSTANT = "2024-03-01T10:00:00Z"
 FIXTURES = Path(__file__).parent / "fixtures" / "schemas"
@@ -81,6 +78,13 @@ def conn(tmp_path):
     c = create_database(tmp_path / "t.db")
     yield c
     c.close()
+
+
+def _exchange_prompt(conn, cid: str, n: int) -> str:
+    """The prompt id of 1-based exchange ``n`` (the turn-numbering resolver)."""
+    turn = turn_at_exchange(conn, cid, n)
+    assert turn is not None and turn.prompt_id is not None
+    return turn.prompt_id
 
 
 def _external_ids(conn, ids: list[str]) -> list[str]:
@@ -163,7 +167,7 @@ class TestEqualTimestamps:
     def test_every_exchange_index_resolves_to_its_own_prompt(self, conn):
         cid = store_conversation(conn, _aider_like(40), commit=True)
         for i in range(1, 41):
-            assert _external_ids(conn, [get_prompt_by_index(conn, cid, i)]) == [f"p{i - 1}"], i
+            assert _external_ids(conn, [_exchange_prompt(conn, cid, i)]) == [f"p{i - 1}"], i
 
     def test_the_prompt_list_and_tree_are_in_recorded_order(self, conn, flip):
         cid = store_conversation(conn, _aider_like(40), commit=True)
@@ -191,16 +195,16 @@ class TestEqualTimestamps:
         by_key = {r["external_id"]: r for r in conn.execute(
             "SELECT id, external_id, kind, sequence, timestamp, parent_id, conversation_id FROM events WHERE conversation_id = ?", (cid,))}
         for i in (0, 5, 39):
-            assert fts5_event_turn_index(conn, by_key[f"p{i}"]["id"], cid) == i
-            assert fts5_event_turn_index(conn, by_key[f"r{i}"]["id"], cid) == i
-            # the parent-chain walk and the position walk must agree
-            assert fetch_event_turn_number(conn, by_key[f"r{i}"]) == i + 1
+            assert event_turn_ordinal(conn, by_key[f"p{i}"]["id"]) == i
+            assert event_turn_ordinal(conn, by_key[f"r{i}"]["id"]) == i
+            # the 0-based ordinal and the 1-based exchange number are one numbering
+            assert exchange_number(conn, by_key[f"r{i}"]["id"]) == i + 1
 
     def test_neighbours_are_the_adjacent_prompts(self, conn):
         from siftd.api.events import get_event
 
         cid = store_conversation(conn, _aider_like(40), commit=True)
-        mid = get_prompt_by_index(conn, cid, 20)
+        mid = _exchange_prompt(conn, cid, 20)
         detail = get_event(mid, conn=conn, include_neighbors=True)
         assert detail is not None and detail.neighbors is not None
         assert _external_ids(conn, [detail.neighbors["prev_event_id"], detail.neighbors["next_event_id"]]) == ["p18", "p20"]
@@ -315,14 +319,14 @@ class TestReaderOrder:
         # Reverse the recorded order: the readers must follow it, not the clock.
         conn.execute("UPDATE events SET sequence = 100 - sequence WHERE conversation_id = ?", (cid,))
         assert _external_ids(conn, [r["id"] for r in get_prompts_for_conv(conn, cid)]) == ["p4", "p3", "p2", "p1", "p0"]
-        assert _external_ids(conn, [get_prompt_by_index(conn, cid, 1)]) == ["p4"]
+        assert _external_ids(conn, [_exchange_prompt(conn, cid, 1)]) == ["p4"]
         assert _external_ids(conn, [get_last_event_id(conn, cid, "prompt")]) == ["p0"]
 
     def test_null_sequence_falls_back_to_timestamp_then_id(self, conn):
         cid = self._stored(conn)
         conn.execute("UPDATE events SET sequence = NULL WHERE conversation_id = ?", (cid,))
         assert _external_ids(conn, [r["id"] for r in get_prompts_for_conv(conn, cid)]) == [f"p{i}" for i in range(5)]
-        assert _external_ids(conn, [get_prompt_by_index(conn, cid, 5)]) == ["p4"]
+        assert _external_ids(conn, [_exchange_prompt(conn, cid, 5)]) == ["p4"]
         assert _external_ids(conn, [get_last_event_id(conn, cid, "prompt")]) == ["p4"]
 
     def test_null_sequence_ties_fall_back_to_id(self, conn):
@@ -331,29 +335,35 @@ class TestReaderOrder:
         ids = [r["id"] for r in get_prompts_for_conv(conn, cid)]
         assert ids == sorted(ids)  # (timestamp, id) with one timestamp is id order
 
-    def test_a_legacy_response_sharing_its_prompts_timestamp_still_follows_it(self, conn):
-        """The NULL-sequence rule keeps its old tie behaviour: same instant counts as 'after the prompt'."""
-        conv = _conversation("legacy-tie", [
-            Prompt(timestamp="2024-03-01T10:00:01Z", external_id="p1", content=_text("q"),
-                   responses=[_response("r1", "2024-03-01T10:00:01Z")]),
-            Prompt(timestamp="2024-03-01T10:00:02Z", external_id="p2", content=_text("q"),
-                   responses=[_response("r2", "2024-03-01T10:00:02Z")]),
-        ])
-        cid = store_conversation(conn, conv, commit=True)
-        conn.execute("UPDATE events SET sequence = NULL WHERE conversation_id = ?", (cid,))
-        r2 = conn.execute(
-            "SELECT id, kind, sequence, timestamp FROM events WHERE external_id = 'r2' AND conversation_id = ?", (cid,)
-        ).fetchone()
-        assert _external_ids(conn, [get_preceding_prompt_id(conn, cid, r2)]) == ["p2"]
+    def test_a_legacy_turn_is_its_prompts_children_not_whatever_shares_its_instant(self, conn):
+        """With no sequence and one shared timestamp there is no order to infer membership from.
 
-    def test_a_preamble_response_precedes_every_prompt(self, conn):
+        Placing a response under "the latest prompt at or before its timestamp"
+        (what search positions used to do for legacy rows) is a coin toss when
+        every event shares an instant. The fold follows the stored parent link,
+        so each response is in its own prompt's turn whatever order the prompts
+        come back in.
+        """
+        cid = store_conversation(conn, _aider_like(12), commit=True)
+        conn.execute("UPDATE events SET sequence = NULL WHERE conversation_id = ?", (cid,))
+        ids = {r["external_id"]: r["id"] for r in conn.execute(
+            "SELECT id, external_id FROM events WHERE conversation_id = ?", (cid,))}
+        for i in range(12):
+            assert event_turn_ordinal(conn, ids[f"r{i}"]) == event_turn_ordinal(conn, ids[f"p{i}"]), i
+
+    def test_a_preamble_response_is_the_first_turn_and_shifts_the_prompts_by_one(self, conn):
+        """Old defect: a response before the first prompt had no turn at all (None), so show/search skipped it."""
         conv = _conversation("pre", [Prompt(timestamp="2024-03-01T10:00:05Z", external_id="p", content=_text("q"),
                                             responses=[_response("r", "2024-03-01T10:00:06Z")])],
                              preamble=[_response("pre", "2024-03-01T09:00:00Z")])
         cid = store_conversation(conn, conv, commit=True)
-        pre_id = conn.execute("SELECT id FROM events WHERE external_id = 'pre'").fetchone()[0]
-        assert fts5_event_turn_index(conn, pre_id, cid) is None
-        assert get_event_position(conn, pre_id) == 1  # first response in recorded order
+        ids = {r["external_id"]: r["id"] for r in conn.execute("SELECT id, external_id FROM events WHERE conversation_id = ?", (cid,))}
+        assert event_turn_ordinal(conn, ids["pre"]) == 0
+        assert event_turn_ordinal(conn, ids["p"]) == event_turn_ordinal(conn, ids["r"]) == 1
+        assert exchange_number(conn, ids["pre"]) == 1
+        assert turn_at_exchange(conn, cid, 1).prompt_id is None  # the preamble turn has no prompt to anchor on
+        assert turn_at_exchange(conn, cid, 2).prompt_id == ids["p"]
+        assert get_event_position(conn, ids["pre"]) == 1  # first response in recorded order (by kind)
 
 
 class TestLegacyDatabase:
@@ -397,7 +407,7 @@ class TestLegacyDatabase:
     def test_legacy_rows_read_in_timestamp_order_and_new_ones_by_sequence(self, tmp_path):
         conn = open_database(self._v12_database(tmp_path))
         try:
-            assert get_prompt_by_index(conn, "c1", 3) == "01P3"
+            assert _exchange_prompt(conn, "c1", 3) == "01P3"
             assert [r["id"] for r in get_prompts_for_conv(conn, "c1")] == ["01P1", "01P2", "01P3"]
             assert get_last_event_id(conn, "c1", "prompt") == "01P3"
             assert get_event_position(conn, "01P2") == 2

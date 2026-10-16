@@ -286,7 +286,7 @@ class TestTreeShape:
 
     def test_event_tree_empty_conversation(self, db, conv_id):
         tree = get_event_tree(db, conv_id)
-        assert tree == {"prompts": []}
+        assert tree == {"preamble": [], "prompts": []}
 
     def test_event_tree_multiple_prompts(self, db, conv_id):
         for i in range(3):

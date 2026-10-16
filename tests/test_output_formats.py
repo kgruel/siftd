@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import pytest
 from painted import Fidelity
 
+from siftd.api.conversations import ConversationSummary
 from siftd.domain.search_types import SearchView
 
 
@@ -22,6 +23,9 @@ class FakeSummary:
     total_tokens: int
     cost: float | None
     tags: list[str] = field(default_factory=list)
+    has_preamble: bool = False
+    # The real rule, so the stand-in counts turns as the listing does.
+    turn_count = ConversationSummary.turn_count
 
 
 @pytest.fixture
@@ -100,7 +104,7 @@ class TestTerminalRenderList:
         assert "my-project" in line
         assert "claude-opus-4-5" in line  # model with date stripped
         assert "3p/5r" not in line  # old Xp/Yr format removed
-        # turns = prompt_count, right-aligned in its gutter-separated column,
+        # turns = prompt_count (no preamble here), right-aligned in its gutter-separated column,
         # sitting before the tokens column
         import re
 
@@ -237,7 +241,7 @@ class TestMarkdownRenderList:
         assert lines[1].count("---") == 6
         assert "claude-opus-4-5" in lines[2]
         assert "3p/5r" not in lines[2]  # old Xp/Yr format removed
-        assert "| 3 |" in lines[2]     # turns = prompt_count
+        assert "| 3 |" in lines[2]     # turns = prompt_count (no preamble here)
         assert "Cost" not in lines[0]
 
     def test_full_depth_includes_cost_and_tags(self, summaries):
@@ -297,6 +301,44 @@ class TestHtmlRenderList:
         assert '<td class="metric missing">?</td>' in output
         assert "$0.0340" in output
         assert "$0.0000" not in output
+
+
+class TestTurnsColumnCountsThePreamble:
+    """The "turns" column is prompts plus the preamble turn, in every list format.
+
+    Old defect: it showed prompt_count, so a forked sub-agent holding 21 responses
+    and no prompts read as 0 turns while show rendered a transcript for it.
+    """
+
+    @pytest.fixture
+    def fork(self):
+        return FakeSummary(
+            id="03FORKABC12345", workspace_path="/home/user/p", model="m",
+            started_at="2026-03-15T10:30:00Z", prompt_count=0, response_count=21,
+            total_tokens=900, cost=None, has_preamble=True,
+        )
+
+    def test_markdown(self, fork):
+        from siftd.output.markdown_fmt import render_list
+
+        row = render_list([fork], Fidelity(depth=1)).splitlines()[2]
+        assert "| 1 |" in row
+
+    def test_html(self, fork):
+        from siftd.output.html_fmt import render_list
+
+        assert '<td class="metric">1</td>' in render_list([fork], Fidelity(depth=1))
+
+    def test_terminal(self, fork):
+        import re
+
+        from siftd.output.terminal_fmt import render_list
+
+        block = render_list([fork], Fidelity(depth=1))
+        row = "\n".join(
+            "".join(cell.char for cell in block.row(y)).rstrip() for y in range(block.height)
+        ).split("\n")[2]
+        assert re.search(r"\s1\s+900", row), row
 
 
 class TestJsonRenderList:

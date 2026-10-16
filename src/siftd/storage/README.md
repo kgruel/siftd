@@ -8,6 +8,8 @@ A fourth invariant governs reads: every read-only connection in siftd — here, 
 
 A fifth governs the FTS index: `content_fts` is written only through [fts.py](fts.py), and "is this block indexable" is decided once, by `_INDEXABLE`, for every writer and for the drift check. Ingest's `index_conversations` is insert-only, so a caller that may re-index an existing conversation uses `rebuild_fts_index(conversation_ids=...)`. Every writer of `event_content` must name the function that indexes its rows; `tests/architecture/test_content_index_pairing.py` holds that population by equality.
 
+A sixth governs turns: a turn is an optional prompt plus the responses (and their tool calls) that follow it, and the fold from events to turns, the turn ordinal, and the exchange number live only in [turns.py](turns.py). Membership is the stored parent link (never position or timestamp), order is recorded order, and responses with no parent prompt form the preamble turn, always first. Readers that group events into turns, count them, or map an event to a turn number call it; `tests/architecture/test_turn_fold.py` holds the SQL sites that still ask "which events are prompts" by equality.
+
 See [Storage](../../../docs/concepts/storage.md) for where data lives, deduplication, and backup/restore, and [Data Model](../../../docs/concepts/data-model.md) for the conversation hierarchy these tables persist.
 
 <!-- gen:begin modules -->
@@ -32,5 +34,6 @@ See [Storage](../../../docs/concepts/storage.md) for where data lives, deduplica
 | [sql_helpers.py](sql_helpers.py) | SQL helper utilities for query building and result processing. |
 | [sqlite.py](sqlite.py) | SQLite storage adapter for siftd. |
 | [tags.py](tags.py) | Tag CRUD operations for siftd storage. |
+| [turns.py](turns.py) | The one fold from stored events to turns, and the one turn ordinal. |
 | [usage_rollup.py](usage_rollup.py) | Usage rollup — the keystone derived-tier fact table. |
 <!-- gen:end -->

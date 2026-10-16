@@ -872,7 +872,8 @@ def _resolve_pending_target(
     exist yet (no response in the transcript, index past the end) resolves to
     a reason, not a target — nothing is applied, so nothing is consumed.
     """
-    from siftd.storage.events import get_last_event_id, get_prompt_by_index
+    from siftd.storage.events import get_last_event_id
+    from siftd.storage.turns import turn_at_exchange
 
     if row["last_marker"]:
         dispatch = LAST_MARKER_DISPATCH.get(row["last_marker"])
@@ -889,12 +890,16 @@ def _resolve_pending_target(
 
     if row["entity_type"] == "exchange":
         try:
-            prompt_id = get_prompt_by_index(conn, conversation_id, row["exchange_index"])
+            turn = turn_at_exchange(conn, conversation_id, row["exchange_index"])
         except ValueError as e:
             return f"invalid exchange index: {e}"
-        if prompt_id is None:
+        if turn is None:
             return f"exchange {row['exchange_index']} not found in the conversation"
-        return ("exchange", prompt_id)
+        if turn.prompt_id is None:
+            # The turn before the first prompt exists and is counted, but an
+            # exchange tag anchors on a prompt and this turn has none.
+            return f"exchange {row['exchange_index']} is the turn before the first prompt; it has no prompt to carry a tag"
+        return ("exchange", turn.prompt_id)
 
     return f"unsupported entity_type {row['entity_type']!r}"
 

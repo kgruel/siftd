@@ -622,7 +622,7 @@ def _summarize_conversation(conversation) -> dict:
     return {
         "workspace_path": conversation.workspace_path,
         "summary": summary,
-        "exchange_count": len(conversation.prompts),
+        "exchange_count": conversation.turn_count,
         "model": model,
     }
 

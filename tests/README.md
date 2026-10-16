@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 203 | 3563 |
+| `tests/` | 204 | 3609 |
 | `tests/adapters/` | 21 | 430 |
-| `tests/architecture/` | 14 | 84 |
+| `tests/architecture/` | 15 | 88 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -175,7 +175,7 @@ docstring so its row is meaningful.
 | [test_embeddings_availability.py](test_embeddings_availability.py) | 14 | Embedding availability — status-driven (config/installed), not reachability. |
 | [test_embeddings_base_edges.py](test_embeddings_base_edges.py) | 21 | Deterministic, config-driven backend resolution (base lane — no fastembed). |
 | [test_embeddings_fastembed_backend_edges.py](test_embeddings_fastembed_backend_edges.py) | 3 | — |
-| [test_embeddings_indexer_edges.py](test_embeddings_indexer_edges.py) | 20 | Edge tests for the schema-v2 index lifecycle (base lane — fake backend, no fastembed). |
+| [test_embeddings_indexer_edges.py](test_embeddings_indexer_edges.py) | 21 | Edge tests for the schema-v2 index lifecycle (base lane — fake backend, no fastembed). |
 | [test_embeddings_presets.py](test_embeddings_presets.py) | 9 | Embedding preset reference data — loading, per-provider fields, validation. |
 | [test_embeddings_remote_edges.py](test_embeddings_remote_edges.py) | 19 | RemoteBackend edge cases — fake httpx transport, no network (base lane). |
 | [test_embeddings_storage.py](test_embeddings_storage.py) | 15 | Tests for embeddings storage. |
@@ -185,7 +185,7 @@ docstring so its row is meaningful.
 | [test_exclude_active.py](test_exclude_active.py) | 6 | Tests for active session exclusion from search results. |
 | [test_export.py](test_export.py) | 40 | Tests for the export API and formatter-driven rendering. |
 | [test_export_elements.py](test_export_elements.py) | 7 | WS6: element export (siftd export --view elements --tag X). |
-| [test_file_refs.py](test_file_refs.py) | 3 | — |
+| [test_file_refs.py](test_file_refs.py) | 4 | — |
 | [test_findability_review.py](test_findability_review.py) | 6 | — |
 | [test_fixture_redaction.py](test_fixture_redaction.py) | 2 | Adapter fixtures carry no personal data, so captured transcripts can be committed. |
 | [test_follow.py](test_follow.py) | 24 | Tests for siftd.peek.follow — live session following utilities. |
@@ -199,7 +199,7 @@ docstring so its row is meaningful.
 | [test_git.py](test_git.py) | 35 | Tests for git utilities and workspace identity. |
 | [test_gutter.py](test_gutter.py) | 10 | Tests for siftd.output.gutter — the grain-gutter taxonomy + the rail it draws. |
 | [test_html_dashboard.py](test_html_dashboard.py) | 11 | Unit tests for the Swiss Stats dashboard renderer (output/html_fmt.render_dashboard). |
-| [test_html_folio.py](test_html_folio.py) | 45 | Unit tests for the Swiss transcript folio renderer (output/html_fmt.render_folio). |
+| [test_html_folio.py](test_html_folio.py) | 46 | Unit tests for the Swiss transcript folio renderer (output/html_fmt.render_folio). |
 | [test_html_sessions.py](test_html_sessions.py) | 9 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
 | [test_html_tags.py](test_html_tags.py) | 3 | Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags). |
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
@@ -231,7 +231,7 @@ docstring so its row is meaningful.
 | [test_opencode_ingest.py](test_opencode_ingest.py) | 12 | OpenCode change detection through real ingest: what a re-run must notice. |
 | [test_output_common.py](test_output_common.py) | 32 | Tests for siftd.output.common — pure formatting helpers. |
 | [test_output_format_registry.py](test_output_format_registry.py) | 1 | — |
-| [test_output_formats.py](test_output_formats.py) | 129 | Tests for output format rendering: lists, search, detail, narrative. |
+| [test_output_formats.py](test_output_formats.py) | 132 | Tests for output format rendering: lists, search, detail, narrative. |
 | [test_output_help.py](test_output_help.py) | 23 | Unit tests for siftd.output.help — the one help grammar. |
 | [test_output_narrative.py](test_output_narrative.py) | 9 | — |
 | [test_output_painted_bridge_edges.py](test_output_painted_bridge_edges.py) | 2 | — |
@@ -315,6 +315,7 @@ docstring so its row is meaningful.
 | [test_theme.py](test_theme.py) | 15 | Tests for siftd.output.theme — the bespoke "warm obsidian" palette + domain styles. |
 | [test_tool_presenters.py](test_tool_presenters.py) | 39 | Tests for painted bridge tool-specific presenters and fidelity integration. |
 | [test_transcript_tags.py](test_transcript_tags.py) | 3 | WS3: element tag chips in CLI conversation-detail transcripts. |
+| [test_turn_fold.py](test_turn_fold.py) | 40 | One fold from stored events to turns, and the preamble made visible on every read surface. |
 | [test_unified_search.py](test_unified_search.py) | 20 | Tests for unified search command with auto-selection. |
 | [test_usage_read_sites.py](test_usage_read_sites.py) | 7 | Read-site regressions for the S2 rollup re-point (api.stats). |
 | [test_usage_rollup.py](test_usage_rollup.py) | 10 | Tests for the usage_by_conv_model rollup — the keystone derived tier. |
@@ -371,6 +372,7 @@ docstring so its row is meaningful.
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
+| [architecture/test_turn_fold.py](architecture/test_turn_fold.py) | 4 | One fold from events to turns; the places that ask "which events are prompts" are enumerated. |
 
 ### `tests/cli/`
 

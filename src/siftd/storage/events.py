@@ -9,6 +9,7 @@ import json
 import sqlite3
 
 from siftd.storage.sql_helpers import event_key, event_key_params, event_order
+from siftd.storage.turns import load_turns
 
 # ---------------------------------------------------------------------------
 # Trigger management
@@ -249,77 +250,16 @@ def get_last_event_id(
     return row["id"] if row else None
 
 
-def get_prompt_by_index(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    exchange_index: int | None,
-) -> str | None:
-    """Get the prompt ID at a specific exchange index (1-based), in recorded order.
-
-    Returns None if index is out of range or None. Raises ValueError for a
-    non-positive index — the API is 1-based, so 0 is a caller bug, not an
-    empty result.
-    """
-    if exchange_index is None:
-        return None
-    if exchange_index < 1:
-        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
-
-    cur = conn.execute(
-        f"""
-        SELECT id FROM events
-        WHERE kind = 'prompt' AND conversation_id = ?
-        ORDER BY {event_order()}
-        LIMIT 1 OFFSET ?
-        """,
-        (conversation_id, exchange_index - 1),
-    )
-    row = cur.fetchone()
-    return row["id"] if row else None
-
-
-def get_preceding_prompt_id(
-    conn: sqlite3.Connection,
-    conversation_id: str,
-    event: sqlite3.Row,
-) -> str | None:
-    """The prompt ``event`` belongs to by position: itself for a prompt, else the latest one before it.
-
-    ``event`` is a row carrying ``id``, ``kind``, ``sequence`` and ``timestamp``.
-    Returns None for an event before every prompt (a preamble response).
-
-    This is placement by *order*, which is what a search hit has to go on: the
-    FTS index knows an event's id, not its parent. With a sequence it is exact.
-    For a legacy row (NULL sequence) it keeps the rule it always had — a prompt
-    sharing the event's timestamp counts as preceding it — because that tie is
-    the common case there (an adapter stamping every event alike) and reading
-    it the other way would put the event under the wrong turn.
-    """
-    if event["kind"] == "prompt":
-        return event["id"]
-    if event["sequence"] is not None:
-        bound, param = "sequence <= ?", event["sequence"]
-    else:
-        bound, param = "timestamp <= ?", event["timestamp"]
-    row = conn.execute(
-        f"""SELECT id FROM events
-            WHERE conversation_id = ? AND kind = 'prompt' AND {bound}
-            ORDER BY {event_order(desc=True)}
-            LIMIT 1""",
-        (conversation_id, param),
-    ).fetchone()
-    return row["id"] if row else None
-
-
 def get_event_position(
     conn: sqlite3.Connection,
     event_id: str,
 ) -> int | None:
     """The 1-based position of an event among the events of its own kind in its conversation.
 
-    Counted in recorded order — the same order :func:`get_prompt_by_index` and
-    the colon-path resolver (``conv:prompt:3``) index by — so a position and the
-    event it names always agree. None if the event does not exist.
+    Counted in recorded order — the same order the colon-path resolver
+    (``conv:prompt:3``) indexes by — so a position and the event it names
+    always agree. None if the event does not exist. This addresses an event *by
+    kind*; it is not a turn number (see :mod:`siftd.storage.turns`).
     """
     row = conn.execute(
         "SELECT id, kind, conversation_id, sequence, timestamp FROM events WHERE id = ?",
@@ -332,15 +272,6 @@ def get_event_position(
             WHERE conversation_id = ? AND kind = ? AND {event_key()} <= (?, ?, ?)""",
         (row["conversation_id"], row["kind"], *event_key_params(row)),
     ).fetchone()[0]
-
-
-def get_prompt_index(
-    conn: sqlite3.Connection,
-    prompt_id: str,
-) -> int | None:
-    """The 0-based turn index of a prompt: :func:`get_event_position` minus one."""
-    position = get_event_position(conn, prompt_id)
-    return None if position is None else position - 1
 
 
 def get_responses_for_prompt(
@@ -394,6 +325,30 @@ def get_tool_calls_for_response(
     ).fetchall()
 
 
+def _response_node(conn: sqlite3.Connection, response: sqlite3.Row) -> dict:
+    node: dict = {
+        "id": response["id"],
+        "external_id": response["external_id"],
+        "timestamp": response["timestamp"],
+        "model_id": response["model_id"],
+        "provider_id": response["provider_id"],
+        "input_tokens": response["input_tokens"],
+        "output_tokens": response["output_tokens"],
+        "tool_calls": [],
+    }
+    for tc in get_tool_calls_for_response(conn, response["id"]):
+        node["tool_calls"].append({
+            "id": tc["id"],
+            "external_id": tc["external_id"],
+            "timestamp": tc["timestamp"],
+            "tool_id": tc["tool_id"],
+            "input": tc["input"],
+            "result_hash": tc["result_hash"],
+            "status": tc["status"],
+        })
+    return node
+
+
 def get_event_tree(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -402,55 +357,47 @@ def get_event_tree(
 
     Shape:
         {
+          "preamble": [<response>, ...],   # responses before the first prompt; [] if none
           "prompts": [
             {
               "id": ..., "external_id": ..., "timestamp": ...,
-              "responses": [
-                {
-                  "id": ..., ..., "model_id": ..., "input_tokens": ...,
-                  "tool_calls": [
-                    {"id": ..., "tool_id": ..., "input": ..., "result_hash": ..., "status": ...}
-                  ]
-                }
-              ]
+              "responses": [<response>, ...]
             }
           ]
         }
-    """
-    prompts = get_prompts_for_conv(conn, conversation_id)
-    result: dict = {"prompts": []}
 
-    for prompt in prompts:
-        prompt_node: dict = {
+    where ``<response>`` is ``{"id": ..., ..., "model_id": ..., "input_tokens": ...,
+    "tool_calls": [{"id": ..., "tool_id": ..., "input": ..., "result_hash": ...,
+    "status": ...}]}``. Which responses the preamble holds is the turn fold's
+    answer (:func:`siftd.storage.turns.load_turns`), so this tree and every read
+    surface agree on it.
+    """
+    preamble_ids = next(
+        (turn.response_ids for turn in load_turns(conn, conversation_id) if turn.is_preamble), (),
+    )
+    result: dict = {"preamble": [], "prompts": []}
+    if preamble_ids:
+        marks = ",".join("?" * len(preamble_ids))
+        rows = conn.execute(
+            f"""SELECT e.id, e.external_id, e.timestamp,
+                      er.model_id, er.provider_id, er.input_tokens, er.output_tokens
+               FROM events e
+               JOIN event_response er ON er.event_id = e.id
+               WHERE e.id IN ({marks})
+               ORDER BY {event_order("e")}""",
+            preamble_ids,
+        ).fetchall()
+        result["preamble"] = [_response_node(conn, row) for row in rows]
+
+    for prompt in get_prompts_for_conv(conn, conversation_id):
+        result["prompts"].append({
             "id": prompt["id"],
             "external_id": prompt["external_id"],
             "timestamp": prompt["timestamp"],
-            "responses": [],
-        }
-        responses = get_responses_for_prompt(conn, prompt["id"])
-        for response in responses:
-            response_node: dict = {
-                "id": response["id"],
-                "external_id": response["external_id"],
-                "timestamp": response["timestamp"],
-                "model_id": response["model_id"],
-                "provider_id": response["provider_id"],
-                "input_tokens": response["input_tokens"],
-                "output_tokens": response["output_tokens"],
-                "tool_calls": [],
-            }
-            tool_calls = get_tool_calls_for_response(conn, response["id"])
-            for tc in tool_calls:
-                response_node["tool_calls"].append({
-                    "id": tc["id"],
-                    "external_id": tc["external_id"],
-                    "timestamp": tc["timestamp"],
-                    "tool_id": tc["tool_id"],
-                    "input": tc["input"],
-                    "result_hash": tc["result_hash"],
-                    "status": tc["status"],
-                })
-            prompt_node["responses"].append(response_node)
-        result["prompts"].append(prompt_node)
+            "responses": [
+                _response_node(conn, response)
+                for response in get_responses_for_prompt(conn, prompt["id"])
+            ],
+        })
 
     return result

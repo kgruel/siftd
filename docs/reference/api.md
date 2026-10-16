@@ -134,6 +134,8 @@ A single user→assistant exchange for detail view.
 | `prompt_external_id` | `str \| None` |  |
 | `response_external_ids` | `list[str]` |  |
 | `tool_use_ids` | `list[str]` |  |
+| `preamble` | `bool` |  |
+| `continued_from` | `str \| None` |  |
 
 ### SessionDetail
 
@@ -248,6 +250,7 @@ Summary row for conversation listing.
 | `cost` | `float \| None` |  |
 | `tags` | `list[str]` |  |
 | `owner` | `str \| None` |  |
+| `has_preamble` | `bool` |  |
 | `external_id` | `str \| None` |  |
 | `parent_external_id` | `str \| None` |  |
 | `parent_id` | `str \| None` |  |
@@ -273,7 +276,7 @@ Full conversation with timeline.
 
 ### Exchange
 
-A prompt-response pair in the timeline.
+One turn as a prompt-response pair (``prompt_text`` is None for the preamble turn).
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -321,7 +324,7 @@ Collapsed tool call for timeline display.
 
 ### Turn
 
-A prompt and its full response narrative.
+One turn: an optional prompt and the full response narrative that followed it.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -334,6 +337,8 @@ A prompt and its full response narrative.
 | `prompt_id` | `str \| None` |  |
 | `response_ids` | `list[str]` |  |
 | `tool_call_ids` | `list[str]` |  |
+| `preamble` | `bool` |  |
+| `continued_from` | `str \| None` |  |
 
 ### Exceptions
 
@@ -527,7 +532,7 @@ A file operation reference from a tool call.
 
 ### fetch_file_refs
 
-Batch query: prompt_ids → file references from tool calls.
+Batch query: prompt_ids → file references from the tool calls of each prompt's turn.
 
 ```python
 def fetch_file_refs(conn: Connection, source_ids: list[str]) -> dict[str, list[FileRef]]
@@ -644,8 +649,8 @@ Canonical mutable search chunk result.
 | `source_ids` | `list[str]` |  |
 | `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
 | `file_refs` | `list[Any] \| None` |  |
-| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
-| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `exchanges` | `list[tuple[str \| None, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str \| None, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
 | `match_event_id` | `str \| None` |  |
@@ -667,8 +672,8 @@ Canonical mutable search chunk result.
 | `source_ids` | `list[str]` |  |
 | `breakdown` | `siftd.domain.search_types.ScoreBreakdown \| None` |  |
 | `file_refs` | `list[Any] \| None` |  |
-| `exchanges` | `list[tuple[str, str, str]] \| None` |  |
-| `context_window` | `list[tuple[str, str, str, bool]] \| None` |  |
+| `exchanges` | `list[tuple[str \| None, str, str]] \| None` |  |
+| `context_window` | `list[tuple[str \| None, str, str, bool]] \| None` |  |
 | `turn_index` | `int \| None` |  |
 | `event_id` | `str \| None` |  |
 | `match_event_id` | `str \| None` |  |
@@ -840,7 +845,7 @@ def enrich_search_metadata(conn: Connection, results: list[SearchChunk]) -> None
 
 ### enrich_file_refs
 
-Attach file references to each chunk in-place.
+Attach file references to each chunk in-place: those of every turn it covers.
 
 ```python
 def enrich_file_refs(conn: Connection, results: list[SearchChunk]) -> None
@@ -848,7 +853,7 @@ def enrich_file_refs(conn: Connection, results: list[SearchChunk]) -> None
 
 ### enrich_exchanges
 
-Attach full prompt+response exchanges for each chunk in-place.
+Attach the full exchange of every turn a chunk covers, in-place.
 
 ```python
 def enrich_exchanges(conn: Connection, results: list[SearchChunk]) -> None
@@ -856,7 +861,7 @@ def enrich_exchanges(conn: Connection, results: list[SearchChunk]) -> None
 
 ### enrich_context_window
 
-Attach +/-N context exchanges around each chunk's source prompts.
+Attach +/-N context exchanges around each chunk's source turns.
 
 ```python
 def enrich_context_window(conn: Connection, results: list[SearchChunk], n: int) -> None

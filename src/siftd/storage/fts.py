@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Literal
 
 from siftd.domain.search_types import MATCH_CLOSE, MATCH_ELLIPSIS, MATCH_OPEN
-from siftd.storage.events import get_preceding_prompt_id, get_prompt_index
 
 log = logging.getLogger(__name__)
 
@@ -514,28 +513,3 @@ def fts5_all_events_in_conversation(
     result = fts5_first_event_in_conversation(conn, phrase, conversation_id=conversation_id, limit=None)
     assert isinstance(result, list)
     return result
-
-
-def fts5_event_turn_index(
-    conn: sqlite3.Connection,
-    event_id: str,
-    conversation_id: str,
-) -> int | None:
-    """Return the 0-based turn index of the turn containing event_id.
-
-    For prompt events: returns the ordinal of this prompt among all prompts
-    in the conversation (in recorded order).
-    For response/tool_call events: returns the ordinal of the preceding prompt.
-
-    Returns None if event not found or no preceding prompt exists.
-    """
-    row = conn.execute(
-        "SELECT id, kind, sequence, timestamp FROM events WHERE id = ?",
-        (event_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    prompt_id = get_preceding_prompt_id(conn, conversation_id, row)
-    if prompt_id is None:
-        return None
-    return get_prompt_index(conn, prompt_id)

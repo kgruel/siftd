@@ -12,6 +12,7 @@ from typing import ClassVar
 
 from painted import Fidelity
 
+from siftd.domain.models import continued_link
 from siftd.domain.search_types import ROLE_ASSISTANT, ROLE_USER
 from siftd.errors import UserInputError
 from siftd.paths import db_path as default_db_path
@@ -24,7 +25,7 @@ from siftd.storage.conversation_stats import (
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.fts import fts5_first_event_in_conversation
 from siftd.storage.fts import sanitize_fts5_query as sanitize_fts5_query  # re-export for the api boundary
-from siftd.storage.links import get_conversation_children
+from siftd.storage.links import get_conversation_children, get_conversation_links
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
@@ -43,6 +44,7 @@ from siftd.storage.sql_helpers import (
     owner_predicate,
 )
 from siftd.storage.sqlite import open_database
+from siftd.storage.turns import fold_turns
 
 _logger = logging.getLogger(__name__)
 
@@ -164,7 +166,14 @@ class NarrativeBlock:
 
 @dataclass
 class Turn:
-    """A prompt and its full response narrative."""
+    """One turn: an optional prompt and the full response narrative that followed it.
+
+    The fold that makes turns is :func:`siftd.storage.turns.fold_turns`. A turn
+    with ``preamble`` set has no prompt: it holds the responses stored before the
+    first prompt (a forked sub-agent's transcript, a leading tool announcement),
+    and is always the first turn. ``continued_from`` names the conversation it
+    continues when the conversation has a lineage link.
+    """
 
     PROMPT_ROLE_LABEL: ClassVar[str] = ROLE_USER
     RESPONSE_ROLE_LABEL: ClassVar[str] = ROLE_ASSISTANT
@@ -180,6 +189,8 @@ class Turn:
     prompt_id: str | None = None
     response_ids: list[str] = field(default_factory=list)
     tool_call_ids: list[str] = field(default_factory=list)
+    preamble: bool = False
+    continued_from: str | None = None
 
     @property
     def response_text(self) -> str | None:
@@ -196,7 +207,7 @@ class Turn:
 
 @dataclass
 class Exchange:
-    """A prompt-response pair in the timeline."""
+    """One turn as a prompt-response pair (``prompt_text`` is None for the preamble turn)."""
 
     timestamp: str | None
     prompt_text: str | None
@@ -220,6 +231,10 @@ class ConversationSummary:
     cost: float | None
     tags: list[str] = field(default_factory=list)
     owner: str | None = None
+    # True when the conversation holds responses before its first prompt (the
+    # preamble turn, see siftd.storage.turns). Only false for a summary built from
+    # a wire payload that predates the field.
+    has_preamble: bool = False
     # Adapter-scoped identity (e.g. "claude_code::<uuid>"). parent_external_id is
     # the parent session's, from the conversation_links edge; a legacy sub-agent
     # with no edge yet (ingested before schema v13, not re-parsed) falls back to
@@ -236,6 +251,16 @@ class ConversationSummary:
     # 'subagent_type' attribute). None for top-level sessions and for historical
     # sub-agents whose sidecar had rotated off disk before ingest.
     agent_type: str | None = None
+
+    @property
+    def turn_count(self) -> int:
+        """Turns: one per prompt, plus the preamble turn if there is one.
+
+        What every "turns" column shows. ``prompt_count`` stays the count of
+        prompt events, so a forked sub-agent with 21 responses and no prompts
+        reads as one turn, not zero.
+        """
+        return self.prompt_count + (1 if self.has_preamble else 0)
 
 
 @dataclass
@@ -266,12 +291,12 @@ class ConversationDetail:
 
     @property
     def exchanges(self) -> list[Exchange]:
-        """Backward-compat: derive per-turn exchanges from turns."""
+        """Backward-compat: one exchange per turn, derived from ``turns`` (so never a second count)."""
         return _turns_to_exchanges(self.turns)
 
 
 def _turns_to_exchanges(turns: list[Turn]) -> list[Exchange]:
-    """Convert turns to backward-compat exchanges (one per turn)."""
+    """Convert turns to backward-compat exchanges (one per turn, the preamble turn included)."""
     return [
         Exchange(
             timestamp=t.timestamp,
@@ -474,6 +499,7 @@ def _list_conversations_impl(
                     COALESCE(cs.response_count,
                         (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id)
                     ) AS responses,
+                    {_HAS_PREAMBLE_SQL} AS has_preamble,
                     COALESCE(cs.total_tokens,
                         (SELECT COALESCE(SUM(er2.input_tokens),0) + COALESCE(SUM(er2.output_tokens),0)
                          FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
@@ -515,6 +541,7 @@ def _list_conversations_impl(
                     c.started_at, c.external_id AS external_id,
                     (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id) AS prompts,
                     (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id) AS responses,
+                    {_HAS_PREAMBLE_SQL} AS has_preamble,
                     (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
                      FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
                      WHERE e2.kind = 'response' AND e2.conversation_id = c.id) AS tokens,
@@ -544,6 +571,7 @@ def _list_conversations_impl(
                 started_at=row["started_at"],
                 prompt_count=row["prompts"],
                 response_count=row["responses"],
+                has_preamble=bool(row["has_preamble"]),
                 total_tokens=row["tokens"],
                 cost=row["cost"],
                 tags=tags_by_conv.get(row["conversation_id"], []),
@@ -556,6 +584,15 @@ def _list_conversations_impl(
         )
     return summaries
 
+
+# SQL for "conversation c has a preamble turn": a response stored with no parent
+# prompt. It is the SQL form of the rule in siftd.storage.turns.fold_turns (the
+# only thing that makes a turn without a prompt), kept beside the listing that
+# adds it to prompt_count.
+_HAS_PREAMBLE_SQL = (
+    "EXISTS (SELECT 1 FROM events WHERE kind = 'response' AND parent_id IS NULL"
+    " AND conversation_id = c.id)"
+)
 
 # SQL for "the external_id of the session this conversation c is a sub-agent
 # of", NULL for a top-level one. The edge is authoritative: a conversation with
@@ -848,38 +885,43 @@ def get_conversation(
         for tc in tool_calls:
             tc_by_response.setdefault(tc["response_id"], []).append(tc)
 
-        # Group responses by prompt_id
-        responses_by_prompt: dict[str, list] = {}
-        for r in responses:
-            if r["prompt_id"]:
-                responses_by_prompt.setdefault(r["prompt_id"], []).append(r)
+        # One fold decides which events make up each turn (preamble turn first,
+        # then one per prompt); this loop only dresses the spans in text.
+        response_by_id = {r["id"]: r for r in responses}
+        spans = fold_turns(
+            prompt_ids,
+            [(r["id"], r["prompt_id"]) for r in responses],
+            [(tc["tool_call_id"], tc["response_id"]) for tc in tool_calls],
+        )
+        prompt_by_id = {p["id"]: p for p in prompts}
 
-        # Build turns (exchanges are derived via property)
         turns = []
-
-        for p in prompts:
-            prompt_id = p["id"]
-            prompt_text = prompt_texts.get(prompt_id, "")
-
-            prompt_responses = responses_by_prompt.get(prompt_id, [])
-            if not prompt_responses:
+        for span in spans:
+            turn_responses = [response_by_id[rid] for rid in span.response_ids]
+            preamble = span.prompt_id is None
+            if span.prompt_id is None:
+                # A preamble turn has no prompt text and is stamped by its first response.
+                prompt_text = None
+                stamp = turn_responses[0]["timestamp"] if turn_responses else None
+            else:
+                prompt_text = prompt_texts.get(span.prompt_id, "") or None
+                stamp = prompt_by_id[span.prompt_id]["timestamp"]
+            if not turn_responses:
                 # Prompt with no response yet
                 turns.append(
                     Turn(
-                        timestamp=p["timestamp"],
-                        prompt_text=prompt_text or None,
+                        timestamp=stamp,
+                        prompt_text=prompt_text,
                         total_input_tokens=0,
                         total_output_tokens=0,
-                        prompt_id=prompt_id,
+                        prompt_id=span.prompt_id,
+                        preamble=preamble,
                     )
                 )
                 continue
 
-            turn_input = sum(r["input_tokens"] or 0 for r in prompt_responses)
-            turn_output = sum(r["output_tokens"] or 0 for r in prompt_responses)
-
             narrative = _build_narrative(
-                prompt_responses,
+                turn_responses,
                 all_content_blocks,
                 tc_by_response,
                 include_thinking=include_thinking,
@@ -887,26 +929,29 @@ def get_conversation(
                 tool_filter=tool_filter,
             )
 
-            # Build tool call summaries from DB data (independent of narrative)
-            all_tcs = []
-            for r in prompt_responses:
-                all_tcs.extend(tc_by_response.get(r["id"], []))
-            tool_summaries = _collapse_tool_call_rows(all_tcs)
-
-            turn_response_ids = [r["id"] for r in prompt_responses]
-            turn_tool_call_ids = [tc["tool_call_id"] for tc in all_tcs]
+            # Tool call summaries come from DB data (independent of narrative),
+            # grouped per response as the narrative reads them.
+            span_calls = set(span.tool_call_ids)
+            all_tcs = [
+                tc
+                for r in turn_responses
+                for tc in tc_by_response.get(r["id"], [])
+                if tc["tool_call_id"] in span_calls
+            ]
 
             turns.append(
                 Turn(
-                    timestamp=p["timestamp"],
-                    prompt_text=prompt_text or None,
-                    total_input_tokens=turn_input,
-                    total_output_tokens=turn_output,
+                    timestamp=stamp,
+                    prompt_text=prompt_text,
+                    total_input_tokens=sum(r["input_tokens"] or 0 for r in turn_responses),
+                    total_output_tokens=sum(r["output_tokens"] or 0 for r in turn_responses),
                     narrative=narrative,
-                    _tool_call_summaries=tool_summaries,
-                    prompt_id=prompt_id,
-                    response_ids=turn_response_ids,
-                    tool_call_ids=turn_tool_call_ids,
+                    _tool_call_summaries=_collapse_tool_call_rows(all_tcs),
+                    prompt_id=span.prompt_id,
+                    response_ids=list(span.response_ids),
+                    tool_call_ids=[tc["tool_call_id"] for tc in all_tcs],
+                    preamble=preamble,
+                    continued_from=_continued_from(conn, conv_id) if preamble else None,
                 )
             )
 
@@ -949,6 +994,22 @@ def get_conversation(
         )
     finally:
         conn.close()
+
+
+def _continued_from(conn: sqlite3.Connection, conversation_id: str) -> str | None:
+    """What the conversation continues, spelled for a header, or None with no lineage link.
+
+    The relation that says what it continues (fork, resume, branch) wins over
+    the one that says where it ran (subagent), so a forked sub-agent reads as
+    a fork of its parent's transcript. A parent that is stored is named by its
+    short id; one that was never ingested by the id the source gave it.
+    """
+    links = get_conversation_links(conn, [conversation_id]).get(conversation_id, [])
+    link = continued_link(links)
+    if link is None:
+        return None
+    parent = link.parent_id[:12] if link.parent_id else link.parent_external_id
+    return f"{parent} ({link.kind})"
 
 
 def _capture_open(
@@ -1249,6 +1310,8 @@ def _build_narrative(
             if tc_id:
                 tc_by_id[tc_id] = tc
         used_ids: set[str] = set()
+        # Stored calls a tool_use block accounted for (rendered or filtered out).
+        matched_calls: set[str] = set()
         # Accumulate consecutive tool calls for collapsing
         pending_tools: list[ToolCallDetail] = []
 
@@ -1315,17 +1378,11 @@ def _build_narrative(
                         break
 
                 if tc:
-                    name = tc["tool_name"] or "unknown"
-                    status = tc["status"] or "unknown"
-
-                    if _matches_tool_filter(name, status, tool_filter):
-                        detail = ToolCallDetail(
-                            tool_name=name,
-                            status=status,
-                            input=tc["input"] if include_tool_content else None,
-                            result=tc["result"] if include_tool_content else None,
-                            tool_call_id=tc["tool_call_id"],
-                        )
+                    matched_calls.add(tc["tool_call_id"])
+                    detail = _tool_call_detail(
+                        tc, include_tool_content=include_tool_content, tool_filter=tool_filter,
+                    )
+                    if detail is not None:
                         pending_tools.append(detail)
 
             elif block_type in ("tool_result", "tool_output"):
@@ -1340,10 +1397,44 @@ def _build_narrative(
                         block_id=block["id"],
                     ))
 
+        # A stored call no tool_use block names still belongs to this response:
+        # the assembler's synthesized container (a call with no response since
+        # the last prompt, as in a preamble) holds calls and no blocks at all.
+        # Render them after the response's blocks, in stored order, so a call
+        # present in the store is present on every surface.
+        for tc in resp_tool_calls:
+            if tc["tool_call_id"] in matched_calls:
+                continue
+            detail = _tool_call_detail(
+                tc, include_tool_content=include_tool_content, tool_filter=tool_filter,
+            )
+            if detail is not None:
+                pending_tools.append(detail)
+
         # Flush remaining tool calls
         _flush_tools()
 
     return narrative
+
+
+def _tool_call_detail(
+    tc,
+    *,
+    include_tool_content: bool,
+    tool_filter: str | None,
+) -> ToolCallDetail | None:
+    """The narrative's view of one stored tool call, or None when the filter drops it."""
+    name = tc["tool_name"] or "unknown"
+    status = tc["status"] or "unknown"
+    if not _matches_tool_filter(name, status, tool_filter):
+        return None
+    return ToolCallDetail(
+        tool_name=name,
+        status=status,
+        input=tc["input"] if include_tool_content else None,
+        result=tc["result"] if include_tool_content else None,
+        tool_call_id=tc["tool_call_id"],
+    )
 
 
 def _extract_thinking(raw: str) -> str:

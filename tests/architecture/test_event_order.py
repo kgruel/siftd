@@ -12,8 +12,9 @@ of 40 positions.
 Fixing one reader was never going to hold. The readers that define order are
 many (the prompt list, the exchange index, the last-event markers, the
 colon-path resolver and its inverse, the turn index, the neighbour lookup, the
-exchange fetchers), and they have to *agree*: ``conv:prompt:3`` must name the
-prompt ``get_prompt_by_index(conn, conv, 3)`` returns. Two readers that disagree
+exchange fetchers), and they have to *agree*: ``conv:exchange:3`` must name the
+prompt ``turn_at_exchange(conn, conv, 3)`` returns (the turn fold in
+``storage/turns.py`` is what every turn surface shares). Two readers that disagree
 on a tie are a wrong answer that looks like a right one. So the order is spelled
 once, in ``storage/sql_helpers.py`` (``event_order`` for ORDER BY,
 ``event_key`` for position predicates), and this ratchet is the CLAUDE.md

@@ -13,7 +13,7 @@ from siftd.adapters import claude_code, vscode
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, Usage
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
-from siftd.storage.events import get_prompt_by_index
+from siftd.storage.turns import turn_at_exchange
 from siftd.storage.sessions import (
     get_pending_tags,
     get_session_info,
@@ -842,7 +842,7 @@ class TestReingestPreservesEventTags:
         ingest_all(live_db["conn"], [claude_code])
 
         conv_id = _conversation_id(live_db["conn"], f"claude_code::{session_uuid}")
-        prompt_id = get_prompt_by_index(live_db["conn"], conv_id, 1)
+        prompt_id = turn_at_exchange(live_db["conn"], conv_id, 1).prompt_id
         tag_id = get_or_create_tag(live_db["conn"], "key-insight")
         apply_tag(live_db["conn"], "exchange", prompt_id, tag_id, commit=True)
 
@@ -853,9 +853,9 @@ class TestReingestPreservesEventTags:
         assert new_conv_id != conv_id
         assert _tag_target_kinds(live_db["conn"], "key-insight") == [("exchange", 1)]
         # ...and on the *same* turn, not re-resolved to the appended one.
-        assert _tag_target(live_db["conn"], "key-insight") == get_prompt_by_index(
+        assert _tag_target(live_db["conn"], "key-insight") == turn_at_exchange(
             live_db["conn"], new_conv_id, 1
-        )
+        ).prompt_id
 
 
 class TestReingestCarriesLegacySuffixedToolTags:

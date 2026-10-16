@@ -21,6 +21,7 @@ from siftd.api.conversations import AmbiguousPrefix, prefix_candidates, resolve_
 from siftd.storage.events import get_event_position
 from siftd.storage.filters import ALL_TAG_KINDS, EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import event_order
+from siftd.storage.turns import exchange_number, turn_at_exchange
 
 # Colon-path *anchor* kinds — the 2nd segment always names an event kind.
 # 'block' is addressable (bare/kind-narrowed id, or the optional 4th colon
@@ -29,13 +30,12 @@ GRANULAR_KINDS = EVENT_TAG_KINDS
 _ADDRESSABLE_KINDS = ALL_TAG_KINDS
 LAST_MARKERS = frozenset({"last_prompt", "last_response", "last_exchange", "last_tool_call"})
 
-# Maps a granular target kind to the events.kind value used to query. 'exchange'
-# anchors on the n-th prompt event.
+# Maps an event-kind target to the events.kind value it counts. 'exchange' is
+# absent on purpose: it is numbered as a turn, not counted by kind.
 _KIND_TO_EVENT_KIND: dict[str, str] = {
     "prompt": "prompt",
     "response": "response",
     "tool_call": "tool_call",
-    "exchange": "prompt",
 }
 
 
@@ -211,16 +211,29 @@ def _resolve_colon(
     if n < 1:
         raise ValueError(f"Index must be >= 1, got {n}")
 
-    event_kind = _KIND_TO_EVENT_KIND[kind]
-    row = conn.execute(
-        "SELECT id FROM events "
-        "WHERE conversation_id = ? AND kind = ? "
-        f"ORDER BY {event_order()} "
-        "LIMIT 1 OFFSET ?",
-        (conversation_id, event_kind, n - 1),
-    ).fetchone()
-    if row is None:
-        raise IndexError(f"No {kind} at index {n} in conversation {conversation_id[:12]}")
+    if kind == "exchange":
+        # An exchange is a turn: number it as every turn surface does, and anchor
+        # on its prompt. The turn before the first prompt has none to address.
+        turn = turn_at_exchange(conn, conversation_id, n)
+        if turn is None:
+            raise IndexError(f"No {kind} at index {n} in conversation {conversation_id[:12]}")
+        if turn.prompt_id is None:
+            raise IndexError(
+                f"{kind} {n} of conversation {conversation_id[:12]} is the turn before the "
+                "first prompt; it has no prompt to address"
+            )
+        row = {"id": turn.prompt_id}
+    else:
+        event_kind = _KIND_TO_EVENT_KIND[kind]
+        row = conn.execute(
+            "SELECT id FROM events "
+            "WHERE conversation_id = ? AND kind = ? "
+            f"ORDER BY {event_order()} "
+            "LIMIT 1 OFFSET ?",
+            (conversation_id, event_kind, n - 1),
+        ).fetchone()
+        if row is None:
+            raise IndexError(f"No {kind} at index {n} in conversation {conversation_id[:12]}")
 
     if block_position is not None:
         # block_index is 0-based and adapter-derived/contiguous — direct lookup,
@@ -352,7 +365,10 @@ def alias(conn: sqlite3.Connection, target_kind: str, target_id: str) -> str:
     ).fetchone()
     if row is None:
         return target_id[:12]
-    return f"{row['conversation_id'][:12]}:{target_kind}:{get_event_position(conn, target_id)}"
+    # An exchange is numbered as a turn (the forward resolver's rule); every
+    # other kind by its position among events of its kind.
+    n = exchange_number(conn, target_id) if target_kind == "exchange" else get_event_position(conn, target_id)
+    return f"{row['conversation_id'][:12]}:{target_kind}:{n}"
 
 
 def _alias_block(conn: sqlite3.Connection, block_id: str) -> str:

@@ -1933,7 +1933,7 @@ def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
 
     Slice 5 changed the exchange tagging API from 0-based to 1-based indices.
     Any pending_tags rows written before that change carry 0-based indices and
-    must be incremented before the strict >= 1 validation in _get_prompt_by_index
+    must be incremented before the strict >= 1 validation in the exchange-index resolver (storage/turns.py::turn_at_exchange)
     can be relied upon.
     """
     # pending_tags may not exist on very old DBs that skipped ensure_session_tables;

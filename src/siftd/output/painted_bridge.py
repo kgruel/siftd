@@ -14,6 +14,7 @@ from siftd.output.common import (
     fmt_tokens,
     fmt_workspace,
     format_refs_annotation,
+    preamble_heading,
     prefers_ascii,
     role_label,
     split_match_segments,
@@ -636,6 +637,13 @@ def render_query_detail_block(
         prompt_role_label = getattr(turn, "PROMPT_ROLE_LABEL", ROLE_USER)
         response_role_label = getattr(turn, "RESPONSE_ROLE_LABEL", ROLE_ASSISTANT)
 
+        # The turn before the first prompt has no prompt line to open it, so it
+        # opens with a heading of its own.
+        heading = preamble_heading(turn)
+        if heading:
+            rule = "--" if ascii_mode else "\u2014"
+            parts.append(_line_block(_line((f"{rule} {heading} {rule}", ds.temporal))))
+
         if turn.prompt_text:
             _prompt_meta = [*_role_prefix(prompt_role_label, ds, abbrev=False), (ts, ds.temporal)]
             _pt = _tag_span(getattr(turn, "prompt_id", None))
@@ -944,7 +952,7 @@ def render_list_block(
     if depth >= 1:
         cols.extend([
             Col("model", lambda c: fmt_model(c.model) if c.model else "", style=ds.model),
-            Col("turns", lambda c: fmt_count(c.prompt_count), style=ds.metric, align=Align.END),
+            Col("turns", lambda c: fmt_count(c.turn_count), style=ds.metric, align=Align.END),
             Col("tokens", lambda c: fmt_tokens(c.total_tokens), style=ds.metric, align=Align.END),
         ])
     if depth >= 3:

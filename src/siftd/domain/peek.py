@@ -70,6 +70,12 @@ class PeekExchange:
     prompt_external_id: str | None = None
     response_external_ids: list[str] = field(default_factory=list)
     tool_use_ids: list[str] = field(default_factory=list)
+    # The exchange of responses that precede the first prompt: no prompt, and,
+    # when the session continues another, what it continues, spelled
+    # ``<parent external id> (<kind>)`` (peek never reads the database, so an
+    # unresolved parent is the only spelling it has).
+    preamble: bool = False
+    continued_from: str | None = None
 
 
 @dataclass

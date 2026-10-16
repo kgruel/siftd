@@ -18,10 +18,10 @@ from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
 )
-from siftd.storage.queries import fetch_event_turn_number as event_turn_number  # noqa: F401 — re-export for cli/id_cmd
 from siftd.storage.sql_helpers import event_key, event_key_params, event_order
 from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
+from siftd.storage.turns import exchange_number as event_turn_number  # noqa: F401 — re-export for cli/id_cmd
 
 _EVENT_KINDS = ("prompt", "response", "tool_call")
 

@@ -4,7 +4,9 @@ Nested structure: Conversation → Prompt → Response → ToolCall
 These are pure data objects, decoupled from storage.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from typing import Protocol
 
 
 @dataclass
@@ -79,6 +81,22 @@ class Harness:
 CONTAINMENT_KINDS = frozenset({"subagent"})
 
 
+class _HasKind(Protocol):
+    @property
+    def kind(self) -> str: ...
+
+
+def continued_link[L: _HasKind](links: Sequence[L]) -> L | None:
+    """The link that says what a conversation continues, for a header; None with no links.
+
+    The relation that says what it continues (fork, resume, branch) wins over
+    the one that says where it ran, so a forked sub-agent reads as a fork of its
+    parent's transcript. Stored edges and an assembled ``Lineage`` both qualify:
+    anything with a ``kind``. One rule for the stored and the live read.
+    """
+    return next((link for link in links if link.kind not in CONTAINMENT_KINDS), links[0] if links else None)
+
+
 @dataclass(frozen=True)
 class Lineage:
     """A conversation this one belongs to or continues.
@@ -130,6 +148,15 @@ class Conversation:
     # Persisted as conversation_links rows, resolved against
     # conversations.external_id at read time.
     lineage: tuple[Lineage, ...] = ()
+
+    @property
+    def turn_count(self) -> int:
+        """Turns: one per prompt, plus the preamble turn when there is a preamble.
+
+        The parsed-conversation form of the rule the stored forms follow
+        (:func:`siftd.storage.turns.fold_turns` and the listing's ``turn_count``).
+        """
+        return len(self.prompts) + (1 if self.preamble else 0)
 
     def parent(self, kind: str) -> Lineage | None:
         """The lineage link of ``kind``, if this conversation has one."""

@@ -44,6 +44,14 @@ A conversation may continue exactly one other: a sub-agent spawned by a session,
 
 Events are ordered by the position they were recorded in (`events.sequence`, assigned when the conversation is stored), not by timestamp: timestamps tie, and some tools stamp every event of a session with the same instant. Conversations stored before schema v13 have no recorded position and are ordered by `(timestamp, id)` as they always were; re-parsing the source gives them one.
 
+### Turns
+
+A turn is an optional prompt plus the responses, and their tool calls, that follow it until the next prompt. Every surface that shows, counts or numbers turns (`show`, `export`, the web transcript, search positions, `--at-turn`, exchange tags, the "turns" column) takes them from one fold of the stored events, so they cannot disagree.
+
+Responses stored before the first prompt (a forked sub-agent's whole transcript, a leading tool announcement) form the **preamble turn**. It has no prompt, it is always first, and it counts as a turn. Transcripts head it "Continued from <parent>" when the conversation has a lineage link, else "Before the first prompt". A conversation with a preamble numbers it 0, so its prompts sit one place later than their position among prompts. A conversation without one is numbered exactly as before: turn 0 is its first prompt, and exchange N is its Nth prompt (1-based).
+
+An exchange tag anchors on a prompt, so the preamble turn, which has none, cannot be tagged as an exchange; its responses and tool calls can still be tagged by their own addresses.
+
 ### Prompts
 
 A prompt is one thing you typed or submitted. Multi-turn conversations have multiple prompts.
