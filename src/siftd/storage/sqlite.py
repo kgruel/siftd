@@ -3622,7 +3622,9 @@ def merge_ingested_file_spellings(conn: sqlite3.Connection, path: str, others: S
     The row kept is the one that names a conversation, preferring ``path``'s own:
     a row with no pointer must not displace one that has a live conversation
     behind it, or that conversation could no longer be found from its file. Its
-    hash and stat carry over with it; the other rows are deleted.
+    hash and stat carry over with it; the other rows are deleted. Rows that name
+    different conversations are left alone: a path that now reaches this file
+    (a retargeted symlink) once read another, and its row is that one's way back.
     """
     spellings = [path, *others]
     rows = {
@@ -3633,7 +3635,7 @@ def merge_ingested_file_spellings(conn: sqlite3.Connection, path: str, others: S
         )
     }
     present = [spelling for spelling in spellings if spelling in rows]
-    if not present:
+    if not present or len({rows[s] for s in present} - {None}) > 1:
         return
     kept = next((spelling for spelling in present if rows[spelling] is not None), present[0])
     conn.executemany("DELETE FROM ingested_files WHERE path = ?", [(s,) for s in present if s != kept])

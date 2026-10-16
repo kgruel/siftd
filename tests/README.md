@@ -116,7 +116,7 @@ docstring so its row is meaningful.
 | `tests/` | 206 | 3630 |
 | `tests/adapters/` | 22 | 484 |
 | `tests/architecture/` | 15 | 91 |
-| `tests/cli/` | 31 | 693 |
+| `tests/cli/` | 31 | 694 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -393,7 +393,7 @@ docstring so its row is meaningful.
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
 | [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
-| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 37 | ``siftd ingest --reparse`` through the argparse layer. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 38 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

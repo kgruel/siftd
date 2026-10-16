@@ -26,7 +26,14 @@ from siftd.adapters.records import PromptRec, ResponseRec, Session, ToolCallRec
 from siftd.cli import main
 from siftd.domain import Harness, ToolCall
 from siftd.ids import ulid
-from siftd.storage.sqlite import ensure_conversation_owners_table, open_database
+from siftd.storage.sqlite import (
+    create_database,
+    ensure_conversation_owners_table,
+    merge_ingested_file_spellings,
+    open_database,
+    record_ingested_file,
+    store_conversation,
+)
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 HARNESS = "reparse_test"
@@ -469,7 +476,9 @@ class TestReparseOneFileUnderTwoPaths:
         conn.close()
         return rows
 
-    @pytest.mark.parametrize("recorded", ["both", "only-the-other", "own-row-unpointed", "relative-scan"])
+    @pytest.mark.parametrize(
+        "recorded", ["both", "only-the-other", "own-row-unpointed", "relative-scan", "relative-history"]
+    )
     def test_the_conversation_is_replaced_and_one_row_remains(self, tmp_path, run_cli, monkeypatch, recorded):
         (tmp_path / "real").mkdir()
         (tmp_path / "link").symlink_to(tmp_path / "real")
@@ -482,11 +491,13 @@ class TestReparseOneFileUnderTwoPaths:
             "only-the-other": ([alias], ()),
             "own-row-unpointed": ([source, alias], (source,)),
             "relative-scan": ([source, alias], ()),
+            # An older relative scan from the same directory recorded the relative spelling.
+            "relative-history": ([Path("real") / "s.jsonl"], ()),
         }[recorded]
         self._recorded_as(run_cli.db, source, spellings, unpointed=unpointed)
         _tag(run_cli.db, "conversation", cid, "kept")
         scanned = source
-        if recorded == "relative-scan":
+        if recorded in ("relative-scan", "relative-history"):
             monkeypatch.chdir(tmp_path)
             scanned = Path("real") / "s.jsonl"
 
@@ -499,6 +510,20 @@ class TestReparseOneFileUnderTwoPaths:
         assert new != cid
         assert "kept" in _conversation_tags(run_cli.db, new)
         assert self._rows(run_cli.db) == [(str(source), new)], "the alias row would claim the file again"
+
+    def test_spellings_that_name_different_conversations_are_not_folded(self, tmp_path):
+        """A symlink retargeted from file A to file B: its row is A's conversation's only way back."""
+        db = create_database(tmp_path / "siftd.db")
+        a = store_conversation(db, make_conversation(external_id="a", harness_name=HARNESS))
+        b = store_conversation(db, make_conversation(external_id="b", harness_name=HARNESS))
+        record_ingested_file(db, "/logs/b.jsonl", "h-b", b)
+        record_ingested_file(db, "/logs/link.jsonl", "h-a", a)
+        db.commit()
+
+        merge_ingested_file_spellings(db, "/logs/b.jsonl", ["/logs/link.jsonl"])
+
+        rows = dict(db.execute("SELECT path, conversation_id FROM ingested_files").fetchall())
+        assert (rows["/logs/b.jsonl"], rows["/logs/link.jsonl"]) == (b, a)
 
     def test_an_emptied_file_takes_its_conversation_from_the_alias_that_named_it(self, tmp_path, run_cli):
         """Its own row names nothing and only the alias names the conversation.
