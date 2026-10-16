@@ -162,6 +162,24 @@ class TestBackfillResponseAttributes:
         keys = {r["key"] for r in db.execute("SELECT key FROM attributes WHERE target_kind='response' AND target_id='r1'").fetchall()}
         assert keys == {"cache_creation_input_tokens", "cache_read_input_tokens"}
 
+    def test_streamed_message_attributes_land_on_final_record_only(self, db, tmp_path):
+        """Issue #97: the same rule as parse(). Every chunk shares one message.id and
+        repeats its usage; only the final chunk's Response gets the attributes."""
+        usage = {"cache_creation_input_tokens": 500, "cache_read_input_tokens": 1200}
+        _chain(db, rid="r1", ext_id="claude_code::u1")
+        _chain(db, rid="r2", ext_id="claude_code::u2")
+        p = _jsonl(tmp_path, [
+            {"type": "assistant", "uuid": "u1", "message": {"id": "msg_1", "usage": usage}},
+            {"type": "assistant", "uuid": "u2", "message": {"id": "msg_1", "usage": usage}},
+        ])
+        _ingest(db, p)
+        db.commit()
+        assert backfill_response_attributes(db) == 2
+        keys = lambda rid: {r["key"] for r in db.execute(  # noqa: E731
+            "SELECT key FROM attributes WHERE target_kind='response' AND target_id=?", (rid,)).fetchall()}
+        assert keys("r1") == set()
+        assert keys("r2") == {"cache_creation_input_tokens", "cache_read_input_tokens"}
+
     @pytest.mark.parametrize("record,desc", [
         ({"type": "human", "uuid": "x"}, "non-assistant"),
         ({"type": "assistant", "uuid": "x", "message": {"usage": {"input_tokens": 100}}}, "no cache"),

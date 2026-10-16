@@ -5,6 +5,7 @@ from pathlib import Path
 from conftest import FIXTURES_DIR, default_location_source, write_jsonl
 
 from siftd.adapters import claude_code
+from siftd.adapters.sdk import peek_exchanges_from_records
 from siftd.domain.source import Source
 
 
@@ -393,3 +394,116 @@ class TestClaudeCodeAdapter:
         responses = conv.prompts[0].responses
         assert "turn_duration_ms" not in responses[0].attributes
         assert responses[1].attributes["turn_duration_ms"] == "114244"
+
+    @staticmethod
+    def _streamed_message(uuid, output, cache_read, message_id="msg_1"):
+        """One content-block record of a streamed message (repeats its full usage)."""
+        record = {"type": "assistant", "sessionId": "s", "timestamp": "T2", "uuid": uuid,
+                  "message": {"role": "assistant", "model": "m", "content": "x",
+                              "usage": {"input_tokens": 5, "output_tokens": output,
+                                        "cache_read_input_tokens": cache_read,
+                                        "cache_creation_input_tokens": 7,
+                                        "cache_creation": {"ephemeral_5m_input_tokens": 7},
+                                        "server_tool_use": {"web_search_requests": 1}}}}
+        if message_id is not None:
+            record["message"]["id"] = message_id
+        return record
+
+    def test_streamed_message_usage_counted_once(self, tmp_path):
+        """Issue #97: three records share one message.id. All three stay Responses;
+        only the final record carries usage and the usage-derived attributes."""
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "hi"}},
+            self._streamed_message("a1", 2, 100),
+            self._streamed_message("a2", 2, 100),
+            self._streamed_message("a3", 176, 100),
+            # A record without message.id is its own message and keeps its usage.
+            self._streamed_message("a4", 9, 0, message_id=None),
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        responses = conv.prompts[0].responses
+        assert [r.external_id for r in responses] == [
+            "claude_code::a1", "claude_code::a2", "claude_code::a3", "claude_code::a4",
+        ]
+        assert [r.usage is not None for r in responses] == [False, False, True, True]
+        assert sum(r.usage.output_tokens for r in responses if r.usage) == 185
+        assert responses[2].usage.input_tokens == 5
+        for quiet in responses[:2]:
+            assert quiet.attributes == {}
+        assert responses[2].attributes["cache_read_input_tokens"] == "100"
+        assert responses[2].attributes["cache_creation_ephemeral_5m_input_tokens"] == "7"
+        assert responses[2].attributes["server_tool_use_web_search_requests"] == "1"
+        assert responses[3].attributes["cache_creation_input_tokens"] == "7"
+
+    def test_usage_carrier_indices_rule(self):
+        records = [
+            {"type": "user", "message": {"role": "user", "content": "hi"}},            # 0 not a response
+            {"type": "assistant", "message": {"id": "m1"}},                             # 1 chunk of m1
+            {"type": "user", "message": {"role": "user", "content": "between"}},        # 2 not a response
+            {"type": "assistant", "message": {"id": "m1"}},                             # 3 final m1
+            {"type": "assistant", "message": {"id": ""}},                               # 4 empty id = no id
+            {"type": "assistant", "message": {"role": "user", "id": "m9"}},             # 5 not a response
+            {"type": "assistant", "message": {"id": "m9"}},                             # 6 only m9 record
+            {"type": "assistant"},                                                      # 7 no message
+        ]
+        assert claude_code.usage_carrier_indices(records) == frozenset({3, 4, 6, 7})
+
+    def test_role_assistant_record_typed_user_carries_its_usage(self, tmp_path):
+        """parse() decides a Response by message.role; the record type only gates which
+        records are read. A record typed user with role assistant is a Response, so it
+        must be the usage carrier of its message, or that usage is silently dropped."""
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "hi"}},
+            {"type": "user", "sessionId": "s", "timestamp": "T2", "uuid": "a1",
+             "message": {"role": "assistant", "id": "msg_x", "model": "m", "content": "x",
+                         "usage": {"input_tokens": 5, "output_tokens": 9}}},
+        ]
+        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        (response,) = conv.prompts[0].responses
+        assert response.usage is not None
+        assert response.usage.output_tokens == 9
+
+    def test_role_mismatch_peek_matches_parse(self, tmp_path):
+        """parse(), the usage carrier rule and peek all classify a record by
+        effective_role. A record typed user with role assistant is a response, so peek
+        must not turn it into a prompt, and a later such record must not replace the
+        message's usage with zero (#97)."""
+        def message(uuid, record_type, role, output_tokens):
+            return {"type": record_type, "sessionId": "s", "timestamp": "T2", "uuid": uuid,
+                    "message": {"role": role, "id": "msg_x", "model": "m", "content": "x",
+                                "usage": {"input_tokens": 1, "output_tokens": output_tokens}}}
+
+        prompt = {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+                  "message": {"role": "user", "content": "hi"}}
+        scenarios = {
+            # A chunk typed assistant, then a final record typed user with role assistant.
+            "final_typed_user": ([prompt, message("a1", "assistant", "assistant", 2),
+                                  message("a2", "user", "assistant", 20)], 1, 20),
+            # The same chunk, then a record typed assistant with role user: a prompt, not a response.
+            "later_role_user": ([prompt, message("a1", "assistant", "assistant", 2),
+                                 message("a2", "assistant", "user", 0)], 2, 2),
+        }
+        for name, (records, prompt_count, output_total) in scenarios.items():
+            path = write_jsonl(tmp_path, records, name=f"{name}.jsonl")
+            conv = list(claude_code.parse(Source(kind="file", location=path)))[0]
+            parsed_output = sum(
+                r.usage.output_tokens for p in conv.prompts for r in p.responses if r.usage
+            )
+            exchanges = peek_exchanges_from_records(records, claude_code.normalize_record, last_n=5)
+            assert len(conv.prompts) == len(exchanges) == prompt_count, name
+            assert parsed_output == sum(x.output_tokens for x in exchanges) == output_total, name
+
+    def test_peek_counts_streamed_message_once(self):
+        """The SDK exchange aggregation applies the same rule as parse()."""
+        records = [
+            {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
+             "message": {"role": "user", "content": "hi"}},
+            self._streamed_message("a1", 2, 100),
+            self._streamed_message("a2", 2, 100),
+            self._streamed_message("a3", 176, 100),
+        ]
+        exchanges = peek_exchanges_from_records(records, claude_code.normalize_record, last_n=5)
+        assert len(exchanges) == 1
+        assert exchanges[0].input_tokens == 5 and exchanges[0].output_tokens == 176

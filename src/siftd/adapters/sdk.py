@@ -576,6 +576,11 @@ class NormalizedRecord:
     model: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    # Provider message identity. Usage-bearing records sharing a message_id are
+    # one message: the exchange aggregation keeps only the last record's usage
+    # for it (streamed messages repeat growing usage on every record). None
+    # means the record's usage is its own.
+    message_id: str | None = None
     tool_name: str | None = None
     extra: dict = field(default_factory=dict)
 
@@ -746,6 +751,9 @@ def peek_exchanges_from_records(
     exchanges: list[PeekExchange] = []
     current_exchange: PeekExchange | None = None
     tool_counter: Counter[str] = Counter()
+    # message_id -> (exchange charged for it, input, output). Lets a later
+    # record of the same message replace the earlier charge.
+    message_charge: dict[str, tuple[PeekExchange, int, int]] = {}
 
     for raw in records:
         nr = normalize(raw)
@@ -769,7 +777,15 @@ def peek_exchanges_from_records(
                 exchanges.append(current_exchange)
                 tool_counter = Counter()
 
-            # Accumulate usage
+            # Accumulate usage. A message_id charges once, at its last record's
+            # value: the earlier charge is withdrawn, then the new one applied.
+            if nr.message_id is not None:
+                prior = message_charge.get(nr.message_id)
+                if prior is not None:
+                    prior_exchange, prior_in, prior_out = prior
+                    prior_exchange.input_tokens -= prior_in
+                    prior_exchange.output_tokens -= prior_out
+                message_charge[nr.message_id] = (current_exchange, nr.input_tokens, nr.output_tokens)
             current_exchange.input_tokens += nr.input_tokens
             current_exchange.output_tokens += nr.output_tokens
 

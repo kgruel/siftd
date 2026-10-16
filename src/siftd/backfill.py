@@ -139,10 +139,13 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
     For each ingested claude_code file, re-parses the JSONL and extracts
     cache_creation_input_tokens / cache_read_input_tokens from message.usage,
     then stores them as polymorphic attributes (target_kind='response').
+    Only usage carriers are read (see ``usage_carrier_indices``): a streamed
+    message's usage lives on its final record alone.
 
     Returns count of attributes inserted.
     """
     from siftd.adapters._jsonl import load_jsonl
+    from siftd.adapters.claude_code import usage_carrier_indices
 
     # Find all ingested claude_code files
     harness_row = conn.execute(
@@ -166,10 +169,12 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
         # Re-read the raw JSONL to extract cache tokens
         records = load_jsonl(file_path)
+        # Same usage rule as the adapter: one carrier per streamed message.
+        usage_carriers = usage_carrier_indices(records)
 
         # Match responses by external_id
-        for record in records:
-            if record.get("type") != "assistant":
+        for index, record in enumerate(records):
+            if index not in usage_carriers:
                 continue
             message_data = record.get("message") or {}
             usage_data = message_data.get("usage") or {}

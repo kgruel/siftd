@@ -12,9 +12,11 @@ import threading
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import TextIO
 
+from siftd.adapters.claude_code import effective_role, message_id_of
 from siftd.adapters.sdk import canonicalize_tool_name, extract_tool_hint
 from siftd.domain.peek import PeekNarrativeBlock, PeekToolCall
 
@@ -24,6 +26,11 @@ class FollowEvent:
     """Parsed data from a single JSONL record (user or assistant turn).
 
     Module-local to decouple parse from render.  Not a domain type.
+
+    ``input_tokens``/``output_tokens`` are this event's share of its message's usage:
+    parse_record() fills in the record's own usage, and follow_session() replaces it
+    with the change from the message's prior charge (charge_usage), so summing the
+    events of a stream yields each message's final counts (#97).
     """
 
     timestamp: str | None = None
@@ -34,6 +41,13 @@ class FollowEvent:
     input_tokens: int = 0
     output_tokens: int = 0
     is_user: bool = False
+    message_id: str | None = None
+    """API message.id; records sharing one id are one streamed message."""
+
+    @property
+    def shows_output(self) -> bool:
+        """True when a text rendering has something to show; False for usage-only events."""
+        return bool(self.is_user or self.text or self.narrative or self.tool_calls)
 
 
 def parse_record(
@@ -47,8 +61,8 @@ def parse_record(
 
     Returns None for tool_result records and non-message records.
     """
-    record_type = record.get("type")
-    if record_type not in ("user", "assistant"):
+    role = effective_role(record)
+    if role not in ("user", "assistant"):
         return None
 
     msg = record.get("message") or {}
@@ -62,7 +76,7 @@ def parse_record(
 
     timestamp = record.get("timestamp")
 
-    if record_type == "user":
+    if role == "user":
         # Skip tool_result records
         if any(
             isinstance(b, dict) and b.get("type") == "tool_result" for b in content
@@ -152,6 +166,70 @@ def parse_record(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         is_user=False,
+        message_id=message_id_of(record),
+    )
+
+
+def account_record(
+    record: dict,
+    *,
+    charged: dict[str, tuple[int, int]],
+    tool_aliases: dict[str, str] | None = None,
+    hint_keys: dict[str, list[str]] | None = None,
+    include_thinking: bool = False,
+) -> FollowEvent | None:
+    """parse_record plus usage accounting: the charged event for a record, or None.
+
+    A record can carry usage its text does not show: a thinking-only or server-tool-only
+    record, often a streamed message's final one. Its usage still becomes an event with
+    no output (``FollowEvent.shows_output`` is False), because a charge that rides on no
+    event would be missing from the stream's totals (#97).
+    """
+    event = parse_record(
+        record,
+        tool_aliases=tool_aliases,
+        hint_keys=hint_keys,
+        include_thinking=include_thinking,
+    )
+    if event is None:
+        event = _usage_only_event(record)
+        if event is None:
+            return None
+    return charge_usage(event, charged)
+
+
+def _usage_only_event(record: dict) -> FollowEvent | None:
+    """The usage of an assistant record that carries usage, for a record with no output."""
+    if effective_role(record) != "assistant":
+        return None
+    usage = (record.get("message") or {}).get("usage")
+    if not usage:
+        return None
+    return FollowEvent(
+        input_tokens=usage.get("input_tokens", 0),
+        output_tokens=usage.get("output_tokens", 0),
+        message_id=message_id_of(record),
+    )
+
+
+def charge_usage(event: FollowEvent, charged: dict[str, tuple[int, int]]) -> FollowEvent:
+    """Return the event with its usage as the change from its message's prior charge.
+
+    Claude Code repeats a streamed message's growing usage on every record sharing its
+    message.id, so counting each record overstates the message (#97). ``charged`` maps
+    message_id to the usage already counted for it; each record is charged only the
+    difference, so the stream's total per message is its final record's counts, the
+    same total peek_exchanges gives. Records without a message_id are charged as-is.
+    ``charged`` is the caller's per-stream state.
+    """
+    if event.is_user or event.message_id is None:
+        return event
+    prior_input, prior_output = charged.get(event.message_id, (0, 0))
+    charged[event.message_id] = (event.input_tokens, event.output_tokens)
+    return replace(
+        event,
+        input_tokens=event.input_tokens - prior_input,
+        output_tokens=event.output_tokens - prior_output,
     )
 
 
@@ -194,6 +272,8 @@ def event_to_json(event: FollowEvent) -> dict:
     if not event.is_user:
         d["input_tokens"] = event.input_tokens
         d["output_tokens"] = event.output_tokens
+        if event.message_id is not None:
+            d["message_id"] = event.message_id
         d["tool_calls"] = [
             {"name": name, "count": count, "hints": hints}
             for name, count, hints in event.tool_calls
@@ -239,6 +319,8 @@ def follow_session(
     """
     # Resolve adapter for tool_aliases and hint_keys
     tool_aliases, hint_keys = _resolve_adapter_config(path)
+    # message_id -> usage already charged in this stream (see charge_usage)
+    charged: dict[str, tuple[int, int]] = {}
 
     f = None
     start_time = time.time() if timeout is not None else None
@@ -248,9 +330,18 @@ def follow_session(
             stat = path.stat()
             last_inode = stat.st_ino
             last_dev = stat.st_dev
-            f.seek(0, 2)  # Seek to end
+            # Attach at end of file. The complete records already there are the initial
+            # context the caller shows, so they seed the usage charges without being
+            # emitted. Otherwise a message's final record would be charged in full on
+            # top of the part the context already showed (#97).
+            buf = _seed_charges(
+                f,
+                charged=charged,
+                tool_aliases=tool_aliases,
+                hint_keys=hint_keys,
+                include_thinking=include_thinking,
+            )
             last_size = stat.st_size
-            buf = ""
         except OSError:
             return
         finally:
@@ -285,6 +376,7 @@ def follow_session(
                 last_dev = stat.st_dev
                 last_size = 0
                 buf = ""
+                charged.clear()
                 f.seek(0)
 
             # Handle file truncation
@@ -292,6 +384,7 @@ def follow_session(
                 f.seek(0)
                 last_size = 0
                 buf = ""
+                charged.clear()
 
             if current_size == last_size:
                 continue
@@ -304,17 +397,9 @@ def follow_session(
             buf += chunk
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
-                line = line.strip()
-                if not line:
-                    continue
-
-                try:
-                    record = json.loads(line)
-                except (json.JSONDecodeError, ValueError):
-                    continue
-
-                event = parse_record(
-                    record,
+                event = _account_line(
+                    line,
+                    charged=charged,
                     tool_aliases=tool_aliases,
                     hint_keys=hint_keys,
                     include_thinking=include_thinking,
@@ -328,7 +413,7 @@ def follow_session(
                 if json_mode:
                     print(json.dumps(event_to_json(event), separators=(",", ":")))
                     sys.stdout.flush()
-                elif render:
+                elif render and event.shows_output:
                     render(event)
 
     except KeyboardInterrupt:
@@ -339,6 +424,67 @@ def follow_session(
 
     if not json_mode:
         print("\n(follow stopped)", file=sys.stderr)
+
+
+def _account_line(
+    line: str,
+    *,
+    charged: dict[str, tuple[int, int]],
+    tool_aliases: dict[str, str] | None,
+    hint_keys: dict[str, list[str]] | None,
+    include_thinking: bool,
+) -> FollowEvent | None:
+    """The charged event for one JSONL line, or None for a blank, invalid or non-turn line."""
+    line = line.strip()
+    if not line:
+        return None
+    try:
+        record = json.loads(line)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    return account_record(
+        record,
+        charged=charged,
+        tool_aliases=tool_aliases,
+        hint_keys=hint_keys,
+        include_thinking=include_thinking,
+    )
+
+
+def _seed_charges(
+    f: TextIO,
+    *,
+    charged: dict[str, tuple[int, int]],
+    tool_aliases: dict[str, str] | None,
+    hint_keys: dict[str, list[str]] | None,
+    include_thinking: bool,
+) -> str:
+    """Charge every complete record already in ``f`` without emitting it.
+
+    Runs the live accounting over the file's existing lines, so a message's charge
+    after attach equals what the initial context showed for it. Leaves ``f`` at end of
+    file and returns the trailing partial line (empty when the file ends in a newline),
+    which the live tail completes.
+
+    A last line that is already a complete record, merely unterminated, is the
+    initial context's too (peek parsed it), so it is seeded and consumed here: the
+    newline that later terminates it then arrives as a blank line the tail skips.
+    """
+    f.seek(0)
+    for raw in f:
+        if not raw.endswith("\n"):
+            try:
+                json.loads(raw)
+            except (json.JSONDecodeError, ValueError):
+                return raw
+        _account_line(
+            raw,
+            charged=charged,
+            tool_aliases=tool_aliases,
+            hint_keys=hint_keys,
+            include_thinking=include_thinking,
+        )
+    return ""
 
 
 def _resolve_adapter_config(

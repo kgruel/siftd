@@ -1,0 +1,126 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2026-08-31T02:19:54.922Z",
+    "external_id": "claude_code::702f7990-c1e9-4827-ab97-f8e6cd8521ca::agent::ae98f5706fb8e06d5",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Check the claim.",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::26e5d2a5-d98f-46c6-ae03-80fcecdf64ef",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "Considering the next step.",
+                  "type": "thinking"
+                }
+              }
+            ],
+            "external_id": "claude_code::5a9873bd-7132-49ba-b091-230bdbc8c44d",
+            "model": "claude-sonnet-5",
+            "timestamp": "2026-08-31T02:19:47.237Z"
+          },
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01XinzWL3zS7rbFYoMcDkCg3",
+                  "input": {
+                    "query": "example query"
+                  },
+                  "name": "WebSearch",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::dbb817f9-0672-4f20-a4c6-338430785572",
+            "model": "claude-sonnet-5",
+            "timestamp": "2026-08-31T02:19:47.246Z",
+            "tool_calls": [
+              {
+                "external_id": "toolu_01XinzWL3zS7rbFYoMcDkCg3",
+                "input": {
+                  "query": "example query"
+                },
+                "result": {
+                  "content": "Neutral tool output."
+                },
+                "status": "success",
+                "timestamp": "2026-08-31T02:19:54.216Z",
+                "tool_name": "WebSearch"
+              }
+            ]
+          },
+          {
+            "attributes": {
+              "cache_creation_ephemeral_5m_input_tokens": "3301",
+              "cache_creation_input_tokens": "3301",
+              "cache_read_input_tokens": "41215"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01Xuk4ZuoEsjq6uyhwkD8SUi",
+                  "input": {
+                    "query": "example query"
+                  },
+                  "name": "WebSearch",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::9897535e-169e-48f1-bbb0-11fe8b85bdc8",
+            "model": "claude-sonnet-5",
+            "timestamp": "2026-08-31T02:19:47.277Z",
+            "tool_calls": [
+              {
+                "external_id": "toolu_01Xuk4ZuoEsjq6uyhwkD8SUi",
+                "input": {
+                  "query": "example query"
+                },
+                "result": {
+                  "content": "Neutral tool output."
+                },
+                "status": "success",
+                "timestamp": "2026-08-31T02:19:54.922Z",
+                "tool_name": "WebSearch"
+              }
+            ],
+            "usage": {
+              "input_tokens": 2,
+              "output_tokens": 176
+            }
+          }
+        ],
+        "timestamp": "2026-08-31T02:19:37.097Z"
+      }
+    ],
+    "started_at": "2026-08-31T02:19:37.097Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

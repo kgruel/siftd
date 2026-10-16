@@ -6,7 +6,7 @@ No storage coupling.
 
 import json
 import re
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
@@ -174,6 +174,96 @@ def _is_injected_user_record(record: dict) -> bool:
     return prompt_source is not None and prompt_source not in _USER_PROMPT_SOURCES
 
 
+def effective_role(record: dict) -> str | None:
+    """How every reader of a record classifies it: "user", "assistant", or None.
+
+    The record type gates which records are read (only "user" and "assistant" records
+    are messages), and message.role, defaulting to the type, decides prompt versus
+    response. parse(), the usage-carrier rule, peek normalization and follow mode all
+    call this one function, so they cannot disagree about what a record is. Returns the
+    role verbatim otherwise, so a role that is neither user nor assistant is skipped
+    by every caller.
+    """
+    record_type = record.get("type")
+    if record_type not in ("user", "assistant"):
+        return None
+    message = record.get("message")
+    role = message.get("role") if isinstance(message, dict) else None
+    return role or record_type
+
+
+def message_id_of(record: dict) -> str | None:
+    """The API message.id a record belongs to, or None when absent."""
+    message = record.get("message")
+    message_id = message.get("id") if isinstance(message, dict) else None
+    return message_id if isinstance(message_id, str) and message_id else None
+
+
+def usage_carrier_indices(records: Sequence[dict]) -> frozenset[int]:
+    """Indices of the response records whose message.usage is counted.
+
+    Claude Code writes one record per content block of an API message, and each
+    record repeats that message's full usage; the final record holds the final
+    counts. Counting every record multiplied tokens and cost by the records-per-
+    message ratio (issue #97). So per message.id only the last response record
+    carries usage. Records without a message.id each carry their own, as before.
+    Every response record is still a Response; only the usage is withheld.
+
+    Shared by parse() and backfill so both apply the same rule.
+    """
+    carriers: set[int] = set()
+    last_index: dict[str, int] = {}
+    for index, record in enumerate(records):
+        if effective_role(record) != "assistant":
+            continue
+        message_id = message_id_of(record)
+        if message_id is None:
+            carriers.add(index)
+        else:
+            last_index[message_id] = index
+    carriers.update(last_index.values())
+    return frozenset(carriers)
+
+
+def _usage_and_attributes(usage_data: dict) -> tuple[Usage | None, dict[str, str]]:
+    """Domain Usage plus the usage-derived response attributes for one message.usage."""
+    usage = None
+    if usage_data:
+        usage = Usage(
+            input_tokens=usage_data.get("input_tokens"),
+            output_tokens=usage_data.get("output_tokens"),
+        )
+
+    attributes: dict[str, str] = {}
+    if usage_data.get("cache_creation_input_tokens"):
+        attributes["cache_creation_input_tokens"] = str(usage_data["cache_creation_input_tokens"])
+    if usage_data.get("cache_read_input_tokens"):
+        attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
+
+    # 5m vs 1h cache writes are priced at different multipliers, so
+    # the TTL split is captured under distinct keys (capture-only —
+    # the cost model still prices the combined cache_creation total).
+    cache_creation = usage_data.get("cache_creation") or {}
+    if cache_creation.get("ephemeral_5m_input_tokens"):
+        attributes["cache_creation_ephemeral_5m_input_tokens"] = str(
+            cache_creation["ephemeral_5m_input_tokens"]
+        )
+    if cache_creation.get("ephemeral_1h_input_tokens"):
+        attributes["cache_creation_ephemeral_1h_input_tokens"] = str(
+            cache_creation["ephemeral_1h_input_tokens"]
+        )
+    server_tool_use = usage_data.get("server_tool_use") or {}
+    if server_tool_use.get("web_search_requests"):
+        attributes["server_tool_use_web_search_requests"] = str(
+            server_tool_use["web_search_requests"]
+        )
+    if server_tool_use.get("web_fetch_requests"):
+        attributes["server_tool_use_web_fetch_requests"] = str(
+            server_tool_use["web_fetch_requests"]
+        )
+    return usage, attributes
+
+
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
     yield from discover_files(locations, DEFAULT_LOCATIONS, ["**/*.jsonl"])
@@ -292,8 +382,9 @@ def parse(source: Source) -> Iterable[Conversation]:
     pending_tool_uses: dict[str, tuple[Response, str, dict]] = {}
     current_prompt: Prompt | None = None
     last_response: Response | None = None
+    usage_carriers = usage_carrier_indices(records)
 
-    for record in records:
+    for index, record in enumerate(records):
         record_type = record.get("type")
         if record_type == "system" and record.get("subtype") == "turn_duration":
             # Emitted after a turn's last assistant message; attach the
@@ -307,7 +398,7 @@ def parse(source: Source) -> Iterable[Conversation]:
             continue
 
         message_data = record.get("message") or {}
-        role = message_data.get("role") or record_type
+        role = effective_role(record)
         timestamp = record.get("timestamp", now_iso())
         external_msg_id = record.get("uuid")
         content_blocks = _normalize_content(message_data.get("content"))
@@ -394,42 +485,12 @@ def parse(source: Source) -> Iterable[Conversation]:
 
         elif role == "assistant":
             # Response
-            usage_data = message_data.get("usage") or {}
-            usage = None
-            if usage_data:
-                usage = Usage(
-                    input_tokens=usage_data.get("input_tokens"),
-                    output_tokens=usage_data.get("output_tokens"),
-                )
-
-            # Extract cache token attributes
-            attributes: dict[str, str] = {}
-            if usage_data.get("cache_creation_input_tokens"):
-                attributes["cache_creation_input_tokens"] = str(usage_data["cache_creation_input_tokens"])
-            if usage_data.get("cache_read_input_tokens"):
-                attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
-
-            # 5m vs 1h cache writes are priced at different multipliers, so
-            # the TTL split is captured under distinct keys (capture-only —
-            # the cost model still prices the combined cache_creation total).
-            cache_creation = usage_data.get("cache_creation") or {}
-            if cache_creation.get("ephemeral_5m_input_tokens"):
-                attributes["cache_creation_ephemeral_5m_input_tokens"] = str(
-                    cache_creation["ephemeral_5m_input_tokens"]
-                )
-            if cache_creation.get("ephemeral_1h_input_tokens"):
-                attributes["cache_creation_ephemeral_1h_input_tokens"] = str(
-                    cache_creation["ephemeral_1h_input_tokens"]
-                )
-            server_tool_use = usage_data.get("server_tool_use") or {}
-            if server_tool_use.get("web_search_requests"):
-                attributes["server_tool_use_web_search_requests"] = str(
-                    server_tool_use["web_search_requests"]
-                )
-            if server_tool_use.get("web_fetch_requests"):
-                attributes["server_tool_use_web_fetch_requests"] = str(
-                    server_tool_use["web_fetch_requests"]
-                )
+            # Every record of a streamed message is a Response, but only its
+            # usage carrier holds usage and the usage-derived attributes.
+            if index in usage_carriers:
+                usage, attributes = _usage_and_attributes(message_data.get("usage") or {})
+            else:
+                usage, attributes = None, {}
 
             response = Response(
                 timestamp=timestamp,
@@ -488,14 +549,15 @@ def _normalize_content(content) -> list:
 def normalize_record(raw: dict) -> NormalizedRecord | None:
     """Map a Claude Code native record to NormalizedRecord.
 
-    Claude Code record types:
+    Classified by effective_role(), the same rule parse() uses, so a record's
+    peek kind never disagrees with whether it became a prompt or a response:
         "user"      → user (or tool_result if content has tool_result blocks)
         "assistant" → assistant (with content blocks, usage, model)
     """
-    record_type = raw.get("type")
+    role = effective_role(raw)
     ts = raw.get("timestamp")
 
-    if record_type not in ("user", "assistant"):
+    if role not in ("user", "assistant"):
         return None
 
     msg = raw.get("message") or {}
@@ -510,7 +572,7 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
     else:
         content_blocks = []
 
-    if record_type == "user":
+    if role == "user":
         # Check if this is a tool_result message
         has_tool_result = any(
             isinstance(b, dict) and b.get("type") == "tool_result"
@@ -544,7 +606,8 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
             extra=extra,
         )
 
-    # assistant
+    # assistant. Usage is reported on every record and keyed by message_id so
+    # the SDK's exchange aggregation counts a streamed message once (#97).
     usage = msg.get("usage") or {}
     return NormalizedRecord(
         kind="assistant",
@@ -553,6 +616,7 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
         model=msg.get("model"),
         input_tokens=usage.get("input_tokens", 0) or 0,
         output_tokens=usage.get("output_tokens", 0) or 0,
+        message_id=message_id_of(raw),
     )
 
 

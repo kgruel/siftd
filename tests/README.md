@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 196 | 3404 |
-| `tests/adapters/` | 22 | 238 |
+| `tests/` | 196 | 3417 |
+| `tests/adapters/` | 22 | 245 |
 | `tests/architecture/` | 13 | 81 |
-| `tests/cli/` | 29 | 640 |
+| `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -147,7 +147,7 @@ docstring so its row is meaningful.
 | [test_auth.py](test_auth.py) | 4 | Tests for siftd.api.auth — token acquisition. |
 | [test_auto_index_hook.py](test_auto_index_hook.py) | 22 | Tests for the post-ingest auto-index hook (base lane — collaborators stubbed). |
 | [test_auto_index_integration.py](test_auto_index_integration.py) | 2 | Real-backend integration for the post-ingest auto-index hook (embed lane — fastembed). |
-| [test_backfill.py](test_backfill.py) | 28 | Tests for siftd.backfill module. |
+| [test_backfill.py](test_backfill.py) | 29 | Tests for siftd.backfill module. |
 | [test_blobs.py](test_blobs.py) | 0 | Blob storage tests — now in test_storage.py. |
 | [test_browser_smoke_remote.py](test_browser_smoke_remote.py) | 13 | Unit coverage for the opt-in Browserless T3 transport and containment. |
 | [test_browser_smoke_waits.py](test_browser_smoke_waits.py) | 15 | Unit coverage for the T3 smoke's condition waits, driven by a scripted CDP wire. |
@@ -186,7 +186,7 @@ docstring so its row is meaningful.
 | [test_file_refs.py](test_file_refs.py) | 3 | — |
 | [test_findability_review.py](test_findability_review.py) | 6 | — |
 | [test_fixture_redaction.py](test_fixture_redaction.py) | 2 | Adapter fixtures carry no personal data, so captured transcripts can be committed. |
-| [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
+| [test_follow.py](test_follow.py) | 24 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
@@ -232,7 +232,7 @@ docstring so its row is meaningful.
 | [test_output_terminal_fmt.py](test_output_terminal_fmt.py) | 1 | — |
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
 | [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
-| [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
+| [test_peek_follow.py](test_peek_follow.py) | 44 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
 | [test_planner_stats.py](test_planner_stats.py) | 7 | Planner statistics are a maintained state, not something a user has to ask for (#80). |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
@@ -328,7 +328,7 @@ docstring so its row is meaningful.
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
 | [adapters/test_assembly.py](adapters/test_assembly.py) | 47 | The shared assembler places every record and accounts for every one. |
-| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 21 | Tests for Claude Code adapter. |
+| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 26 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 15 | Tests for Codex CLI adapter. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 7 | Tests for Copilot CLI adapter. |
@@ -343,7 +343,7 @@ docstring so its row is meaningful.
 | [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
-| [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 5 | — |
+| [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |
 | [adapters/test_validation.py](adapters/test_validation.py) | 15 | Tests for adapter signature validation (H16). |
 | [adapters/test_vscode.py](adapters/test_vscode.py) | 8 | Tests for VSCode adapter. |
 
@@ -372,7 +372,7 @@ docstring so its row is meaningful.
 | [cli/test_cli.py](cli/test_cli.py) | 30 | CLI smoke tests — verify commands parse and run without import errors. |
 | [cli/test_cli_errors.py](cli/test_cli_errors.py) | 8 | The main() taxonomy backstop: SiftdError renders clean, never a traceback. |
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
-| [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
+| [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 38 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 54 | Tests for siftd db namespace commands. |
