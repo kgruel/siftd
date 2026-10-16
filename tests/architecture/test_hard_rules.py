@@ -928,6 +928,7 @@ class TestSchemaStability:
         "tag_assignments",
         "tag_pins",
         "workspace_pins",
+        "conversation_links",  # lineage edge: one parent per conversation (schema v13)
         "search_events",
         "search_opens",
     }
@@ -966,7 +967,7 @@ class TestSchemaStability:
 
     CRITICAL_COLUMNS = {
         "conversations": {"id", "external_id", "harness_id", "workspace_id", "started_at", "branch"},
-        "events": {"id", "kind", "conversation_id", "parent_id", "external_id", "timestamp"},
+        "events": {"id", "kind", "conversation_id", "parent_id", "external_id", "timestamp", "sequence"},
         "event_response": {"event_id", "model_id", "provider_id", "input_tokens", "output_tokens"},
         "event_tool_call": {"event_id", "tool_id", "input", "result_hash", "status"},
         "event_content": {"id", "event_id", "block_index", "block_type", "content"},

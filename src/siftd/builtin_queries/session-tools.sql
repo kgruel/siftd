@@ -18,4 +18,4 @@ LEFT JOIN tools t ON t.id = etc.tool_id
 LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash
 WHERE e.kind = 'tool_call'
   AND (c.id = :session OR c.external_id = :session)
-ORDER BY e.timestamp
+ORDER BY e.sequence, e.timestamp, e.id

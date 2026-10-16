@@ -254,8 +254,8 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
 
     conn.execute("""
         INSERT OR IGNORE INTO slice.events
-            (id, kind, conversation_id, parent_id, external_id, timestamp)
-        SELECT id, kind, conversation_id, parent_id, external_id, timestamp
+            (id, kind, conversation_id, parent_id, external_id, timestamp, sequence)
+        SELECT id, kind, conversation_id, parent_id, external_id, timestamp, sequence
         FROM events
         WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
     """)
@@ -279,6 +279,16 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
         SELECT ec.id, ec.event_id, ec.block_index, ec.block_type, ec.content
         FROM event_content ec
         WHERE ec.event_id IN (SELECT id FROM slice.events)
+    """)
+
+    # The edge to each copied conversation's parent. The parent need not be in
+    # the slice: the edge names it by external_id and simply dangles if it isn't.
+    conn.execute("""
+        INSERT OR IGNORE INTO slice.conversation_links
+            (conversation_id, kind, parent_external_id, anchor)
+        SELECT conversation_id, kind, parent_external_id, anchor
+        FROM conversation_links
+        WHERE conversation_id IN (SELECT id FROM _slice_conv_ids)
     """)
 
     # --- Attribute tables ---

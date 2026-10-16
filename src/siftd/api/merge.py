@@ -363,8 +363,9 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
         # events — explicit columns; filter by conversations already in target
         conn.execute("""
             INSERT OR IGNORE INTO events
-                (id, kind, conversation_id, parent_id, external_id, timestamp)
-            SELECT se.id, se.kind, se.conversation_id, se.parent_id, se.external_id, se.timestamp
+                (id, kind, conversation_id, parent_id, external_id, timestamp, sequence)
+            SELECT se.id, se.kind, se.conversation_id, se.parent_id, se.external_id, se.timestamp,
+                   se.sequence
             FROM src.events se
             WHERE se.conversation_id IN (SELECT conversation_id FROM _eligible_convs)
         """)
@@ -403,6 +404,17 @@ def _merge_attached(conn, *, replace: bool = True, user_id: str | None = None) -
                 WHERE conversation_id IN (SELECT conversation_id FROM _eligible_convs)
             )
         """)
+
+    # conversation_links — keyed by the child, parent held as an external_id, so
+    # nothing to remap and a parent that never lands is just a dangling edge.
+    # Confined to eligible conversations like every other child row.
+    conn.execute("""
+        INSERT OR IGNORE INTO conversation_links
+            (conversation_id, kind, parent_external_id, anchor)
+        SELECT sl.conversation_id, sl.kind, sl.parent_external_id, sl.anchor
+        FROM src.conversation_links sl
+        WHERE sl.conversation_id IN (SELECT conversation_id FROM _eligible_convs)
+    """)
 
     # --- Step 3: Content + Attribute tables ---
 
@@ -740,7 +752,7 @@ def _missing_merge_runtime_schema(conn, schema_name: str) -> list[str]:
     if not content_blobs:
         missing.append("content_blobs table")
 
-    for table in ("events", "event_response", "event_tool_call", "event_content"):
+    for table in ("events", "event_response", "event_tool_call", "event_content", "conversation_links"):
         exists = conn.execute(
             f"SELECT 1 FROM {schema_name}.sqlite_master "
             f"WHERE type='table' AND name='{table}'"

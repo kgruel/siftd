@@ -73,6 +73,26 @@ class Harness:
     display_name: str | None = None
 
 
+#: Lineage kinds that say where a conversation ran (a subagent runs inside its
+#: parent session). Every other kind says what it continues. A conversation has
+#: at most one parent of each relation, so a forked subagent keeps both.
+CONTAINMENT_KINDS = frozenset({"subagent"})
+
+
+@dataclass(frozen=True)
+class Lineage:
+    """A conversation this one belongs to or continues.
+
+    ``kind`` is ``subagent``, ``fork``, ``resume`` or ``branch``. ``parent`` is
+    the parent's ``external_id`` as the source spells it (not a stored id: the
+    parent may be re-ingested under a new one, or never ingested at all).
+    ``anchor`` is the parent record the child continues from, when known.
+    """
+    kind: str
+    parent: str
+    anchor: str | None = None
+
+
 @dataclass
 class Conversation:
     """A complete conversation from a harness.
@@ -103,3 +123,12 @@ class Conversation:
     # the key can share a start instant, and a legacy row may carry a parse-time
     # stamp no later parse reproduces. A superseded key alone never claims a row.
     superseded_external_ids: tuple[str, ...] = ()
+    # The conversations this one belongs to and continues: at most one per
+    # relation (where it ran, CONTAINMENT_KINDS; what it continues, the rest).
+    # Persisted as conversation_links rows, resolved against
+    # conversations.external_id at read time.
+    lineage: tuple[Lineage, ...] = ()
+
+    def parent(self, kind: str) -> Lineage | None:
+        """The lineage link of ``kind``, if this conversation has one."""
+        return next((link for link in self.lineage if link.kind == kind), None)

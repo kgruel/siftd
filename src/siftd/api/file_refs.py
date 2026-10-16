@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.safecall import parse_json
+from siftd.storage.sql_helpers import event_order
 
 
 @dataclass
@@ -81,7 +82,7 @@ def fetch_file_refs(
         WHERE e_r.parent_id IN ({placeholders})
           AND e.kind = 'tool_call'
           AND t.name IN ('file.read', 'file.write', 'file.edit')
-        ORDER BY e.timestamp
+        ORDER BY {event_order("e")}
     """,
         source_ids,
     ).fetchall()

@@ -8,6 +8,8 @@ prompt_content, response_content) remain until slice 8 cleanup.
 import json
 import sqlite3
 
+from siftd.storage.sql_helpers import event_key, event_key_params, event_order
+
 # ---------------------------------------------------------------------------
 # Trigger management
 # ---------------------------------------------------------------------------
@@ -105,12 +107,18 @@ def insert_event(
     *,
     parent_id: str | None = None,
     external_id: str | None = None,
+    sequence: int | None = None,
 ) -> str:
-    """Insert a row into events, return event_id."""
+    """Insert a row into events, return event_id.
+
+    ``sequence`` is the event's recorded position in its conversation
+    (``store_conversation`` assigns 0..n in tree-walk order). None leaves it
+    NULL, which readers treat as "order by (timestamp, id)" — the legacy form.
+    """
     conn.execute(
-        """INSERT INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (event_id, kind, conversation_id, parent_id, external_id, timestamp),
+        """INSERT INTO events (id, kind, conversation_id, parent_id, external_id, timestamp, sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (event_id, kind, conversation_id, parent_id, external_id, timestamp, sequence),
     )
     return event_id
 
@@ -200,12 +208,12 @@ def get_prompts_for_conv(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Return all prompt events for a conversation, ordered by timestamp."""
+    """Return all prompt events for a conversation, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp, e.parent_id
+        f"""SELECT e.id, e.external_id, e.timestamp, e.parent_id
            FROM events e
            WHERE e.conversation_id = ? AND e.kind = 'prompt'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (conversation_id,),
     ).fetchall()
 
@@ -217,8 +225,11 @@ def get_last_event_id(
 ) -> str | None:
     """Return the most-recent event ID of `kind` in this conversation, or None.
 
-    Ordered by (timestamp DESC, id DESC) so ULID ordering breaks ties
-    deterministically when multiple events share a timestamp.
+    "Most recent" is the last in recorded order (``sequence``), falling back to
+    (timestamp, id) for legacy rows with no sequence. The fallback is NOT a
+    deterministic tie-break in any meaningful sense: ULIDs are random within a
+    millisecond, so events sharing a timestamp resolve arbitrarily there. That is
+    the defect ``sequence`` exists to remove.
 
     Resolves the ``last_*`` pending-tag markers. Two callers need it: the
     ingest drain (:mod:`siftd.ingestion.orchestration`) and the doctor
@@ -226,10 +237,10 @@ def get_last_event_id(
     both resolve against a settled transcript, so the answer is the same.
     """
     cur = conn.execute(
-        """
+        f"""
         SELECT id FROM events
         WHERE conversation_id = ? AND kind = ?
-        ORDER BY timestamp DESC, id DESC
+        ORDER BY {event_order(desc=True)}
         LIMIT 1
         """,
         (conversation_id, kind),
@@ -243,7 +254,7 @@ def get_prompt_by_index(
     conversation_id: str,
     exchange_index: int | None,
 ) -> str | None:
-    """Get the prompt ID at a specific exchange index (1-based).
+    """Get the prompt ID at a specific exchange index (1-based), in recorded order.
 
     Returns None if index is out of range or None. Raises ValueError for a
     non-positive index — the API is 1-based, so 0 is a caller bug, not an
@@ -255,10 +266,10 @@ def get_prompt_by_index(
         raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
 
     cur = conn.execute(
-        """
+        f"""
         SELECT id FROM events
         WHERE kind = 'prompt' AND conversation_id = ?
-        ORDER BY timestamp, id
+        ORDER BY {event_order()}
         LIMIT 1 OFFSET ?
         """,
         (conversation_id, exchange_index - 1),
@@ -267,18 +278,83 @@ def get_prompt_by_index(
     return row["id"] if row else None
 
 
+def get_preceding_prompt_id(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    event: sqlite3.Row,
+) -> str | None:
+    """The prompt ``event`` belongs to by position: itself for a prompt, else the latest one before it.
+
+    ``event`` is a row carrying ``id``, ``kind``, ``sequence`` and ``timestamp``.
+    Returns None for an event before every prompt (a preamble response).
+
+    This is placement by *order*, which is what a search hit has to go on: the
+    FTS index knows an event's id, not its parent. With a sequence it is exact.
+    For a legacy row (NULL sequence) it keeps the rule it always had — a prompt
+    sharing the event's timestamp counts as preceding it — because that tie is
+    the common case there (an adapter stamping every event alike) and reading
+    it the other way would put the event under the wrong turn.
+    """
+    if event["kind"] == "prompt":
+        return event["id"]
+    if event["sequence"] is not None:
+        bound, param = "sequence <= ?", event["sequence"]
+    else:
+        bound, param = "timestamp <= ?", event["timestamp"]
+    row = conn.execute(
+        f"""SELECT id FROM events
+            WHERE conversation_id = ? AND kind = 'prompt' AND {bound}
+            ORDER BY {event_order(desc=True)}
+            LIMIT 1""",
+        (conversation_id, param),
+    ).fetchone()
+    return row["id"] if row else None
+
+
+def get_event_position(
+    conn: sqlite3.Connection,
+    event_id: str,
+) -> int | None:
+    """The 1-based position of an event among the events of its own kind in its conversation.
+
+    Counted in recorded order — the same order :func:`get_prompt_by_index` and
+    the colon-path resolver (``conv:prompt:3``) index by — so a position and the
+    event it names always agree. None if the event does not exist.
+    """
+    row = conn.execute(
+        "SELECT id, kind, conversation_id, sequence, timestamp FROM events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return conn.execute(
+        f"""SELECT COUNT(*) FROM events
+            WHERE conversation_id = ? AND kind = ? AND {event_key()} <= (?, ?, ?)""",
+        (row["conversation_id"], row["kind"], *event_key_params(row)),
+    ).fetchone()[0]
+
+
+def get_prompt_index(
+    conn: sqlite3.Connection,
+    prompt_id: str,
+) -> int | None:
+    """The 0-based turn index of a prompt: :func:`get_event_position` minus one."""
+    position = get_event_position(conn, prompt_id)
+    return None if position is None else position - 1
+
+
 def get_responses_for_prompt(
     conn: sqlite3.Connection,
     prompt_id: str,
 ) -> list[sqlite3.Row]:
-    """Return all response events whose parent is prompt_id."""
+    """Return all response events whose parent is prompt_id, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp,
+        f"""SELECT e.id, e.external_id, e.timestamp,
                   er.model_id, er.provider_id, er.input_tokens, er.output_tokens
            FROM events e
            JOIN event_response er ON er.event_id = e.id
            WHERE e.parent_id = ? AND e.kind = 'response'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (prompt_id,),
     ).fetchall()
 
@@ -306,14 +382,14 @@ def get_tool_calls_for_response(
     *,
     include_content: bool = False,
 ) -> list[sqlite3.Row]:
-    """Return all tool_call events whose parent is response_id."""
+    """Return all tool_call events whose parent is response_id, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp,
+        f"""SELECT e.id, e.external_id, e.timestamp,
                   etc.tool_id, etc.input, etc.result_hash, etc.status
            FROM events e
            JOIN event_tool_call etc ON etc.event_id = e.id
            WHERE e.parent_id = ? AND e.kind = 'tool_call'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (response_id,),
     ).fetchall()
 

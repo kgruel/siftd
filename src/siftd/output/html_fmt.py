@@ -1609,24 +1609,39 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         )
 
     # --- ingested timeline ---------------------------------------------------
-    # Sub-agent conversations carry their root session in external_id
-    # ("claude_code::<uuid>::agent::<id>" -> root "claude_code::<uuid>"), so
-    # list_conversations derives parent_external_id render-side already. Nest
-    # them under their parent row instead of scattering them through the
-    # timeline. Pure render-layer: no schema column, no extra query.
-    present = {
-        c.external_id for c in summaries if getattr(c, "external_id", None)
-    }
+    # list_conversations resolves each sub-agent's parent to a stored
+    # conversation id (the conversation_links edge, resolved within the child's
+    # harness). Nest children under that parent row, keyed by conversation id:
+    # external_ids are only unique per harness, so grouping by them would hang
+    # one child under every same-named parent of another harness.
+    present = {c.id for c in summaries}
     children: dict[str, list] = {}
     roots: list = []
     for c in summaries:
-        parent_ext = getattr(c, "parent_external_id", None)
-        if parent_ext and parent_ext in present:
-            children.setdefault(parent_ext, []).append(c)
+        parent_id = getattr(c, "parent_id", None)
+        if parent_id and parent_id in present:
+            children.setdefault(parent_id, []).append(c)
         else:
             # Top-level session, or an orphan sub-agent whose parent fell outside
             # this page (n=50) — render at top level, flagged as a sub-agent.
             roots.append(c)
+
+    def _descendants(root) -> list:
+        # Every sub-agent below ``root`` (children, grandchildren, ...) in
+        # depth-first order, flattened under the root's one disclosure group.
+        # ``seen`` guards a malformed edge cycle and keeps a conversation from
+        # being listed (or counted into the day totals) twice.
+        out: list = []
+        seen = {root.id}
+        stack = list(reversed(children.get(root.id, [])))
+        while stack:
+            kid = stack.pop()
+            if kid.id in seen:
+                continue
+            seen.add(kid.id)
+            out.append(kid)
+            stack.extend(reversed(children.get(kid.id, [])))
+        return out
 
     def _session_row(c, *, agents: int = 0, group_id=None, parent_id=None, flagged=False) -> str:
         # group_id  -> expandable parent: disclosure button + agent-count chip.
@@ -1709,9 +1724,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
         # and cost numbers still account for all work done that day.
         day_kids: list = []
         for c in convs:
-            ext = getattr(c, "external_id", None)
-            if ext:
-                day_kids.extend(children.get(ext, []))
+            day_kids.extend(_descendants(c))
         in_day = convs + day_kids
 
         if key == "unknown":
@@ -1756,8 +1769,7 @@ def render_sessions(live: list, summaries: list, **context: Any) -> str:
 
         rows: list[str] = []
         for c in convs:
-            ext = getattr(c, "external_id", None)
-            kids = children.get(ext, []) if ext else []
+            kids = _descendants(c)
             if kids:
                 rows.append(_session_row(c, agents=len(kids), group_id=c.id))
                 for kid in kids:

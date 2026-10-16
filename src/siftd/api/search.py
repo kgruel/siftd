@@ -23,6 +23,7 @@ from siftd.domain.search_types import (
     SearchView,
 )
 from siftd.errors import UserInputError
+from siftd.storage.events import get_preceding_prompt_id
 from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.queries import (
     fetch_all_conversation_ids,
@@ -30,6 +31,7 @@ from siftd.storage.queries import (
     fetch_prompt_response_texts,
     fetch_prompt_timestamps,
 )
+from siftd.storage.sql_helpers import event_order
 
 if TYPE_CHECKING:
     from siftd.embeddings.base import EmbeddingBackend, EmbeddingConfigError
@@ -547,10 +549,10 @@ def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], 
             continue
 
         all_prompts = conn.execute(
-            """
+            f"""
             SELECT e.id FROM events e
             WHERE e.conversation_id = ? AND e.kind = 'prompt'
-            ORDER BY e.timestamp
+            ORDER BY {event_order("e")}
         """,
             (r.conversation_id,),
         ).fetchall()
@@ -580,7 +582,7 @@ def _events_to_turn_indices(
     """
 
     prompt_rows = conn.execute(
-        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+        f"SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY {event_order()}",
         (conv_id,),
     ).fetchall()
     prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
@@ -588,25 +590,14 @@ def _events_to_turn_indices(
     result: list[int | None] = []
     for eid in event_ids:
         row = conn.execute(
-            "SELECT kind, timestamp FROM events WHERE id = ?",
+            "SELECT id, kind, sequence, timestamp FROM events WHERE id = ?",
             (eid,),
         ).fetchone()
         if row is None:
             result.append(None)
             continue
-        kind = row["kind"]
-        ts = row["timestamp"]
-        if kind == "prompt":
-            result.append(prompt_id_to_idx.get(eid))
-        else:
-            prompt_row = conn.execute(
-                "SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
-                (conv_id, ts),
-            ).fetchone()
-            if prompt_row is None:
-                result.append(None)
-            else:
-                result.append(prompt_id_to_idx.get(prompt_row["id"]))
+        prompt_id = get_preceding_prompt_id(conn, conv_id, row)
+        result.append(prompt_id_to_idx.get(prompt_id) if prompt_id is not None else None)
     return result
 
 
@@ -626,7 +617,7 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
     for conv_id, conv_chunks in by_conv.items():
         try:
             prompt_rows = conn.execute(
-                "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+                f"SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY {event_order()}",
                 (conv_id,),
             ).fetchall()
         except Exception:
@@ -710,7 +701,7 @@ def enrich_around_window(
             chunk.turn_index = turn_idx
 
         all_prompts = conn.execute(
-            "SELECT e.id FROM events e WHERE e.conversation_id = ? AND e.kind = 'prompt' ORDER BY e.timestamp",
+            f"SELECT e.id FROM events e WHERE e.conversation_id = ? AND e.kind = 'prompt' ORDER BY {event_order('e')}",
             (conv_id,),
         ).fetchall()
         prompt_order = [row[0] for row in all_prompts]
@@ -1908,7 +1899,7 @@ def enumerate_tagged(
                 "JOIN events e ON e.id = ec.event_id "
                 "WHERE e.conversation_id = ? AND e.kind = 'prompt' "
                 "AND json_extract(ec.content, '$.text') IS NOT NULL "
-                "ORDER BY e.timestamp LIMIT 1",
+                f"ORDER BY {event_order('e')} LIMIT 1",
                 (cid,),
             ).fetchone()
             started = row["started_at"]

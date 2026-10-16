@@ -8,7 +8,7 @@ import pytest
 from conftest import FIXTURES_DIR, default_location_source, write_jsonl
 
 from siftd.adapters import claude_code
-from siftd.adapters.assembly import AssemblyError, assemble, lineage_parent, read_jsonl
+from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
 from siftd.adapters.records import Disposition
 from siftd.domain.source import Source
 
@@ -439,14 +439,14 @@ class TestAssembledShape:
         the whole file (37 responses, 22 tool calls in the real one); the ref is the only pointer to its parent."""
         assembly = _assembly(_fixture("fork_context_ref"))
         (conversation,) = assembly.conversations
-        assert conversation.attributes["lineage.kind"] == "fork"
-        assert conversation.attributes["lineage.parent"] == "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
-        assert conversation.attributes["lineage.anchor"] == "4f1e004c-5919-4d60-99aa-133a0db88d17"
+        fork = conversation.parent("fork")
+        assert fork is not None and fork.parent == "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
+        assert fork.anchor == "4f1e004c-5919-4d60-99aa-133a0db88d17"
         assert conversation.prompts == [] and len(conversation.preamble) == 3
         assert [c.tool_name for c in _calls(conversation)] == ["Agent", "Bash"]
         assert all(c.status == "success" for c in _calls(conversation))
         # It is also a sub-agent: containment is a second relation, kept beside the fork, not ignored.
-        assert lineage_parent(conversation.attributes, "subagent") == "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
+        assert conversation.parent("subagent").parent == "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
         assert (Disposition.IGNORED, "conversation already has a parent") not in assembly.ledger.reasons
 
     def test_a_forked_subagent_peeks_as_a_subagent_of_the_session_it_ran_in(self):
@@ -631,7 +631,7 @@ class TestDecoding:
         assembly = _assembly(path)
         (conversation,) = assembly.conversations
         assert conversation.external_id == "claude_code::s::agent::ag1"
-        assert lineage_parent(conversation.attributes, "subagent") == "claude_code::s"
+        assert conversation.parent("subagent").parent == "claude_code::s"
         assert conversation.attributes["subagent_type"] == "Explore"
         assert conversation.workspace_path == "/w"
         assert assembly.ledger.count(Disposition.UNKNOWN) == 0
@@ -651,8 +651,8 @@ class TestDecoding:
         records = [_user("u1", "T1", "hi", agentId="ag1")]
         conversation = _only(write_jsonl(tmp_path, records, name="agent-ag1.jsonl"))
         assert conversation.external_id == "claude_code::s::agent::ag1"
-        assert conversation.attributes["lineage.kind"] == "subagent"
-        assert conversation.attributes["lineage.parent"] == "claude_code::s"
+        assert conversation.parent("subagent").parent == "claude_code::s"
+        assert not any(k.startswith("lineage.") for k in conversation.attributes)
 
     def test_a_later_cwd_or_branch_fills_what_the_first_record_lacked(self, tmp_path):
         first = _user("u1", "T1", "hi")

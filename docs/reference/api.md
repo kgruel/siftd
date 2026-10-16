@@ -250,6 +250,7 @@ Summary row for conversation listing.
 | `owner` | `str \| None` |  |
 | `external_id` | `str \| None` |  |
 | `parent_external_id` | `str \| None` |  |
+| `parent_id` | `str \| None` |  |
 | `agent_type` | `str \| None` |  |
 
 ### ConversationDetail

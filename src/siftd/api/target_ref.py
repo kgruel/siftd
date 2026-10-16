@@ -18,7 +18,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from siftd.api.conversations import AmbiguousPrefix, prefix_candidates, resolve_entity_id
+from siftd.storage.events import get_event_position
 from siftd.storage.filters import ALL_TAG_KINDS, EVENT_TAG_KINDS
+from siftd.storage.sql_helpers import event_order
 
 # Colon-path *anchor* kinds — the 2nd segment always names an event kind.
 # 'block' is addressable (bare/kind-narrowed id, or the optional 4th colon
@@ -213,7 +215,7 @@ def _resolve_colon(
     row = conn.execute(
         "SELECT id FROM events "
         "WHERE conversation_id = ? AND kind = ? "
-        "ORDER BY timestamp, id "
+        f"ORDER BY {event_order()} "
         "LIMIT 1 OFFSET ?",
         (conversation_id, event_kind, n - 1),
     ).fetchone()
@@ -335,8 +337,8 @@ def alias(conn: sqlite3.Connection, target_kind: str, target_id: str) -> str:
     """Reverse map: a resolved target → its ``<conv-prefix>:<kind>:<n>`` colon-path.
 
     For conversation/workspace targets, returns the short id (no colon-path).
-    Position is computed with the same ``ORDER BY timestamp, id`` the forward
-    resolver uses.
+    Position is computed in the same recorded order the forward resolver uses
+    (``get_event_position`` and ``event_order`` share one definition).
     """
     if target_kind in ("conversation", "workspace"):
         return target_id[:12]
@@ -344,21 +346,13 @@ def alias(conn: sqlite3.Connection, target_kind: str, target_id: str) -> str:
     if target_kind == "block":
         return _alias_block(conn, target_id)
 
-    event_kind = _KIND_TO_EVENT_KIND.get(target_kind, target_kind)
     row = conn.execute(
-        "SELECT conversation_id, timestamp FROM events WHERE id = ?",
+        "SELECT conversation_id FROM events WHERE id = ?",
         (target_id,),
     ).fetchone()
     if row is None:
         return target_id[:12]
-    conv = row["conversation_id"]
-    n = conn.execute(
-        "SELECT COUNT(*) AS n FROM events "
-        "WHERE conversation_id = ? AND kind = ? "
-        "AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
-        (conv, event_kind, row["timestamp"], row["timestamp"], target_id),
-    ).fetchone()["n"]
-    return f"{conv[:12]}:{target_kind}:{n}"
+    return f"{row['conversation_id'][:12]}:{target_kind}:{get_event_position(conn, target_id)}"
 
 
 def _alias_block(conn: sqlite3.Connection, block_id: str) -> str:
@@ -375,16 +369,10 @@ def _alias_block(conn: sqlite3.Connection, block_id: str) -> str:
     if brow is None:
         return block_id[:12]
     erow = conn.execute(
-        "SELECT conversation_id, kind, timestamp FROM events WHERE id = ?",
+        "SELECT conversation_id, kind FROM events WHERE id = ?",
         (brow["event_id"],),
     ).fetchone()
     if erow is None:
         return block_id[:12]
-    conv = erow["conversation_id"]
-    n = conn.execute(
-        "SELECT COUNT(*) AS n FROM events "
-        "WHERE conversation_id = ? AND kind = ? "
-        "AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
-        (conv, erow["kind"], erow["timestamp"], erow["timestamp"], brow["event_id"]),
-    ).fetchone()["n"]
-    return f"{conv[:12]}:{erow['kind']}:{n}:{brow['block_index'] + 1}"
+    n = get_event_position(conn, brow["event_id"])
+    return f"{erow['conversation_id'][:12]}:{erow['kind']}:{n}:{brow['block_index'] + 1}"

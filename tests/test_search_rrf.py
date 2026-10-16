@@ -156,10 +156,10 @@ def test_annotate_turn_positions_prefers_match_event_id():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     conn.execute(
-        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, timestamp TEXT)"
+        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, timestamp TEXT, sequence INTEGER)"
     )
     conn.executemany(
-        "INSERT INTO events VALUES (?, ?, ?, ?)",
+        "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, ?, ?, ?)",
         [
             ("p1", "prompt", "c1", "2026-01-01T00:00:00"),
             ("r1", "response", "c1", "2026-01-01T00:00:01"),

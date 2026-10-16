@@ -1,9 +1,5 @@
 [
   {
-    "attributes": {
-      "lineage.kind": "subagent",
-      "lineage.parent": "claude_code::702f7990-c1e9-4827-ab97-f8e6cd8521ca"
-    },
     "branch": "main",
     "ended_at": "2026-08-31T02:19:54.922Z",
     "external_id": "claude_code::702f7990-c1e9-4827-ab97-f8e6cd8521ca::agent::ae98f5706fb8e06d5",
@@ -13,6 +9,12 @@
       "name": "claude_code",
       "source": "anthropic"
     },
+    "lineage": [
+      {
+        "kind": "subagent",
+        "parent": "claude_code::702f7990-c1e9-4827-ab97-f8e6cd8521ca"
+      }
+    ],
     "prompts": [
       {
         "content": [

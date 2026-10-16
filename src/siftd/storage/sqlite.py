@@ -9,11 +9,12 @@ Backfill operations: see siftd/backfill.py
 """
 
 import hashlib
+import itertools
 import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
 from siftd.domain import Conversation, Response
@@ -30,6 +31,7 @@ from siftd.storage.events import (
     insert_event_tool_call,
 )
 from siftd.storage.fts import ensure_fts_table, index_conversations
+from siftd.storage.links import insert_conversation_link
 from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
@@ -40,7 +42,7 @@ from siftd.storage.tags import (
 )
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def schema_version(conn: sqlite3.Connection, schema: str = "main") -> int:
@@ -2371,6 +2373,53 @@ def _migrate_v12_block_cleanup_trigger(conn: sqlite3.Connection) -> None:
 MIGRATIONS[12] = _migrate_v12_block_cleanup_trigger
 
 
+def _migrate_v13_event_sequence_and_links(conn: sqlite3.Connection) -> None:
+    """v13: give events a recorded order and make lineage a first-class edge.
+
+    ``events.sequence`` is the position ``store_conversation`` assigned in
+    tree-walk order. Order used to be ``(timestamp, id)``, and ULIDs are random
+    within a millisecond, so equal timestamps (an adapter that stamps every
+    event with the session start, a burst of prompts) resolved arbitrarily.
+
+    Existing rows are deliberately NOT backfilled. The tree-walk order of a
+    legacy conversation is not recoverable from what was stored (that is the
+    defect), and rewriting every event of a multi-GB database to approximate it
+    would assert an order nobody recorded. They keep a NULL sequence, which every
+    reader treats as "fall back to ``(timestamp, id)``"; `siftd ingest --reparse`
+    fills them from the source.
+
+    ``conversation_links`` holds a conversation's parents, at most one per
+    relation (where it ran; what it continues), by the parent's ``external_id``
+    (see schema.sql for why not a conversation id).
+
+    Idempotent: guards each step, since a fresh database already has all three.
+    Caller owns the transaction.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "sequence" not in columns:
+        conn.execute("ALTER TABLE events ADD COLUMN sequence INTEGER")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_conversation_sequence"
+        " ON events(conversation_id, sequence)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_links (
+            conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            kind               TEXT NOT NULL,
+            parent_external_id TEXT NOT NULL,
+            anchor             TEXT,
+            PRIMARY KEY (conversation_id, kind)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation_links_parent"
+        " ON conversation_links(parent_external_id)"
+    )
+
+
+MIGRATIONS[13] = _migrate_v13_event_sequence_and_links
+
+
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
     """Create content_blobs table and result_hash column if they don't exist. Idempotent."""
     # Create content_blobs table (with NOT NULL + CHECK added in schema v3).
@@ -2922,9 +2971,10 @@ def insert_prompt(
     conversation_id: str,
     external_id: str | None,
     timestamp: str,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id)
+    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id, sequence=sequence)
     return uid
 
 
@@ -2938,9 +2988,10 @@ def insert_response(
     timestamp: str,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id)
+    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id, sequence=sequence)
     insert_event_response(conn, uid, model_id=model_id, provider_id=provider_id, input_tokens=input_tokens, output_tokens=output_tokens)
     return uid
 
@@ -2982,9 +3033,10 @@ def insert_tool_call(
     *,
     dedupe_result: bool = True,
     filter_binary: bool = True,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id)
+    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id, sequence=sequence)
     insert_event_tool_call(conn, uid, tool_id=tool_id, input_json=input_json, result_json=result_json, status=status, dedupe_result=dedupe_result, filter_binary=filter_binary)
     return uid
 
@@ -3060,13 +3112,23 @@ def store_conversation(
     for attr_key, attr_value in conversation.attributes.items():
         set_attribute(conn, "conversation", conversation_id, attr_key, attr_value, scope="analyzer")
 
+    for link in conversation.lineage:
+        insert_conversation_link(conn, conversation_id, link)
+
+    # Every event takes the next position in tree-walk order, so the conversation
+    # carries the order it was parsed in rather than leaving readers to recover
+    # it from timestamps (which tie, and which some adapters stamp identically).
+    position = itertools.count()
+
     # Responses that precede every prompt (written first, as they came first): stored with no parent event.
     for response in conversation.preamble:
-        _store_response(conn, conversation_id, None, response, harness_id, provider_id, filter_binary)
+        _store_response(conn, conversation_id, None, response, harness_id, provider_id, filter_binary, position)
 
     # Process prompts
     for prompt in conversation.prompts:
-        prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
+        prompt_id = insert_prompt(
+            conn, conversation_id, prompt.external_id, prompt.timestamp, sequence=next(position)
+        )
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
@@ -3075,7 +3137,7 @@ def store_conversation(
         # Process responses for this prompt
         for response in prompt.responses:
             _store_response(
-                conn, conversation_id, prompt_id, response, harness_id, provider_id, filter_binary
+                conn, conversation_id, prompt_id, response, harness_id, provider_id, filter_binary, position
             )
 
     # One index write for the whole conversation, after every event_content row
@@ -3095,8 +3157,12 @@ def _store_response(
     harness_id: str,
     provider_id: str | None,
     filter_binary: bool,
+    position: Iterator[int],
 ) -> None:
     """Store one response, its content and its tool calls. ``prompt_id`` is None for a preamble response.
+
+    ``position`` hands out the conversation's next ``events.sequence``: the
+    response takes one, then each of its tool calls.
 
     ``provider_id`` is the harness's provider, the fallback for a response that
     names none; a multi-provider harness (pi) names one per response.
@@ -3123,6 +3189,7 @@ def _store_response(
         timestamp=response.timestamp,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
+        sequence=next(position),
     )
 
     # Insert response content blocks
@@ -3154,6 +3221,7 @@ def _store_response(
             status=tool_call.status,
             timestamp=tool_call.timestamp or response.timestamp,
             filter_binary=filter_binary,
+            sequence=next(position),
         )
 
         for attr_key, attr_value in tool_call.attributes.items():
@@ -3203,7 +3271,8 @@ def delete_conversations(conn: sqlite3.Connection, conversation_ids: Sequence[st
     - content_fts (virtual table, no FK/trigger support)
 
     Conversation FK CASCADE handles: events, event_content, event_response,
-    event_tool_call, ingested_files, conversation_owners, usage_by_conv_model,
+    event_tool_call, ingested_files, conversation_owners, conversation_links,
+    usage_by_conv_model,
     conversation_stats, content_blobs (via tr_event_tool_call_* trigger).
 
     tr_polymorphic_*_cleanup triggers handle tag_assignments and attributes for

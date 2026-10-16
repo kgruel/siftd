@@ -1,11 +1,5 @@
 [
   {
-    "attributes": {
-      "lineage.anchor": "4f1e004c-5919-4d60-99aa-133a0db88d17",
-      "lineage.kind": "fork",
-      "lineage.parent": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c",
-      "lineage.subagent.parent": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
-    },
     "branch": "main",
     "ended_at": "2026-09-26T20:53:15.392Z",
     "external_id": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c::agent::a313e0c2c15430b41",
@@ -15,6 +9,17 @@
       "name": "claude_code",
       "source": "anthropic"
     },
+    "lineage": [
+      {
+        "anchor": "4f1e004c-5919-4d60-99aa-133a0db88d17",
+        "kind": "fork",
+        "parent": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
+      },
+      {
+        "kind": "subagent",
+        "parent": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c"
+      }
+    ],
     "preamble": [
       {
         "attributes": {

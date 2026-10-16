@@ -197,6 +197,11 @@ NOT_CARRIED = {
     ),
     "content_fts_content": "content_fts's shadow storage",
     "content_fts_docsize": "content_fts's shadow storage",
+    "conversation_links": (
+        "the replacement's parse states its own parent (Conversation.lineage), "
+        "and the edge holds the parent's external_id, so nothing in it goes stale "
+        "when either side is re-ingested"
+    ),
     "conversation_stats": "derived tier, rebuilt from the replacement's rows",
     "usage_by_conv_model": "derived tier, rebuilt from the replacement's rows",
     "ingested_files": "the replacement writes its own row (record_ingested_file)",

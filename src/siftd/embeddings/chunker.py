@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 
 from siftd.storage.queries import fetch_conversation_exchanges, fetch_exchanges
+from siftd.storage.sql_helpers import event_order
 
 # Characters per token — the standard English heuristic (~4 chars/token). Deliberately
 # an estimate: the real tokenizer lives in the backend, and every backend's true count
@@ -395,7 +396,7 @@ def extract_tool_summary_chunks(
             JOIN event_tool_call etc ON etc.event_id = e.id
             LEFT JOIN tools t ON t.id = etc.tool_id
             WHERE e.kind = 'tool_call'{conv_filter}
-            ORDER BY e.conversation_id, e.timestamp""",
+            ORDER BY e.conversation_id, {event_order("e")}""",
         params,
     ).fetchall()
 

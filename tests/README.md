@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 199 | 3473 |
-| `tests/adapters/` | 22 | 286 |
-| `tests/architecture/` | 13 | 81 |
+| `tests/` | 201 | 3530 |
+| `tests/adapters/` | 22 | 287 |
+| `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -161,6 +161,7 @@ docstring so its row is meaningful.
 | [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
+| [test_conversation_links.py](test_conversation_links.py) | 33 | conversation_links: lineage as a first-class edge, resolved at read time. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
 | [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
@@ -178,6 +179,7 @@ docstring so its row is meaningful.
 | [test_embeddings_presets.py](test_embeddings_presets.py) | 9 | Embedding preset reference data — loading, per-provider fields, validation. |
 | [test_embeddings_remote_edges.py](test_embeddings_remote_edges.py) | 19 | RemoteBackend edge cases — fake httpx transport, no network (base lane). |
 | [test_embeddings_storage.py](test_embeddings_storage.py) | 15 | Tests for embeddings storage. |
+| [test_event_sequence.py](test_event_sequence.py) | 22 | events.sequence: the recorded order of a conversation, and every reader that follows it. |
 | [test_event_tool_call_triggers.py](test_event_tool_call_triggers.py) | 8 | Tests for tr_event_tool_call_* blob reference-count triggers. |
 | [test_events_roundtrip.py](test_events_roundtrip.py) | 13 | Roundtrip tests for the polymorphic events writers and readers (schema v4). |
 | [test_exclude_active.py](test_exclude_active.py) | 6 | Tests for active session exclusion from search results. |
@@ -198,7 +200,7 @@ docstring so its row is meaningful.
 | [test_gutter.py](test_gutter.py) | 10 | Tests for siftd.output.gutter — the grain-gutter taxonomy + the rail it draws. |
 | [test_html_dashboard.py](test_html_dashboard.py) | 11 | Unit tests for the Swiss Stats dashboard renderer (output/html_fmt.render_dashboard). |
 | [test_html_folio.py](test_html_folio.py) | 45 | Unit tests for the Swiss transcript folio renderer (output/html_fmt.render_folio). |
-| [test_html_sessions.py](test_html_sessions.py) | 7 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
+| [test_html_sessions.py](test_html_sessions.py) | 9 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
 | [test_html_tags.py](test_html_tags.py) | 3 | Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags). |
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
@@ -341,7 +343,7 @@ docstring so its row is meaningful.
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
 | [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
-| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 20 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
+| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 21 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
 | [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
 | [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
@@ -358,6 +360,7 @@ docstring so its row is meaningful.
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
+| [architecture/test_event_order.py](architecture/test_event_order.py) | 3 | One definition of event order; every reader that orders events asks it. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 33 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |

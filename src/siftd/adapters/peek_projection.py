@@ -44,7 +44,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
-from siftd.adapters.assembly import Assembly, AssemblyError, Decoder, assemble, lineage_parent
+from siftd.adapters.assembly import Assembly, AssemblyError, Decoder, assemble
 from siftd.adapters.records import Session
 from siftd.adapters.sdk import (
     _is_tool_placeholder_only,
@@ -69,7 +69,7 @@ def peek_scan_from_assembly(assembly: Assembly) -> PeekScanResult | None:
         model = response.model or model
 
     # A subagent's parent is the session it ran in, even when it also forked from another.
-    parent = lineage_parent(conversation.attributes, "subagent") or conversation.attributes.get("lineage.parent")
+    link = conversation.parent("subagent") or next(iter(conversation.lineage), None)
     return PeekScanResult(
         session_id=_session_id(conversation),
         workspace_path=conversation.workspace_path,
@@ -77,7 +77,7 @@ def peek_scan_from_assembly(assembly: Assembly) -> PeekScanResult | None:
         exchange_count=len(conversation.prompts) + (1 if conversation.preamble else 0),
         started_at=conversation.started_at,
         last_activity_at=conversation.ended_at,
-        parent_session_id=_session_part(conversation.harness, parent) if parent is not None else None,
+        parent_session_id=(_session_part(conversation.harness, link.parent) if link is not None else None),
         attributes=dict(conversation.attributes),
     )
 
@@ -189,10 +189,10 @@ def _session_id(conversation: Conversation) -> str:
     segment. Only the lineage record marks a subagent, so the parent named here
     and in ``parent_session_id`` come from the same fact.
     """
-    subagent_parent = lineage_parent(conversation.attributes, "subagent")
-    if subagent_parent is not None:
+    subagent = conversation.parent("subagent")
+    if subagent is not None:
         own_id = conversation.external_id.rsplit("::", 1)[-1]
-        return f"{_session_part(conversation.harness, subagent_parent)}:{own_id}"
+        return f"{_session_part(conversation.harness, subagent.parent)}:{own_id}"
     return _session_part(conversation.harness, conversation.external_id)
 
 

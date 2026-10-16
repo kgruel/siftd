@@ -43,16 +43,19 @@ Placement rules, which are the decisions the adapters each used to make alone:
   create no event. An undated event takes the nearest earlier time, or
   failing that the nearest later one, and the bounds span all of them.
   Parsing never reads the wall clock, so it is a pure function of the source.
-- **Lineage.** A conversation has one parent per relation: where it ran
-  (``subagent``) and what it continues (``fork``, ``resume``, ``branch``). A
-  second parent of the same relation is ignored by name. Both relations are
-  carried as attributes; ``lineage_parent`` reads a kind from either.
 - **Identity.** ``Session`` records open conversations; a restated
   ``Session`` fills only what is still unknown. A source with no ``Session``
   uses the caller's ``default_session``, whose fields sit beneath anything
   the stream stated; with neither, assembly fails loudly. ``ended_at`` is
   inferred from event times unless a Session says the source cannot know it
   (``infer_end=False``).
+- **Lineage.** A conversation has at most one parent per relation: where it
+  ran (``subagent``) and what it continues (``fork``, ``resume``, ``branch``),
+  so a forked subagent keeps both. Each becomes a ``Conversation.lineage`` link
+  (one ``conversation_links`` row); a second of the same relation is
+  ``IGNORED``. The parent stays the
+  source's identity string: resolving it to a stored conversation is a read-time
+  join, not something assembly can know.
 - **Arrival order.** A tool call takes its pairing slot and lends its time
   when it arrives, even if its parent response appears later; waiting
   records apply in the order they arrived. Model and provider inherited
@@ -63,7 +66,7 @@ from __future__ import annotations
 
 import json
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -83,14 +86,10 @@ from siftd.adapters.records import (
     Unknown,
     UsageRec,
 )
-from siftd.domain import Conversation, Harness, Prompt, Response, ToolCall, Usage
+from siftd.domain import Conversation, Harness, Lineage, Prompt, Response, ToolCall, Usage
+from siftd.domain.models import CONTAINMENT_KINDS
 from siftd.domain.source import Source
 from siftd.errors import SiftdError
-
-#: Lineage kinds that say where a conversation ran (a subagent runs inside its
-#: parent session). Every other kind says what it continues. A conversation
-#: has one parent of each relation, so a forked subagent keeps both.
-CONTAINMENT_KINDS = frozenset({"subagent"})
 
 #: Origin of records a decoder returns from ``finish()`` rather than for a unit.
 END_OF_STREAM = -1
@@ -243,8 +242,7 @@ class _Build:
         # PATCH once it is placed, ORPHAN if it never is.
         self.results_on_unplaced: dict[int, list[ToolResultRec]] = {}
         self.placed: set[int] = set()
-        # Which lineage relations the conversation already states (see CONTAINMENT_KINDS)
-        self.lineage_relations: set[str] = set()
+        self.lineage: list[Lineage] = []
 
         # Every record's timestamp in arrival order, with the event it created
         # (or None for records that only lend their time: merged chunks,
@@ -350,6 +348,7 @@ class Assembler:
                 workspace_path=build.workspace_path or (default.workspace_path if default else None),
                 branch=build.branch or (default.branch if default else None),
                 attributes={**(default.attributes if default else {}), **build.attributes},
+                lineage=tuple(build.lineage),
             )
         )
 
@@ -567,20 +566,11 @@ class Assembler:
     def _on_lineage(self, rec: LineageRec) -> None:
         build = self._current()
         build.anchor(rec.at)
-        relation = "containment" if rec.kind in CONTAINMENT_KINDS else "ancestry"
-        if relation in build.lineage_relations:
+        containment = rec.kind in CONTAINMENT_KINDS
+        if any((link.kind in CONTAINMENT_KINDS) == containment for link in build.lineage):
             self.ledger.record(rec, Disposition.IGNORED, "conversation already has a parent")
             return
-        # Carried as attributes until conversation_links exists (P3). The first
-        # relation stated takes the bare keys; the other, if any, is qualified
-        # by its kind. ``lineage_parent`` reads either.
-        prefix = "lineage" if not build.lineage_relations else f"lineage.{rec.kind}"
-        build.lineage_relations.add(relation)
-        if prefix == "lineage":
-            build.attributes["lineage.kind"] = rec.kind
-        build.attributes[f"{prefix}.parent"] = rec.parent
-        if rec.anchor is not None:
-            build.attributes[f"{prefix}.anchor"] = rec.anchor
+        build.lineage.append(Lineage(kind=rec.kind, parent=rec.parent, anchor=rec.anchor))
         self.ledger.record(rec, Disposition.LINEAGE)
 
     def _on_ignored(self, rec: Ignored) -> None:
@@ -602,13 +592,6 @@ class Assembler:
         Ignored: _on_ignored,
         Unknown: _on_unknown,
     }
-
-
-def lineage_parent(attributes: Mapping[str, str], kind: str) -> str | None:
-    """The parent a conversation's lineage names for ``kind``, whichever relation stated it first."""
-    if attributes.get("lineage.kind") == kind:
-        return attributes.get("lineage.parent")
-    return attributes.get(f"lineage.{kind}.parent")
 
 
 def _apply_result(call: ToolCall, rec: ToolResultRec) -> None:

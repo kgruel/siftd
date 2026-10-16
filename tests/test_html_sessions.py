@@ -1,8 +1,8 @@
 """Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions).
 
 Base lane (no litestar): renders real ConversationSummary dataclasses, proving
-sub-agent nesting is built from the parent_external_id that list_conversations
-already derives from external_id — no new data surface, no schema column.
+sub-agent nesting is built from the resolved parent_id that list_conversations
+derives from the conversation_links edge, never from external_id alone.
 """
 
 from __future__ import annotations
@@ -15,7 +15,8 @@ _CTX = dict(
 )
 
 
-def _summary(cid, ext, *, parent=None, tokens=10, cost=None, agent_type=None):
+def _summary(cid, ext, *, parent=None, orphan_of=None, tokens=10, cost=None, agent_type=None):
+    """``parent`` is the stored parent summary's id; ``orphan_of`` a parent external_id that is not stored."""
     return ConversationSummary(
         id=cid,
         workspace_path="/proj",
@@ -26,15 +27,16 @@ def _summary(cid, ext, *, parent=None, tokens=10, cost=None, agent_type=None):
         total_tokens=tokens,
         cost=cost,
         external_id=ext,
-        parent_external_id=parent,
+        parent_external_id=f"ext::{parent}" if parent else orphan_of,
+        parent_id=parent,
         agent_type=agent_type,
     )
 
 
 def test_sessions_nests_subagents_under_parent():
     parent = _summary("c-root", "claude_code::r1")
-    k1 = _summary("c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1")
-    k2 = _summary("c-a2", "claude_code::r1::agent::a2", parent="claude_code::r1")
+    k1 = _summary("c-a1", "claude_code::r1::agent::a1", parent="c-root")
+    k2 = _summary("c-a2", "claude_code::r1::agent::a2", parent="c-root")
     html = render_sessions([], [parent, k1, k2], **_CTX)
     # One top-level entry (exact class="entry"); two nested sub entries.
     assert html.count('class="entry"') == 1
@@ -57,7 +59,7 @@ def test_sessions_orphan_subagent_flagged_at_top_level():
     # Parent fell outside the page (n=50) — the sub-agent still renders, flagged
     # as a sub row, never silently dropped.
     orphan = _summary(
-        "c-orphan", "claude_code::r9::agent::a9", parent="claude_code::r9"
+        "c-orphan", "claude_code::r9::agent::a9", orphan_of="claude_code::r9"
     )
     html = render_sessions([], [orphan], **_CTX)
     assert "entry--sub" in html
@@ -71,7 +73,7 @@ def test_sessions_orphan_subagent_flagged_at_top_level():
 def test_sessions_day_totals_fold_in_subagents():
     parent = _summary("c-root", "claude_code::r1", tokens=100, cost=1.0)
     kid = _summary(
-        "c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1",
+        "c-a1", "claude_code::r1::agent::a1", parent="c-root",
         tokens=50, cost=0.5,
     )
     html = render_sessions([], [parent, kid], **_CTX)
@@ -94,7 +96,7 @@ def test_sessions_child_shows_agent_type_not_workspace():
     # workspace name (which every sibling would otherwise repeat).
     parent = _summary("c-root", "claude_code::r1")
     kid = _summary(
-        "c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1",
+        "c-a1", "claude_code::r1::agent::a1", parent="c-root",
         agent_type="Explore",
     )
     html = render_sessions([], [parent, kid], **_CTX)
@@ -107,7 +109,7 @@ def test_sessions_child_shows_agent_type_not_workspace():
 def test_sessions_child_strips_plugin_namespace():
     parent = _summary("c-root", "claude_code::r1")
     kid = _summary(
-        "c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1",
+        "c-a1", "claude_code::r1::agent::a1", parent="c-root",
         agent_type="feature-dev:code-reviewer",
     )
     html = render_sessions([], [parent, kid], **_CTX)
@@ -119,7 +121,29 @@ def test_sessions_child_falls_back_to_time_without_agent_type():
     # No sidecar type (historical / rotated-off) — the spawn time still replaces
     # the repeated workspace so siblings stay distinguishable.
     parent = _summary("c-root", "claude_code::r1")
-    kid = _summary("c-a1", "claude_code::r1::agent::a1", parent="claude_code::r1")
+    kid = _summary("c-a1", "claude_code::r1::agent::a1", parent="c-root")
     html = render_sessions([], [parent, kid], **_CTX)
     assert 'class="entry__time">' in html
     assert html.count(">proj<") == 1
+
+
+def test_sessions_nests_the_whole_subtree_under_the_root_once():
+    root = _summary("c-root", "claude_code::r1", tokens=100)
+    child = _summary("c-a1", "claude_code::a1", parent="c-root", tokens=10)
+    grand = _summary("c-a2", "claude_code::a2", parent="c-a1", tokens=1)
+    html = render_sessions([], [root, child, grand], **_CTX)
+    # The grandchild is a hidden row under the root's group, not dropped.
+    assert html.count('class="entry"') == 1
+    assert html.count('data-parent="c-root" hidden') == 2
+    assert "2 agents</span>" in html
+    assert '<span class="total__k">Sub-agents</span><span class="total__n">2</span>' in html
+    assert "111" in html  # 100 + 10 + 1, each counted once
+
+
+def test_sessions_subtree_walk_survives_an_edge_cycle():
+    root = _summary("c-root", "claude_code::r1")
+    a = _summary("c-a", "claude_code::a", parent="c-root")
+    b = _summary("c-b", "claude_code::b", parent="c-a")
+    a.parent_id = "c-b"  # a <-> b; neither is reachable from root
+    html = render_sessions([], [root, a, b], **_CTX)
+    assert html.count("c-root") >= 1

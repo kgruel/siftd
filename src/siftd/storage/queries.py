@@ -13,8 +13,10 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from siftd.storage.events import get_event_position
 from siftd.storage.sql_helpers import (
     batched_in_query,
+    event_order,
     has_conversation_owners_table,
     owner_predicate,
 )
@@ -30,7 +32,7 @@ class ExchangeRow:
     prompt_text: str
     response_text: str
     response_ids: list[str] = field(default_factory=list)
-    """Event IDs of the responses in this exchange (timestamp order). Carried so an
+    """Event IDs of the responses in this exchange (recorded order). Carried so an
     embedding chunk's ``source_ids`` can cover response events too — the bridge the
     hybrid engine uses to map an FTS hit on response text back to its chunk."""
 
@@ -46,8 +48,9 @@ def fetch_exchanges(
 
     Returns rows with prompt and response text, where:
     - prompt text is ordered by prompt_content.block_index
-    - response text is ordered by responses.timestamp, then response_content.block_index
-    - multiple responses per prompt are concatenated in timestamp order
+    - response text is ordered by recorded order (events.sequence, falling back to
+      timestamp for legacy rows), then response_content.block_index
+    - multiple responses per prompt are concatenated in recorded order
 
     Args:
         conn: Database connection.
@@ -56,7 +59,10 @@ def fetch_exchanges(
         exclude_conversation_ids: Conversation IDs to exclude from results.
 
     Returns:
-        List of ExchangeRow ordered by prompt timestamp.
+        List of ExchangeRow grouped by conversation (conversation id order), each
+        conversation's prompts in recorded order. Every consumer groups by
+        conversation or addresses prompts by id; none relies on a global
+        timestamp order across conversations.
     """
     if prompt_ids is not None and len(prompt_ids) == 0:
         return []
@@ -91,25 +97,36 @@ def fetch_exchanges(
         where_prefix = " AND ".join(conditions + [kind_cond]) + " AND " if conditions else f"{kind_cond} AND "
         prompt_rows = batched_in_query(
             conn,
-            f"SELECT conversation_id, id, timestamp FROM events "
-            f"WHERE {where_prefix}id IN ({{placeholders}}) ORDER BY timestamp",
+            f"SELECT conversation_id, id, timestamp, sequence FROM events "
+            f"WHERE {where_prefix}id IN ({{placeholders}}) "
+            f"ORDER BY conversation_id, {event_order()}",
             prompt_ids,
             prefix_params=tuple(params),
         )
-        # Restore global timestamp ordering across batches
-        prompt_rows = sorted(prompt_rows, key=lambda r: r["timestamp"])
+        # Restore the global order across batches. NULL sequence (legacy rows)
+        # sorts first, as it does in SQL.
+        prompt_rows = sorted(
+            prompt_rows,
+            key=lambda r: (
+                r["conversation_id"],
+                -1 if r["sequence"] is None else r["sequence"],
+                r["timestamp"],
+                r["id"],
+            ),
+        )
     elif conditions:
         # Only non-batched filters
         where_clause = "WHERE " + " AND ".join(conditions) + " AND kind = 'prompt'"
         prompt_rows = conn.execute(
             f"SELECT conversation_id, id, timestamp FROM events "
-            f"{where_clause} ORDER BY timestamp",
+            f"{where_clause} ORDER BY conversation_id, {event_order()}",
             params,
         ).fetchall()
     else:
         # No filters
         prompt_rows = conn.execute(
-            "SELECT conversation_id, id, timestamp FROM events WHERE kind = 'prompt' ORDER BY timestamp"
+            "SELECT conversation_id, id, timestamp FROM events WHERE kind = 'prompt' "
+            f"ORDER BY conversation_id, {event_order()}"
         ).fetchall()
 
     if not prompt_rows:
@@ -141,7 +158,7 @@ def fetch_exchanges(
         conn,
         "SELECT id, parent_id AS prompt_id, timestamp FROM events "
         "WHERE kind = 'response' AND parent_id IN ({placeholders}) "
-        "ORDER BY parent_id, timestamp",
+        f"ORDER BY parent_id, {event_order()}",
         prompt_id_list,
     )
 
@@ -176,7 +193,7 @@ def fetch_exchanges(
         response_texts: dict[str, str] = {}
         response_ids_by_prompt: dict[str, list[str]] = {}
         for prompt_id, resp_list in responses_by_prompt.items():
-            # resp_list is already ordered by timestamp from the query
+            # resp_list is already in recorded order from the query
             response_ids_by_prompt[prompt_id] = [resp_id for resp_id, _ in resp_list]
             parts = []
             for resp_id, _ in resp_list:
@@ -189,7 +206,7 @@ def fetch_exchanges(
         response_texts = {}
         response_ids_by_prompt = {}
 
-    # Build final result in prompt timestamp order
+    # Build final result in the prompts' recorded order
     result = []
     for prompt_id in prompt_id_list:
         conv_id, timestamp = prompt_info[prompt_id]
@@ -218,10 +235,10 @@ def fetch_prompt_response_texts(
     """Fetch prompt and response text for a list of prompt IDs.
 
     Returns list of (prompt_id, prompt_text, response_text) tuples,
-    ordered by prompt timestamp. Text values are stripped; missing
-    text returns empty string.
+    in the prompts' recorded order (``events.sequence``, else timestamp then id
+    for legacy rows). Text values are stripped; missing text returns empty string.
 
-    Note: Multiple responses per prompt are concatenated in timestamp order.
+    Note: Multiple responses per prompt are concatenated in recorded order.
     """
     exchanges = fetch_exchanges(conn, prompt_ids=prompt_ids)
     return [
@@ -236,7 +253,7 @@ def fetch_conversation_exchanges(
     conversation_id: str | None = None,
     exclude_conversation_ids: set[str] | None = None,
 ) -> dict[str, list[dict]]:
-    """Load prompt/response pairs grouped by conversation, ordered by timestamp.
+    """Load prompt/response pairs grouped by conversation, in recorded order.
 
     Each exchange is: {"text": str, "prompt_id": str, "event_ids": list[str]}
     where text is prompt_text + response_text concatenated and ``event_ids`` is the
@@ -386,9 +403,10 @@ def fetch_prompts_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Fetch all prompts for a conversation, ordered by timestamp."""
+    """Fetch all prompts for a conversation, in recorded order."""
     return conn.execute(
-        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' "
+        f"ORDER BY {event_order()}",
         (conversation_id,),
     ).fetchall()
 
@@ -435,11 +453,11 @@ def fetch_responses_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Fetch all responses for a conversation, ordered by timestamp."""
+    """Fetch all responses for a conversation, in recorded order."""
     return conn.execute(
         "SELECT e.id, e.parent_id AS prompt_id, e.timestamp, er.input_tokens, er.output_tokens "
         "FROM events e JOIN event_response er ON er.event_id = e.id "
-        "WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY e.timestamp",
+        f"WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY {event_order('e')}",
         (conversation_id,),
     ).fetchall()
 
@@ -479,7 +497,7 @@ def fetch_tool_calls_for_conversation(
             "LEFT JOIN tools t ON t.id = etc.tool_id "
             "LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash "
             "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
-            "ORDER BY e.timestamp",
+            f"ORDER BY {event_order('e')}",
             (conversation_id,),
         ).fetchall()
     return conn.execute(
@@ -489,7 +507,7 @@ def fetch_tool_calls_for_conversation(
         "JOIN event_tool_call etc ON etc.event_id = e.id "
         "LEFT JOIN tools t ON t.id = etc.tool_id "
         "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
-        "ORDER BY e.timestamp",
+        f"ORDER BY {event_order('e')}",
         (conversation_id,),
     ).fetchall()
 
@@ -1148,7 +1166,8 @@ def fetch_all_conversation_ids(conn: sqlite3.Connection) -> list[str]:
 
 def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | None) -> int | None:
     """1-based turn index of an event: walk its parent chain to the prompt
-    anchoring it, then count that conversation's prompts up to and including it.
+    anchoring it, then count that conversation's prompts up to and including it
+    (in recorded order, via :func:`~siftd.storage.events.get_event_position`).
 
     ``event_row`` needs ``id``, ``kind``, ``parent_id``, ``timestamp`` and
     ``conversation_id``. Returns None when the chain ends without a prompt.
@@ -1169,13 +1188,7 @@ def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | N
         if not current_row:
             return None
 
-    count_row = conn.execute(
-        "SELECT COUNT(*) AS n FROM events"
-        " WHERE conversation_id = ? AND kind = 'prompt'"
-        " AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
-        (current_row["conversation_id"], current_row["timestamp"], current_row["timestamp"], current_row["id"]),
-    ).fetchone()
-    return int(count_row["n"]) if count_row else None
+    return get_event_position(conn, current_row["id"])
 
 
 # =============================================================================

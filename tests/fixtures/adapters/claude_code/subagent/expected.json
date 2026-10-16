@@ -1,9 +1,5 @@
 [
   {
-    "attributes": {
-      "lineage.kind": "subagent",
-      "lineage.parent": "claude_code::parent-session-1"
-    },
     "ended_at": "2024-01-15T10:00:03Z",
     "external_id": "claude_code::parent-session-1::agent::sub-agent-1",
     "harness": {
@@ -12,6 +8,12 @@
       "name": "claude_code",
       "source": "anthropic"
     },
+    "lineage": [
+      {
+        "kind": "subagent",
+        "parent": "claude_code::parent-session-1"
+      }
+    ],
     "prompts": [
       {
         "content": [

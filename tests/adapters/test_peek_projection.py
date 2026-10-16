@@ -319,6 +319,19 @@ class TestCorrections:
         assert scan.parent_session_id == "parent-sid"
         assert scan.session_id == "parent-sid:s1"
 
+    def test_a_fork_names_its_parent_but_keeps_its_own_session_id(self, tmp_path):
+        """Only a subagent is spelled ``parent:own-id``; any other lineage still sets the parent."""
+        scan, _ = _scripted(
+            tmp_path,
+            [
+                LineageRec(at=None, kind="fork", parent=f"{NAME}::parent-sid"),
+                PromptRec(at="2026-01-01T00:00:01Z", content=_text("go"), key="u1"),
+            ],
+        )
+        assert scan is not None
+        assert scan.parent_session_id == "parent-sid"
+        assert scan.session_id == "s1"
+
     def test_thinking_appears_only_when_asked(self, tmp_path):
         records = [
             PromptRec(at="2026-01-01T00:00:01Z", content=_text("go"), key="u1"),

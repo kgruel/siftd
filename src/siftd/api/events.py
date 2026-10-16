@@ -19,6 +19,7 @@ from siftd.storage.queries import (
     fetch_conversation_model,
 )
 from siftd.storage.queries import fetch_event_turn_number as event_turn_number  # noqa: F401 — re-export for cli/id_cmd
+from siftd.storage.sql_helpers import event_key, event_key_params, event_order
 from siftd.storage.sqlite import open_database
 from siftd.storage.tags import get_tags_for
 
@@ -174,7 +175,7 @@ def _fetch_response_child_tool_calls(
         " JOIN event_tool_call etc ON etc.event_id = e.id"
         " LEFT JOIN tools t ON t.id = etc.tool_id"
         " WHERE e.parent_id = ? AND e.kind = 'tool_call'"
-        " ORDER BY e.timestamp, e.id",
+        f" ORDER BY {event_order('e')}",
         (response_id,),
     ).fetchall()
     return [
@@ -265,25 +266,28 @@ def _fetch_event_tag_pairs(
 
 def _fetch_neighbors(
     conn: sqlite3.Connection, event_id: str, kind: str, conversation_id: str,
-    timestamp: str | None,
 ) -> dict[str, str | None]:
-    """Return prev/next event of the same kind by (timestamp, id) order."""
-    if timestamp is None:
+    """Return prev/next event of the same kind, in recorded order."""
+    here = conn.execute(
+        "SELECT id, sequence, timestamp FROM events WHERE id = ?", (event_id,),
+    ).fetchone()
+    if here is None:
         return {"prev_event_id": None, "next_event_id": None}
+    key = event_key_params(here)
 
     prev_row = conn.execute(
         "SELECT id FROM events"
         " WHERE conversation_id = ? AND kind = ?"
-        "   AND (timestamp < ? OR (timestamp = ? AND id < ?))"
-        " ORDER BY timestamp DESC, id DESC LIMIT 1",
-        (conversation_id, kind, timestamp, timestamp, event_id),
+        f"   AND {event_key()} < (?, ?, ?)"
+        f" ORDER BY {event_order(desc=True)} LIMIT 1",
+        (conversation_id, kind, *key),
     ).fetchone()
     next_row = conn.execute(
         "SELECT id FROM events"
         " WHERE conversation_id = ? AND kind = ?"
-        "   AND (timestamp > ? OR (timestamp = ? AND id > ?))"
-        " ORDER BY timestamp ASC, id ASC LIMIT 1",
-        (conversation_id, kind, timestamp, timestamp, event_id),
+        f"   AND {event_key()} > (?, ?, ?)"
+        f" ORDER BY {event_order()} LIMIT 1",
+        (conversation_id, kind, *key),
     ).fetchone()
     return {
         "prev_event_id": prev_row["id"] if prev_row else None,
@@ -353,9 +357,7 @@ def get_event(
         kind_specific = _kind_specific_for(work_conn, event_id, kind)
         conv_summary = _fetch_conversation_summary(work_conn, row["conversation_id"])
         neighbors = (
-            _fetch_neighbors(
-                work_conn, event_id, kind, row["conversation_id"], row["timestamp"],
-            )
+            _fetch_neighbors(work_conn, event_id, kind, row["conversation_id"])
             if include_neighbors
             else None
         )

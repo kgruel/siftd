@@ -38,6 +38,12 @@ A conversation is a single session with a tool — from when you started it to w
 | `workspace` | The directory you were working in |
 | `harness` | Which tool (Claude Code, Aider, etc.) |
 
+A conversation may continue exactly one other: a sub-agent spawned by a session, a fork, a resumed session, a branch. That link is stored with the parent's `external_id`, not its siftd id, and resolved when read. Re-ingesting the parent therefore never leaves a stale pointer, and a parent that was never ingested leaves the link unresolved rather than broken.
+
+### Order within a conversation
+
+Events are ordered by the position they were recorded in (`events.sequence`, assigned when the conversation is stored), not by timestamp: timestamps tie, and some tools stamp every event of a session with the same instant. Conversations stored before schema v13 have no recorded position and are ordered by `(timestamp, id)` as they always were; re-parsing the source gives them one.
+
 ### Prompts
 
 A prompt is one thing you typed or submitted. Multi-turn conversations have multiple prompts.

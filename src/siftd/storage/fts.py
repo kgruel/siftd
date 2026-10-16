@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from siftd.domain.search_types import MATCH_CLOSE, MATCH_ELLIPSIS, MATCH_OPEN
+from siftd.storage.events import get_preceding_prompt_id, get_prompt_index
 
 log = logging.getLogger(__name__)
 
@@ -523,38 +524,18 @@ def fts5_event_turn_index(
     """Return the 0-based turn index of the turn containing event_id.
 
     For prompt events: returns the ordinal of this prompt among all prompts
-    in the conversation (ordered by timestamp).
+    in the conversation (in recorded order).
     For response/tool_call events: returns the ordinal of the preceding prompt.
 
     Returns None if event not found or no preceding prompt exists.
     """
     row = conn.execute(
-        "SELECT kind, timestamp FROM events WHERE id = ?",
+        "SELECT id, kind, sequence, timestamp FROM events WHERE id = ?",
         (event_id,),
     ).fetchone()
     if row is None:
         return None
-
-    kind = row["kind"]
-    ts = row["timestamp"]
-
-    if kind == "prompt":
-        count = conn.execute(
-            "SELECT COUNT(*) FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp < ?",
-            (conversation_id, ts),
-        ).fetchone()[0]
-        return count
-
-    # For response/tool_call: find the preceding prompt's timestamp
-    prompt_row = conn.execute(
-        "SELECT timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
-        (conversation_id, ts),
-    ).fetchone()
-    if prompt_row is None:
+    prompt_id = get_preceding_prompt_id(conn, conversation_id, row)
+    if prompt_id is None:
         return None
-    prompt_ts = prompt_row["timestamp"]
-    count = conn.execute(
-        "SELECT COUNT(*) FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp < ?",
-        (conversation_id, prompt_ts),
-    ).fetchone()[0]
-    return count
+    return get_prompt_index(conn, prompt_id)

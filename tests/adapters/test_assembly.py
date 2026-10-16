@@ -17,7 +17,6 @@ from siftd.adapters.assembly import (
     AssemblyError,
     assemble,
     decode,
-    lineage_parent,
     read_jsonl,
 )
 from siftd.adapters.records import (
@@ -35,7 +34,7 @@ from siftd.adapters.records import (
     Unknown,
     UsageRec,
 )
-from siftd.domain import ContentBlock, Harness, Usage
+from siftd.domain import ContentBlock, Harness, Lineage, Usage
 from siftd.domain.source import Source
 
 H = Harness(name="t", source="test", log_format="jsonl")
@@ -328,34 +327,35 @@ def test_meta_workspace_first_wins_and_model_is_context_for_later_responses():
     assert [r.model for r in conv.prompts[0].responses] == ["m1", "m2", "explicit"]
 
 
-def test_lineage_is_carried_as_attributes_and_a_second_parent_is_ignored():
+def test_lineage_becomes_the_conversations_lineage_and_a_second_parent_is_ignored():
     out = run(
         S,
         LineageRec(at=None, kind="fork", parent="sess-parent", anchor="rec-9"),
         LineageRec(at=None, kind="resume", parent="other"),
         ResponseRec(at="2026-01-01T00:00:00Z"),
     )
-    attrs = only(out).attributes
-    assert attrs == {"lineage.kind": "fork", "lineage.parent": "sess-parent", "lineage.anchor": "rec-9"}
+    conv = only(out)
+    assert conv.lineage == (Lineage(kind="fork", parent="sess-parent", anchor="rec-9"),)
+    assert not any(k.startswith("lineage.") for k in conv.attributes)
     assert d(out, Disposition.LINEAGE) == 1
     assert out.ledger.reasons[(Disposition.IGNORED, "conversation already has a parent")] == 1
 
 
 def test_a_subagent_that_is_also_a_fork_keeps_both_parents():
-    """Containment (where it ran) and ancestry (what it continues) are different relations. The first stated takes
-    the bare keys, the other is qualified by kind, and lineage_parent reads either, in either arrival order."""
+    """Containment (where it ran) and ancestry (what it continues) are different relations,
+    so a forked subagent keeps one link of each, in either arrival order."""
     for order in (("fork", "subagent"), ("subagent", "fork")):
         recs = {
             "fork": LineageRec(at=None, kind="fork", parent="sess-a", anchor="rec-9"),
             "subagent": LineageRec(at=None, kind="subagent", parent="sess-b"),
         }
         out = run(S, *(recs[k] for k in order), ResponseRec(at="2026-01-01T00:00:00Z"))
-        attrs = only(out).attributes
-        assert lineage_parent(attrs, "fork") == "sess-a" and lineage_parent(attrs, "subagent") == "sess-b"
-        assert lineage_parent(attrs, "resume") is None
+        conv = only(out)
+        assert conv.parent("fork") == Lineage(kind="fork", parent="sess-a", anchor="rec-9")
+        assert conv.parent("subagent") == Lineage(kind="subagent", parent="sess-b")
+        assert conv.parent("resume") is None
         assert d(out, Disposition.LINEAGE) == 2
         assert out.ledger.reasons.get((Disposition.IGNORED, "conversation already has a parent")) is None
-    assert attrs["lineage.fork.anchor"] == "rec-9"  # the second order stored the fork qualified
 
 
 # --- time ----------------------------------------------------------------------
