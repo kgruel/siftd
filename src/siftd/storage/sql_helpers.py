@@ -140,6 +140,11 @@ def uncached_input_sql(response_alias: str = "r") -> str:
     where it matters: a ``cache_read`` exceeding ``input_tokens`` can only be the
     exclusive convention.
 
+    The default branch is the inclusive form, so every row that reaches it must
+    store ``input_tokens`` INCLUSIVE. An adapter whose native input is exclusive
+    but whose source falls through to this branch normalizes at parse time:
+    ``antigravity_cli`` (source ``google``) stores native input + cache_read.
+
     The caller's flatten MUST expose ``{r}.input_tokens``, ``{r}.cache_read`` and
     ``{r}.source`` as columns. Returns a non-negative scalar expression.
     """
@@ -245,3 +250,50 @@ def batched_execute(
         total_affected += cur.rowcount
 
     return total_affected
+
+
+# ---------------------------------------------------------------------------
+# Event order
+# ---------------------------------------------------------------------------
+#
+# Order inside a conversation is the *recorded* order: ``events.sequence``,
+# assigned by ``store_conversation`` in tree-walk order. Timestamp cannot carry
+# it — ULIDs are random within a millisecond, so ``(timestamp, id)`` breaks a
+# tie arbitrarily, and some adapters stamp every event with the session start.
+# Legacy rows (written before schema v13) have a NULL sequence and keep the old
+# ``(timestamp, id)`` order, so every reader that defines order spells it here,
+# once, and `tests/architecture/test_event_order.py` holds that to the sources.
+#
+# A conversation is written whole, so its sequences are all set or all NULL;
+# that is what lets the two forms below share one expression.
+
+
+def event_order(alias: str = "", *, desc: bool = False) -> str:
+    """ORDER BY terms for events of one conversation: sequence, then (timestamp, id).
+
+    ``ORDER BY e.sequence, e.timestamp, e.id`` needs no COALESCE: SQLite sorts
+    NULL first ascending (last descending), so an all-NULL legacy conversation
+    falls through to ``(timestamp, id)`` and a sequenced one orders by sequence.
+    For events of several conversations, put ``conversation_id`` first.
+    """
+    prefix = f"{alias}." if alias else ""
+    direction = " DESC" if desc else ""
+    return ", ".join(f"{prefix}{col}{direction}" for col in ("sequence", "timestamp", "id"))
+
+
+def event_key(alias: str = "") -> str:
+    """The row-value form of :func:`event_order`, for position predicates.
+
+    ``WHERE {event_key('e')} < (?, ?, ?)`` is "strictly before" in the same
+    order ``event_order`` sorts by. Row-value comparison against NULL is NULL,
+    so the sequence is coalesced to -1 (what NULL-first ordering treats it as).
+    Bind the right-hand side with :func:`event_key_params`.
+    """
+    prefix = f"{alias}." if alias else ""
+    return f"(COALESCE({prefix}sequence, -1), {prefix}timestamp, {prefix}id)"
+
+
+def event_key_params(row: Any) -> tuple[int, str, str]:
+    """Bind values for :func:`event_key` from a row carrying sequence, timestamp, id."""
+    sequence = row["sequence"]
+    return (-1 if sequence is None else sequence, row["timestamp"], row["id"])

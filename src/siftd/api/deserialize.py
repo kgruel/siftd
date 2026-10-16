@@ -112,6 +112,7 @@ def deserialize_conversation_summary(d: dict[str, Any]) -> ConversationSummary |
             cost=d.get("cost"),
             tags=_coerce_list(d.get("tags")),
             owner=d.get("owner"),
+            has_preamble=d.get("preamble") is True,
         )
     except Exception:
         # Any other unexpected failure (dataclass validation, etc.) — fall back.
@@ -273,6 +274,8 @@ def deserialize_turn(d: dict[str, Any]) -> Turn | None:
             prompt_id=d.get("prompt_id"),
             response_ids=_coerce_list(d.get("response_ids")),
             tool_call_ids=_coerce_list(d.get("tool_call_ids")),
+            preamble=d.get("preamble") is True,
+            continued_from=d.get("continued_from"),
         )
     except Exception:
         # Any unexpected field-level failure (e.g. malformed narrative block

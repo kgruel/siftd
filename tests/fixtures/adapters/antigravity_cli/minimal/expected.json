@@ -36,6 +36,7 @@
               {
                 "block_type": "tool_use",
                 "content": {
+                  "id": "2:0",
                   "input": {
                     "DirectoryPath": "/repo",
                     "Recursive": false
@@ -44,9 +45,14 @@
                 }
               }
             ],
+            "sequence": 1,
             "timestamp": "2026-07-06T15:01:00Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-06T15:01:01+00:00"
+                },
+                "external_id": "2:0",
                 "input": {
                   "DirectoryPath": "/repo",
                   "Recursive": false
@@ -54,8 +60,9 @@
                 "result": {
                   "output": "README.md\nsrc/\n"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-07-06T15:01:01Z",
+                "timestamp": "2026-07-06T15:01:00Z",
                 "tool_name": "list_dir"
               }
             ]
@@ -69,9 +76,11 @@
                 }
               }
             ],
+            "sequence": 3,
             "timestamp": "2026-07-06T15:01:02Z"
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-07-06T15:00:59Z"
       }
     ],

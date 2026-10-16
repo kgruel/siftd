@@ -13,6 +13,7 @@ from siftd.adapters import (
     pi_agent,
     vscode,
 )
+from siftd.adapters.contract import adapt
 from siftd.adapters.validation import validate_adapter
 from siftd.plugin_discovery import PluginInfo, load_all_extensions, load_dropin_modules, load_entrypoint_modules
 
@@ -20,8 +21,15 @@ from siftd.plugin_discovery import PluginInfo, load_all_extensions, load_dropin_
 _validate_adapter = validate_adapter
 
 
+def _adapted(plugins: list[PluginInfo]) -> list[PluginInfo]:
+    """Give each loaded adapter that decodes the interface the framework derives for it."""
+    for plugin in plugins:
+        plugin.module = adapt(plugin.module)
+    return plugins
+
+
 def load_builtin_adapters() -> list[PluginInfo]:
-    """Return the built-in adapter modules as PluginInfo."""
+    """Return the built-in adapters as PluginInfo (modules that decode, wrapped; see ``contract.adapt``)."""
     builtins = [
         aider,
         antigravity_cli,
@@ -37,7 +45,7 @@ def load_builtin_adapters() -> list[PluginInfo]:
         PluginInfo(
             name=getattr(m, "NAME", m.__name__.split(".")[-1]),
             origin="builtin",
-            module=m,
+            module=adapt(m),
         )
         for m in builtins
     ]
@@ -49,21 +57,25 @@ def load_dropin_adapters(
     failures_out: list[tuple[Path, str]] | None = None,
 ) -> list[PluginInfo]:
     """Scan a directory for .py adapter files, import and validate them."""
-    return load_dropin_modules(
-        path,
-        module_name_prefix="siftd_dropin_adapter_",
-        validate=_validate_adapter,
-        get_name=lambda m: getattr(m, "NAME", "unknown"),
-        failures_out=failures_out,
+    return _adapted(
+        load_dropin_modules(
+            path,
+            module_name_prefix="siftd_dropin_adapter_",
+            validate=_validate_adapter,
+            get_name=lambda m: getattr(m, "NAME", "unknown"),
+            failures_out=failures_out,
+        )
     )
 
 
 def load_entrypoint_adapters() -> list[PluginInfo]:
     """Discover adapters registered via the 'siftd.adapters' entry point group."""
-    return load_entrypoint_modules(
-        group="siftd.adapters",
-        validate=_validate_adapter,
-        get_name=lambda m: getattr(m, "NAME", "unknown"),
+    return _adapted(
+        load_entrypoint_modules(
+            group="siftd.adapters",
+            validate=_validate_adapter,
+            get_name=lambda m: getattr(m, "NAME", "unknown"),
+        )
     )
 
 
@@ -104,14 +116,19 @@ class _AdapterPathOverride:
 def wrap_adapter_paths(adapter, paths: list[str]):
     """Create an adapter wrapper with custom discovery paths.
 
+    The adapter is adapted first (``contract.adapt``: a no-op for anything that is
+    not a bare decoding module), because the override forwards every other
+    attribute to what it wraps: wrapping a bare version-2 module would hide the
+    ``parse``/``assemble`` the framework derives for it.
+
     Args:
-        adapter: An adapter module.
+        adapter: An adapter module, or an adapter already adapted.
         paths: List of directory paths to use instead of DEFAULT_LOCATIONS.
 
     Returns:
         Wrapped adapter that discovers from the given paths.
     """
-    return _AdapterPathOverride(adapter, paths)
+    return _AdapterPathOverride(adapt(adapter), paths)
 
 
 def load_all_adapters(
@@ -145,6 +162,7 @@ def load_all_adapters(
         get_name=lambda m: getattr(m, "NAME", "unknown"),
         failures_out=failures_out,
     )
+    _adapted(result)
 
     # Apply adapter-specific config: disable knob, then location overrides.
     # One config read for the whole loop — the per-name accessors would

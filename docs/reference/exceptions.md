@@ -31,6 +31,7 @@ SiftdError (exit 1, HTTP 500) — errors.py
 │   ├── IncrementalCompatError — embeddings/indexer.py
 │   ├── IndexCompatError — storage/embeddings.py
 │   └── SchemaUpgradeRequiredError — storage/sqlite.py
+├── AssemblyError — adapters/assembly.py
 ├── AdapterParseError — adapters/sdk.py
 ├── AuthError — api/auth.py
 ├── PreflightError — api/database.py
@@ -58,6 +59,7 @@ SiftdError (exit 1, HTTP 500) — errors.py
 | `IncrementalCompatError` | `embeddings/indexer.py` | DriftError | Raised when an incremental build cannot proceed against the existing index |
 | `IndexCompatError` | `storage/embeddings.py` | DriftError | Raised when index metadata is incompatible with current backend configuration |
 | `SchemaUpgradeRequiredError` | `storage/sqlite.py` | DriftError | Raised on read-only open of a stale-schema DB that cannot be auto-upgraded |
+| `AssemblyError` | `adapters/assembly.py` | SiftdError (root) | A decoder produced records the assembler cannot interpret (a decoder bug) |
 | `AdapterParseError` | `adapters/sdk.py` | SiftdError (root) | Raised when a source matches an adapter but cannot be parsed safely |
 | `AuthError` | `api/auth.py` | SiftdError (root) | Raised when token acquisition fails |
 | `PreflightError` | `api/database.py` | SiftdError (root) | Raised when a source database fails integrity pre-flight checks |

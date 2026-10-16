@@ -15,6 +15,10 @@ logs without duplicating parse logic. Because it never goes through
 DB-backed query path; the tradeoff is that peek sees only what is on disk, not
 the enriched, deduplicated view the database holds.
 
+Token counts in follow mode are per-message deltas, not per-record values. A streamed message repeats its growing usage on every record that shares its `message.id`, so [`follow.py`](follow.py) charges each record only the change from what its message already charged (`charge_usage`). Summing a followed stream therefore gives the same totals `peek_exchanges` reports (#97). A record that carries usage but no visible text still emits an event with `shows_output` false, so its charge reaches JSON consumers and is hidden from the text view.
+
+Follow attaches at end of file. The records already there are the initial context that peek shows first, so they seed the per-message charges without being emitted (`_seed_charges`). A message whose final record arrives after attach is then charged only what the initial context did not show. Without the seed, its totals would count the shown part twice.
+
 <!-- gen:begin modules -->
 <sub>generated from module docstrings — run <code>./dev docs</code></sub>
 

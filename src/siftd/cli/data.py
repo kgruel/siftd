@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from siftd.api import open_database
 from siftd.cli._common import embedding_awaiting_message, resolve_db
+from siftd.errors import UserInputError
 from siftd.output import fmt_count, fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
@@ -323,6 +324,9 @@ class _IngestJsonRenderer:
                 "exchanges": event.exchange_count,
                 "model": event.model,
                 "error": event.error,
+                "unknown": event.unknown,
+                "orphan": event.orphan,
+                "ignored": event.ignored,
             })
         self._emit(payload)
 
@@ -359,9 +363,63 @@ class _IngestJsonRenderer:
         print(json.dumps(payload))
 
 
+def _unrecognized_message(name: str, unknown: int, orphan: int) -> str:
+    parts = []
+    if unknown:
+        parts.append(f"{fmt_count(unknown)} record(s) unrecognized")
+    if orphan:
+        parts.append(f"{fmt_count(orphan)} orphaned")
+    return f"Adapter '{name}': {', '.join(parts)} in the sources read this run"
+
+
+def _refused_adoption_message(refused) -> str:
+    return (
+        f"Adapter '{refused.adapter}': did not adopt conversation {refused.conversation_id} for "
+        f"{refused.external_id} ({refused.path}); it may be another conversation's, so that row "
+        "and its tags were left as they were and this one was stored beside it"
+    )
+
+
+def _report_reparse(stats, *, renderer) -> None:
+    """Report what ``--reparse`` did: totals, and each conversation it declined.
+
+    Nothing here is hidden by ``--quiet``. A reparse is an explicit maintenance
+    run, and its totals are the only account of what it changed; a declined
+    conversation is a tag a replacement would have destroyed, which a quiet run
+    must not hide either. Units: sources re-parsed, conversations replaced,
+    conversations skipped.
+    """
+    skipped = stats.skipped_for_tags
+    if renderer is not None:
+        renderer._emit({
+            "type": "reparse",
+            "reparsed": stats.reparsed,
+            "replaced": stats.conversations_replaced,
+            "skipped_for_tags": [
+                {"path": s.path, "conversation_id": s.conversation_id, "lost": s.lost}
+                for s in skipped
+            ],
+        })
+        return
+    status.info(
+        f"reparse: {stats.reparsed} source(s) re-parsed, "
+        f"{stats.conversations_replaced} conversation(s) replaced, "
+        f"{len(skipped)} skipped for tags"
+    )
+    for s in skipped:
+        status.warning(
+            f"skipped for tags: conversation {s.conversation_id} would lose "
+            f"{s.lost} user-applied tag(s) on replacement ({s.path}); "
+            "not replaced. Re-run with --reparse --force to replace it anyway."
+        )
+
+
 def cmd_ingest(args) -> int:
     """Run ingestion from all adapters."""
     from siftd.api import AdapterSelectionError, run_ingest, run_rebuild_fts
+
+    if getattr(args, "force", False) and not getattr(args, "reparse", False):
+        raise UserInputError("--force applies only with --reparse")
 
     ensure_dirs()
 
@@ -447,6 +505,8 @@ def cmd_ingest(args) -> int:
                 scan_paths=args.path,
                 on_event=renderer.handle_event,
                 on_notice=_on_egress_notice,
+                reparse=args.reparse,
+                force=args.force,
             )
     except AdapterSelectionError as exc:
         message = str(exc)
@@ -465,14 +525,17 @@ def cmd_ingest(args) -> int:
         # asked for specific work did none of it. Auto-quiet (any non-TTY, which
         # is every scripted `siftd ingest --path … && siftd search …`) must not
         # swallow that; only an explicit --quiet does.
-        scoped = bool(args.path or args.adapter)
+        scoped = bool(args.path or args.adapter or args.reparse)
         if json_mode:
             renderer._emit({"type": "skipped", "reason": "locked", "message": message})
         elif not quiet_explicit and (scoped or not auto_quiet):
-            status.info(
-                message
-                + (" The requested paths/adapters were not ingested." if scoped else "")
-            )
+            if args.reparse:
+                suffix = " The requested reparse was not run."
+            elif scoped:
+                suffix = " The requested paths/adapters were not ingested."
+            else:
+                suffix = ""
+            status.info(message + suffix)
         return 0
 
     stats = result.stats
@@ -482,6 +545,8 @@ def cmd_ingest(args) -> int:
         renderer.handle_summary(stats)
     else:
         renderer.print_summary(stats)
+    if args.reparse:
+        _report_reparse(stats, renderer=renderer if json_mode else None)
 
     # Adapter health: zero-discovery, non-core file errors, drop-in import failures.
     from siftd.api.adapters import DEFAULT_SUPPORT_TIER
@@ -495,6 +560,14 @@ def cmd_ingest(args) -> int:
         (name, counts.get("errors", 0), tiers.get(name, DEFAULT_SUPPORT_TIER))
         for name, counts in stats.by_harness.items()
         if counts.get("errors", 0) and tiers.get(name, DEFAULT_SUPPORT_TIER) != "core"
+    )
+    # Records an adapter that decodes could not recognize or place, in the sources
+    # it parsed this run. A location claim ("here, N records"), not a verdict on
+    # why: the ledger is not persisted, so there is no later report to point at.
+    unrecognized = sorted(
+        (name, counts["unknown"], counts["orphan"])
+        for name, counts in stats.by_harness.items()
+        if counts.get("unknown") or counts.get("orphan")
     )
     # Disabled-adapter notices are scoped to the run: on an --adapter run, a
     # globally disabled adapter that was never requested is not news.
@@ -519,6 +592,26 @@ def cmd_ingest(args) -> int:
                 "tier": tier,
                 "errors": errors,
                 "message": f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort",
+            })
+        for name, unknown, orphan in unrecognized:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "unrecognized_records",
+                "adapter": name,
+                "unknown": unknown,
+                "orphan": orphan,
+                "ignored": stats.by_harness[name]["ignored"],
+                "message": _unrecognized_message(name, unknown, orphan),
+            })
+        for refused in stats.refused_adoptions:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "refused_adoption",
+                "adapter": refused.adapter,
+                "path": refused.path,
+                "conversation_id": refused.conversation_id,
+                "external_id": refused.external_id,
+                "message": _refused_adoption_message(refused),
             })
         for path, error in result.dropin_failures:
             renderer._emit({
@@ -546,10 +639,41 @@ def cmd_ingest(args) -> int:
                 status.info(
                     f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)"
                 )
+        # Records an adapter lost track of, and rows ingest would not adopt, are
+        # data quality, not chatter: auto-quiet (any non-TTY, which is every
+        # scripted ingest) must not swallow them, as it must not swallow a
+        # skipped-by-lock run. Only an explicit --quiet does.
+        if not quiet_explicit:
+            for name, unknown, orphan in unrecognized:
+                status.warning(_unrecognized_message(name, unknown, orphan))
+            for refused in stats.refused_adoptions:
+                status.warning(_refused_adoption_message(refused))
         # Drop-in import failures are hard errors and stay visible even in quiet
         # mode; the info-level notices above ride the quiet gate.
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
+
+    # Deprecated adapters that contributed sources. Shown even in quiet mode, as
+    # `db merge --no-fts` warns: a deprecation is a standing instruction, not chatter.
+    from siftd.api.compat import adapter_deprecation
+
+    deprecated = [
+        (name, d)
+        for name in stats.by_harness
+        if (d := adapter_deprecation(name))
+    ]
+    for name, d in deprecated:
+        if json_mode:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "deprecated",
+                "adapter": name,
+                "removed_in": d.removed_in,
+                "successor": d.successor,
+                "message": d.message(name),
+            })
+        else:
+            status.warning(d.message(name), hint=d.hint())
 
     _render_auto_index(result.auto_index, json_mode=json_mode, quiet=quiet, renderer=renderer)
     return 0
@@ -1666,7 +1790,9 @@ def build_data_parser(subparsers) -> None:
   siftd ingest -v                   # verbose: per-adapter skip breakdowns
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
-  siftd ingest --rebuild-fts        # rebuild FTS index from scratch""",
+  siftd ingest --rebuild-fts        # rebuild FTS index from scratch
+  siftd ingest --reparse -a gemini_cli  # re-parse unchanged files under the current parser
+  siftd ingest --reparse --force    # ...and replace conversations that would lose user tags""",
     )
     _verbosity = p_ingest.add_mutually_exclusive_group()
     _verbosity.add_argument(
@@ -1686,6 +1812,18 @@ def build_data_parser(subparsers) -> None:
     p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
     p_ingest.add_argument("--json", action="store_true", help="Output newline-delimited JSON events")
     p_ingest.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS index from existing data (skips ingestion)")
+    p_ingest.add_argument(
+        "--reparse",
+        action="store_true",
+        help="Re-parse already-ingested sources even when unchanged, so an adapter fix reaches stored "
+        "conversations. Tags and ownership carry over; a conversation that would lose user-applied "
+        "tags is skipped unless --force is given (use with -a to limit to one adapter)",
+    )
+    p_ingest.add_argument(
+        "--force",
+        action="store_true",
+        help="With --reparse, replace conversations even when that would lose user-applied tags",
+    )
     p_ingest.set_defaults(func=cmd_ingest)
 
     # backfill

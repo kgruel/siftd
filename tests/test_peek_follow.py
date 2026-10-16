@@ -5,10 +5,17 @@ import threading
 import time
 from collections.abc import Callable
 
+import pytest
+from conftest import FIXTURES_DIR
+
+from siftd.adapters import claude_code
 from siftd.adapters.claude_code import TOOL_ALIASES, TOOL_HINT_KEYS
+from siftd.adapters.contract import adapt
 from siftd.adapters.sdk import extract_tool_hint
 from siftd.peek.follow import (
     FollowEvent,
+    account_record,
+    charge_usage,
     event_to_json,
     follow_session,
     parse_record,
@@ -546,3 +553,149 @@ def test_follow_session_with_timeout(tmp_path):
         path.unlink()
     except OSError:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Streamed-message usage (#97)
+# ---------------------------------------------------------------------------
+
+_STREAMED_FIXTURE = FIXTURES_DIR / "adapters" / "claude_code" / "streamed_message" / "input.jsonl"
+
+
+def _streamed_records() -> list[dict]:
+    return [json.loads(line) for line in _STREAMED_FIXTURE.read_text().splitlines() if line.strip()]
+
+
+def _charged_totals(records: list[dict], *, include_thinking: bool = False) -> tuple[int, int]:
+    """Replay records through the follow accounting, as follow_session does."""
+    charged: dict[str, tuple[int, int]] = {}
+    input_total = output_total = 0
+    for record in records:
+        event = account_record(record, charged=charged, include_thinking=include_thinking)
+        if event is None or event.is_user:
+            continue
+        input_total += event.input_tokens
+        output_total += event.output_tokens
+    return input_total, output_total
+
+
+class TestChargeUsage:
+    """Follow mode counts a streamed message's usage once, at its final record."""
+
+    @pytest.mark.parametrize("include_thinking", [False, True])
+    def test_golden_stream_matches_peek_exchanges(self, include_thinking):
+        records = _streamed_records()
+        exchanges = adapt(claude_code).peek_exchanges(_STREAMED_FIXTURE, 5)
+        peek_totals = (sum(x.input_tokens for x in exchanges), sum(x.output_tokens for x in exchanges))
+        assert _charged_totals(records, include_thinking=include_thinking) == peek_totals == (2, 176)
+
+    def test_stream_starting_mid_message_charges_final_counts(self):
+        """follow starts at end-of-file, so a message's first records can be unseen. The
+        final record still carries the message's counts and is charged them in full."""
+        records = _streamed_records()
+        assert _charged_totals(records[2:])[1] == 176
+        assert _charged_totals(records[1:])[1] == 176
+
+    def test_unkeyed_records_are_charged_as_is(self):
+        charged: dict[str, tuple[int, int]] = {}
+        for _ in range(2):
+            event = charge_usage(FollowEvent(input_tokens=1, output_tokens=5), charged)
+            assert (event.input_tokens, event.output_tokens) == (1, 5)
+        assert charged == {}
+
+    def test_user_event_is_not_charged(self):
+        event = FollowEvent(is_user=True, message_id="m1", input_tokens=9, output_tokens=9)
+        assert charge_usage(event, {}) is event
+
+    def test_role_mismatch_record_is_an_assistant_event(self):
+        """effective_role classifies a record typed user with role assistant as a response."""
+        record = {"type": "user", "timestamp": "T", "message": {
+            "role": "assistant", "id": "msg_x", "content": [{"type": "text", "text": "reply"}],
+            "usage": {"input_tokens": 3, "output_tokens": 4}}}
+        event = parse_record(record)
+        assert event is not None and not event.is_user
+        assert (event.message_id, event.input_tokens, event.output_tokens) == ("msg_x", 3, 4)
+
+    def test_final_record_without_visible_output_is_still_charged(self):
+        """A message whose final record shows nothing (thinking only) keeps that record's
+        usage: it is charged as a usage-only event, so the message totals stay whole."""
+        charged: dict[str, tuple[int, int]] = {}
+        first = {"type": "assistant", "timestamp": "T", "message": {
+            "role": "assistant", "id": "msg_t", "content": [
+                {"type": "tool_use", "id": "tu1", "name": "Bash", "input": {"command": "ls"}}],
+            "usage": {"input_tokens": 1, "output_tokens": 2}}}
+        final = {"type": "assistant", "timestamp": "T", "message": {
+            "role": "assistant", "id": "msg_t", "content": [{"type": "thinking", "thinking": ""}],
+            "usage": {"input_tokens": 1, "output_tokens": 20}}}
+        first_event = account_record(first, charged=charged)
+        final_event = account_record(final, charged=charged)
+        assert first_event is not None and first_event.shows_output
+        assert final_event is not None and not final_event.shows_output
+        assert (final_event.input_tokens, final_event.output_tokens) == (0, 18)
+        assert charged == {"msg_t": (1, 20)}
+        assert _charged_totals([first, final]) == (1, 20)
+
+
+class TestAttachSeedsCharges:
+    """follow attaches at end of file. Records already on disk seed the usage charges
+    without being emitted, so a message's later record is charged only its new part (#97)."""
+
+    def test_records_already_on_disk_seed_charges_and_are_not_emitted(self, tmp_path):
+        records = _streamed_records()
+        path = tmp_path / "session.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in records[:3]), encoding="utf-8")
+        events: list[FollowEvent] = []
+
+        thread = _follow_in_thread(path, on_turn=events.append)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(records[3]) + "\n")
+            f.flush()
+
+        assert _wait_for_events(events, 1)
+        _stop_follow(path, thread)
+
+        # Records 0-2 were charged on attach (2 input, 2 output), so the final record
+        # adds only the difference to 2/176.
+        assert len(events) == 1
+        assert (events[0].message_id, events[0].input_tokens, events[0].output_tokens) == (
+            "msg_011Cea2TnjxEfrXbjGNnGHD1", 0, 174)
+
+    def test_partial_line_on_disk_completes_with_its_charge_intact(self, tmp_path):
+        records = _streamed_records()
+        path = tmp_path / "session.jsonl"
+        final_line = json.dumps(records[3]) + "\n"
+        head = "".join(json.dumps(r) + "\n" for r in records[:3])
+        path.write_text(head + final_line[: len(final_line) // 2], encoding="utf-8")
+        events: list[FollowEvent] = []
+
+        thread = _follow_in_thread(path, on_turn=events.append)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(final_line[len(final_line) // 2 :])
+            f.flush()
+
+        assert _wait_for_events(events, 1)
+        _stop_follow(path, thread)
+
+        assert [(e.input_tokens, e.output_tokens) for e in events] == [(0, 174)]
+
+    def test_complete_record_without_its_newline_is_seeded_once(self, tmp_path):
+        """A complete record the writer has not yet terminated is part of the initial
+        context; when its newline and the rest of the stream arrive, it is not charged
+        a second time (it was, at 350 output tokens instead of 176)."""
+        records = _streamed_records()
+        assert len(records) > 4
+        path = tmp_path / "session.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in records[:3]) + json.dumps(records[3]), encoding="utf-8")
+        seeded = _charged_totals(records[:4])
+        events: list[FollowEvent] = []
+
+        thread = _follow_in_thread(path, on_turn=events.append)
+        with path.open("a", encoding="utf-8") as f:
+            f.write("\n" + "".join(json.dumps(r) + "\n" for r in records[4:]))
+            f.flush()
+
+        _wait_for_events(events, len(records) - 4)
+        _stop_follow(path, thread)
+
+        total_out = seeded[1] + sum(e.output_tokens for e in events if not e.is_user)
+        assert total_out == _charged_totals(records)[1]

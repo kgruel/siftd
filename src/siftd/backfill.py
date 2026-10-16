@@ -6,6 +6,7 @@ They use storage primitives but are not storage primitives themselves.
 
 import json
 import sqlite3
+from collections.abc import Sequence
 from pathlib import Path
 
 from siftd.domain.shell_categories import (
@@ -133,12 +134,43 @@ def backfill_shell_tags(conn: sqlite3.Connection) -> dict[str, int]:
     return counts
 
 
+def _usage_carrier_indices(records: Sequence[dict]) -> frozenset[int]:
+    """Indices of the response records whose message.usage is counted.
+
+    Claude Code writes one record per content block of an API message, and each
+    record repeats that message's full usage; the final record holds the final
+    counts (issue #97). So per message.id only the last response record carries
+    usage. Records without a message.id each carry their own. Responses are
+    classified by ``effective_role``, as the adapter's decoder does.
+    """
+    from siftd.adapters.claude_code import effective_role, message_id_of
+
+    carriers: set[int] = set()
+    last_index: dict[str, int] = {}
+    for index, record in enumerate(records):
+        if effective_role(record) != "assistant":
+            continue
+        message_id = message_id_of(record)
+        if message_id is None:
+            carriers.add(index)
+        else:
+            last_index[message_id] = index
+    carriers.update(last_index.values())
+    return frozenset(carriers)
+
+
 def backfill_response_attributes(conn: sqlite3.Connection) -> int:
     """Backfill cache token attributes by re-reading raw JSONL files.
 
     For each ingested claude_code file, re-parses the JSONL and extracts
     cache_creation_input_tokens / cache_read_input_tokens from message.usage,
     then stores them as polymorphic attributes (target_kind='response').
+    Only usage carriers are read (see ``_usage_carrier_indices``): a streamed
+    message's usage lives on its final record alone. That is the shape of a
+    database ingested before streamed chunks merged into one response, where
+    each record is its own response; a message ingested since keeps its first
+    chunk's id, so its final record matches no response and is skipped (ingest
+    already stored its attributes).
 
     Returns count of attributes inserted.
     """
@@ -166,10 +198,11 @@ def backfill_response_attributes(conn: sqlite3.Connection) -> int:
 
         # Re-read the raw JSONL to extract cache tokens
         records = load_jsonl(file_path)
+        usage_carriers = _usage_carrier_indices(records)
 
         # Match responses by external_id
-        for record in records:
-            if record.get("type") != "assistant":
+        for index, record in enumerate(records):
+            if index not in usage_carriers:
                 continue
             message_data = record.get("message") or {}
             usage_data = message_data.get("usage") or {}

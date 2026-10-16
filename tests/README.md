@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 194 | 3399 |
-| `tests/adapters/` | 20 | 165 |
-| `tests/architecture/` | 13 | 81 |
-| `tests/cli/` | 29 | 640 |
+| `tests/` | 206 | 3630 |
+| `tests/adapters/` | 22 | 483 |
+| `tests/architecture/` | 15 | 91 |
+| `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -143,11 +143,12 @@ docstring so its row is meaningful.
 | [test_api_stats_edges.py](test_api_stats_edges.py) | 2 | — |
 | [test_api_tags_edges.py](test_api_tags_edges.py) | 2 | — |
 | [test_api_tags_mutation.py](test_api_tags_mutation.py) | 13 | — |
+| [test_assembled_storage.py](test_assembled_storage.py) | 4 | What the assembler produces is what storage can keep, in the order it arrived. |
 | [test_attributes.py](test_attributes.py) | 6 | Tests for storage/attributes.py — set_attribute / get_attributes and downstream consumers. |
 | [test_auth.py](test_auth.py) | 4 | Tests for siftd.api.auth — token acquisition. |
 | [test_auto_index_hook.py](test_auto_index_hook.py) | 22 | Tests for the post-ingest auto-index hook (base lane — collaborators stubbed). |
 | [test_auto_index_integration.py](test_auto_index_integration.py) | 2 | Real-backend integration for the post-ingest auto-index hook (embed lane — fastembed). |
-| [test_backfill.py](test_backfill.py) | 28 | Tests for siftd.backfill module. |
+| [test_backfill.py](test_backfill.py) | 31 | Tests for siftd.backfill module. |
 | [test_blobs.py](test_blobs.py) | 0 | Blob storage tests — now in test_storage.py. |
 | [test_browser_smoke_remote.py](test_browser_smoke_remote.py) | 13 | Unit coverage for the opt-in Browserless T3 transport and containment. |
 | [test_browser_smoke_waits.py](test_browser_smoke_waits.py) | 15 | Unit coverage for the T3 smoke's condition waits, driven by a scripted CDP wire. |
@@ -160,7 +161,8 @@ docstring so its row is meaningful.
 | [test_cli_query.py](test_cli_query.py) | 6 | Tests for siftd query CLI error handling. |
 | [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
-| [test_content_filters.py](test_content_filters.py) | 35 | Tests for binary content filtering. |
+| [test_content_filters.py](test_content_filters.py) | 38 | Tests for binary content filtering. |
+| [test_conversation_links.py](test_conversation_links.py) | 35 | conversation_links: lineage as a first-class edge, resolved at read time. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
 | [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
@@ -170,45 +172,51 @@ docstring so its row is meaningful.
 | [test_doctor.py](test_doctor.py) | 125 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
+| [test_domain_conversation.py](test_domain_conversation.py) | 3 | ``Conversation`` keeps the positional constructor v1 adapters were written against. |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
 | [test_embeddings_availability.py](test_embeddings_availability.py) | 14 | Embedding availability — status-driven (config/installed), not reachability. |
 | [test_embeddings_base_edges.py](test_embeddings_base_edges.py) | 21 | Deterministic, config-driven backend resolution (base lane — no fastembed). |
 | [test_embeddings_fastembed_backend_edges.py](test_embeddings_fastembed_backend_edges.py) | 3 | — |
-| [test_embeddings_indexer_edges.py](test_embeddings_indexer_edges.py) | 20 | Edge tests for the schema-v2 index lifecycle (base lane — fake backend, no fastembed). |
+| [test_embeddings_indexer_edges.py](test_embeddings_indexer_edges.py) | 21 | Edge tests for the schema-v2 index lifecycle (base lane — fake backend, no fastembed). |
 | [test_embeddings_presets.py](test_embeddings_presets.py) | 9 | Embedding preset reference data — loading, per-provider fields, validation. |
 | [test_embeddings_remote_edges.py](test_embeddings_remote_edges.py) | 19 | RemoteBackend edge cases — fake httpx transport, no network (base lane). |
 | [test_embeddings_storage.py](test_embeddings_storage.py) | 15 | Tests for embeddings storage. |
+| [test_event_sequence.py](test_event_sequence.py) | 23 | events.sequence: the recorded order of a conversation, and every reader that follows it. |
 | [test_event_tool_call_triggers.py](test_event_tool_call_triggers.py) | 8 | Tests for tr_event_tool_call_* blob reference-count triggers. |
 | [test_events_roundtrip.py](test_events_roundtrip.py) | 13 | Roundtrip tests for the polymorphic events writers and readers (schema v4). |
 | [test_exclude_active.py](test_exclude_active.py) | 6 | Tests for active session exclusion from search results. |
 | [test_export.py](test_export.py) | 40 | Tests for the export API and formatter-driven rendering. |
 | [test_export_elements.py](test_export_elements.py) | 7 | WS6: element export (siftd export --view elements --tag X). |
-| [test_file_refs.py](test_file_refs.py) | 3 | — |
+| [test_file_refs.py](test_file_refs.py) | 4 | — |
 | [test_findability_review.py](test_findability_review.py) | 6 | — |
-| [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
+| [test_fixture_redaction.py](test_fixture_redaction.py) | 2 | Adapter fixtures carry no personal data, so captured transcripts can be committed. |
+| [test_follow.py](test_follow.py) | 24 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
+| [test_gemini_cli_deprecation.py](test_gemini_cli_deprecation.py) | 9 | gemini_cli is deprecated, and the notice reaches users where they meet the adapter. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
 | [test_git.py](test_git.py) | 35 | Tests for git utilities and workspace identity. |
 | [test_gutter.py](test_gutter.py) | 10 | Tests for siftd.output.gutter — the grain-gutter taxonomy + the rail it draws. |
 | [test_html_dashboard.py](test_html_dashboard.py) | 11 | Unit tests for the Swiss Stats dashboard renderer (output/html_fmt.render_dashboard). |
-| [test_html_folio.py](test_html_folio.py) | 45 | Unit tests for the Swiss transcript folio renderer (output/html_fmt.render_folio). |
-| [test_html_sessions.py](test_html_sessions.py) | 7 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
+| [test_html_folio.py](test_html_folio.py) | 46 | Unit tests for the Swiss transcript folio renderer (output/html_fmt.render_folio). |
+| [test_html_sessions.py](test_html_sessions.py) | 9 | Unit tests for the Swiss Sessions renderer (output/html_fmt.render_sessions). |
 | [test_html_tags.py](test_html_tags.py) | 3 | Unit tests for the Swiss Tags renderer (output/html_fmt.render_tags). |
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
-| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 7 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 16 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 15 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
+| [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 51 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 53 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
-| [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
+| [test_live_tagging.py](test_live_tagging.py) | 29 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
 | [test_merge.py](test_merge.py) | 42 | Tests for siftd db merge — importing a slice into the main database. |
@@ -220,24 +228,26 @@ docstring so its row is meaningful.
 | [test_model_names.py](test_model_names.py) | 4 | Tests for model name parsing. |
 | [test_model_names_edges.py](test_model_names_edges.py) | 1 | — |
 | [test_narrative.py](test_narrative.py) | 13 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
-| [test_normalizers.py](test_normalizers.py) | 4 | Cross-format normalizer validation tests. |
+| [test_normalizers.py](test_normalizers.py) | 2 | Cross-format normalizer validation tests. |
 | [test_op_route_parity.py](test_op_route_parity.py) | 7 | Contract tests: CLI Operation params must be accepted by their serve route. |
+| [test_opencode_ingest.py](test_opencode_ingest.py) | 13 | OpenCode change detection through real ingest: what a re-run must notice. |
 | [test_output_common.py](test_output_common.py) | 32 | Tests for siftd.output.common — pure formatting helpers. |
 | [test_output_format_registry.py](test_output_format_registry.py) | 1 | — |
-| [test_output_formats.py](test_output_formats.py) | 129 | Tests for output format rendering: lists, search, detail, narrative. |
+| [test_output_formats.py](test_output_formats.py) | 132 | Tests for output format rendering: lists, search, detail, narrative. |
 | [test_output_help.py](test_output_help.py) | 23 | Unit tests for siftd.output.help — the one help grammar. |
 | [test_output_narrative.py](test_output_narrative.py) | 9 | — |
 | [test_output_painted_bridge_edges.py](test_output_painted_bridge_edges.py) | 2 | — |
 | [test_output_terminal_fmt.py](test_output_terminal_fmt.py) | 1 | — |
 | [test_painted_bridge.py](test_painted_bridge.py) | 1 | — |
-| [test_peek.py](test_peek.py) | 45 | Tests for the peek module. |
-| [test_peek_follow.py](test_peek_follow.py) | 35 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
+| [test_peek.py](test_peek.py) | 46 | Tests for the peek module. |
+| [test_peek_follow.py](test_peek_follow.py) | 44 | Tests for peek follow mode: parsing, rendering, and hint extraction. |
 | [test_pi_identity_preflight.py](test_pi_identity_preflight.py) | 57 | Disposable P1–P4 fixtures for the private Pi identity diagnostic. |
 | [test_planner_stats.py](test_planner_stats.py) | 7 | Planner statistics are a maintained state, not something a user has to ask for (#80). |
 | [test_plugin_discovery.py](test_plugin_discovery.py) | 30 | Tests for siftd.plugin_discovery module. |
 | [test_portable_filenames.py](test_portable_filenames.py) | 1 | Every tracked path is a legal filename on every platform siftd ships to. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 10 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
+| [test_probe.py](test_probe.py) | 31 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |
 | [test_push_error_mapping.py](test_push_error_mapping.py) | 5 | I1 — push failures surface a structured, actionable error (client side). |
@@ -245,7 +255,7 @@ docstring so its row is meaningful.
 | [test_push_windowing_floor.py](test_push_windowing_floor.py) | 3 | Regression: a delta/resume push must window with a since-floor. |
 | [test_queries.py](test_queries.py) | 30 | Tests for storage/queries.py correctness and efficiency. |
 | [test_query_files.py](test_query_files.py) | 25 | Tests for user-defined SQL query files with dual variable syntax. |
-| [test_reader.py](test_reader.py) | 33 | Tests for siftd.peek.reader — session file reading utilities. |
+| [test_reader.py](test_reader.py) | 34 | Tests for siftd.peek.reader — session file reading utilities. |
 | [test_reader_edges.py](test_reader_edges.py) | 3 | — |
 | [test_readonly.py](test_readonly.py) | 20 | Tests for read-only database mode. |
 | [test_receive.py](test_receive.py) | 18 | Tests for siftd db receive — create-or-merge from a source database. |
@@ -291,6 +301,7 @@ docstring so its row is meaningful.
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
 | [test_storage.py](test_storage.py) | 96 | Tests for siftd storage layer coverage. |
+| [test_store_preamble.py](test_store_preamble.py) | 3 | A response that precedes every prompt is stored with no parent, not dropped. |
 | [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
 | [test_sync_http_streaming.py](test_sync_http_streaming.py) | 20 | Tests for Y3: HTTP streaming for sync push and pull. |
@@ -306,6 +317,7 @@ docstring so its row is meaningful.
 | [test_theme.py](test_theme.py) | 15 | Tests for siftd.output.theme — the bespoke "warm obsidian" palette + domain styles. |
 | [test_tool_presenters.py](test_tool_presenters.py) | 39 | Tests for painted bridge tool-specific presenters and fidelity integration. |
 | [test_transcript_tags.py](test_transcript_tags.py) | 3 | WS3: element tag chips in CLI conversation-detail transcripts. |
+| [test_turn_fold.py](test_turn_fold.py) | 40 | One fold from stored events to turns, and the preamble made visible on every read surface. |
 | [test_unified_search.py](test_unified_search.py) | 20 | Tests for unified search command with auto-selection. |
 | [test_usage_read_sites.py](test_usage_read_sites.py) | 7 | Read-site regressions for the S2 rollup re-point (api.stats). |
 | [test_usage_rollup.py](test_usage_rollup.py) | 10 | Tests for the usage_by_conv_model rollup — the keystone derived tier. |
@@ -322,26 +334,28 @@ docstring so its row is meaningful.
 
 | File | Tests | Summary |
 |------|-------|---------|
-| [adapters/test_aider.py](adapters/test_aider.py) | 9 | Tests for Aider adapter. |
+| [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
-| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 36 | Tests for Antigravity CLI adapter. |
-| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 21 | Tests for Claude Code adapter. |
+| [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 54 | Tests for Antigravity CLI adapter. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 60 | The shared assembler places every record and accounts for every one. |
+| [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
-| [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 15 | Tests for Codex CLI adapter. |
-| [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 7 | Tests for Copilot CLI adapter. |
+| [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
+| [adapters/test_contract.py](adapters/test_contract.py) | 42 | The adapter contract: versions, optional hooks, derivation, drop-ins, template. |
+| [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
 | [adapters/test_infra.py](adapters/test_infra.py) | 12 | Tests for adapter infrastructure: validation, registry, SDK utilities. |
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
-| [adapters/test_opencode.py](adapters/test_opencode.py) | 6 | Tests for OpenCode adapter. |
-| [adapters/test_opencode_edges.py](adapters/test_opencode_edges.py) | 1 | — |
-| [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 4 | Tests for Pi Agent adapter. |
-| [adapters/test_pi_agent_characterization.py](adapters/test_pi_agent_characterization.py) | 2 | Frozen full-domain characterization of the Pi parser before seam extraction. |
+| [adapters/test_opencode.py](adapters/test_opencode.py) | 24 | Tests for the OpenCode adapter: the decoder, the row reader, the content revision, and peek's deferral. |
+| [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 22 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
+| [adapters/test_pi_agent.py](adapters/test_pi_agent.py) | 3 | Tests for Pi Agent adapter. |
+| [adapters/test_pi_agent_decoding.py](adapters/test_pi_agent_decoding.py) | 34 | Pi Agent decoding: each test names the placement or conversion it pins, and the defect it replaces. |
 | [adapters/test_pi_agent_edges.py](adapters/test_pi_agent_edges.py) | 2 | — |
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
-| [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 5 | — |
+| [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |
 | [adapters/test_validation.py](adapters/test_validation.py) | 15 | Tests for adapter signature validation (H16). |
-| [adapters/test_vscode.py](adapters/test_vscode.py) | 8 | Tests for VSCode adapter. |
+| [adapters/test_vscode.py](adapters/test_vscode.py) | 30 | Tests for VSCode adapter. |
 
 ### `tests/architecture/`
 
@@ -351,15 +365,17 @@ docstring so its row is meaningful.
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
+| [architecture/test_event_order.py](architecture/test_event_order.py) | 3 | One definition of event order; every reader that orders events asks it. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 33 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 34 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
-| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 9 | A conversation replacement is answerable to one list of what it must carry. |
+| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 10 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
+| [architecture/test_turn_fold.py](architecture/test_turn_fold.py) | 5 | One fold from events to turns; the places that ask "which events are prompts" are enumerated. |
 
 ### `tests/cli/`
 
@@ -368,7 +384,7 @@ docstring so its row is meaningful.
 | [cli/test_cli.py](cli/test_cli.py) | 30 | CLI smoke tests — verify commands parse and run without import errors. |
 | [cli/test_cli_errors.py](cli/test_cli_errors.py) | 8 | The main() taxonomy backstop: SiftdError renders clean, never a traceback. |
 | [cli/test_cmd_embed.py](cli/test_cmd_embed.py) | 11 | CLI tests for 'siftd embed' — build / rebuild / status / error surfaces. |
-| [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 37 | Tests for siftd peek command (cmd_peek). |
+| [cli/test_cmd_peek.py](cli/test_cmd_peek.py) | 38 | Tests for siftd peek command (cmd_peek). |
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 54 | Tests for siftd db namespace commands. |
@@ -376,6 +392,8 @@ docstring so its row is meaningful.
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
+| [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 35 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

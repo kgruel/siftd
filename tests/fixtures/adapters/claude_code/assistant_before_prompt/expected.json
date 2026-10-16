@@ -1,0 +1,136 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2026-09-26T20:54:06.000Z",
+    "external_id": "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "preamble": [
+      {
+        "attributes": {
+          "cache_creation_ephemeral_5m_input_tokens": "3044",
+          "cache_creation_input_tokens": "3044",
+          "cache_read_input_tokens": "135370",
+          "merged_external_ids": "[\"claude_code::f37a135d-523e-44ef-8411-c3ca6a403922\", \"claude_code::e102eccb-a3d4-4ca9-b008-b68764458931\"]"
+        },
+        "content": [
+          {
+            "block_type": "thinking",
+            "content": {
+              "signature": "sig",
+              "thinking": "x",
+              "type": "thinking"
+            }
+          },
+          {
+            "block_type": "text",
+            "content": {
+              "text": "x",
+              "type": "text"
+            }
+          },
+          {
+            "block_type": "tool_use",
+            "content": {
+              "caller": {
+                "type": "direct"
+              },
+              "id": "toolu_01TLUxgiHat5ZcspSiqwio79",
+              "input": {
+                "command": "x",
+                "description": "x"
+              },
+              "name": "Bash",
+              "type": "tool_use"
+            }
+          }
+        ],
+        "external_id": "claude_code::01b1968e-06fe-4652-8be7-2673418a8930",
+        "model": "claude-opus-5-5",
+        "sequence": 0,
+        "timestamp": "2026-09-26T20:53:04.039Z",
+        "tool_calls": [
+          {
+            "attributes": {
+              "completed_at": "2026-09-26T20:53:05.194000+00:00",
+              "stderr": "x",
+              "stdout": "x"
+            },
+            "external_id": "toolu_01TLUxgiHat5ZcspSiqwio79",
+            "input": {
+              "command": "x",
+              "description": "x"
+            },
+            "result": {
+              "content": "x"
+            },
+            "sequence": 1,
+            "status": "success",
+            "timestamp": "2026-09-26T20:53:04.917Z",
+            "tool_name": "Bash"
+          }
+        ],
+        "usage": {
+          "input_tokens": 4,
+          "output_tokens": 320
+        }
+      }
+    ],
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "x",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::fc933be2-d632-4430-8c1f-df79f7fc8113",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "30529",
+              "cache_creation_input_tokens": "30529",
+              "merged_external_ids": "[\"claude_code::280fe32f-8ecd-4810-96ec-6d631853fbe6\"]"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "x",
+                  "type": "thinking"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "x",
+                  "type": "text"
+                }
+              }
+            ],
+            "external_id": "claude_code::5a1fe899-6211-4d89-b67f-49e1d33b1e93",
+            "model": "claude-opus-4-7",
+            "sequence": 3,
+            "timestamp": "2026-09-26T20:54:05.000Z",
+            "usage": {
+              "input_tokens": 6,
+              "output_tokens": 657
+            }
+          }
+        ],
+        "sequence": 2,
+        "timestamp": "2026-09-26T20:54:00.000Z"
+      }
+    ],
+    "started_at": "2026-09-26T20:53:04.039Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

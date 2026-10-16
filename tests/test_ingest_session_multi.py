@@ -20,6 +20,7 @@ import sqlite3
 from conftest import make_conversation
 
 from siftd.adapters import opencode
+from siftd.adapters.contract import adapt
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
 from siftd.storage.sqlite import create_database
@@ -71,7 +72,7 @@ def _opencode_adapter_at(db_path):
         DEDUP_STRATEGY = opencode.DEDUP_STRATEGY
         HARNESS_SOURCE = getattr(opencode, "HARNESS_SOURCE", "opencode")
         can_handle = staticmethod(opencode.can_handle)
-        parse = staticmethod(opencode.parse)
+        parse = staticmethod(adapt(opencode).parse)
 
         @staticmethod
         def discover():

@@ -1,13 +1,16 @@
-"""Template adapter — copy and customize for new log formats.
+"""Template adapter: copy and customize for a new log format (interface version 2).
 
-This is a minimal starting point for writing a siftd adapter.
 Copy this file to ~/.config/siftd/adapters/my_harness.py and customize.
 
-Adapters are pure parsers: they read log files and yield Conversation
-domain objects. No storage coupling.
+An adapter only decodes. A reader yields the raw units of a source (here, the
+lines of a JSONL file); a decoder turns each unit into the canonical records in
+siftd.adapters.records; the shared assembler decides where each record attaches
+(which prompt a response answers, which call a result completes) and counts
+every record in a ledger. The framework derives parse() and the peek hooks from
+the declarations below, so there is no tree to build and nothing to keep in step.
 
 Required exports:
-    ADAPTER_INTERFACE_VERSION (int): Must be 1.
+    ADAPTER_INTERFACE_VERSION (int): 2 (decoding). 1 is the legacy parse() interface.
     NAME (str): Unique adapter identifier (e.g., "my_harness").
     DEFAULT_LOCATIONS (list[str]): Paths to scan when no --path given.
     DEDUP_STRATEGY (str): "file" or "session".
@@ -15,53 +18,55 @@ Required exports:
 
     discover(locations=None) -> Iterable[Source]: Find log sources.
     can_handle(source: Source) -> bool: Check if this adapter handles source.
-    parse(source: Source) -> Iterable[Conversation]: Parse source into conversations.
+    read(source: Source) -> Iterable[unit]: Yield each raw unit of the source.
+    decoder(source: Source) -> Decoder: A decoder (a class taking the source works).
 
 Optional exports:
     SUPPORT_TIER (str): "core", "contrib", or "frozen" (defaults to "contrib").
     HARNESS_LOG_FORMAT (str): Log format (e.g., "jsonl", "json").
     HARNESS_DISPLAY_NAME (str): Human-readable name.
     TOOL_ALIASES (dict[str, str]): Map raw tool names to canonical names.
+    default_session(source) -> Session | None: Names a source whose records state no session.
+    change_paths(source) -> list[Path]: Files whose change means the source changed.
+    SUPPORTS_LIVE_REGISTRATION (bool): Tagging during a live session is supported.
+    SUBAGENT_PATH_MARKER (str): Path marker identifying subagent logs.
+    PEEK_GLOB_PATTERNS (list[str]): Globs `siftd peek` scans under DEFAULT_LOCATIONS.
+    TOOL_HINT_KEYS (dict[str, list[str]]): Input keys that summarize a canonical tool call.
+    SUPPORTS_PEEK (bool): False when peek must not be derived (default True).
+    PEEK_LAST_OF_MANY (bool): A source holding several conversations peeks as its last.
+    peek_read(source), peek_enrich(path, scan), peek_scan / peek_exchanges / peek_tail:
+        peek refinements and overrides. See docs/guides/writing-adapters.md.
 
-Optional peek hooks (for `siftd peek` support):
-    peek_scan(path: Path) -> PeekScanResult | None: Extract lightweight metadata.
-    peek_exchanges(path: Path, last_n: int) -> list[PeekExchange]: Get recent exchanges.
-    peek_tail(path: Path, lines: int) -> Iterator[dict]: Tail raw records.
-
-    Adapters without peek hooks will still work for ingest, but sessions will
-    show "preview unavailable" in peek listings. See docs/writing-adapters.md.
+Peek needs nothing more: it is derived from read and decoder. See
+docs/guides/writing-adapters.md for what every record type means and how the
+assembler places it.
 """
 
-import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-from siftd.adapters.sdk import (
-    ToolCallLinker,
-    build_harness,
-    discover_files,
-    load_jsonl,
-    timestamp_bounds,
-    yield_conversation,
+from siftd.adapters.assembly import read_jsonl
+from siftd.adapters.records import (
+    Ignored,
+    PromptRec,
+    Record,
+    ResponseRec,
+    Session,
+    ToolCallRec,
+    ToolResultRec,
+    Unknown,
 )
-from siftd.domain import (
-    ContentBlock,
-    Conversation,
-    Prompt,
-    Response,
-    Source,
-    ToolCall,
-    Usage,
-)
+from siftd.adapters.sdk import discover_files
+from siftd.domain import ContentBlock, Source, Usage
 
 # ============================================================================
-# Adapter metadata — customize these
+# Adapter metadata: customize these
 # ============================================================================
 
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 
 # Support tier (optional): "core" (maintained by siftd, ingest expected to work),
-# "contrib" (best-effort — the default for drop-ins), or "frozen" (kept working
+# "contrib" (best-effort, the default for drop-ins), or "frozen" (kept working
 # as-is; upstream format changes may not be tracked).
 SUPPORT_TIER = "contrib"
 
@@ -72,13 +77,13 @@ NAME = "my_harness"
 DEFAULT_LOCATIONS = ["~/.my_harness/logs"]
 
 # Deduplication strategy:
-#   "file"    — one conversation per source (most common); parse() must not
-#               yield more than one
-#   "session" — the source is a container of many conversations, each deduped
-#               by external_id and replaced when its ended_at moves. A session
-#               reporting no ended_at is read as still open and replaced on
-#               every content change, so emit one wherever your format can
-#               bound a session.
+#   "file"    one conversation per source (most common); a source may not
+#             yield more than one
+#   "session" the source is a container of many conversations, each deduped
+#             by external_id and replaced when its ended_at moves. A session
+#             reporting no ended_at is read as still open and replaced on
+#             every content change, so state one wherever your format can
+#             bound a session.
 DEDUP_STRATEGY = "file"
 
 # Provider/source name (e.g., "anthropic", "openai", "google", "multi")
@@ -105,7 +110,7 @@ TOOL_ALIASES: dict[str, str] = {
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all log files.
 
-    Called during `siftd ingest` to find files to parse.
+    Called during `siftd ingest` to find files to read.
     """
     # Use SDK helper for standard file discovery
     yield from discover_files(
@@ -116,7 +121,7 @@ def discover(locations=None) -> Iterable[Source]:
 
 
 def can_handle(source: Source) -> bool:
-    """Return True if this adapter can parse the given source.
+    """Return True if this adapter can read the given source.
 
     Called to determine which adapter handles a discovered source.
     Be specific to avoid conflicts with other adapters.
@@ -128,220 +133,96 @@ def can_handle(source: Source) -> bool:
     return path.suffix == ".jsonl"
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a log file and yield Conversation objects.
+# One JSON object per line. A line that is not JSON is yielded as Malformed, so
+# the ledger counts it. For another format, write a generator that yields each
+# unit (a JSON message, a database row) and never skips one silently.
+read = read_jsonl
 
-    This is the main parsing logic. Customize based on your log format.
+
+# ============================================================================
+# The decoder: customize for your log format
+# ============================================================================
+
+# Record types that are deliberately not stored. Name each and say why.
+_IGNORED_TYPES = frozenset({"note"})
+
+
+class MyDecoder:
+    """Turns each line of a my_harness log into canonical records.
+
+    This example format has one JSON object per line, with a `type`:
+
+    | Record | Becomes | Why |
+    |---|---|---|
+    | `session` | Session | Names the conversation (`id`) and where it ran (`cwd`). |
+    | `user` | PromptRec | A human turn; `text` is its content. |
+    | `assistant` | ResponseRec, then one ToolCallRec per `tool_calls` entry | One model message. `usage` is the message's token total. |
+    | `tool_result` | ToolResultRec | Completes the call named by `call_id`, whichever came first. |
+    | `note` | Ignored | Bookkeeping that is not conversation content. |
+    | anything else | Unknown | A new type in the log shows up in the ledger instead of vanishing. |
+
+    Replace the table with what your format holds. Say why every ignored type is
+    ignored: the table is how the next reader knows nothing was lost by accident.
     """
-    path = Path(source.location)
 
-    # Load JSONL with error handling
-    records, errors = load_jsonl(path)
-    if errors:
-        # Log or handle parse errors
-        for e in errors:
-            print(f"Warning: {path}:{e.line_number}: {e.error}", file=sys.stderr)
-    if not records:
-        return
+    def __init__(self, source: Source):
+        self._source = source  # state is allowed, but only decoding state
 
-    # Extract timestamp bounds
-    started_at, ended_at = timestamp_bounds(records)
-
-    # Build harness metadata
-    harness = build_harness(
-        NAME,
-        HARNESS_SOURCE,
-        HARNESS_LOG_FORMAT,
-        HARNESS_DISPLAY_NAME,
-    )
-
-    # Build external_id — must be stable and unique per conversation
-    # Common patterns:
-    #   - Session ID from log: f"{NAME}::{session_id}"
-    #   - File-based: f"{NAME}::{path.stem}"
-    session_id = records[0].get("session_id") or path.stem
-    external_id = f"{NAME}::{session_id}"
-
-    # Extract workspace path if available
-    workspace_path = records[0].get("cwd")
-
-    # Create conversation shell
-    conversation = Conversation(
-        external_id=external_id,
-        harness=harness,
-        started_at=started_at or _now_iso(),
-        ended_at=ended_at,
-        workspace_path=workspace_path,
-    )
-
-    # Process records into prompts/responses
-    # This example assumes records have "role" and "content" fields
-    _parse_records(records, conversation)
-
-    yield from yield_conversation(conversation)
-
-
-# ============================================================================
-# Parsing helpers — customize for your log format
-# ============================================================================
-
-
-def _parse_records(records: list[dict], conversation: Conversation) -> None:
-    """Parse records into Prompt and Response objects on the conversation."""
-    current_prompt: Prompt | None = None
-    linker = ToolCallLinker()
-
-    for record in records:
-        role = record.get("role")
-        timestamp = record.get("timestamp", conversation.started_at)
-        content = record.get("content", "")
-
-        if role == "user":
-            # Check for tool results (Claude-style)
-            if _has_tool_result(content):
-                _process_tool_results(content, linker)
-            else:
-                # New user prompt
-                current_prompt = Prompt(
-                    timestamp=timestamp,
-                    external_id=record.get("id"),
+    def decode(self, unit: dict) -> list[Record]:
+        """One unit in, the records it means out. Never return nothing for a unit."""
+        at = unit.get("timestamp")
+        kind = unit.get("type")
+        if kind == "session":
+            return [Session(external_id=f"{NAME}::{unit.get('id')}", workspace_path=unit.get("cwd"))]
+        if kind == "user":
+            return [PromptRec(at=at, content=_text(unit.get("text")), external_id=unit.get("id"))]
+        if kind == "assistant":
+            return self._assistant(unit, at)
+        if kind == "tool_result":
+            call_id = unit.get("call_id")
+            if not call_id:
+                return [Unknown(reason="tool_result:no-call_id")]
+            return [
+                ToolResultRec(
+                    at=at,
+                    call_id=str(call_id),
+                    result={"output": unit.get("output")},
+                    status="error" if unit.get("is_error") else "success",
                 )
-                if isinstance(content, str):
-                    current_prompt.content.append(
-                        ContentBlock(block_type="text", content={"text": content})
-                    )
-                conversation.prompts.append(current_prompt)
+            ]
+        if kind in _IGNORED_TYPES:
+            return [Ignored(reason=f"type:{kind}")]
+        return [Unknown(reason=f"type:{kind}")]
 
-        elif role == "assistant":
-            if current_prompt is None:
-                continue
-
-            # Extract usage if available
-            usage = None
-            usage_data = record.get("usage")
-            if usage_data:
-                usage = Usage(
-                    input_tokens=usage_data.get("input_tokens"),
-                    output_tokens=usage_data.get("output_tokens"),
-                )
-
-            response = Response(
-                timestamp=timestamp,
-                usage=usage,
-                model=record.get("model"),
-                external_id=record.get("id"),
-            )
-
-            # Parse content blocks
-            if isinstance(content, str):
-                response.content.append(
-                    ContentBlock(block_type="text", content={"text": content})
-                )
-            elif isinstance(content, list):
-                for block in content:
-                    response.content.append(
-                        ContentBlock(
-                            block_type=block.get("type", "unknown"),
-                            content=block,
-                        )
-                    )
-                    # Track tool uses for later matching
-                    if block.get("type") == "tool_use":
-                        linker.add_use(
-                            block.get("id"),
-                            name=block.get("name"),
-                            input=block.get("input", {}),
-                            response=response,
-                        )
-
-            current_prompt.responses.append(response)
-
-    # Finalize tool calls from linker
-    for tool_id, use_data, result_data in linker.get_pairs():
-        response = use_data.get("response")
-        if response is None:
-            continue
-        status = "success" if result_data else "pending"
-        if result_data and result_data.get("is_error"):
-            status = "error"
-        tool_call = ToolCall(
-            tool_name=use_data.get("name", "unknown"),
-            input=use_data.get("input", {}),
-            result=result_data.get("content") if result_data else None,
-            status=status,
-            external_id=tool_id,
+    def _assistant(self, unit: dict, at: str | None) -> list[Record]:
+        usage = unit.get("usage") or {}
+        calls = unit.get("tool_calls") or []
+        response = ResponseRec(
+            at=at,
+            content=_text(unit.get("text")),
+            external_id=unit.get("id"),
+            model=unit.get("model"),
+            usage=Usage(input_tokens=usage.get("input_tokens"), output_tokens=usage.get("output_tokens")) if usage else None,
         )
-        response.tool_calls.append(tool_call)
+        # A call attaches to the latest response, so it follows the response it belongs to.
+        tool_calls = [
+            ToolCallRec(at=at, name=c.get("name", "unknown"), input=c.get("input") or {}, call_id=c.get("id"))
+            for c in calls
+        ]
+        return [response, *tool_calls]
 
 
-def _has_tool_result(content) -> bool:
-    """Check if content contains tool_result blocks."""
-    if not isinstance(content, list):
-        return False
-    return any(
-        isinstance(b, dict) and b.get("type") == "tool_result" for b in content
-    )
+def _text(text: str | None) -> list[ContentBlock]:
+    return [ContentBlock(block_type="text", content={"text": text})] if text else []
 
 
-def _process_tool_results(content: list, linker: ToolCallLinker) -> None:
-    """Process tool_result blocks, adding them to the linker."""
-    for block in content:
-        if isinstance(block, dict) and block.get("type") == "tool_result":
-            linker.add_result(
-                block.get("tool_use_id"),
-                content=block.get("content"),
-                is_error=block.get("is_error", False),
-            )
+decoder = MyDecoder
 
 
-def _now_iso() -> str:
-    """ISO timestamp for now (UTC)."""
-    from datetime import UTC, datetime
+def default_session(source: Source) -> Session:
+    """The conversation of a file whose records name no session: its file name.
 
-    return datetime.now(UTC).isoformat()
-
-
-# ============================================================================
-# Optional: Peek hooks for `siftd peek` support
-# ============================================================================
-#
-# Uncomment and customize if you want `siftd peek` to work with your adapter.
-# Without these, the adapter still works for ingest, but sessions show
-# "preview unavailable" in peek listings.
-#
-# from typing import Iterator
-# from siftd.peek.types import PeekExchange, PeekScanResult
-# from siftd.adapters.sdk import peek_jsonl_scan, peek_jsonl_exchanges, peek_jsonl_tail
-#
-# def peek_scan(path: Path) -> PeekScanResult | None:
-#     """Extract lightweight metadata for session listing."""
-#     return peek_jsonl_scan(
-#         path,
-#         user_type="user",
-#         assistant_type="assistant",
-#         cwd_key="cwd",
-#         session_id_key="session_id",
-#         is_tool_result=lambda r: _has_tool_result(r.get("content", [])),
-#     )
-#
-#
-# def peek_exchanges(path: Path, last_n: int = 5) -> list[PeekExchange]:
-#     """Extract recent exchanges for session detail view."""
-#     return peek_jsonl_exchanges(
-#         path,
-#         last_n,
-#         user_type="user",
-#         assistant_type="assistant",
-#         get_content_blocks=lambda r: r.get("content", []),
-#         get_usage=lambda r: (
-#             r.get("usage", {}).get("input_tokens", 0),
-#             r.get("usage", {}).get("output_tokens", 0),
-#         ),
-#         is_tool_result=lambda r: _has_tool_result(r.get("content", [])),
-#         tool_aliases=TOOL_ALIASES,
-#     )
-#
-#
-# def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
-#     """Yield last N raw records from the session file."""
-#     yield from peek_jsonl_tail(path, lines, parse_json=True)
+    Optional. Without it, a source that states no `session` record fails
+    assembly loudly instead of guessing an identity.
+    """
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")

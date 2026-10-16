@@ -1,0 +1,229 @@
+[
+  {
+    "ended_at": "2026-02-16T16:35:14.599000+00:00",
+    "external_id": "vscode::a32a104b-b1d4-4a56-8c49-06d8151923f9",
+    "harness": {
+      "display_name": "VSCode",
+      "log_format": "json",
+      "name": "vscode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 61."
+            }
+          }
+        ],
+        "external_id": "request_a9f9ef5a-d25e-498b-9c63-a1174eb8a3d5",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "progressMessage",
+                "content": {
+                  "content": {
+                    "isTrusted": false,
+                    "supportAlertSyntax": false,
+                    "supportHtml": false,
+                    "supportThemeIcons": false,
+                    "value": "Getting chat ready..."
+                  },
+                  "kind": "progressMessage"
+                }
+              },
+              {
+                "block_type": "progressMessage",
+                "content": {
+                  "content": {
+                    "isTrusted": false,
+                    "supportAlertSyntax": false,
+                    "supportHtml": false,
+                    "supportThemeIcons": false,
+                    "value": "Chat is almost ready..."
+                  },
+                  "kind": "progressMessage"
+                }
+              },
+              {
+                "block_type": "warning",
+                "content": {
+                  "content": {
+                    "isTrusted": false,
+                    "supportAlertSyntax": false,
+                    "supportHtml": false,
+                    "supportThemeIcons": false,
+                    "value": "redacted free text 62."
+                  },
+                  "kind": "warning"
+                }
+              },
+              {
+                "block_type": "command",
+                "content": {
+                  "command": {
+                    "arguments": [
+                      {
+                        "$mid": 1,
+                        "authority": "local",
+                        "external": "redacted-token",
+                        "path": "/YTMyYTEwNGItYjFkNC00YTU2LThjNDktMDZkODE1MTkyM2Y5",
+                        "scheme": "vscode-chat-session"
+                      }
+                    ],
+                    "id": "workbench.action.chat.retrySetup",
+                    "title": "Restart"
+                  },
+                  "kind": "command"
+                }
+              }
+            ],
+            "external_id": "response_f554a511-2f11-4daf-8926-86dadaae92ec",
+            "model": "copilot/auto",
+            "sequence": 1,
+            "timestamp": "2026-02-16T16:33:22.117000+00:00"
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-02-16T16:33:22.117000+00:00"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 63."
+            }
+          }
+        ],
+        "external_id": "request_fbe37ece-364f-4c39-8b4c-0437eee69a79",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thinking text 64."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "answer text 65."
+                }
+              }
+            ],
+            "external_id": "response_6f91fec9-46e3-492f-8980-f82fc5795f3d",
+            "model": "copilot/auto",
+            "sequence": 3,
+            "timestamp": "2026-02-16T16:34:36.461000+00:00"
+          }
+        ],
+        "sequence": 2,
+        "timestamp": "2026-02-16T16:34:36.461000+00:00"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 66."
+            }
+          }
+        ],
+        "external_id": "request_f537b3af-7c65-480a-abb8-632289e5cc89",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thinking text 67."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "answer text 68."
+                }
+              }
+            ],
+            "external_id": "response_bf5f1757-5bd7-459d-baf9-c1323d1d567d",
+            "model": "copilot/auto",
+            "sequence": 5,
+            "timestamp": "2026-02-16T16:34:52.709000+00:00"
+          }
+        ],
+        "sequence": 4,
+        "timestamp": "2026-02-16T16:34:52.709000+00:00"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 69."
+            }
+          }
+        ],
+        "external_id": "request_c91f4ca1-7575-4863-97cb-77404ae3121b",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thinking text 70."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "answer text 71."
+                }
+              }
+            ],
+            "external_id": "response_52f50261-b699-48ac-be0e-8f8bdbe6a628",
+            "model": "copilot/auto",
+            "sequence": 7,
+            "timestamp": "2026-02-16T16:35:14.599000+00:00"
+          }
+        ],
+        "sequence": 6,
+        "timestamp": "2026-02-16T16:35:14.599000+00:00"
+      }
+    ],
+    "started_at": "2026-02-16T03:38:41.529000+00:00"
+  }
+]

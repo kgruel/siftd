@@ -6,6 +6,7 @@ Each test creates an isolated database and runs real adapters.
 
 from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
+from siftd.adapters.contract import adapt
 from siftd.adapters import claude_code, gemini_cli
 from painted import Fidelity
 from siftd.api import get_conversation, get_stats, list_conversations
@@ -39,7 +40,7 @@ def _make_file_adapter(dest):
 
         @staticmethod
         def parse(source):
-            return claude_code.parse(source)
+            return adapt(claude_code).parse(source)
 
         @staticmethod
         def discover():

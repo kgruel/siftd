@@ -20,9 +20,7 @@
         "responses": [
           {
             "attributes": {
-              "approx_cost": "0.01",
-              "approx_input_tokens": "2100",
-              "approx_output_tokens": "256"
+              "approx_cost": "0.01"
             },
             "content": [
               {
@@ -34,13 +32,19 @@
               {
                 "block_type": "tool_output",
                 "content": {
-                  "text": "Tokens: 2.1k sent, 256 received. Cost: $0.01\nApplied edit to hello.py"
+                  "text": "Applied edit to hello.py"
                 }
               }
             ],
-            "timestamp": "2025-07-15T14:32:01+00:00"
+            "sequence": 1,
+            "timestamp": "2025-07-15T14:32:01+00:00",
+            "usage": {
+              "input_tokens": 2100,
+              "output_tokens": 256
+            }
           }
         ],
+        "sequence": 0,
         "timestamp": "2025-07-15T14:32:01+00:00"
       }
     ],

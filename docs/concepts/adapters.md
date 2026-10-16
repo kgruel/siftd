@@ -68,7 +68,7 @@ siftd ships with adapters for:
 |---------|------|--------------|--------|
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
-| `gemini_cli` | Gemini CLI | `~/.gemini/tmp/` | JSONL |
+| `gemini_cli` | Gemini CLI (deprecated: removed in 0.13.0; use `antigravity_cli`) | `~/.gemini/tmp/` | JSON |
 | `antigravity_cli` | Antigravity CLI | `~/.gemini/antigravity-cli/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
@@ -84,7 +84,7 @@ log format is tracked:
 - **contrib** — best-effort; parse errors are possible when the tool's format
   drifts. This is the default for drop-in adapters.
 - **frozen** — kept working as-is; upstream format changes may not be tracked
-  (`gemini_cli`, `aider`).
+  (`aider`, and `gemini_cli` until it is removed in 0.13.0).
 
 Tiers show up in the `siftd adapters` listing, and ingest tags file-error
 warnings from non-core adapters with their tier.
@@ -100,6 +100,77 @@ gemini_cli       builtin  frozen  ~/.gemini/tmp
 antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
 codex_cli        builtin  core    ~/.codex/sessions
 ```
+
+`siftd adapters` also prints a deprecation line under any deprecated adapter. At
+present that is `gemini_cli`: removed in 0.13.0, successor `antigravity_cli`. Ingest
+prints the same line whenever `gemini_cli` contributes sources.
+
+#### Recovering Gemini CLI conversations from before the chat-file key
+
+Releases before the chat-file key stored one Gemini conversation per `sessionId`,
+so every chat file that shared a session except one was never stored. A plain
+`siftd ingest` does not recover them: it skips a file whose stat and hash are
+unchanged. Re-parse them:
+
+```sh
+siftd ingest --reparse -a gemini_cli
+```
+
+The legacy conversation for each chat file is replaced by its chat-file
+conversation, and the tags on it carry over. Running the command again is safe.
+This adapter reads only the `.json` chat files; the newer Gemini `.jsonl` logs are
+not discovered.
+
+### Re-parsing stored sources
+
+A fix to an adapter reaches only the sources that change: ingest skips a source
+whose stat and content hash match what was stored. To apply a parser fix to
+conversations already in the database, re-parse them:
+
+```sh
+siftd ingest --reparse                 # every adapter
+siftd ingest --reparse -a codex_cli    # one adapter (-a can repeat)
+```
+
+`--reparse` parses every stored source again, changed or not. Each conversation
+goes through the same replacement as a changed file: it is deleted and stored
+again under a new ID, and what a person attached to it moves across with it.
+Conversation tags and ownership carry over whenever the new parse produces a
+conversation. An event tag moves when the new parse produces an event with the
+same kind and external ID.
+
+A container that holds several copies of one session (a backup next to the live
+file, say) keeps latest-wins: a reparse never replaces a stored session with an
+older copy of it, whichever copy is processed first.
+
+A replacement that would lose a user-applied tag is **skipped**, and the skip is
+reported by conversation ID; the conversation stays as it was. Before deciding,
+ingest counts what the replacement would not carry. The rule applies to every
+replacement a reparse makes, including a legacy session marker, an orphaned
+conversation whose bookkeeping pointer was lost, and a new file that adopts a
+conversation stored under an older key. It also applies when a conversation that
+another path shares gives up the tags its transcript owns to a new conversation:
+those tags are counted the same way, and declining leaves them where they are.
+
+- A conversation tag is never lost while the new parse produces a conversation.
+  A parse that produces no conversation stores nothing to carry it onto, so its
+  conversation tags count as lost.
+- An event tag is lost when its event has no external ID, or the new parse no
+  longer produces an event with that ID. Prompts and responses from Aider, Codex,
+  Antigravity, pi and Copilot have no external ID today, so a tag on one cannot carry.
+- A block tag is always lost: re-pointing block tags is not implemented yet.
+- A tag the parser derives is not counted. `shell:<category>` on a `shell.execute`
+  call is applied at ingest from the command, so the re-parse reproduces it. The
+  name alone does not identify a derived tag, since a person can apply one by hand,
+  so ingest re-runs the categorizer on the call: a `shell:` tag the command would
+  not produce counts as user data.
+
+`--force` replaces the skipped conversations anyway, and the tags counted above
+are lost. The totals at the end of the run report how many sources were re-parsed,
+how many conversations were replaced, and how many conversations were skipped for
+tags. They print even under `--quiet`.
+
+`--force` requires `--reparse`.
 
 ### Disabling an adapter
 
@@ -134,7 +205,7 @@ siftd copy adapter claude_code    # copy a built-in to modify
 This creates a file in `~/.config/siftd/adapters/`. Edit it to:
 
 1. Set `NAME` and `DEFAULT_LOCATIONS` for your tool
-2. Implement `parse()` to read your tool's log format
+2. Implement `read()` (yield each raw unit of the log) and a `decoder` (turn each unit into canonical records); siftd derives `parse()` and peek from them
 3. Map tool names to canonical forms in `TOOL_ALIASES`
 
 Drop-in adapters are auto-discovered — just save the file and run `siftd ingest`.
@@ -149,7 +220,7 @@ Adapters declare how they handle re-ingesting the same content:
 One conversation per file. If the file hasn't changed, skip it; if it has, the conversation is replaced. Most tools work this way — each session gets its own log file. A parse that yields more than one conversation fails the source.
 
 **Session-based deduplication** (`DEDUP_STRATEGY = "session"`):
-Conversations are deduped independently by `external_id` rather than by the file that produced them. Use this when a source can hold several sessions or grow new ones over its life — a SQLite database of chats (OpenCode), or a markdown history file every session is appended to (aider) — and also when a source holds one conversation that is re-exported as it changes, so a re-parse should update rather than duplicate (Gemini CLI).
+Conversations are deduped independently by `external_id` rather than by the file that produced them. Use this when a source can hold several sessions or grow new ones over its life — a SQLite database of chats (OpenCode), or a markdown history file every session is appended to (aider).
 
 The deduplication strategy ensures `siftd ingest` is idempotent — run it as often as you want without creating duplicate conversations.
 
@@ -159,10 +230,11 @@ When you run `siftd ingest`:
 
 1. All adapters are loaded (built-in + drop-in)
 2. Each adapter's `discover()` finds candidate files
-3. Files are checked against `ingested_files` table (skip if already processed and unchanged)
+3. Files are checked against `ingested_files` table (skip if already processed and unchanged; `siftd ingest --reparse` re-parses them anyway, see [Re-parsing stored sources](#re-parsing-stored-sources))
 4. For new/changed files, `can_handle()` confirms the adapter can parse it
-5. `parse()` produces `Conversation` objects
-6. Storage layer writes to SQLite, normalizes tool names, builds FTS index
+5. `read` and `decoder` produce records, and the shared assembler turns them into `Conversation` objects (a version-1 adapter's `parse()` does this itself)
+6. A decoding adapter's ledger counts every record; records it did not recognize or could not place are reported at the end of `siftd ingest`
+7. Storage layer writes to SQLite, normalizes tool names, builds FTS index
 
 ```bash
 siftd ingest -v    # verbose output shows per-adapter skip breakdowns

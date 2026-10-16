@@ -155,16 +155,18 @@ def test_annotate_turn_positions_prefers_match_event_id():
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
+    # parent_id is what places a response in its prompt's turn (the turn fold).
     conn.execute(
-        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, timestamp TEXT)"
+        "CREATE TABLE events (id TEXT PRIMARY KEY, kind TEXT, conversation_id TEXT, parent_id TEXT,"
+        " timestamp TEXT, sequence INTEGER)"
     )
     conn.executemany(
-        "INSERT INTO events VALUES (?, ?, ?, ?)",
+        "INSERT INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES (?, ?, ?, ?, ?)",
         [
-            ("p1", "prompt", "c1", "2026-01-01T00:00:00"),
-            ("r1", "response", "c1", "2026-01-01T00:00:01"),
-            ("p2", "prompt", "c1", "2026-01-01T00:01:00"),
-            ("r2", "response", "c1", "2026-01-01T00:01:01"),
+            ("p1", "prompt", "c1", None, "2026-01-01T00:00:00"),
+            ("r1", "response", "c1", "p1", "2026-01-01T00:00:01"),
+            ("p2", "prompt", "c1", None, "2026-01-01T00:01:00"),
+            ("r2", "response", "c1", "p2", "2026-01-01T00:01:01"),
         ],
     )
     bridged = SearchChunk(

@@ -156,7 +156,8 @@ def test_extract_tool_summary_chunks_smoke():
                 conversation_id TEXT NOT NULL,
                 parent_id TEXT,
                 external_id TEXT,
-                timestamp TEXT
+                timestamp TEXT,
+                sequence INTEGER
             );
             CREATE TABLE event_tool_call (
                 event_id TEXT PRIMARY KEY,
@@ -225,7 +226,8 @@ def test_extract_tool_summary_chunks_raw_names_use_category():
                 conversation_id TEXT NOT NULL,
                 parent_id TEXT,
                 external_id TEXT,
-                timestamp TEXT
+                timestamp TEXT,
+                sequence INTEGER
             );
             CREATE TABLE event_tool_call (
                 event_id TEXT PRIMARY KEY,

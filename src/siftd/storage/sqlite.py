@@ -9,14 +9,15 @@ Backfill operations: see siftd/backfill.py
 """
 
 import hashlib
+import itertools
 import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 
-from siftd.domain import Conversation
+from siftd.domain import Conversation, Prompt, Response, ToolCall
 from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
@@ -30,6 +31,7 @@ from siftd.storage.events import (
     insert_event_tool_call,
 )
 from siftd.storage.fts import ensure_fts_table, index_conversations
+from siftd.storage.links import insert_conversation_link
 from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
@@ -40,7 +42,7 @@ from siftd.storage.tags import (
 )
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 def schema_version(conn: sqlite3.Connection, schema: str = "main") -> int:
@@ -1931,7 +1933,7 @@ def _migrate_v7_pending_tags_exchange_index(conn: sqlite3.Connection) -> None:
 
     Slice 5 changed the exchange tagging API from 0-based to 1-based indices.
     Any pending_tags rows written before that change carry 0-based indices and
-    must be incremented before the strict >= 1 validation in _get_prompt_by_index
+    must be incremented before the strict >= 1 validation in the exchange-index resolver (storage/turns.py::turn_at_exchange)
     can be relied upon.
     """
     # pending_tags may not exist on very old DBs that skipped ensure_session_tables;
@@ -2369,6 +2371,63 @@ def _migrate_v12_block_cleanup_trigger(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[12] = _migrate_v12_block_cleanup_trigger
+
+
+def _migrate_v13_event_sequence_and_links(conn: sqlite3.Connection) -> None:
+    """v13: give events a recorded order and make lineage a first-class edge.
+
+    ``events.sequence`` is the position ``store_conversation`` assigned in
+    tree-walk order. Order used to be ``(timestamp, id)``, and ULIDs are random
+    within a millisecond, so equal timestamps (an adapter that stamps every
+    event with the session start, a burst of prompts) resolved arbitrarily.
+
+    Existing rows are deliberately NOT backfilled. The tree-walk order of a
+    legacy conversation is not recoverable from what was stored (that is the
+    defect), and rewriting every event of a multi-GB database to approximate it
+    would assert an order nobody recorded. They keep a NULL sequence, which every
+    reader treats as "fall back to ``(timestamp, id)``"; `siftd ingest --reparse`
+    fills them from the source.
+
+    ``conversation_links`` holds a conversation's parents, at most one per
+    relation (where it ran; what it continues), by the parent's ``external_id``
+    (see schema.sql for why not a conversation id). A legacy sub-agent row gets
+    its edge from the parent its external_id names.
+
+    Idempotent: guards each step, since a fresh database already has all three.
+    Caller owns the transaction.
+    """
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(events)")}
+    if "sequence" not in columns:
+        conn.execute("ALTER TABLE events ADD COLUMN sequence INTEGER")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_events_conversation_sequence"
+        " ON events(conversation_id, sequence)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_links (
+            conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            kind               TEXT NOT NULL,
+            parent_external_id TEXT NOT NULL,
+            anchor             TEXT,
+            PRIMARY KEY (conversation_id, kind)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_conversation_links_parent"
+        " ON conversation_links(parent_external_id)"
+    )
+    # A sub-agent stored before the edge existed names its parent only in its
+    # ``<root>::agent::<id>`` external_id; give it the edge it would be stored with now.
+    conn.execute("""
+        INSERT OR IGNORE INTO conversation_links (conversation_id, kind, parent_external_id)
+        SELECT c.id, 'subagent', substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)
+        FROM conversations c
+        WHERE instr(c.external_id, '::agent::') > 0
+          AND NOT EXISTS (SELECT 1 FROM conversation_links l WHERE l.conversation_id = c.id)
+    """)
+
+
+MIGRATIONS[13] = _migrate_v13_event_sequence_and_links
 
 
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
@@ -2922,9 +2981,10 @@ def insert_prompt(
     conversation_id: str,
     external_id: str | None,
     timestamp: str,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id)
+    insert_event(conn, uid, "prompt", conversation_id, timestamp, external_id=external_id, sequence=sequence)
     return uid
 
 
@@ -2938,9 +2998,10 @@ def insert_response(
     timestamp: str,
     input_tokens: int | None = None,
     output_tokens: int | None = None,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id)
+    insert_event(conn, uid, "response", conversation_id, timestamp, parent_id=prompt_id, external_id=external_id, sequence=sequence)
     insert_event_response(conn, uid, model_id=model_id, provider_id=provider_id, input_tokens=input_tokens, output_tokens=output_tokens)
     return uid
 
@@ -2982,9 +3043,10 @@ def insert_tool_call(
     *,
     dedupe_result: bool = True,
     filter_binary: bool = True,
+    sequence: int | None = None,
 ) -> str:
     uid = _ulid()
-    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id)
+    insert_event(conn, uid, "tool_call", conversation_id, timestamp or "", parent_id=response_id, external_id=external_id, sequence=sequence)
     insert_event_tool_call(conn, uid, tool_id=tool_id, input_json=input_json, result_json=result_json, status=status, dedupe_result=dedupe_result, filter_binary=filter_binary)
     return uid
 
@@ -3060,9 +3122,25 @@ def store_conversation(
     for attr_key, attr_value in conversation.attributes.items():
         set_attribute(conn, "conversation", conversation_id, attr_key, attr_value, scope="analyzer")
 
+    for link in conversation.lineage:
+        insert_conversation_link(conn, conversation_id, link)
+
+    # Every event is stored with its recorded position, so the conversation
+    # carries the order it was parsed in rather than leaving readers to recover
+    # it from timestamps (which tie, and which some adapters stamp identically).
+    # The assembler numbers events in arrival order. A conversation that
+    # arrives without numbers (a version-1 adapter) takes tree-walk order.
+    position = itertools.count()
+
+    # Responses that precede every prompt (written first, as they came first): stored with no parent event.
+    for response in conversation.preamble:
+        _store_response(conn, conversation_id, None, response, harness_id, provider_id, filter_binary, position)
+
     # Process prompts
     for prompt in conversation.prompts:
-        prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
+        prompt_id = insert_prompt(
+            conn, conversation_id, prompt.external_id, prompt.timestamp, sequence=_recorded(prompt, position)
+        )
 
         # Insert prompt content blocks
         for idx, block in enumerate(prompt.content):
@@ -3070,66 +3148,9 @@ def store_conversation(
 
         # Process responses for this prompt
         for response in prompt.responses:
-            model_id = None
-            if response.model:
-                model_id = get_or_create_model(conn, response.model)
-
-            input_tokens = None
-            output_tokens = None
-            if response.usage:
-                input_tokens = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
-
-            response_id = insert_response(
-                conn,
-                conversation_id=conversation_id,
-                prompt_id=prompt_id,
-                model_id=model_id,
-                provider_id=provider_id,
-                external_id=response.external_id,
-                timestamp=response.timestamp,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+            _store_response(
+                conn, conversation_id, prompt_id, response, harness_id, provider_id, filter_binary, position
             )
-
-            # Insert response content blocks
-            for idx, block in enumerate(response.content):
-                insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
-
-            for attr_key, attr_value in response.attributes.items():
-                set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
-
-            # Insert tool calls
-            for tool_call in response.tool_calls:
-                tool_id = get_or_create_tool_by_alias(
-                    conn, tool_call.tool_name, harness_id
-                )
-                if tool_id not in _tool_name_cache:
-                    _tool_name_cache[tool_id] = conn.execute(
-                        "SELECT name FROM tools WHERE id = ?", (tool_id,)
-                    ).fetchone()["name"]
-                canonical_name = _tool_name_cache[tool_id]
-
-                tool_call_id = insert_tool_call(
-                    conn,
-                    response_id=response_id,
-                    conversation_id=conversation_id,
-                    tool_id=tool_id,
-                    external_id=tool_call.external_id,
-                    input_json=json.dumps(tool_call.input),
-                    result_json=json.dumps(tool_call.result) if tool_call.result else None,
-                    status=tool_call.status,
-                    timestamp=tool_call.timestamp or response.timestamp,
-                    filter_binary=filter_binary,
-                )
-
-                for attr_key, attr_value in tool_call.attributes.items():
-                    set_attribute(conn, "tool_call", tool_call_id, attr_key, attr_value)
-
-                tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
-                tag_derivative_conversation(
-                    conn, conversation_id, canonical_name, tool_call.input
-                )
 
     # One index write for the whole conversation, after every event_content row
     # it owns exists. Insert-only: this conversation id was minted above.
@@ -3138,6 +3159,96 @@ def store_conversation(
     if commit:
         conn.commit()
     return conversation_id
+
+
+def _recorded(event: Prompt | Response | ToolCall, position: Iterator[int]) -> int:
+    """The event's recorded position: its own when the assembler numbered it, else the next in the walk."""
+    return event.sequence if event.sequence is not None else next(position)
+
+
+def _store_response(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    prompt_id: str | None,
+    response: Response,
+    harness_id: str,
+    provider_id: str | None,
+    filter_binary: bool,
+    position: Iterator[int],
+) -> None:
+    """Store one response, its content and its tool calls. ``prompt_id`` is None for a preamble response.
+
+    An event stores its own ``sequence`` when it has one; otherwise ``position``
+    hands out the conversation's next: the response takes one, then each of its
+    tool calls.
+
+    ``provider_id`` is the harness's provider, the fallback for a response that
+    names none; a multi-provider harness (pi) names one per response.
+    """
+    if response.provider:
+        provider_id = get_or_create_provider(conn, response.provider)
+    model_id = None
+    if response.model:
+        model_id = get_or_create_model(conn, response.model)
+
+    input_tokens = None
+    output_tokens = None
+    if response.usage:
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+    response_id = insert_response(
+        conn,
+        conversation_id=conversation_id,
+        prompt_id=prompt_id,
+        model_id=model_id,
+        provider_id=provider_id,
+        external_id=response.external_id,
+        timestamp=response.timestamp,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        sequence=_recorded(response, position),
+    )
+
+    # Insert response content blocks
+    for idx, block in enumerate(response.content):
+        insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
+
+    for attr_key, attr_value in response.attributes.items():
+        set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
+
+    # Insert tool calls
+    for tool_call in response.tool_calls:
+        tool_id = get_or_create_tool_by_alias(
+            conn, tool_call.tool_name, harness_id
+        )
+        if tool_id not in _tool_name_cache:
+            _tool_name_cache[tool_id] = conn.execute(
+                "SELECT name FROM tools WHERE id = ?", (tool_id,)
+            ).fetchone()["name"]
+        canonical_name = _tool_name_cache[tool_id]
+
+        tool_call_id = insert_tool_call(
+            conn,
+            response_id=response_id,
+            conversation_id=conversation_id,
+            tool_id=tool_id,
+            external_id=tool_call.external_id,
+            input_json=json.dumps(tool_call.input),
+            result_json=json.dumps(tool_call.result) if tool_call.result else None,
+            status=tool_call.status,
+            timestamp=tool_call.timestamp or response.timestamp,
+            filter_binary=filter_binary,
+            sequence=_recorded(tool_call, position),
+        )
+
+        for attr_key, attr_value in tool_call.attributes.items():
+            set_attribute(conn, "tool_call", tool_call_id, attr_key, attr_value)
+
+        tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
+        tag_derivative_conversation(
+            conn, conversation_id, canonical_name, tool_call.input
+        )
 
 
 # =============================================================================
@@ -3152,16 +3263,24 @@ def find_conversation_by_external_id(
 ) -> dict | None:
     """Find a conversation by harness + external_id.
 
-    Returns dict with {id, ended_at} or None if not found.
+    Returns dict with {id, started_at, ended_at} or None if not found.
     """
     cur = conn.execute(
-        "SELECT id, ended_at FROM conversations WHERE harness_id = ? AND external_id = ?",
+        "SELECT id, started_at, ended_at FROM conversations WHERE harness_id = ? AND external_id = ?",
         (harness_id, external_id)
     )
     row = cur.fetchone()
     if row:
-        return {"id": row["id"], "ended_at": row["ended_at"]}
+        return {"id": row["id"], "started_at": row["started_at"], "ended_at": row["ended_at"]}
     return None
+
+
+def find_conversation_by_id(conn: sqlite3.Connection, conversation_id: str) -> dict | None:
+    """A conversation's {id, external_id, started_at, ended_at}, or None if it is gone."""
+    row = conn.execute(
+        "SELECT id, external_id, started_at, ended_at FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
@@ -3178,7 +3297,8 @@ def delete_conversations(conn: sqlite3.Connection, conversation_ids: Sequence[st
     - content_fts (virtual table, no FK/trigger support)
 
     Conversation FK CASCADE handles: events, event_content, event_response,
-    event_tool_call, ingested_files, conversation_owners, usage_by_conv_model,
+    event_tool_call, ingested_files, conversation_owners, conversation_links,
+    usage_by_conv_model,
     conversation_stats, content_blobs (via tr_event_tool_call_* trigger).
 
     tr_polymorphic_*_cleanup triggers handle tag_assignments and attributes for
@@ -3470,6 +3590,60 @@ def clear_ingested_file_error(
 ) -> None:
     """Clear error and delete the ingested_files record so the file can be re-ingested."""
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
+
+
+def ingested_paths_for_conversation(
+    conn: sqlite3.Connection, conversation_id: str, *, excluding: str
+) -> list[str]:
+    """Paths other than ``excluding`` whose bookkeeping row points at the conversation."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT path FROM ingested_files WHERE conversation_id = ? AND path != ?",
+            (conversation_id, excluding),
+        )
+    ]
+
+
+def ingested_paths_for_harness(conn: sqlite3.Connection, harness_name: str) -> list[str]:
+    """Every path the bookkeeping recorded for a harness, as each was spelled."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT f.path FROM ingested_files f JOIN harnesses h ON h.id = f.harness_id WHERE h.name = ?",
+            (harness_name,),
+        )
+    ]
+
+
+def release_conversation_pointers(
+    conn: sqlite3.Connection, conversation_id: str, paths: Iterable[str]
+) -> None:
+    """Clear these paths' pointers at the conversation, keeping their rows as markers."""
+    conn.executemany(
+        "UPDATE ingested_files SET conversation_id = NULL WHERE conversation_id = ? AND path = ?",
+        [(conversation_id, path) for path in paths],
+    )
+
+
+def conversation_exists(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    """Whether a conversation row is still present."""
+    return conn.execute(
+        "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone() is not None
+
+
+def message_rows(
+    conn: sqlite3.Connection, conversation_id: str, kinds: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """``kind, external_id, timestamp, content`` (first block) of a conversation's events of ``kinds``."""
+    placeholders = ",".join("?" * len(kinds))
+    return conn.execute(
+        "SELECT e.kind, e.external_id, e.timestamp, ec.content FROM events e "
+        "LEFT JOIN event_content ec ON ec.event_id = e.id AND ec.block_index = 0 "
+        f"WHERE e.conversation_id = ? AND e.kind IN ({placeholders})",
+        (conversation_id, *kinds),
+    ).fetchall()
 
 
 def get_ingest_errors(conn: sqlite3.Connection) -> list[dict]:

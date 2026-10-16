@@ -5,7 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 from siftd.adapters.sdk import AdapterParseError
-from siftd.storage.events import get_last_event_id, get_prompt_by_index
+from siftd.domain import Conversation
+from siftd.ingestion import IngestStats
 from siftd.ingestion.orchestration import (
     _compare_timestamps,
     _extract_first_text,
@@ -13,7 +14,10 @@ from siftd.ingestion.orchestration import (
     _normalize_status,
     _summarize_conversation,
     _truncate_summary,
+    _update_stats_for_conversation,
 )
+from siftd.storage.events import get_last_event_id
+from siftd.storage.turns import turn_at_exchange
 
 
 class TestCompareTimestamps:
@@ -130,8 +134,12 @@ class _MockPrompt:
 
 
 class _MockConversation:
+    # The real property, so the mock counts turns by the rule the summary reads.
+    turn_count = Conversation.turn_count
+
     def __init__(self, prompts=None, workspace_path="/proj"):
         self.prompts = prompts or []
+        self.preamble = []
         self.workspace_path = workspace_path
 
 
@@ -165,7 +173,7 @@ class TestSummarizeConversation:
         assert result["exchange_count"] == 0
 
 
-class TestGetPromptByIndex:
+class TestTurnAtExchange:
     """Index validation happens before any lookup, so an empty DB is enough."""
 
     @pytest.fixture
@@ -179,18 +187,18 @@ class TestGetPromptByIndex:
             conn.close()
 
     def test_zero_raises_value_error(self, conn):
-        """get_prompt_by_index rejects exchange_index=0 (0-based index, API is 1-based)."""
+        """turn_at_exchange rejects exchange_index=0 (0-based index, API is 1-based)."""
         with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-            get_prompt_by_index(conn, "any-conv-id", 0)
+            turn_at_exchange(conn, "any-conv-id", 0)
 
     def test_negative_raises_value_error(self, conn):
-        """get_prompt_by_index rejects negative exchange_index."""
+        """turn_at_exchange rejects negative exchange_index."""
         with pytest.raises(ValueError, match="exchange_index must be >= 1"):
-            get_prompt_by_index(conn, "any-conv-id", -1)
+            turn_at_exchange(conn, "any-conv-id", -1)
 
     def test_none_returns_none(self, conn):
-        """get_prompt_by_index returns None when exchange_index is None."""
-        assert get_prompt_by_index(conn, "any-conv-id", None) is None
+        """turn_at_exchange returns None when exchange_index is None."""
+        assert turn_at_exchange(conn, "any-conv-id", None) is None
 
 
 class TestGetLastEventId:
@@ -650,6 +658,49 @@ class TestBookkeepingRecovery:
         # ...and the orphan's tags rode across.
         assert "keeper" in self._tag_names(conn, new_id)
 
+    def test_a_new_file_whose_key_holds_a_row_links_it_from_one_parse(self, tmp_path, monkeypatch):
+        """External review r1, finding 3: the plan resolves the file's own key; no store is attempted.
+
+        The documented recovery (clear the bookkeeping, ingest again) makes every file
+        new while its conversation exists. The plan finds that row under the file's own
+        key and links it, without claiming the bytes it hashed (so the next run replaces
+        the row from the same file), and the file is parsed once, not again by a
+        collision repair after a failed insert.
+        """
+        from siftd.ingestion import ingest_all, orchestration
+        from siftd.storage.sqlite import compute_file_hash, get_ingested_file_info
+
+        state = {"external_id": "poison_test::S11", "text": "first", "ended_at": "2024-01-15T11:00:00Z"}
+        conn, source, adapter = self._seed(tmp_path, state)
+        conv_id = self._conversation_id(conn, state["external_id"])
+        conn.execute("DELETE FROM ingested_files")
+        conn.commit()
+        calls = {"parse": 0, "store": 0}
+        real_parse, real_store = orchestration._parse_source, orchestration.store_conversation
+
+        def counting_parse(*args, **kwargs):
+            calls["parse"] += 1
+            return real_parse(*args, **kwargs)
+
+        def counting_store(*args, **kwargs):
+            calls["store"] += 1
+            return real_store(*args, **kwargs)
+
+        monkeypatch.setattr(orchestration, "_parse_source", counting_parse)
+        monkeypatch.setattr(orchestration, "store_conversation", counting_store)
+
+        stats = ingest_all(conn, [adapter])
+
+        assert calls == {"parse": 1, "store": 0}
+        assert (stats.files_skipped, stats.files_errored) == (1, 0)
+        info = get_ingested_file_info(conn, str(source))
+        assert info["conversation_id"] == conv_id
+        assert info["file_hash"] != compute_file_hash(source)
+
+        stats = ingest_all(conn, [adapter])
+        assert (stats.files_replaced, stats.files_errored) == (1, 0)
+        assert get_ingested_file_info(conn, str(source))["file_hash"] == compute_file_hash(source)
+
     def test_lost_race_keeps_the_pointer_and_leaves_no_orphan(self, tmp_path, monkeypatch):
         """The race loser repairs bookkeeping instead of NULLing it.
 
@@ -1107,3 +1158,26 @@ class TestBookkeepingRecovery:
         info = get_ingested_file_info(conn, str(source))
         assert info["error"] is None
         assert self._indexed(conn, "second") == 1
+
+
+class TestIngestStatsCountPreamble:
+    def test_a_preamble_is_counted_as_responses_and_their_calls(self):
+        """The preamble is stored, so the ingest summary must count it. A count that walked only prompts would
+        report fewer responses and tool calls than were written."""
+        from siftd.adapters.sdk import build_harness
+        from siftd.domain import Conversation, Prompt, Response, ToolCall
+
+        conversation = Conversation(
+            external_id="x::1",
+            harness=build_harness("x", "google", "jsonl", "X"),
+            started_at="T1",
+            ended_at="T2",
+            preamble=[Response(timestamp="T1", tool_calls=[ToolCall(tool_name="a", input={})])],
+            prompts=[Prompt(timestamp="T2", responses=[Response(timestamp="T2")])],
+        )
+        # The caller opens the harness's row before counting, as ingest does.
+        row = {"conversations": 0, "prompts": 0, "responses": 0, "tool_calls": 0, "replaced": 0, "errors": 0}
+        stats = IngestStats(by_harness={"x": row})
+        _update_stats_for_conversation(stats, "x", conversation)
+        assert (stats.prompts, stats.responses, stats.tool_calls) == (1, 2, 1)
+        assert stats.by_harness["x"]["responses"] == 2

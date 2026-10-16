@@ -38,6 +38,20 @@ A conversation is a single session with a tool — from when you started it to w
 | `workspace` | The directory you were working in |
 | `harness` | Which tool (Claude Code, Aider, etc.) |
 
+A conversation may continue exactly one other: a sub-agent spawned by a session, a fork, a resumed session, a branch. That link is stored with the parent's `external_id`, not its siftd id, and resolved when read. Re-ingesting the parent therefore never leaves a stale pointer, and a parent that was never ingested leaves the link unresolved rather than broken.
+
+### Order within a conversation
+
+Events are ordered by the position they were recorded in (`events.sequence`, the order they arrived in when the source was parsed), not by timestamp: timestamps tie, and some tools stamp every event of a session with the same instant. Conversations stored before schema v13 have no recorded position and are ordered by `(timestamp, id)` as they always were; re-parsing the source gives them one.
+
+### Turns
+
+A turn is an optional prompt plus the responses, and their tool calls, that follow it until the next prompt. Every surface that shows, counts or numbers turns (`show`, `export`, the web transcript, search positions, `--at-turn`, exchange tags, the "turns" column) takes them from one fold of the stored events, so they cannot disagree.
+
+Responses stored before the first prompt (a forked sub-agent's whole transcript, a leading tool announcement) form the **preamble turn**. It has no prompt, it is always first, and it counts as a turn. Transcripts head it "Continued from <parent>" when the conversation has a lineage link, else "Before the first prompt". A conversation with a preamble numbers it 0, so its prompts sit one place later than their position among prompts. A conversation without one is numbered exactly as before: turn 0 is its first prompt, and exchange N is its Nth prompt (1-based).
+
+An exchange tag anchors on a prompt, so the preamble turn, which has none, cannot be tagged as an exchange; its responses and tool calls can still be tagged by their own addresses.
+
 ### Prompts
 
 A prompt is one thing you typed or submitted. Multi-turn conversations have multiple prompts.
@@ -66,9 +80,11 @@ A tool call is an action the model took: reading a file, running a shell command
 | Field | What it means |
 |-------|---------------|
 | `tool_name` | Canonical name (file.read, shell.execute, file.edit) |
+| `timestamp` | When the call was made |
 | `input` | Arguments passed to the tool (file path, command, etc.) |
 | `result` | What the tool returned |
 | `status` | success, error, or pending |
+| `completed_at` | Attribute: when the result arrived, in UTC |
 
 Tool calls are where the real work happens. A typical coding session might have hundreds of tool calls — every `cat`, `grep`, file edit, and test run.
 

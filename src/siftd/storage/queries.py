@@ -10,29 +10,97 @@ The API layer handles parameter validation and dataclass mapping.
 """
 
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from siftd.storage.sql_helpers import (
     batched_in_query,
+    event_order,
     has_conversation_owners_table,
     owner_predicate,
 )
+from siftd.storage.turns import PREAMBLE_RESPONSE_SQL, TurnSpan, fold_turns, load_turns
 
 
 @dataclass
 class ExchangeRow:
-    """A single prompt-response exchange."""
+    """One turn's text: its prompt (if any) and the responses that followed it.
+
+    ``prompt_id`` is None for the preamble turn (responses before the first
+    prompt); its ``prompt_text`` is empty and ``prompt_timestamp`` is its first
+    response's.
+    """
 
     conversation_id: str
-    prompt_id: str
-    prompt_timestamp: str
+    prompt_id: str | None
+    prompt_timestamp: str | None
     prompt_text: str
     response_text: str
     response_ids: list[str] = field(default_factory=list)
-    """Event IDs of the responses in this exchange (timestamp order). Carried so an
+    """Event IDs of the responses in this exchange (recorded order). Carried so an
     embedding chunk's ``source_ids`` can cover response events too — the bridge the
     hybrid engine uses to map an FTS hit on response text back to its chunk."""
+
+
+def _exchange_rows(
+    conn: sqlite3.Connection,
+    turns: list[tuple[str, TurnSpan]],
+) -> list[ExchangeRow]:
+    """Text of each ``(conversation_id, turn)``, in the order given.
+
+    Prompt text joins its text blocks with newlines; a turn's response text joins
+    its responses' blocks with a blank line, in the turn's recorded response order.
+    """
+    prompt_ids = [t.prompt_id for _, t in turns if t.prompt_id is not None]
+    response_ids = [rid for _, t in turns for rid in t.response_ids]
+
+    def texts(event_ids: list[str]) -> dict[str, list[str]]:
+        rows = batched_in_query(
+            conn,
+            "SELECT event_id, json_extract(content, '$.text') AS text "
+            "FROM event_content "
+            "WHERE event_id IN ({placeholders}) "
+            "AND block_type = 'text' "
+            "AND json_extract(content, '$.text') IS NOT NULL "
+            "ORDER BY event_id, block_index",
+            event_ids,
+        )
+        by_event: dict[str, list[str]] = {}
+        for row in rows:
+            by_event.setdefault(row[0], []).append(row[1])
+        return by_event
+
+    prompt_texts = texts(prompt_ids)
+    response_texts = texts(response_ids)
+    # A turn is stamped by its prompt, or by its first response when it has none.
+    stamped = [t.prompt_id or t.response_ids[0] for _, t in turns if t.prompt_id or t.response_ids]
+    stamps = {
+        row[0]: row[1]
+        for row in batched_in_query(
+            conn, "SELECT id, timestamp FROM events WHERE id IN ({placeholders})", stamped,
+        )
+    }
+
+    result: list[ExchangeRow] = []
+    for conv_id, turn in turns:
+        parts = []
+        for rid in turn.response_ids:
+            blocks = response_texts.get(rid, [])
+            if blocks:
+                parts.append("\n".join(blocks))
+        anchor = turn.prompt_id or (turn.response_ids[0] if turn.response_ids else None)
+        result.append(
+            ExchangeRow(
+                conversation_id=conv_id,
+                prompt_id=turn.prompt_id,
+                prompt_timestamp=stamps.get(anchor) if anchor else None,
+                prompt_text="\n".join(prompt_texts.get(turn.prompt_id, [])).strip() if turn.prompt_id else "",
+                response_text="\n\n".join(parts).strip(),
+                response_ids=list(turn.response_ids),
+            )
+        )
+    return result
 
 
 def fetch_exchanges(
@@ -42,21 +110,27 @@ def fetch_exchanges(
     prompt_ids: list[str] | None = None,
     exclude_conversation_ids: set[str] | None = None,
 ) -> list[ExchangeRow]:
-    """Fetch prompt-response exchanges with deterministic ordering.
+    """Fetch the text of turns (:mod:`siftd.storage.turns`) with deterministic ordering.
 
-    Returns rows with prompt and response text, where:
+    One row per turn, so a conversation's preamble turn is a row with no
+    ``prompt_id``. Returns rows where:
     - prompt text is ordered by prompt_content.block_index
-    - response text is ordered by responses.timestamp, then response_content.block_index
-    - multiple responses per prompt are concatenated in timestamp order
+    - response text is ordered by recorded order (events.sequence, falling back to
+      timestamp for legacy rows), then response_content.block_index
+    - multiple responses per turn are concatenated in recorded order
 
     Args:
         conn: Database connection.
         conversation_id: Filter to a single conversation.
-        prompt_ids: Filter to specific prompt IDs.
+        prompt_ids: Filter to specific prompt IDs. Selects those prompts' turns
+            only, so no preamble turn is returned.
         exclude_conversation_ids: Conversation IDs to exclude from results.
 
     Returns:
-        List of ExchangeRow ordered by prompt timestamp.
+        ExchangeRow grouped by conversation (conversation id order), each
+        conversation's turns in recorded order. Every consumer groups by
+        conversation or addresses prompts by id; none relies on a global
+        timestamp order across conversations.
     """
     if prompt_ids is not None and len(prompt_ids) == 0:
         return []
@@ -83,132 +157,83 @@ def fetch_exchanges(
         # All batches must pass (AND), so combine them
         conditions.append("(" + " AND ".join(not_in_clauses) + ")")
 
-    # Get prompts (with optional prompt_ids batching)
     if prompt_ids is not None:
         # Use batched_in_query for prompt_ids, with other conditions as prefix
         # Note: ORDER BY in query is per-batch; we sort globally after
-        kind_cond = "kind = 'prompt'"
-        where_prefix = " AND ".join(conditions + [kind_cond]) + " AND " if conditions else f"{kind_cond} AND "
+        where_prefix = " AND ".join([*conditions, "kind = 'prompt'"]) + " AND "
         prompt_rows = batched_in_query(
             conn,
-            f"SELECT conversation_id, id, timestamp FROM events "
-            f"WHERE {where_prefix}id IN ({{placeholders}}) ORDER BY timestamp",
+            f"SELECT conversation_id, id, sequence, timestamp FROM events "
+            f"WHERE {where_prefix}id IN ({{placeholders}}) "
+            f"ORDER BY conversation_id, {event_order()}",
             prompt_ids,
             prefix_params=tuple(params),
         )
-        # Restore global timestamp ordering across batches
-        prompt_rows = sorted(prompt_rows, key=lambda r: r["timestamp"])
-    elif conditions:
-        # Only non-batched filters
-        where_clause = "WHERE " + " AND ".join(conditions) + " AND kind = 'prompt'"
+        # Restore the global order across batches. NULL sequence (legacy rows)
+        # sorts first, as it does in SQL.
+        prompt_rows = sorted(
+            prompt_rows,
+            key=lambda r: (
+                r["conversation_id"],
+                -1 if r["sequence"] is None else r["sequence"],
+                r["timestamp"],
+                r["id"],
+            ),
+        )
+        # Only these prompts' own responses: a turn is selected, not a conversation.
+        response_rows = batched_in_query(
+            conn,
+            "SELECT conversation_id, id, parent_id FROM events "
+            "WHERE kind = 'response' AND parent_id IN ({placeholders}) "
+            f"ORDER BY parent_id, {event_order()}",
+            [row["id"] for row in prompt_rows],
+        )
+    else:
+        where = ("WHERE " + " AND ".join(conditions) + " AND ") if conditions else "WHERE "
         prompt_rows = conn.execute(
-            f"SELECT conversation_id, id, timestamp FROM events "
-            f"{where_clause} ORDER BY timestamp",
+            f"SELECT conversation_id, id FROM events {where}kind = 'prompt' "
+            f"ORDER BY conversation_id, {event_order()}",
             params,
         ).fetchall()
-    else:
-        # No filters
-        prompt_rows = conn.execute(
-            "SELECT conversation_id, id, timestamp FROM events WHERE kind = 'prompt' ORDER BY timestamp"
+        # Every response of the matching conversations, parented or not: the
+        # preamble's have no parent, which is why they cannot be found by prompt.
+        response_rows = conn.execute(
+            f"SELECT conversation_id, id, parent_id FROM events {where}kind = 'response' "
+            f"ORDER BY conversation_id, {event_order()}",
+            params,
         ).fetchall()
 
-    if not prompt_rows:
-        return []
+    prompts_by_conv: dict[str, list[str]] = {}
+    for row in prompt_rows:
+        prompts_by_conv.setdefault(row["conversation_id"], []).append(row["id"])
+    responses_by_conv: dict[str, list[tuple[str, str | None]]] = {}
+    for row in response_rows:
+        responses_by_conv.setdefault(row["conversation_id"], []).append((row["id"], row["parent_id"]))
 
-    # Build lookup of prompt_id -> (conversation_id, timestamp)
-    prompt_info = {row[1]: (row[0], row[2]) for row in prompt_rows}
-    prompt_id_list = list(prompt_info.keys())
+    turns: list[tuple[str, TurnSpan]] = []
+    for conv_id in sorted(prompts_by_conv.keys() | responses_by_conv.keys()):
+        for span in fold_turns(prompts_by_conv.get(conv_id, []), responses_by_conv.get(conv_id, [])):
+            turns.append((conv_id, span))
+    return _exchange_rows(conn, turns)
 
-    # Fetch prompt content blocks in order (batched)
-    prompt_content_rows = batched_in_query(
-        conn,
-        "SELECT event_id AS prompt_id, json_extract(content, '$.text') AS text "
-        "FROM event_content "
-        "WHERE event_id IN ({placeholders}) "
-        "AND block_type = 'text' "
-        "AND json_extract(content, '$.text') IS NOT NULL "
-        "ORDER BY event_id, block_index",
-        prompt_id_list,
-    )
 
-    # Aggregate prompt text by prompt_id
-    prompt_texts: dict[str, list[str]] = {}
-    for row in prompt_content_rows:
-        prompt_texts.setdefault(row[0], []).append(row[1])
+def fetch_turn_exchanges(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    ordinals: Sequence[int],
+    *,
+    turns: Sequence[TurnSpan] | None = None,
+) -> list[ExchangeRow]:
+    """The text of the turns at ``ordinals`` of one conversation, in ordinal order.
 
-    # Fetch responses for these prompts (batched)
-    response_rows = batched_in_query(
-        conn,
-        "SELECT id, parent_id AS prompt_id, timestamp FROM events "
-        "WHERE kind = 'response' AND parent_id IN ({placeholders}) "
-        "ORDER BY parent_id, timestamp",
-        prompt_id_list,
-    )
-
-    if response_rows:
-        response_ids = [row[0] for row in response_rows]
-
-        # Fetch response content blocks in order (batched)
-        response_content_rows = batched_in_query(
-            conn,
-            "SELECT event_id AS response_id, json_extract(content, '$.text') AS text "
-            "FROM event_content "
-            "WHERE event_id IN ({placeholders}) "
-            "AND block_type = 'text' "
-            "AND json_extract(content, '$.text') IS NOT NULL "
-            "ORDER BY event_id, block_index",
-            response_ids,
-        )
-
-        # Aggregate response content by response_id
-        response_content_texts: dict[str, list[str]] = {}
-        for row in response_content_rows:
-            response_content_texts.setdefault(row[0], []).append(row[1])
-
-        # Build response_id -> prompt_id mapping and ordered response list per prompt
-        responses_by_prompt: dict[str, list[tuple[str, str]]] = {}
-        for row in response_rows:
-            resp_id, prompt_id, timestamp = row
-            responses_by_prompt.setdefault(prompt_id, []).append((resp_id, timestamp))
-
-        # Build response text by prompt (multiple responses concatenated) and the
-        # ordered response-event-id list (the source_ids bridge for the hybrid engine).
-        response_texts: dict[str, str] = {}
-        response_ids_by_prompt: dict[str, list[str]] = {}
-        for prompt_id, resp_list in responses_by_prompt.items():
-            # resp_list is already ordered by timestamp from the query
-            response_ids_by_prompt[prompt_id] = [resp_id for resp_id, _ in resp_list]
-            parts = []
-            for resp_id, _ in resp_list:
-                blocks = response_content_texts.get(resp_id, [])
-                if blocks:
-                    parts.append("\n".join(blocks))
-            if parts:
-                response_texts[prompt_id] = "\n\n".join(parts)
-    else:  # pragma: no cover — prompts with zero responses (rare in ingested data)
-        response_texts = {}
-        response_ids_by_prompt = {}
-
-    # Build final result in prompt timestamp order
-    result = []
-    for prompt_id in prompt_id_list:
-        conv_id, timestamp = prompt_info[prompt_id]
-        prompt_text_parts = prompt_texts.get(prompt_id, [])
-        prompt_text = "\n".join(prompt_text_parts) if prompt_text_parts else ""
-        response_text = response_texts.get(prompt_id, "")
-
-        result.append(
-            ExchangeRow(
-                conversation_id=conv_id,
-                prompt_id=prompt_id,
-                prompt_timestamp=timestamp,
-                prompt_text=prompt_text.strip(),
-                response_text=response_text.strip(),
-                response_ids=response_ids_by_prompt.get(prompt_id, []),
-            )
-        )
-
-    return result
+    Ordinals past the end are skipped. This is how a window around a turn is
+    read: by turn ordinal, the same numbering ``--at-turn`` and search positions use.
+    A caller that already folded the conversation passes its ``turns`` so the
+    transcript is not read and folded again.
+    """
+    if turns is None:
+        turns = load_turns(conn, conversation_id)
+    return _exchange_rows(conn, [(conversation_id, turns[o]) for o in sorted(set(ordinals)) if 0 <= o < len(turns)])
 
 
 def fetch_prompt_response_texts(
@@ -218,15 +243,16 @@ def fetch_prompt_response_texts(
     """Fetch prompt and response text for a list of prompt IDs.
 
     Returns list of (prompt_id, prompt_text, response_text) tuples,
-    ordered by prompt timestamp. Text values are stripped; missing
-    text returns empty string.
+    in the prompts' recorded order (``events.sequence``, else timestamp then id
+    for legacy rows). Text values are stripped; missing text returns empty string.
 
-    Note: Multiple responses per prompt are concatenated in timestamp order.
+    Note: Multiple responses per prompt are concatenated in recorded order.
     """
     exchanges = fetch_exchanges(conn, prompt_ids=prompt_ids)
     return [
         (ex.prompt_id, ex.prompt_text, ex.response_text)
         for ex in exchanges
+        if ex.prompt_id is not None
     ]
 
 
@@ -236,13 +262,13 @@ def fetch_conversation_exchanges(
     conversation_id: str | None = None,
     exclude_conversation_ids: set[str] | None = None,
 ) -> dict[str, list[dict]]:
-    """Load prompt/response pairs grouped by conversation, ordered by timestamp.
+    """Load turn text grouped by conversation, in recorded order.
 
-    Each exchange is: {"text": str, "prompt_id": str, "event_ids": list[str]}
+    Each exchange is: {"text": str, "prompt_id": str | None, "event_ids": list[str]}
     where text is prompt_text + response_text concatenated and ``event_ids`` is the
-    prompt id followed by every response event id in the exchange (the widened
-    source_ids the chunker records — the bridge that lets the hybrid engine map an
-    FTS hit on prompt OR response text back to its covering chunk).
+    prompt id (none for a preamble turn) followed by every response event id in the
+    turn (the widened source_ids the chunker records — the bridge that lets the hybrid
+    engine map an FTS hit on prompt OR response text back to its covering chunk).
 
     Args:
         conn: Database connection.
@@ -279,8 +305,9 @@ def fetch_conversation_exchanges(
             "text": exchange_text,
             "prompt_id": ex.prompt_id,
             # Prompt id stays first so consumers that anchor on source_ids[0] (turn
-            # positioning) are unaffected; response ids follow.
-            "event_ids": [ex.prompt_id, *ex.response_ids],
+            # positioning) are unaffected; response ids follow. A preamble turn has
+            # only response ids.
+            "event_ids": [*([ex.prompt_id] if ex.prompt_id else []), *ex.response_ids],
         })
 
     return result
@@ -289,26 +316,35 @@ def fetch_conversation_exchanges(
 def fetch_conversation_fingerprints(conn: sqlite3.Connection) -> dict[str, str]:
     """Return a cheap staleness fingerprint per conversation.
 
-    Fingerprint = ``"{event_count}:{max_event_timestamp}:{event_content_count}"``.
-    The event-content count catches block-level appends to existing events (ingest is
-    INSERT-OR-IGNORE on both events and (event_id, block_index)), which an events-only
-    fingerprint would miss. One GROUP BY over ``events`` LEFT JOIN ``event_content``;
-    the ``events.timestamp`` column is the ingest-time ordering key (there is no
-    ``events.created_at``).
+    Fingerprint = ``"{event_count}:{max_event_timestamp}:{event_content_count}"``,
+    plus ``":p{n}"`` when the conversation has ``n`` preamble responses (no parent
+    prompt: see :mod:`siftd.storage.turns`). The event-content count catches
+    block-level appends to existing events (ingest is INSERT-OR-IGNORE on both
+    events and (event_id, block_index)), which an events-only fingerprint would
+    miss. The preamble term is how an index built before the preamble was
+    extracted is invalidated: those conversations alone acquire a new fingerprint
+    and are re-indexed by the next incremental build, while every conversation
+    without a preamble keeps its fingerprint (and its chunks) unchanged. One
+    GROUP BY over ``events`` LEFT JOIN ``event_content``; the ``events.timestamp``
+    column is the ingest-time ordering key (there is no ``events.created_at``).
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT e.conversation_id AS cid,
                COUNT(DISTINCT e.id) AS event_count,
                MAX(e.timestamp) AS max_ts,
-               COUNT(ec.id) AS content_count
+               COUNT(ec.id) AS content_count,
+               COUNT(DISTINCT CASE WHEN {PREAMBLE_RESPONSE_SQL} THEN e.id END) AS preamble_count
         FROM events e
         LEFT JOIN event_content ec ON ec.event_id = e.id
         GROUP BY e.conversation_id
         """
     ).fetchall()
     return {
-        row["cid"]: f"{row['event_count']}:{row['max_ts'] or ''}:{row['content_count']}"
+        row["cid"]: (
+            f"{row['event_count']}:{row['max_ts'] or ''}:{row['content_count']}"
+            + (f":p{row['preamble_count']}" if row["preamble_count"] else "")
+        )
         for row in rows
     }
 
@@ -386,9 +422,10 @@ def fetch_prompts_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Fetch all prompts for a conversation, ordered by timestamp."""
+    """Fetch all prompts for a conversation, in recorded order."""
     return conn.execute(
-        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
+        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' "
+        f"ORDER BY {event_order()}",
         (conversation_id,),
     ).fetchall()
 
@@ -435,11 +472,11 @@ def fetch_responses_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Fetch all responses for a conversation, ordered by timestamp."""
+    """Fetch all responses for a conversation, in recorded order."""
     return conn.execute(
         "SELECT e.id, e.parent_id AS prompt_id, e.timestamp, er.input_tokens, er.output_tokens "
         "FROM events e JOIN event_response er ON er.event_id = e.id "
-        "WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY e.timestamp",
+        f"WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY {event_order('e')}",
         (conversation_id,),
     ).fetchall()
 
@@ -479,7 +516,7 @@ def fetch_tool_calls_for_conversation(
             "LEFT JOIN tools t ON t.id = etc.tool_id "
             "LEFT JOIN content_blobs cb ON cb.hash = etc.result_hash "
             "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
-            "ORDER BY e.timestamp",
+            f"ORDER BY {event_order('e')}",
             (conversation_id,),
         ).fetchall()
     return conn.execute(
@@ -489,7 +526,7 @@ def fetch_tool_calls_for_conversation(
         "JOIN event_tool_call etc ON etc.event_id = e.id "
         "LEFT JOIN tools t ON t.id = etc.tool_id "
         "WHERE e.conversation_id = ? AND e.kind = 'tool_call' "
-        "ORDER BY e.timestamp",
+        f"ORDER BY {event_order('e')}",
         (conversation_id,),
     ).fetchall()
 
@@ -1144,38 +1181,6 @@ def fetch_all_conversation_ids(conn: sqlite3.Connection) -> list[str]:
     """Fetch all conversation IDs."""
     rows = conn.execute("SELECT id FROM conversations").fetchall()
     return [row["id"] for row in rows]
-
-
-def fetch_event_turn_number(conn: sqlite3.Connection, event_row: sqlite3.Row | None) -> int | None:
-    """1-based turn index of an event: walk its parent chain to the prompt
-    anchoring it, then count that conversation's prompts up to and including it.
-
-    ``event_row`` needs ``id``, ``kind``, ``parent_id``, ``timestamp`` and
-    ``conversation_id``. Returns None when the chain ends without a prompt.
-    """
-    if not event_row:
-        return None
-
-    current_row = event_row
-    while current_row["kind"] != "prompt":
-        parent_id = current_row["parent_id"]
-        if not parent_id:
-            return None
-
-        current_row = conn.execute(
-            "SELECT id, kind, parent_id, timestamp, conversation_id FROM events WHERE id = ?",
-            (parent_id,),
-        ).fetchone()
-        if not current_row:
-            return None
-
-    count_row = conn.execute(
-        "SELECT COUNT(*) AS n FROM events"
-        " WHERE conversation_id = ? AND kind = 'prompt'"
-        " AND (timestamp < ? OR (timestamp = ? AND id <= ?))",
-        (current_row["conversation_id"], current_row["timestamp"], current_row["timestamp"], current_row["id"]),
-    ).fetchone()
-    return int(count_row["n"]) if count_row else None
 
 
 # =============================================================================

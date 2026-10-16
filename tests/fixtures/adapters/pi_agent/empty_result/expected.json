@@ -1,0 +1,125 @@
+[
+  {
+    "ended_at": "2026-03-16T05:31:19.411Z",
+    "external_id": "pi_agent::a2502109-b09b-4565-aad8-59f7092ce891",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 1"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "30336",
+              "cost": "0.0094865"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 1"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_gz1UNB23ND3WbQtRKWz5QjSs|fc_0cd24bff802c616b0169b795a2fbf881a191ca956bf56c077f",
+                  "input": {
+                    "path": "value"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "gpt-5.4",
+            "provider": "openai",
+            "sequence": 1,
+            "timestamp": "2026-03-16T05:31:16.308Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-03-16T05:31:16.313000+00:00"
+                },
+                "external_id": "call_gz1UNB23ND3WbQtRKWz5QjSs|fc_0cd24bff802c616b0169b795a2fbf881a191ca956bf56c077f",
+                "input": {
+                  "path": "value"
+                },
+                "result": {
+                  "output": ""
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-03-16T05:31:16.308Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 30527,
+              "output_tokens": 95
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "30464",
+              "cost": "0.0089485"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": ""
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_F0Pox60uM4XnGfRzmGNZmwsW|fc_0cd24bff802c616b0169b795a727bc81a1b2ecfeb8e098a243",
+                  "input": {
+                    "command": "value"
+                  },
+                  "name": "bash"
+                }
+              }
+            ],
+            "model": "gpt-5.4",
+            "provider": "openai",
+            "sequence": 3,
+            "timestamp": "2026-03-16T05:31:19.411Z",
+            "tool_calls": [
+              {
+                "external_id": "call_F0Pox60uM4XnGfRzmGNZmwsW|fc_0cd24bff802c616b0169b795a727bc81a1b2ecfeb8e098a243",
+                "input": {
+                  "command": "value"
+                },
+                "sequence": 4,
+                "timestamp": "2026-03-16T05:31:19.411Z",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 30637,
+              "output_tokens": 60
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-03-16T05:30:24.031Z"
+      }
+    ],
+    "started_at": "2026-03-16T05:30:21.583Z",
+    "workspace_path": "/Users/user/Code/loops"
+  }
+]

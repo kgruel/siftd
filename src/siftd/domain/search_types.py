@@ -103,8 +103,9 @@ class SearchChunk:
     source_ids: list[str] = field(default_factory=list)
     breakdown: ScoreBreakdown | None = None
     file_refs: list[Any] | None = None
-    exchanges: list[tuple[str, str, str]] | None = None
-    context_window: list[tuple[str, str, str, bool]] | None = None
+    # (prompt_id, prompt_text, response_text) per turn; prompt_id is None for the preamble turn.
+    exchanges: list[tuple[str | None, str, str]] | None = None
+    context_window: list[tuple[str | None, str, str, bool]] | None = None
     turn_index: int | None = None
     event_id: str | None = None
     # The exact keyword-matched event that bridged this chunk into an RRF

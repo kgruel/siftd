@@ -152,7 +152,7 @@ def _resolve_and_classify(conn, raw_id: str) -> dict | None:
             },
         }
     if event_full:
-        turn = event_turn_number(conn, row)
+        turn = event_turn_number(conn, event_full)
         return {
             "status": "ok",
             "kind": "event",

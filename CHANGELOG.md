@@ -5,6 +5,88 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`siftd ingest --reparse` applies adapter fixes to conversations already
+  stored.** It re-parses every source, unchanged or not, and declines any
+  replacement that would lose a tag you applied unless `--force` is given.
+- **`siftd ingest` says when an adapter meets records it does not recognize.**
+  A line per adapter appears only when records went unrecognized or could not
+  be placed, and `--json` carries the counts. This is the first sign of a
+  changed log format.
+- **Adapter contract version 2.** An adapter declares `read` and `decoder` and
+  siftd derives `parse()` and peek from them; the adapter template is a
+  working decoder. Version 1 drop-in adapters load unchanged.
+- **Tool calls record when their result arrived.** A `completed_at` attribute
+  (UTC) sits beside the call's own time, which stays the time it was made.
+- **`./dev probe` reports what each adapter drops.** A read-only comparison of
+  every adapter's raw files with its parsed output, for development.
+
+### Deprecated
+
+- **The `gemini_cli` adapter is deprecated and removed in 0.13.0.** Gemini CLI
+  became Antigravity; use `antigravity_cli`. `siftd adapters` and `siftd ingest`
+  say so when it has sources.
+
+### Fixed
+
+- **Claude Code sessions keep everything they hold.** A forked sub-agent's
+  transcript, which was dropped whole, is stored; tool results written before
+  their call are paired; a message streamed over several records is one
+  response; `siftd peek` shows what ingest stores.
+- **Prompts that share a timestamp keep their order.** Events now record their
+  position (schema v13), so `--at-turn` and exchange-index tags find the right
+  prompt; stored rows gain it when re-parsed.
+- **A Claude Code reply that resumes after a Skill expansion or image stays in
+  its own turn.** Its usage is still counted once.
+- **VS Code tool calls appear where they happened** in `siftd show` and
+  `siftd peek`, and peek no longer moves any adapter's calls after the text
+  that followed them.
+- **Grouped session lists show a sub-agent whose parent belongs to another
+  user.**
+- **Responses stored before a conversation's first prompt are shown.** A forked
+  sub-agent's transcript rendered empty in `show`, export and the web folio; it
+  now reads as a "Continued from" turn, and every surface counts turns the same
+  way. Conversations without one number exactly as before. ([#93](https://github.com/kgruel/siftd/issues/93))
+- **Claude Code token and cost totals count each message once.** A streamed
+  message repeats its usage on every record, and every copy was summed (about
+  2.3x the real figure); stored conversations correct on re-ingest. ([#97](https://github.com/kgruel/siftd/issues/97))
+- **Codex sessions keep what they hold.** A forked child session has its own
+  identity instead of colliding with its parent (11 shared ids), injected
+  AGENTS.md and environment text is kept out of prompt search, each turn's
+  model is the one it ran on, and embedded images no longer store raw base64.
+- **Codex token and cost totals count every API call.** Each call's usage
+  overwrote the last, so about 19% of tokens were kept; stored conversations
+  correct on re-ingest. ([#98](https://github.com/kgruel/siftd/issues/98))
+- **Gemini CLI chat files that shared a session id are stored separately.**
+  124 prompts on one machine were never stored; an existing database recovers
+  them with the steps in the adapters concept page.
+- **VS Code chat sessions keep their answers, tool calls and token usage.** The
+  adapter read field names the real format never has, so every answer was
+  dropped, every tool call was named `unknown`, and usage was never read.
+- **Pi sessions are priced.** Each message's provider is stored instead of
+  `multi` (16,375 of 22,372 responses on one machine now match a price), cache
+  reads are counted the way pricing expects, and `siftd peek` shows pi's tool
+  calls, which it showed none of.
+- **Copilot CLI sub-agent turns name the call that spawned them,** tool calls
+  keep the order the model requested them in, and a session with no messages
+  is no longer stored as an empty conversation.
+- **Aider sessions keep what they hold.** Text and tool output before a prompt
+  are stored, token lines count as usage, a history file scanned under two
+  spellings of its path is one conversation, and a session that grows is
+  re-read.
+- **OpenCode sessions stay current.** Writes still in SQLite's write-ahead log
+  are seen, a session whose content changes is re-read even when its timestamp
+  does not move, and one malformed row no longer aborts every session in the
+  database. Peek does not preview OpenCode yet.
+- **Antigravity tool results pair with the right calls.** Reminders and API
+  errors no longer take a tool declaration (545 results had junk names), a
+  turn's errors stay on that turn, and more sessions get a workspace.
+- **Antigravity sessions now record their token usage**, which the adapter
+  never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
+
 ## [0.12.4] - 2026-10-15
 
 0.12.3 was tagged but never published: its package build failed. This release

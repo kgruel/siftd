@@ -329,6 +329,37 @@ def delete_pending_tag(
     return removed
 
 
+def rekey_pending_tags(
+    conn: sqlite3.Connection,
+    superseded_keys: Iterable[str],
+    key: str,
+) -> int:
+    """Move queued rows held under superseded external_ids to ``key``. Returns the count.
+
+    An adapter that re-keys its conversations (gemini_cli: sessionId to chat
+    file) leaves queued tags under the old key, and the doctor resolver matches
+    queue keys against external_id, so they would stop resolving. The caller
+    passes the key only when the stored row under it was adopted by the
+    replacement, which makes the move unambiguous: the replacement is the
+    conversation those rows named.
+
+    Matches the same forms :func:`_covered_keys` expands a superseded key to,
+    and nothing else. ``OR IGNORE`` because the queue is unique per
+    (session, tag, target): a row that would collide stays queued under the old
+    key, where doctor reports it, rather than being deleted. Caller commits.
+    """
+    forms = list(dict.fromkeys(form for old in superseded_keys for form in _covered_keys(old)))
+    if not forms:
+        return 0
+    placeholders = ",".join("?" * len(forms))
+    cur = conn.execute(
+        f"UPDATE OR IGNORE pending_tags SET harness_session_id = ? "
+        f"WHERE harness_session_id IN ({placeholders})",
+        (key, *forms),
+    )
+    return cur.rowcount
+
+
 def get_pending_tags(
     conn: sqlite3.Connection,
     harness_session_id: str,
@@ -841,7 +872,8 @@ def _resolve_pending_target(
     exist yet (no response in the transcript, index past the end) resolves to
     a reason, not a target — nothing is applied, so nothing is consumed.
     """
-    from siftd.storage.events import get_last_event_id, get_prompt_by_index
+    from siftd.storage.events import get_last_event_id
+    from siftd.storage.turns import turn_at_exchange
 
     if row["last_marker"]:
         dispatch = LAST_MARKER_DISPATCH.get(row["last_marker"])
@@ -858,12 +890,16 @@ def _resolve_pending_target(
 
     if row["entity_type"] == "exchange":
         try:
-            prompt_id = get_prompt_by_index(conn, conversation_id, row["exchange_index"])
+            turn = turn_at_exchange(conn, conversation_id, row["exchange_index"])
         except ValueError as e:
             return f"invalid exchange index: {e}"
-        if prompt_id is None:
+        if turn is None:
             return f"exchange {row['exchange_index']} not found in the conversation"
-        return ("exchange", prompt_id)
+        if turn.prompt_id is None:
+            # The turn before the first prompt exists and is counted, but an
+            # exchange tag anchors on a prompt and this turn has none.
+            return f"exchange {row['exchange_index']} is the turn before the first prompt; it has no prompt to carry a tag"
+        return ("exchange", turn.prompt_id)
 
     return f"unsupported entity_type {row['entity_type']!r}"
 

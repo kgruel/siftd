@@ -6,24 +6,97 @@ from conftest import ClaudeSession, CodexSession, write_jsonl
 
 import siftd.adapters.sdk as sdk
 from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, pi_agent, vscode
-from siftd.adapters.claude_code import normalize_record as claude_norm
-from siftd.adapters.codex_cli import normalize_record as codex_norm
+from siftd.adapters.claude_code import _is_injected_user_record, effective_role, message_id_of
+from siftd.adapters.contract import adapt
 from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
-from siftd.adapters.validation import ADAPTER_INTERFACE_VERSION, validate_adapter
-from siftd.domain import Response
+from siftd.adapters.sdk import NormalizedRecord
+from siftd.adapters.validation import LEGACY_VERSION, validate_adapter
+
+
+def claude_norm(raw: dict) -> NormalizedRecord | None:
+    """A Claude-shaped normalizer, to exercise the SDK's record folds.
+
+    claude_code no longer has one (its peek is built from its decoder); the folds
+    still serve the adapters that have not been ported, and these tests need a
+    normalizer that emits every record kind.
+    """
+    role = effective_role(raw)
+    ts = raw.get("timestamp")
+
+    if role not in ("user", "assistant"):
+        return None
+
+    msg = raw.get("message") or {}
+    content = msg.get("content")
+    # Normalize content to list
+    if content is None:
+        content_blocks = []
+    elif isinstance(content, str):
+        content_blocks = [{"type": "text", "text": content}]
+    elif isinstance(content, list):
+        content_blocks = content
+    else:
+        content_blocks = []
+
+    if role == "user":
+        # Check if this is a tool_result message
+        has_tool_result = any(
+            isinstance(b, dict) and b.get("type") == "tool_result"
+            for b in content_blocks
+        )
+        if has_tool_result:
+            return NormalizedRecord(kind="tool_result", timestamp=ts)
+
+        # Injected content (isMeta / non-user promptSource) is not a real
+        # user prompt — surface it as metadata so peek exchange counts and
+        # prompt previews only reflect what the human actually typed.
+        if _is_injected_user_record(raw):
+            return NormalizedRecord(
+                kind="metadata",
+                timestamp=ts,
+                session_id=raw.get("sessionId"),
+                workspace_path=raw.get("cwd"),
+            )
+
+        extra: dict = {}
+        agent_id = raw.get("agentId")
+        if agent_id is not None:
+            extra["agent_id"] = agent_id
+
+        return NormalizedRecord(
+            kind="user",
+            timestamp=ts,
+            content_blocks=content_blocks,
+            session_id=raw.get("sessionId"),
+            workspace_path=raw.get("cwd"),
+            extra=extra,
+        )
+
+    # assistant. Usage is reported on every record and keyed by message_id so
+    # the SDK's exchange aggregation counts a streamed message once (#97).
+    usage = msg.get("usage") or {}
+    return NormalizedRecord(
+        kind="assistant",
+        timestamp=ts,
+        content_blocks=content_blocks,
+        model=msg.get("model"),
+        input_tokens=usage.get("input_tokens", 0) or 0,
+        output_tokens=usage.get("output_tokens", 0) or 0,
+        message_id=message_id_of(raw),
+    )
 
 
 class TestValidateAdapter:
     def test_validation(self):
         mod = ModuleType("test_adapter")
-        for attr, val in [("ADAPTER_INTERFACE_VERSION", ADAPTER_INTERFACE_VERSION), ("NAME", "test"),
+        for attr, val in [("ADAPTER_INTERFACE_VERSION", LEGACY_VERSION), ("NAME", "test"),
                           ("DEFAULT_LOCATIONS", []), ("DEDUP_STRATEGY", "file"), ("HARNESS_SOURCE", "test")]:
             setattr(mod, attr, val)
         mod.discover, mod.can_handle, mod.parse = (lambda locations=None: []), (lambda source: False), (lambda source: iter([]))
         assert validate_adapter(mod, "test") is None
         mod.ADAPTER_INTERFACE_VERSION = 999
         assert "incompatible" in validate_adapter(mod, "x")
-        mod.ADAPTER_INTERFACE_VERSION = ADAPTER_INTERFACE_VERSION
+        mod.ADAPTER_INTERFACE_VERSION = LEGACY_VERSION
         mod2 = ModuleType("bad")
         assert "missing required attribute" in validate_adapter(mod2, "x")
         mod2.ADAPTER_INTERFACE_VERSION = "not_int"
@@ -68,15 +141,12 @@ class TestSDK:
         records, errors = sdk.load_jsonl(f)
         assert len(records) == 2 and len(errors) == 1 and errors[0].line_number == 2
 
-    def test_tool_call_linker_and_flush(self):
+    def test_tool_call_linker(self):
         linker = sdk.ToolCallLinker()
         linker.add_use("t1", name="file.read")
         linker.add_use("t2", name="shell")
         linker.add_result("t1", content="data")
         assert len(linker.get_pairs()) == 2 and linker.get_pairs()[0][2] is not None and len(linker.pending_uses()) == 1
-        resp = Response(timestamp="T1")
-        sdk.flush_pending_calls({"c1": (resp, "sh", {"cmd": "ls"}), "c2": (resp, "t", "raw")})
-        assert len(resp.tool_calls) == 2 and all(tc.status == "pending" for tc in resp.tool_calls)
 
     def test_seek_last_lines(self, tmp_path):
         (tmp_path / "s.txt").write_text("a\nb\nc\n")
@@ -130,7 +200,7 @@ class TestSDK:
         def _recs(f):
             return list(sdk.iter_jsonl(f))
         assert sdk.peek_scan_from_records(_recs(ClaudeSession(tmp_path, exchanges=2).build()), claude_norm, default_session_id="test").exchange_count == 2
-        r2 = sdk.peek_scan_from_records(_recs(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build()), codex_norm, default_session_id="fb")
+        r2 = adapt(codex_cli).peek_scan(CodexSession(tmp_path, exchanges=1, cwd="/proj", model="gpt-4", name="cx.jsonl").build())
         assert r2.workspace_path == "/proj" and r2.model == "gpt-4"
         assert sdk.peek_scan_from_records([], claude_norm, default_session_id="x") is None
         # assistant-before-user → exchange_count=1 (L644), unknown records skipped (L620)
@@ -150,7 +220,7 @@ class TestSDK:
         assert path_sub.parent_session_id == "s1"
         ex = sdk.peek_exchanges_from_records(_recs(ClaudeSession(tmp_path, exchanges=3, name="t.jsonl").with_tools(["Read"]).build()), claude_norm, last_n=2, tool_aliases={"Read": "file.read"})
         assert len(ex) == 2 and ex[0].prompt_text and len(ex[0].tool_calls) >= 1
-        assert sdk.peek_exchanges_from_records(_recs(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build()), codex_norm, last_n=5, tool_aliases={"shell": "shell.execute"})[0].input_tokens > 0
+        assert adapt(codex_cli).peek_exchanges(CodexSession(tmp_path, exchanges=1, name="cu.jsonl").with_tools(["shell"]).with_usage().build(), 5)[0].input_tokens > 0
         assert sdk.peek_exchanges_from_records([{"type": "assistant", "timestamp": "T1", "message": {"role": "assistant", "model": "m", "content": [{"type": "text", "text": "init"}]}}], claude_norm, last_n=5)[0].prompt_text is None
         # last_n < 1 clamps to 1 (L711)
         assert len(sdk.peek_exchanges_from_records([

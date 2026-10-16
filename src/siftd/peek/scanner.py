@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 import time
 from collections import defaultdict
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,9 +92,8 @@ def _discover_files(
         module = plugin.module
         adapter_name = getattr(module, "NAME", plugin.name)
 
-        # Only process adapters that have peek support
-        # (either explicit peek_scan or normalize_record for auto-derivation)
-        if not hasattr(module, "peek_scan") and not hasattr(module, "normalize_record"):
+        # Only process adapters that have peek support: a peek_scan, its own or derived (contract.adapt)
+        if not hasattr(module, "peek_scan"):
             continue
 
         locations = getattr(module, "DEFAULT_LOCATIONS", [])
@@ -160,29 +158,9 @@ def _get_glob_patterns(module) -> list[str]:
 
 
 def _scan_session_file(file_info: DiscoveredFile) -> SessionInfo | None:
-    """Delegate to adapter's peek_scan to extract metadata.
-
-    Precedence: explicit peek_scan > auto-derived from normalize_record.
-    """
-    module = file_info.adapter_module
-
-    peek_scan = getattr(module, "peek_scan", None)
-
-    # Auto-derive peek_scan from normalize_record if no explicit hook
-    if peek_scan is None and hasattr(module, "normalize_record"):
-        from siftd.adapters.sdk import NormalizedRecord, iter_jsonl, peek_scan_from_records
-
-        _norm: Callable[[dict], NormalizedRecord | None] = module.normalize_record  # type: ignore[attr-defined]
-        subagent_marker = getattr(module, "SUBAGENT_PATH_MARKER", None)
-
-        def peek_scan(path: Path) -> PeekScanResult | None:
-            return peek_scan_from_records(
-                iter_jsonl(path),
-                _norm,
-                default_session_id=path.stem,
-                subagent_path_marker=subagent_marker,
-                file_path=path,
-            )
+    """Delegate to adapter's peek_scan to extract metadata."""
+    # The adapter's peek_scan: its own, or the one derived for it (contract.adapt).
+    peek_scan = getattr(file_info.adapter_module, "peek_scan", None)
 
     if peek_scan is None:
         # Adapter doesn't support peek — mark as unavailable

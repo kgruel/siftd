@@ -183,6 +183,28 @@ class TestBuiltinAdapters:
         if violations:
             pytest.fail("Built-in adapter violations:\n" + "\n".join(violations))
 
+    def test_the_required_interface_is_listed_once(self, src_dir):
+        """validation.py is the one place the required adapter names are listed.
+
+        The registry, the drop-in doctor check and this suite read it. A second
+        list (a collection literal naming both ``discover`` and ``can_handle``
+        as strings) is how the three used to drift. The allowlist is empty and
+        shrink-only: a new reader of the contract calls ``required_names``.
+        """
+        allowed: set[str] = set()
+        offenders = []
+        for py_file in source_files(src_dir):
+            if py_file.name == "validation.py" and py_file.parent.name == "adapters":
+                continue
+            rel = str(py_file.relative_to(REPO_ROOT))
+            for node in ast.walk(ast.parse(py_file.read_text())):
+                if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+                    continue
+                names = {e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+                if {"discover", "can_handle"} <= names and rel not in allowed:
+                    offenders.append(f"{rel}:{node.lineno}")
+        assert not offenders, "a second list of the required adapter interface:\n" + "\n".join(offenders)
+
 
 # =============================================================================
 # 4. Formatter Registration Validity
@@ -928,6 +950,7 @@ class TestSchemaStability:
         "tag_assignments",
         "tag_pins",
         "workspace_pins",
+        "conversation_links",  # lineage edge: one parent per conversation (schema v13)
         "search_events",
         "search_opens",
     }
@@ -966,7 +989,7 @@ class TestSchemaStability:
 
     CRITICAL_COLUMNS = {
         "conversations": {"id", "external_id", "harness_id", "workspace_id", "started_at", "branch"},
-        "events": {"id", "kind", "conversation_id", "parent_id", "external_id", "timestamp"},
+        "events": {"id", "kind", "conversation_id", "parent_id", "external_id", "timestamp", "sequence"},
         "event_response": {"event_id", "model_id", "provider_id", "input_tokens", "output_tokens"},
         "event_tool_call": {"event_id", "tool_id", "input", "result_hash", "status"},
         "event_content": {"id", "event_id", "block_index", "block_type", "content"},

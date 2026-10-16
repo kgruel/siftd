@@ -1,20 +1,1852 @@
 {
   "version": 3,
-  "sessionId": "golden-vscode-001",
-  "creationDate": 1708012345678,
+  "sessionId": "a840651e-f8e8-41dd-b8db-f0be3bed9535",
+  "creationDate": 1771376214522,
+  "initialLocation": "panel",
+  "responderUsername": "GitHub Copilot",
   "requests": [
     {
-      "requestId": "req-g01",
-      "message": "How do I read a file in Python?",
-      "timestamp": 1708012345678,
-      "modelId": "gpt-4o",
+      "requestId": "request_f130aa08-3427-40aa-bbe7-1ea44d5f8c1d",
+      "responseId": "response_c7db468c-2969-4423-8102-67bdcae64f01",
+      "timestamp": 1771376224115,
+      "modelId": "copilot/oswe-vscode-prime",
+      "message": {
+        "text": "user prompt 1.",
+        "parts": []
+      },
       "response": [
         {
-          "kind": "markdownContent",
-          "content": {"value": "Use the built-in `open()` function."}
+          "kind": "mcpServersStarting",
+          "didStartServerIds": []
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 2.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "text"
+          }
+        },
+        {
+          "value": "answer text 3.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
         }
-      ],
-      "responseId": "resp-g01"
+      ]
+    },
+    {
+      "requestId": "request_ca69321e-4c19-4260-8b29-2a23ef53d2f0",
+      "responseId": "response_b46e73f9-f1c0-4e3a-9db4-8b687f824740",
+      "timestamp": 1771376405786,
+      "modelId": "copilot/oswe-vscode-prime",
+      "message": {
+        "text": "user prompt 4.",
+        "parts": []
+      },
+      "response": [
+        {
+          "kind": "mcpServersStarting",
+          "didStartServerIds": []
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 5.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 6.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "text"
+          }
+        },
+        {
+          "value": "answer text 7.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/src/siftd/adapters/vscode.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/vscode.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/src/siftd/adapters/vscode.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/vscode.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "3708f620-2c5f-48b2-b422-9cb7bacdbe79",
+          "toolId": "copilot_readFile"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "redacted free text 8.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 9.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 1,
+                "startColumn": 4,
+                "endLineNumber": 1,
+                "endColumn": 10
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 3,
+                "startColumn": 37,
+                "endLineNumber": 3,
+                "endColumn": 43
+              }
+            }
+          ],
+          "toolCallId": "5c37a577-6ff4-4db4-90fe-306e71e8efb0",
+          "toolId": "copilot_findTextInFiles"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 10.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/tests/test_adapters.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/tests/test_adapters.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/tests/test_adapters.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/tests/test_adapters.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/tests/test_adapters.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/tests/test_adapters.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "bc7b5414-0d64-4a19-83d0-80505455294e",
+          "toolId": "copilot_readFile"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 11.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Searching for text `from datetime import UTC` (`**/*.py`)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 12.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 10,
+                "startColumn": 1,
+                "endLineNumber": 10,
+                "endColumn": 25
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/search.py",
+                "external": "file:///Users/user/project/src/siftd/search.py",
+                "path": "/Users/user/project/src/siftd/search.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 5,
+                "startColumn": 1,
+                "endLineNumber": 5,
+                "endColumn": 25
+              }
+            }
+          ],
+          "toolCallId": "0cc34de5-452d-491b-8913-7c67e6b36de7",
+          "toolId": "copilot_findTextInFiles"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 13.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 14.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 15.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "redacted free text 16.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 17.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 53,
+                "startColumn": 16,
+                "endLineNumber": 53,
+                "endColumn": 31
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/peek/reader.py",
+                "external": "file:///Users/user/project/src/siftd/peek/reader.py",
+                "path": "/Users/user/project/src/siftd/peek/reader.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 157,
+                "startColumn": 19,
+                "endLineNumber": 157,
+                "endColumn": 34
+              }
+            }
+          ],
+          "toolCallId": "28971a12-950c-4a18-8629-90acf21160f3",
+          "toolId": "copilot_findTextInFiles"
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/sdk.py#1-1": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "scheme": "file",
+                "fragment": "1-1"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/sdk.py#1-1": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "scheme": "file",
+                "fragment": "1-1"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "4c3286bf-25e5-489d-802a-ae969167b18c",
+          "toolId": "copilot_readFile"
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/src/siftd/adapters/vscode.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/vscode.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/src/siftd/adapters/vscode.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/vscode.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "3708f620-2c5f-48b2-b422-9cb7bacdbe79",
+          "toolId": "copilot_readFile",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "redacted free text 18.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 19.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 1,
+                "startColumn": 4,
+                "endLineNumber": 1,
+                "endColumn": 10
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 3,
+                "startColumn": 37,
+                "endLineNumber": 3,
+                "endColumn": 43
+              }
+            }
+          ],
+          "toolCallId": "5c37a577-6ff4-4db4-90fe-306e71e8efb0",
+          "toolId": "copilot_findTextInFiles",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 20.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/tests/test_adapters.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/tests/test_adapters.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/tests/test_adapters.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/tests/test_adapters.py)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/tests/test_adapters.py": {
+                "$mid": 1,
+                "path": "/Users/user/project/tests/test_adapters.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "bc7b5414-0d64-4a19-83d0-80505455294e",
+          "toolId": "copilot_readFile",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 21.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Searching for text `from datetime import UTC` (`**/*.py`)",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 22.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 10,
+                "startColumn": 1,
+                "endLineNumber": 10,
+                "endColumn": 25
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/search.py",
+                "external": "file:///Users/user/project/src/siftd/search.py",
+                "path": "/Users/user/project/src/siftd/search.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 5,
+                "startColumn": 1,
+                "endLineNumber": 5,
+                "endColumn": 25
+              }
+            }
+          ],
+          "toolCallId": "0cc34de5-452d-491b-8913-7c67e6b36de7",
+          "toolId": "copilot_findTextInFiles",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 23.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 24.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 25.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "redacted free text 26.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "pastTenseMessage": {
+            "value": "redacted free text 27.",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {}
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": [
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 53,
+                "startColumn": 16,
+                "endLineNumber": 53,
+                "endColumn": 31
+              }
+            },
+            {
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/peek/reader.py",
+                "external": "file:///Users/user/project/src/siftd/peek/reader.py",
+                "path": "/Users/user/project/src/siftd/peek/reader.py",
+                "scheme": "file"
+              },
+              "range": {
+                "startLineNumber": 157,
+                "startColumn": 19,
+                "endLineNumber": 157,
+                "endColumn": 34
+              }
+            }
+          ],
+          "toolCallId": "28971a12-950c-4a18-8629-90acf21160f3",
+          "toolId": "copilot_findTextInFiles",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": {
+            "value": "Reading [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/sdk.py#1-1": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "scheme": "file",
+                "fragment": "1-1"
+              }
+            }
+          },
+          "pastTenseMessage": {
+            "value": "Read [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220",
+            "supportThemeIcons": false,
+            "supportHtml": false,
+            "supportAlertSyntax": false,
+            "uris": {
+              "file:///Users/user/project/src/siftd/adapters/sdk.py#1-1": {
+                "$mid": 1,
+                "path": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "scheme": "file",
+                "fragment": "1-1"
+              }
+            }
+          },
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolCallId": "4c3286bf-25e5-489d-802a-ae969167b18c",
+          "toolId": "copilot_readFile",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 28.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 29.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 30.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "text"
+          }
+        },
+        {
+          "value": "answer text 31.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": "Configuring a Python Environment",
+          "isConfirmed": {
+            "type": 1
+          },
+          "isComplete": true,
+          "source": {
+            "type": "extension",
+            "label": "Python",
+            "extensionId": {
+              "value": "ms-python.python",
+              "_lower": "ms-python.python"
+            }
+          },
+          "resultDetails": {
+            "input": "{\n  \"resourcePath\": \"/Users/user/project/\"\n}",
+            "output": [
+              {
+                "type": "embed",
+                "isText": true,
+                "value": "Error: No environment found for the provided resource path: /Users/user/project/"
+              }
+            ],
+            "isError": true
+          },
+          "toolCallId": "8f14e79b-d8c9-44fb-8fea-77ebefe50f03",
+          "toolId": "configure_python_environment",
+          "generatedTitle": "redacted title"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 32.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "other"
+          }
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": "",
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "toolSpecificData": {
+            "kind": "terminal",
+            "terminalToolSessionId": "22d53b14-5b12-4727-8606-569286f1b9dc",
+            "terminalCommandId": "tool-5520be7f-5ca3-41f5-810b-17544c563e7e",
+            "commandLine": {
+              "original": "pytest -q tests/test_adapters.py::TestVscodeAdapter -q",
+              "toolEdited": " pytest -q tests/test_adapters.py::TestVscodeAdapter -q"
+            },
+            "cwd": {
+              "$mid": 1,
+              "fsPath": "/Users/user/project",
+              "external": "file:///Users/user/project",
+              "path": "/Users/user/project",
+              "scheme": "file"
+            },
+            "language": "sh",
+            "isBackground": false,
+            "confirmation": {
+              "commandLine": "pytest -q tests/test_adapters.py::TestVscodeAdapter -q"
+            }
+          },
+          "toolCallId": "6da6f940-6f36-4b40-a51f-7139ea4fc095",
+          "toolId": "run_in_terminal"
+        },
+        {
+          "kind": "toolInvocationSerialized",
+          "invocationMessage": "",
+          "isConfirmed": {
+            "type": 4
+          },
+          "isComplete": true,
+          "source": {
+            "type": "internal",
+            "label": "Built-In"
+          },
+          "resultDetails": {
+            "input": " pytest -q tests/test_adapters.py::TestVscodeAdapter -q",
+            "output": [
+              {
+                "type": "embed",
+                "isText": true,
+                "value": "ERROR: usage: pytest [options] [file_or_dir] [file_or_dir] [...]\npytest: error: unrecognized arguments: -n\n  inifile: /Users/user/project/pyproject.toml\n  rootdir: /Users/user/project\n\n\n\nCommand exited with code 4"
+              }
+            ],
+            "isError": true
+          },
+          "toolSpecificData": {
+            "kind": "terminal",
+            "terminalToolSessionId": "22d53b14-5b12-4727-8606-569286f1b9dc",
+            "terminalCommandId": "tool-5520be7f-5ca3-41f5-810b-17544c563e7e",
+            "commandLine": {
+              "original": "pytest -q tests/test_adapters.py::TestVscodeAdapter -q",
+              "toolEdited": " pytest -q tests/test_adapters.py::TestVscodeAdapter -q"
+            },
+            "cwd": {
+              "$mid": 1,
+              "fsPath": "/Users/user/project",
+              "external": "file:///Users/user/project",
+              "path": "/Users/user/project",
+              "scheme": "file"
+            },
+            "language": "sh",
+            "isBackground": false,
+            "confirmation": {
+              "commandLine": "pytest -q tests/test_adapters.py::TestVscodeAdapter -q"
+            },
+            "terminalCommandState": {
+              "exitCode": 4,
+              "timestamp": 1771376483930,
+              "duration": 0
+            },
+            "terminalCommandUri": {
+              "$mid": 1,
+              "path": "/9bffaa6b06b7923b67c2022ce50d5749/2",
+              "scheme": "vscode-terminal",
+              "query": "command=tool-5520be7f-5ca3-41f5-810b-17544c563e7e"
+            },
+            "terminalCommandOutput": {
+              "text": "\u001b[31mERROR: \u001b[34;1musage: \u001b[35mpytest\u001b[22m [options] [file_or_dir] [file_or_dir] [...]\r\n\u001b[0mpytest: error: unrecognized arguments: -n\r\n  inifile: /Users/user/project/pyproject.toml\r\n  rootdir: /Users/user/project",
+              "lineCount": 5
+            },
+            "terminalTheme": {
+              "background": "#181818",
+              "foreground": "#cccccc"
+            }
+          },
+          "toolCallId": "6da6f940-6f36-4b40-a51f-7139ea4fc095",
+          "toolId": "run_in_terminal"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 33.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 34.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 35.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 36.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 37.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "thinking text 38.",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "redacted-thinking-id"
+        },
+        {
+          "kind": "thinking",
+          "value": "",
+          "id": "",
+          "metadata": {
+            "vscodeReasoningDone": true,
+            "stopReason": "text"
+          }
+        },
+        {
+          "value": "answer text 39.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "$mid": 1,
+            "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+            "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+            "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+            "scheme": "file"
+          }
+        },
+        {
+          "value": "answer text 40.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "tests/test_adapters.py::TestVscodeAdapter",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 437,
+                "startColumn": 7,
+                "endLineNumber": 437,
+                "endColumn": 7
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/.worktrees/vscode-adapter/tests/test_adapters.py",
+                "external": "file:///Users/user/project/.worktrees/vscode-adapter/tests/test_adapters.py",
+                "path": "/Users/user/project/.worktrees/vscode-adapter/tests/test_adapters.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "a4043c8c-88d6-4948-8e7e-b35a1ee2d0fe"
+        },
+        {
+          "value": "answer text 41.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "discover_files",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 21,
+                "startColumn": 5,
+                "endLineNumber": 21,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/.worktrees/vscode-adapter/src/siftd/adapters/sdk.py",
+                "external": "file:///Users/user/project/.worktrees/vscode-adapter/src/siftd/adapters/sdk.py",
+                "path": "/Users/user/project/.worktrees/vscode-adapter/src/siftd/adapters/sdk.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "fdf02903-57c5-4142-9f2e-ddca03921e44"
+        },
+        {
+          "value": "answer text 42.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "build_harness",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 54,
+                "startColumn": 5,
+                "endLineNumber": 54,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/sdk.py",
+                "path": "/Users/user/project/src/siftd/adapters/sdk.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "0b092193-8f09-432d-9a73-fec01679d16c"
+        },
+        {
+          "value": "answer text 43.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "if creation_date",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 85,
+                "startColumn": 5,
+                "endLineNumber": 85,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "90ed58ed-a68f-4391-b22f-93d9844f0329"
+        },
+        {
+          "value": "answer text 44.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "_last_timestamp",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 190,
+                "startColumn": 5,
+                "endLineNumber": 190,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "25fc3215-8d15-4ed6-b0b0-b54e1af286d8"
+        },
+        {
+          "value": "answer text 45.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "response",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 153,
+                "startColumn": 5,
+                "endLineNumber": 153,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "7c36a962-0f67-455c-9d0b-51ee9d20c120"
+        },
+        {
+          "value": "answer text 46.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "request[\"response\"]",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 153,
+                "startColumn": 5,
+                "endLineNumber": 153,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "6ac7a2b9-ca37-4561-8566-808ffd956ac6"
+        },
+        {
+          "value": "answer text 47.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "redacted free text 48.",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 127,
+                "startColumn": 5,
+                "endLineNumber": 127,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "27a67a56-9709-47cf-9696-53eef4e47db7"
+        },
+        {
+          "value": "answer text 49.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "status=\"success\"",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 30,
+                "startColumn": 5,
+                "endLineNumber": 30,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/domain/models.py",
+                "external": "file:///Users/user/project/src/siftd/domain/models.py",
+                "path": "/Users/user/project/src/siftd/domain/models.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "aefdb9ec-1522-475a-b422-a4b04bef47a7"
+        },
+        {
+          "value": "answer text 50.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "result is not None",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 29,
+                "startColumn": 5,
+                "endLineNumber": 29,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/domain/models.py",
+                "external": "file:///Users/user/project/src/siftd/domain/models.py",
+                "path": "/Users/user/project/src/siftd/domain/models.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "c36170dc-87e7-45f2-bf31-15ea791915b1"
+        },
+        {
+          "value": "answer text 51.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "part.get(\"error\")",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 131,
+                "startColumn": 9,
+                "endLineNumber": 131,
+                "endColumn": 9
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "0ab001cb-444c-4390-b2ac-6fb318e8cfc3"
+        },
+        {
+          "value": "answer text 52.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "part.get(\"status\") == \"failed\"",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 131,
+                "startColumn": 9,
+                "endLineNumber": 131,
+                "endColumn": 9
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "ed4b1ce5-9b96-4a34-ab78-2d4523b6e2cb"
+        },
+        {
+          "value": "answer text 53.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "_resolve_workspace",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 165,
+                "startColumn": 5,
+                "endLineNumber": 165,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "59056406-ca10-4915-9e54-a65863d315ff"
+        },
+        {
+          "value": "answer text 54.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "startswith(\"file://\")",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 1788,
+                "startColumn": 5,
+                "endLineNumber": 1788,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/.vscode/extensions/ms-python.vscode-pylance-2025.10.4/dist/typeshed-fallback/stdlib/builtins.pyi",
+                "external": "file:///Users/user/.vscode/extensions/ms-python.vscode-pylance-2025.10.4/dist/typeshed-fallback/stdlib/builtins.pyi",
+                "path": "/Users/user/.vscode/extensions/ms-python.vscode-pylance-2025.10.4/dist/typeshed-fallback/stdlib/builtins.pyi",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "4108a0b8-87e6-4dd4-ac6f-a4200a8e27ee"
+        },
+        {
+          "value": "answer text 55.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "_parse_request(request)",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 101,
+                "startColumn": 9,
+                "endLineNumber": 101,
+                "endColumn": 9
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "b6e95a08-1eac-47d5-8b95-0ba62b842a9f"
+        },
+        {
+          "value": "answer text 56.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "response",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 153,
+                "startColumn": 5,
+                "endLineNumber": 153,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "9bdcfbcc-a71b-4c58-bfbf-b842c20ae66d"
+        },
+        {
+          "value": "answer text 57.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "workspace.json",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 1,
+                "startColumn": 1,
+                "endLineNumber": 1,
+                "endColumn": 1
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/json/__init__.py",
+                "external": "file:///Users/user/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/json/__init__.py",
+                "path": "/Users/user/.local/share/uv/python/cpython-3.13.11-macos-aarch64-none/lib/python3.13/json/__init__.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "6676e148-06af-4658-844a-3efdaa15da20"
+        },
+        {
+          "value": "answer text 58.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "response",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 153,
+                "startColumn": 5,
+                "endLineNumber": 153,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "28fd739b-7f0b-4c12-92fe-5b0a321f9355"
+        },
+        {
+          "value": "answer text 59.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        },
+        {
+          "kind": "inlineReference",
+          "inlineReference": {
+            "name": "creation_date is not None",
+            "kind": 12,
+            "containerName": "",
+            "location": {
+              "range": {
+                "startLineNumber": 85,
+                "startColumn": 5,
+                "endLineNumber": 85,
+                "endColumn": 5
+              },
+              "uri": {
+                "$mid": 1,
+                "fsPath": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "external": "file:///Users/user/project/src/siftd/adapters/vscode.py",
+                "path": "/Users/user/project/src/siftd/adapters/vscode.py",
+                "scheme": "file"
+              }
+            }
+          },
+          "resolveId": "b7bfcb83-2dfb-4b89-a80a-d16926937409"
+        },
+        {
+          "value": "answer text 60.",
+          "supportThemeIcons": false,
+          "supportHtml": false,
+          "baseUri": {
+            "$mid": 1,
+            "path": "/Users/user/project/",
+            "scheme": "file"
+          }
+        }
+      ]
     }
   ]
 }

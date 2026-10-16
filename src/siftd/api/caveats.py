@@ -448,9 +448,9 @@ def _embeddings_stale_caveats(op, result, ctx: ProducerContext) -> list[Finding]
 
     # Compare against conversations in main db
     conn = ctx.db()
-    main_ids = {row[0] for row in conn.execute(
-        "SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'"
-    ).fetchall()}
+    from siftd.storage.turns import conversation_ids_with_turns
+
+    main_ids = conversation_ids_with_turns(conn)
 
     # Presence-based (indexed_state markers), not fingerprint-diff: a fingerprint pass
     # would re-query event_content on every list render (a hot path). This catches

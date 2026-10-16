@@ -5,7 +5,8 @@ database size without losing searchable value. Binary content is replaced with
 metadata-only placeholders that preserve context.
 
 Detection patterns:
-1. Anthropic API image/document blocks with base64 data
+1. Anthropic API image/document blocks with base64 data, and OpenAI-style
+   ``input_image`` blocks whose ``image_url`` is a base64 data URI
 2. Generic base64 content in strings (500+ chars)
 3. Binary file magic bytes (SQLite, PNG, PDF, JPEG, GIF)
 """
@@ -15,6 +16,9 @@ from typing import Any
 
 # Pattern for detecting base64 content (500+ chars to avoid JWT/hash false positives)
 BASE64_PATTERN = re.compile(r"[A-Za-z0-9+/]{500,}={0,2}")
+
+# A base64 data URI: the media type, then the payload after the comma
+_DATA_URI = re.compile(r"^data:([^;,]+);base64,")
 
 # Magic bytes for common binary formats
 BINARY_SIGNATURES = [
@@ -43,6 +47,22 @@ def is_base64_image_block(block: dict) -> bool:
     if not isinstance(source, dict):
         return False
     return source.get("type") == "base64"
+
+
+def inline_image_media_type(block: dict) -> str | None:
+    """The media type of an image whose base64 data is inline in an ``image_url`` data URI.
+
+    Codex CLI writes images as ``{"type": "input_image", "image_url": "data:image/png;base64,..."}``,
+    the OpenAI shape, where :func:`is_base64_image_block` checks the Anthropic ``source`` shape.
+    Returns None for any other block, including an ``image_url`` that is a plain URL.
+    """
+    if not isinstance(block, dict) or block.get("type") != "input_image":
+        return None
+    url = block.get("image_url")
+    if not isinstance(url, str):
+        return None
+    match = _DATA_URI.match(url)
+    return match.group(1) if match else None
 
 
 def is_binary_content(content: str) -> bool:
@@ -84,11 +104,25 @@ def filter_binary_block(block: dict) -> dict:
     """Replace binary content in block with metadata placeholder.
 
     For image/document blocks with base64 data, replaces the data field with
-    metadata preserving the media type and original size. Preserves all other
-    fields from the original block (e.g., cache_control).
+    metadata preserving the media type and original size. An ``input_image`` whose
+    data is a base64 data URI is replaced the same way, its ``image_url`` dropped.
+    Preserves all other fields from the original block (e.g., cache_control).
 
     Returns the original block unchanged if not binary.
     """
+    media_type = inline_image_media_type(block)
+    if media_type is not None:
+        url = block["image_url"]
+        result = {k: v for k, v in block.items() if k != "image_url"}
+        result["source"] = {
+            "type": "filtered",
+            "original_type": "base64",
+            "media_type": media_type,
+            "original_size": len(url.split(",", 1)[1]),
+            "filtered_reason": "binary_content",
+        }
+        return result
+
     if not is_base64_image_block(block):
         return block
 

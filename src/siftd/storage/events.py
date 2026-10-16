@@ -8,6 +8,9 @@ prompt_content, response_content) remain until slice 8 cleanup.
 import json
 import sqlite3
 
+from siftd.storage.sql_helpers import event_key, event_key_params, event_order
+from siftd.storage.turns import load_turns
+
 # ---------------------------------------------------------------------------
 # Trigger management
 # ---------------------------------------------------------------------------
@@ -105,12 +108,18 @@ def insert_event(
     *,
     parent_id: str | None = None,
     external_id: str | None = None,
+    sequence: int | None = None,
 ) -> str:
-    """Insert a row into events, return event_id."""
+    """Insert a row into events, return event_id.
+
+    ``sequence`` is the event's recorded position in its conversation
+    (``store_conversation`` assigns 0..n in tree-walk order). None leaves it
+    NULL, which readers treat as "order by (timestamp, id)" — the legacy form.
+    """
     conn.execute(
-        """INSERT INTO events (id, kind, conversation_id, parent_id, external_id, timestamp)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (event_id, kind, conversation_id, parent_id, external_id, timestamp),
+        """INSERT INTO events (id, kind, conversation_id, parent_id, external_id, timestamp, sequence)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (event_id, kind, conversation_id, parent_id, external_id, timestamp, sequence),
     )
     return event_id
 
@@ -200,12 +209,12 @@ def get_prompts_for_conv(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Return all prompt events for a conversation, ordered by timestamp."""
+    """Return all prompt events for a conversation, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp, e.parent_id
+        f"""SELECT e.id, e.external_id, e.timestamp, e.parent_id
            FROM events e
            WHERE e.conversation_id = ? AND e.kind = 'prompt'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (conversation_id,),
     ).fetchall()
 
@@ -217,8 +226,11 @@ def get_last_event_id(
 ) -> str | None:
     """Return the most-recent event ID of `kind` in this conversation, or None.
 
-    Ordered by (timestamp DESC, id DESC) so ULID ordering breaks ties
-    deterministically when multiple events share a timestamp.
+    "Most recent" is the last in recorded order (``sequence``), falling back to
+    (timestamp, id) for legacy rows with no sequence. The fallback is NOT a
+    deterministic tie-break in any meaningful sense: ULIDs are random within a
+    millisecond, so events sharing a timestamp resolve arbitrarily there. That is
+    the defect ``sequence`` exists to remove.
 
     Resolves the ``last_*`` pending-tag markers. Two callers need it: the
     ingest drain (:mod:`siftd.ingestion.orchestration`) and the doctor
@@ -226,10 +238,10 @@ def get_last_event_id(
     both resolve against a settled transcript, so the answer is the same.
     """
     cur = conn.execute(
-        """
+        f"""
         SELECT id FROM events
         WHERE conversation_id = ? AND kind = ?
-        ORDER BY timestamp DESC, id DESC
+        ORDER BY {event_order(desc=True)}
         LIMIT 1
         """,
         (conversation_id, kind),
@@ -238,47 +250,42 @@ def get_last_event_id(
     return row["id"] if row else None
 
 
-def get_prompt_by_index(
+def get_event_position(
     conn: sqlite3.Connection,
-    conversation_id: str,
-    exchange_index: int | None,
-) -> str | None:
-    """Get the prompt ID at a specific exchange index (1-based).
+    event_id: str,
+) -> int | None:
+    """The 1-based position of an event among the events of its own kind in its conversation.
 
-    Returns None if index is out of range or None. Raises ValueError for a
-    non-positive index — the API is 1-based, so 0 is a caller bug, not an
-    empty result.
+    Counted in recorded order — the same order the colon-path resolver
+    (``conv:prompt:3``) indexes by — so a position and the event it names
+    always agree. None if the event does not exist. This addresses an event *by
+    kind*; it is not a turn number (see :mod:`siftd.storage.turns`).
     """
-    if exchange_index is None:
+    row = conn.execute(
+        "SELECT id, kind, conversation_id, sequence, timestamp FROM events WHERE id = ?",
+        (event_id,),
+    ).fetchone()
+    if row is None:
         return None
-    if exchange_index < 1:
-        raise ValueError(f"exchange_index must be >= 1, got {exchange_index}")
-
-    cur = conn.execute(
-        """
-        SELECT id FROM events
-        WHERE kind = 'prompt' AND conversation_id = ?
-        ORDER BY timestamp, id
-        LIMIT 1 OFFSET ?
-        """,
-        (conversation_id, exchange_index - 1),
-    )
-    row = cur.fetchone()
-    return row["id"] if row else None
+    return conn.execute(
+        f"""SELECT COUNT(*) FROM events
+            WHERE conversation_id = ? AND kind = ? AND {event_key()} <= (?, ?, ?)""",
+        (row["conversation_id"], row["kind"], *event_key_params(row)),
+    ).fetchone()[0]
 
 
 def get_responses_for_prompt(
     conn: sqlite3.Connection,
     prompt_id: str,
 ) -> list[sqlite3.Row]:
-    """Return all response events whose parent is prompt_id."""
+    """Return all response events whose parent is prompt_id, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp,
+        f"""SELECT e.id, e.external_id, e.timestamp,
                   er.model_id, er.provider_id, er.input_tokens, er.output_tokens
            FROM events e
            JOIN event_response er ON er.event_id = e.id
            WHERE e.parent_id = ? AND e.kind = 'response'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (prompt_id,),
     ).fetchall()
 
@@ -306,16 +313,40 @@ def get_tool_calls_for_response(
     *,
     include_content: bool = False,
 ) -> list[sqlite3.Row]:
-    """Return all tool_call events whose parent is response_id."""
+    """Return all tool_call events whose parent is response_id, in recorded order."""
     return conn.execute(
-        """SELECT e.id, e.external_id, e.timestamp,
+        f"""SELECT e.id, e.external_id, e.timestamp,
                   etc.tool_id, etc.input, etc.result_hash, etc.status
            FROM events e
            JOIN event_tool_call etc ON etc.event_id = e.id
            WHERE e.parent_id = ? AND e.kind = 'tool_call'
-           ORDER BY e.timestamp""",
+           ORDER BY {event_order("e")}""",
         (response_id,),
     ).fetchall()
+
+
+def _response_node(conn: sqlite3.Connection, response: sqlite3.Row) -> dict:
+    node: dict = {
+        "id": response["id"],
+        "external_id": response["external_id"],
+        "timestamp": response["timestamp"],
+        "model_id": response["model_id"],
+        "provider_id": response["provider_id"],
+        "input_tokens": response["input_tokens"],
+        "output_tokens": response["output_tokens"],
+        "tool_calls": [],
+    }
+    for tc in get_tool_calls_for_response(conn, response["id"]):
+        node["tool_calls"].append({
+            "id": tc["id"],
+            "external_id": tc["external_id"],
+            "timestamp": tc["timestamp"],
+            "tool_id": tc["tool_id"],
+            "input": tc["input"],
+            "result_hash": tc["result_hash"],
+            "status": tc["status"],
+        })
+    return node
 
 
 def get_event_tree(
@@ -326,55 +357,47 @@ def get_event_tree(
 
     Shape:
         {
+          "preamble": [<response>, ...],   # responses before the first prompt; [] if none
           "prompts": [
             {
               "id": ..., "external_id": ..., "timestamp": ...,
-              "responses": [
-                {
-                  "id": ..., ..., "model_id": ..., "input_tokens": ...,
-                  "tool_calls": [
-                    {"id": ..., "tool_id": ..., "input": ..., "result_hash": ..., "status": ...}
-                  ]
-                }
-              ]
+              "responses": [<response>, ...]
             }
           ]
         }
-    """
-    prompts = get_prompts_for_conv(conn, conversation_id)
-    result: dict = {"prompts": []}
 
-    for prompt in prompts:
-        prompt_node: dict = {
+    where ``<response>`` is ``{"id": ..., ..., "model_id": ..., "input_tokens": ...,
+    "tool_calls": [{"id": ..., "tool_id": ..., "input": ..., "result_hash": ...,
+    "status": ...}]}``. Which responses the preamble holds is the turn fold's
+    answer (:func:`siftd.storage.turns.load_turns`), so this tree and every read
+    surface agree on it.
+    """
+    preamble_ids = next(
+        (turn.response_ids for turn in load_turns(conn, conversation_id) if turn.is_preamble), (),
+    )
+    result: dict = {"preamble": [], "prompts": []}
+    if preamble_ids:
+        marks = ",".join("?" * len(preamble_ids))
+        rows = conn.execute(
+            f"""SELECT e.id, e.external_id, e.timestamp,
+                      er.model_id, er.provider_id, er.input_tokens, er.output_tokens
+               FROM events e
+               JOIN event_response er ON er.event_id = e.id
+               WHERE e.id IN ({marks})
+               ORDER BY {event_order("e")}""",
+            preamble_ids,
+        ).fetchall()
+        result["preamble"] = [_response_node(conn, row) for row in rows]
+
+    for prompt in get_prompts_for_conv(conn, conversation_id):
+        result["prompts"].append({
             "id": prompt["id"],
             "external_id": prompt["external_id"],
             "timestamp": prompt["timestamp"],
-            "responses": [],
-        }
-        responses = get_responses_for_prompt(conn, prompt["id"])
-        for response in responses:
-            response_node: dict = {
-                "id": response["id"],
-                "external_id": response["external_id"],
-                "timestamp": response["timestamp"],
-                "model_id": response["model_id"],
-                "provider_id": response["provider_id"],
-                "input_tokens": response["input_tokens"],
-                "output_tokens": response["output_tokens"],
-                "tool_calls": [],
-            }
-            tool_calls = get_tool_calls_for_response(conn, response["id"])
-            for tc in tool_calls:
-                response_node["tool_calls"].append({
-                    "id": tc["id"],
-                    "external_id": tc["external_id"],
-                    "timestamp": tc["timestamp"],
-                    "tool_id": tc["tool_id"],
-                    "input": tc["input"],
-                    "result_hash": tc["result_hash"],
-                    "status": tc["status"],
-                })
-            prompt_node["responses"].append(response_node)
-        result["prompts"].append(prompt_node)
+            "responses": [
+                _response_node(conn, response)
+                for response in get_responses_for_prompt(conn, prompt["id"])
+            ],
+        })
 
     return result

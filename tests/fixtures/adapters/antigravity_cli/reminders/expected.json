@@ -1,0 +1,153 @@
+[
+  {
+    "ended_at": "2026-08-16T03:42:16Z",
+    "external_id": "antigravity_cli::adapters",
+    "harness": {
+      "display_name": "Antigravity CLI",
+      "log_format": "jsonl",
+      "name": "antigravity_cli",
+      "source": "google"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Redacted user request."
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Redacted reasoning."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "3:0",
+                  "input": {
+                    "CommandLine": "redacted",
+                    "Cwd": "/Users/user/project/receipt-order-fold",
+                    "WaitMsBeforeAsync": 2000,
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "run_command"
+                }
+              }
+            ],
+            "sequence": 1,
+            "timestamp": "2026-08-16T03:42:06Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-08-16T03:42:12+00:00"
+                },
+                "external_id": "3:0",
+                "input": {
+                  "CommandLine": "redacted",
+                  "Cwd": "/Users/user/project/receipt-order-fold",
+                  "WaitMsBeforeAsync": 2000,
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-08-15T22:42:12-05:00\nCompleted At: 2026-08-15T22:42:12-05:00\n\nRedacted output."
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-08-16T03:42:06Z",
+                "tool_name": "run_command"
+              }
+            ]
+          },
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "7:0",
+                  "input": {
+                    "CommandLine": "redacted",
+                    "Cwd": "/Users/user/project/receipt-order-fold",
+                    "WaitMsBeforeAsync": 5000,
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "run_command"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "7:1",
+                  "input": {
+                    "CommandLine": "redacted",
+                    "Cwd": "/Users/user/project/receipt-order-fold",
+                    "WaitMsBeforeAsync": 10000,
+                    "toolAction": "Redacted",
+                    "toolSummary": "Redacted"
+                  },
+                  "name": "run_command"
+                }
+              }
+            ],
+            "sequence": 3,
+            "timestamp": "2026-08-16T03:42:12Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-08-16T03:42:16+00:00"
+                },
+                "external_id": "7:0",
+                "input": {
+                  "CommandLine": "redacted",
+                  "Cwd": "/Users/user/project/receipt-order-fold",
+                  "WaitMsBeforeAsync": 5000,
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-08-15T22:42:16-05:00\nCompleted At: 2026-08-15T22:42:16-05:00\n\nRedacted output."
+                },
+                "sequence": 4,
+                "status": "success",
+                "timestamp": "2026-08-16T03:42:12Z",
+                "tool_name": "run_command"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-08-16T03:42:16+00:00"
+                },
+                "external_id": "7:1",
+                "input": {
+                  "CommandLine": "redacted",
+                  "Cwd": "/Users/user/project/receipt-order-fold",
+                  "WaitMsBeforeAsync": 10000,
+                  "toolAction": "Redacted",
+                  "toolSummary": "Redacted"
+                },
+                "result": {
+                  "output": "Created At: 2026-08-15T22:42:16-05:00\nCompleted At: 2026-08-15T22:42:16-05:00\n\nRedacted output."
+                },
+                "sequence": 5,
+                "status": "success",
+                "timestamp": "2026-08-16T03:42:12Z",
+                "tool_name": "run_command"
+              }
+            ]
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-08-16T03:42:06Z"
+      }
+    ],
+    "started_at": "2026-08-16T03:42:06Z"
+  }
+]

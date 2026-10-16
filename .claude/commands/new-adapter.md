@@ -13,8 +13,9 @@ Follow the full workflow — do not skip steps:
    sessions → `codex_cli.py`) and `src/siftd/adapters/sdk.py`.
 2. Inspect the actual log format on disk first (the path hint above, or ask).
    Never guess field names — parse a real sample.
-3. Implement `src/siftd/adapters/<name>.py`: `can_handle()`, `parse()`,
-   `discover()`, `ADAPTER_INTERFACE_VERSION = 1`, module docstring (it feeds
+3. Implement `src/siftd/adapters/<name>.py` as a decoder (version 2):
+   `can_handle()`, `discover()`, `read()`, `decoder()`,
+   `ADAPTER_INTERFACE_VERSION = 2`, module docstring (it feeds
    the generated adapter table). Register it in BOTH places: the import/export
    in `src/siftd/adapters/__init__.py` AND the explicit builtin list in
    `src/siftd/adapters/registry.py` (`load_builtin_adapters()`) — missing the

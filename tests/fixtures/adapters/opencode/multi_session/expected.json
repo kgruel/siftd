@@ -1,0 +1,381 @@
+[
+  {
+    "attributes": {
+      "content.revision": "a9dab3804a1dd1a9efe519b4a8524d1f822af2c7996528f28bbb2c95510d5750"
+    },
+    "ended_at": "2026-07-28T03:48:44.829000+00:00",
+    "external_id": "opencode::ses_0592937d6ffevD21euuHVpngt2",
+    "harness": {
+      "display_name": "OpenCode",
+      "log_format": "sqlite",
+      "name": "opencode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Sample text text."
+            }
+          }
+        ],
+        "external_id": "opencode::msg_fa6d6c8c7001xCrUK5c9pay86L",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "1792",
+              "cost": "0",
+              "reasoning_output_tokens": "13"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d6c8d2001aa3n08mS8MSDIO",
+            "model": "big-pickle",
+            "sequence": 1,
+            "timestamp": "2026-07-28T03:48:41.810000+00:00",
+            "usage": {
+              "input_tokens": 6866,
+              "output_tokens": 5
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-07-28T03:48:41.799000+00:00"
+      }
+    ],
+    "started_at": "2026-07-28T03:48:41.642000+00:00",
+    "workspace_path": "/Users/user/work/1"
+  },
+  {
+    "attributes": {
+      "content.revision": "800652d364891dc1ce6bae68f6c3b348f8a5b330bb84e430b4802e6eeafbb3d6"
+    },
+    "ended_at": "2026-07-28T03:49:05.585000+00:00",
+    "external_id": "opencode::ses_05928e658ffedFMamf8Y4PzXr6",
+    "harness": {
+      "display_name": "OpenCode",
+      "log_format": "sqlite",
+      "name": "opencode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Sample text text."
+            }
+          }
+        ],
+        "external_id": "opencode::msg_fa6d71a490019LFBdZ7nxCiIgR",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "1792",
+              "cost": "0",
+              "reasoning_output_tokens": "34"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d71a5e001IBwM3C2ppxGqJT",
+            "model": "big-pickle",
+            "sequence": 1,
+            "timestamp": "2026-07-28T03:49:02.686000+00:00",
+            "usage": {
+              "input_tokens": 6954,
+              "output_tokens": 5
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-07-28T03:49:02.665000+00:00"
+      }
+    ],
+    "started_at": "2026-07-28T03:49:02.504000+00:00",
+    "workspace_path": "/Users/user/work/3"
+  },
+  {
+    "attributes": {
+      "content.revision": "d2aa9d797b6be98d207fef7ec744258892c85fd5b3d2989fcadc674d36de8d5b"
+    },
+    "ended_at": "2026-07-28T03:50:30.628000+00:00",
+    "external_id": "opencode::ses_05928a872ffeqP1ON4m7gxNPv0",
+    "harness": {
+      "display_name": "OpenCode",
+      "log_format": "sqlite",
+      "name": "opencode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Sample text text."
+            }
+          }
+        ],
+        "external_id": "opencode::msg_fa6d7582a001dKjozdZ7dx3FZ9",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "1792",
+              "cost": "0",
+              "reasoning_output_tokens": "23"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_0d5584a18a6f4745b18bf7f7",
+                  "name": "write"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d758350016sy5zK6V7E6OPS",
+            "model": "big-pickle",
+            "sequence": 1,
+            "timestamp": "2026-07-28T03:49:18.517000+00:00",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:49:23.562000+00:00"
+                },
+                "external_id": "call_0d5584a18a6f4745b18bf7f7",
+                "input": {
+                  "content": "sample",
+                  "filePath": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-07-28T03:49:21.979000+00:00",
+                "tool_name": "write"
+              }
+            ],
+            "usage": {
+              "input_tokens": 7294,
+              "output_tokens": 140
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "9024",
+              "cost": "0",
+              "reasoning_output_tokens": "10"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_586323dad8844526811228b6",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d76c40001zx4CN3a7xuWvnh",
+            "model": "big-pickle",
+            "sequence": 3,
+            "timestamp": "2026-07-28T03:49:23.648000+00:00",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:49:28.305000+00:00"
+                },
+                "external_id": "call_586323dad8844526811228b6",
+                "input": {
+                  "command": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "sequence": 4,
+                "status": "success",
+                "timestamp": "2026-07-28T03:49:27.981000+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 241,
+              "output_tokens": 35
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "9216",
+              "cost": "0",
+              "reasoning_output_tokens": "2"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d77e9b0010ucr5vLWDiI4iX",
+            "model": "big-pickle",
+            "sequence": 5,
+            "timestamp": "2026-07-28T03:49:28.347000+00:00",
+            "usage": {
+              "input_tokens": 142,
+              "output_tokens": 4
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-07-28T03:49:18.506000+00:00"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Sample text text."
+            }
+          }
+        ],
+        "external_id": "opencode::msg_fa6d85975001eznmGudVeKubv5",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "9344",
+              "cost": "0",
+              "reasoning_output_tokens": "22"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_68f64854362c4bf59654478a",
+                  "name": "bash"
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d85a09001GlyfNq91hXGmEn",
+            "model": "big-pickle",
+            "sequence": 7,
+            "timestamp": "2026-07-28T03:50:24.522000+00:00",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:50:28.324000+00:00"
+                },
+                "external_id": "call_68f64854362c4bf59654478a",
+                "input": {
+                  "command": "sample"
+                },
+                "result": {
+                  "output": "sample output"
+                },
+                "sequence": 8,
+                "status": "success",
+                "timestamp": "2026-07-28T03:50:28.182000+00:00",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 299,
+              "output_tokens": 24
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "9600",
+              "cost": "0",
+              "reasoning_output_tokens": "42"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "Sample reasoning text."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "Sample text text."
+                }
+              }
+            ],
+            "external_id": "opencode::msg_fa6d8692f001zFz3JYPD9dtLXC",
+            "model": "big-pickle",
+            "sequence": 9,
+            "timestamp": "2026-07-28T03:50:28.399000+00:00",
+            "usage": {
+              "input_tokens": 149,
+              "output_tokens": 37
+            }
+          }
+        ],
+        "sequence": 6,
+        "timestamp": "2026-07-28T03:50:24.374000+00:00"
+      }
+    ],
+    "started_at": "2026-07-28T03:49:18.349000+00:00",
+    "workspace_path": "/Users/user/work/4"
+  }
+]

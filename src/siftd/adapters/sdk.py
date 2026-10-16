@@ -6,6 +6,7 @@ Helpers that reduce boilerplate in adapter implementations.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
@@ -84,10 +85,27 @@ def discover_files(
                 yield Source(kind="file", location=match)
 
 
+def spells(spelling: str, path: str) -> bool:
+    """Whether a recorded path spelling can name the file at ``path``.
+
+    A spelling that resolves from the working directory names the file it
+    resolves to. One that does not names ``path`` only if it is relative and,
+    past its leading ``..``, is a trailing part of ``path`` (a scan from some
+    other directory). An absolute spelling that does not resolve names a file
+    that has moved or gone, not this one.
+    """
+    if os.path.exists(spelling):
+        return os.path.exists(path) and os.path.samefile(spelling, path)
+    if os.path.isabs(spelling):
+        return False
+    parts = [part for part in Path(os.path.normpath(spelling)).parts if part != ".."]
+    return bool(parts) and Path(path).resolve().parts[-len(parts):] == tuple(parts)
+
+
 def build_harness(
     name: str,
     source: str,
-    log_format: str,
+    log_format: str | None,
     display_name: str | None = None,
 ) -> Harness:
     """Construct a Harness with consistent defaults.
@@ -95,7 +113,7 @@ def build_harness(
     Args:
         name: Adapter name (e.g., "claude_code").
         source: Provider source (e.g., "anthropic", "google").
-        log_format: Log format (e.g., "jsonl", "json", "markdown").
+        log_format: Log format (e.g., "jsonl", "json", "markdown"), or None if the adapter declares none.
         display_name: Human-readable name. Defaults to name.title().
 
     Returns:
@@ -280,33 +298,6 @@ class ToolCallLinker:
             for tool_id, use_data in self._uses.items()
             if tool_id not in self._results
         ]
-
-
-def flush_pending_calls(
-    pending_calls: dict,
-) -> None:
-    """Finalize tool calls that never received results.
-
-    Iterates pending_calls and appends a ToolCall with status="pending"
-    to each response. Adapters call this at the end of parse() to handle
-    tool uses that were cut off (session ended mid-tool-call).
-
-    Args:
-        pending_calls: Dict of call_id -> (response, tool_name, input_data).
-            This is the standard pending tracking dict used by adapters.
-    """
-    from siftd.domain import ToolCall
-
-    for call_id, (response, tool_name, input_data) in pending_calls.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_data if isinstance(input_data, dict) else {"raw": input_data},
-            result=None,
-            status="pending",
-            external_id=call_id,
-            timestamp=None,
-        )
-        response.tool_calls.append(tool_call)
 
 
 # =============================================================================
@@ -494,6 +485,27 @@ def extract_tool_hint(
     return None
 
 
+def peek_tool_hint(input_dict: dict | None) -> str | None:
+    """The one-line input summary peek shows for a tool call, or None.
+
+    Shared by the record folds and the assembled-conversation projection so a
+    tool call reads the same in both.
+    """
+    if not input_dict:
+        return None
+    return (
+        str(
+            input_dict.get("description")
+            or input_dict.get("command")
+            or input_dict.get("file_path")
+            or input_dict.get("path")
+            or input_dict.get("pattern")
+            or ""
+        )
+        or None
+    )
+
+
 def peek_jsonl_tail(
     path: Path, lines: int, *, parse_json: bool = True
 ) -> Iterator[dict | str]:
@@ -521,12 +533,14 @@ def peek_jsonl_tail(
 
 
 # =============================================================================
-# Record normalization — the general pattern for adapter peek support
+# Record normalization — the version-1 path to peek
 # =============================================================================
 #
-# Adapters that provide a normalize_record() function get peek_scan,
-# peek_exchanges, and peek_tail for free. The normalizer maps native
-# records to NormalizedRecord, and the SDK provides the scan/exchange logic.
+# A version-1 adapter's normalize_record() maps its native records to
+# NormalizedRecord, and the folds below scan and exchange them. contract.adapt
+# derives peek_scan and peek_exchanges from it (LegacyAdapter, via
+# make_peek_hooks). These folds leave with version 1 (api/compat.py,
+# V1_INTERFACE_REMOVAL); version-2 adapters peek through peek_projection.
 
 
 @dataclass
@@ -544,7 +558,9 @@ class NormalizedRecord:
         "tool_use"    — A tool invocation (separate from assistant content,
                         e.g., Codex function_call records).
         "metadata"    — Session metadata (session_id, workspace, model).
-        "usage"       — Standalone usage/token record.
+        "usage"       — Standalone usage/token record. Counted on the latest
+                        exchange that has a response (assistant or tool_use);
+                        held until the first such exchange exists.
     """
 
     kind: str
@@ -555,6 +571,11 @@ class NormalizedRecord:
     model: str | None = None
     input_tokens: int = 0
     output_tokens: int = 0
+    # Provider message identity. Usage-bearing records sharing a message_id are
+    # one message: the exchange aggregation keeps only the last record's usage
+    # for it (streamed messages repeat growing usage on every record). None
+    # means the record's usage is its own.
+    message_id: str | None = None
     tool_name: str | None = None
     extra: dict = field(default_factory=dict)
 
@@ -725,6 +746,16 @@ def peek_exchanges_from_records(
     exchanges: list[PeekExchange] = []
     current_exchange: PeekExchange | None = None
     tool_counter: Counter[str] = Counter()
+    # message_id -> (exchange charged for it, input, output). Lets a later
+    # record of the same message replace the earlier charge.
+    message_charge: dict[str, tuple[PeekExchange, int, int]] = {}
+    # Standalone usage goes to the latest exchange that has produced a response,
+    # the rule parse() applies (the most recent stored response). A user prompt
+    # with no response yet does not take usage that belongs to an earlier turn.
+    # Usage before any response is held and added to the first one.
+    usage_target: PeekExchange | None = None
+    held_input = 0
+    held_output = 0
 
     for raw in records:
         nr = normalize(raw)
@@ -747,8 +778,20 @@ def peek_exchanges_from_records(
                 )
                 exchanges.append(current_exchange)
                 tool_counter = Counter()
+            usage_target = current_exchange
+            usage_target.input_tokens += held_input
+            usage_target.output_tokens += held_output
+            held_input = held_output = 0
 
-            # Accumulate usage
+            # Accumulate usage. A message_id charges once, at its last record's
+            # value: the earlier charge is withdrawn, then the new one applied.
+            if nr.message_id is not None:
+                prior = message_charge.get(nr.message_id)
+                if prior is not None:
+                    prior_exchange, prior_in, prior_out = prior
+                    prior_exchange.input_tokens -= prior_in
+                    prior_exchange.output_tokens -= prior_out
+                message_charge[nr.message_id] = (current_exchange, nr.input_tokens, nr.output_tokens)
             current_exchange.input_tokens += nr.input_tokens
             current_exchange.output_tokens += nr.output_tokens
 
@@ -794,22 +837,9 @@ def peek_exchanges_from_records(
                         if isinstance(block.get("input"), dict)
                         else {}
                     )
-                    hint = None
-                    if input_dict:
-                        hint = (
-                            str(
-                                input_dict.get("description")
-                                or input_dict.get("command")
-                                or input_dict.get("file_path")
-                                or input_dict.get("path")
-                                or input_dict.get("pattern")
-                                or ""
-                            )
-                            or None
-                        )
                     tool_use_id = block.get("id") or block.get("tool_use_id") or block.get("call_id")
                     pending_tool_blocks.append(
-                        PeekToolCall(tool_name=tool_name, input=hint, external_id=tool_use_id),
+                        PeekToolCall(tool_name=tool_name, input=peek_tool_hint(input_dict), external_id=tool_use_id),
                     )
                     if tool_use_id:
                         current_exchange.tool_use_ids.append(str(tool_use_id))
@@ -830,12 +860,20 @@ def peek_exchanges_from_records(
                     tool_name = canonicalize_tool_name(tool_name, tool_aliases)
                 tool_counter[tool_name] += 1
                 current_exchange.tool_calls = list(tool_counter.most_common())
+                # A tool call is a response: it takes later usage, as in parse().
+                usage_target = current_exchange
+                usage_target.input_tokens += held_input
+                usage_target.output_tokens += held_output
+                held_input = held_output = 0
 
         elif nr.kind == "usage":
             # Standalone usage record (e.g., Codex event_msg token_count)
-            if current_exchange is not None:
-                current_exchange.input_tokens += nr.input_tokens
-                current_exchange.output_tokens += nr.output_tokens
+            if usage_target is not None:
+                usage_target.input_tokens += nr.input_tokens
+                usage_target.output_tokens += nr.output_tokens
+            else:
+                held_input += nr.input_tokens
+                held_output += nr.output_tokens
 
     return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
 

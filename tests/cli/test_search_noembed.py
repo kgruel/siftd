@@ -180,22 +180,46 @@ def test_api_metadata_aggregate_and_tiers():
     assert len(t1) == 1 and len(t2) == 1
 
 
-def test_enrich_exchanges(monkeypatch):
-    from siftd.api.search import enrich_exchanges
-    from siftd.domain.search_types import SearchChunk
+def test_enrich_exchanges(tmp_path):
+    """A chunk shows the exchange of every turn its source ids touch; a chunk with none is left alone.
 
-    monkeypatch.setattr("siftd.api.search.fetch_prompt_response_texts", lambda conn, ids: [(i, "p", "r") for i in ids])
+    Was a wiring mock of ``fetch_prompt_response_texts``; enrich_exchanges now maps
+    source ids (any event kind) to turns, so it is read against a stored conversation.
+    """
+    from siftd.api.search import enrich_exchanges
+    from siftd.domain import ContentBlock, Conversation, Harness, Prompt, Response
+    from siftd.domain.search_types import SearchChunk
+    from siftd.storage.sqlite import create_database, store_conversation
+
+    def text(s):
+        return [ContentBlock(block_type="text", content={"text": s})]
+
+    conn = create_database(tmp_path / "t.db")
+    cid = store_conversation(conn, Conversation(
+        external_id="c1", harness=Harness(name="h", source="s", log_format="jsonl"),
+        started_at="2024-01-01T00:00:00Z",
+        prompts=[
+            Prompt(timestamp="2024-01-01T00:00:01Z", external_id="p1", content=text("first q"),
+                   responses=[Response(timestamp="2024-01-01T00:00:02Z", external_id="r1", content=text("first a"))]),
+            Prompt(timestamp="2024-01-01T00:00:03Z", external_id="p2", content=text("second q"),
+                   responses=[Response(timestamp="2024-01-01T00:00:04Z", external_id="r2", content=text("second a"))]),
+        ],
+    ), commit=True)
+    ids = {r["external_id"]: r["id"] for r in conn.execute("SELECT id, external_id FROM events WHERE conversation_id = ?", (cid,))}
 
     chunks = [
-        SearchChunk(conversation_id="c1", score=0.0, text="", chunk_type="exchange", source_ids=["p2"]),
-        SearchChunk(conversation_id="c2", score=0.0, text="", chunk_type="exchange", source_ids=[]),
+        SearchChunk(conversation_id=cid, score=0.0, text="", chunk_type="exchange", source_ids=[ids["p2"]]),
+        SearchChunk(conversation_id=cid, score=0.0, text="", chunk_type="response", source_ids=[ids["r1"]]),
+        SearchChunk(conversation_id=cid, score=0.0, text="", chunk_type="exchange", source_ids=[]),
     ]
     sentinel = [("untouched", "", "")]
-    chunks[1].exchanges = sentinel  # source_ids empty → must be left as-is, not the None default
-    enrich_exchanges(None, chunks)
-    assert chunks[0].exchanges == [("p2", "p", "r")]
-    assert chunks[1].exchanges is sentinel
-
+    chunks[2].exchanges = sentinel  # source_ids empty -> must be left as-is, not the None default
+    enrich_exchanges(conn, chunks)
+    assert chunks[0].exchanges == [(ids["p2"], "second q", "second a")]
+    # A response-anchored chunk shows its turn too (the old prompt-id-only lookup returned nothing).
+    assert chunks[1].exchanges == [(ids["p1"], "first q", "first a")]
+    assert chunks[2].exchanges is sentinel
+    conn.close()
 
 
 def test_search_fts_only_branches(monkeypatch, tmp_path, capsys):

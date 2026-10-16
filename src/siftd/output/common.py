@@ -121,6 +121,20 @@ def role_label(role: str, *, abbrev: bool = False) -> str:
     return _ROLE_ABBREV.get(token, token) if abbrev else token
 
 
+def preamble_heading(turn: object) -> str | None:
+    """The header of a turn that has no prompt, or None for an ordinary turn.
+
+    Every transcript surface (terminal, markdown, html folio, ...) heads the
+    preamble turn with this one string, so the stored preamble reads the same
+    wherever it is shown. It names the conversation it continues when the turn
+    carries a lineage link, else says only where it sits.
+    """
+    if not getattr(turn, "preamble", False):
+        return None
+    parent = getattr(turn, "continued_from", None)
+    return f"Continued from {parent}" if parent else "Before the first prompt"
+
+
 def fmt_tokens(n: int) -> str:
     """Format token count: 1234 -> '1.2k', 1_500_000 -> '1.5M', 46_590_000_000 -> '46.6B'.
 

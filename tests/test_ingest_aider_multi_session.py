@@ -23,11 +23,26 @@ Three properties are pinned, one per defect the fix had to close:
 
 from __future__ import annotations
 
-import pytest
+import hashlib
+from pathlib import Path
 
+import pytest
+from conftest import tag_names
+
+from siftd.adapters.contract import adapt
 from siftd.adapters import aider
 from siftd.ingestion import ingest_all
-from siftd.storage.sqlite import create_database
+from siftd.domain.source import Source
+from siftd.storage.sessions import get_pending_tags, queue_tag
+from siftd.storage.sqlite import (
+    compute_file_hash,
+    create_database,
+    harness_id_for_conversation,
+    record_ingested_file,
+    record_session_file,
+    store_conversation,
+)
+from siftd.storage.tags import apply_tag, get_or_create_tag
 
 _SESSION_ONE = """# aider chat started at 2025-07-15 14:32:01
 
@@ -74,7 +89,7 @@ def _aider_adapter_at(project_dir, *, strategy=None):
         HARNESS_DISPLAY_NAME = aider.HARNESS_DISPLAY_NAME
         TOOL_ALIASES = aider.TOOL_ALIASES
         can_handle = staticmethod(aider.can_handle)
-        parse = staticmethod(aider.parse)
+        parse = staticmethod(adapt(aider).parse)
 
         @staticmethod
         def discover(locations=None):
@@ -304,4 +319,339 @@ def test_a_poisoned_row_still_pointing_at_a_conversation_heals(tmp_path, project
     assert row is not None, "the marker was cascade-deleted and never restored"
     assert row["conversation_id"] is None and row["error"] is None
     assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+    conn.close()
+
+
+def _digest(path: str) -> str:
+    return hashlib.sha256(path.encode()).hexdigest()[:12]
+
+
+def test_a_single_session_file_that_grows_is_re_stored_on_reingest(tmp_path, project):
+    """The live session of a one-session file has no successor, so it must still be re-checked as it grows."""
+    conn = create_database(tmp_path / "siftd.db")
+    adapter = _aider_adapter_at(project)
+    ingest_all(conn, [adapter])
+    (live,) = _conversations(conn).values()
+    assert live[1] is None and _exchange_count(conn, live[0]) == 1
+
+    _append(project, "\n#### and add logging\n\nAdded.\n")
+    ingest_all(conn, [adapter])
+
+    (grown,) = _conversations(conn).values()
+    assert _exchange_count(conn, grown[0]) == 2, "the append to the only session was lost"
+    conn.close()
+
+
+def test_a_row_the_previous_release_stored_under_a_relative_id_is_adopted(tmp_path, project, monkeypatch):
+    """The previous release keyed a session on its path as spelled. Scanning the same file absolutely must adopt
+    that row, tags and all, rather than store a second copy beside it.
+    """
+    monkeypatch.chdir(tmp_path)
+    conn = create_database(tmp_path / "siftd.db")
+    legacy = f"aider::{_digest('proj/.aider.chat.history.md')}::2025-07-15 14:32:01"
+    # What the previous release wrote for this session: the same conversation under the spelled-relative id.
+    (conversation,) = adapt(aider).parse(Source(kind="file", location=Path("proj/.aider.chat.history.md")))
+    conversation.external_id = legacy
+    conversation.superseded_external_ids = ()
+    legacy_id = store_conversation(conn, conversation, filter_binary=False)
+    name = "decision:aider-identity"
+    apply_tag(conn, "conversation", legacy_id, get_or_create_tag(conn, name), commit=True)
+
+    stats = ingest_all(conn, [_aider_adapter_at(project)])
+
+    assert stats.files_errored == 0
+    rows = conn.execute("SELECT id, external_id FROM conversations").fetchall()
+    assert len(rows) == 1, "the absolute scan stored a second copy of the same session"
+    assert rows[0]["external_id"] == f"aider::{_digest(str(project.resolve() / '.aider.chat.history.md'))}::2025-07-15 14:32:01"
+    assert name in tag_names(conn, "conversation", rows[0]["id"])
+    conn.close()
+
+
+def _store_legacy_row(conn, legacy_external_id, conversation, tag):
+    """The row the previous release wrote: the same session under the id it keyed on."""
+    conversation.external_id = legacy_external_id
+    conversation.superseded_external_ids = ()
+    legacy_id = store_conversation(conn, conversation, filter_binary=False)
+    apply_tag(conn, "conversation", legacy_id, get_or_create_tag(conn, tag), commit=True)
+    return legacy_id
+
+
+def test_a_same_second_session_of_another_project_is_never_adopted(tmp_path, monkeypatch):
+    """Adoption must not take a row that belongs to a different file.
+
+    Project A was scanned as `--path .` by the previous release, so its row is
+    keyed on the basename-only digest. Project B has a session opened in the same
+    second, and it is scanned from its own directory, where that same basename
+    spelling is one of its candidates. Adoption must verify the stored messages
+    against B's own content, not trust a shared start second: the session header
+    is the only timestamp the sessions have in common.
+    """
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / ".aider.chat.history.md").write_text(_SESSION_ONE)
+    (b / ".aider.chat.history.md").write_text(_SESSION_ONE.replace("write a hello world script", "refactor the parser"))
+    conn = create_database(tmp_path / "siftd.db")
+
+    monkeypatch.chdir(a)
+    (a_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    a_id = _store_legacy_row(
+        conn,
+        f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01",
+        a_conversation,
+        "decision:project-a",
+    )
+
+    monkeypatch.chdir(b)
+    stats = ingest_all(conn, [_aider_adapter_at(b)])
+
+    assert stats.files_errored == 0
+    survivor = conn.execute("SELECT id FROM conversations WHERE id = ?", (a_id,)).fetchone()
+    assert survivor is not None, "project B's ingest deleted project A's conversation"
+    assert "decision:project-a" in tag_names(conn, "conversation", a_id)
+    assert conn.execute("SELECT count(*) FROM conversations").fetchone()[0] == 2
+    conn.close()
+
+
+def test_a_legacy_row_is_adopted_after_the_working_directory_changes(tmp_path, monkeypatch):
+    """The previous release keyed a file on the spelling its scan root gave, relative to the cwd then.
+
+    Scanning the same file from a different directory now must still adopt that
+    row, tags and all. The legacy spelling of a file is its path relative to some
+    directory that contains it, so every such spelling is a candidate, and the
+    stored messages decide which one (if any) was really this file.
+    """
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".aider.chat.history.md").write_text(_SESSION_ONE)
+    conn = create_database(tmp_path / "siftd.db")
+
+    monkeypatch.chdir(proj)
+    (legacy_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    legacy_id = _store_legacy_row(
+        conn,
+        f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01",
+        legacy_conversation,
+        "decision:moved-cwd",
+    )
+
+    monkeypatch.chdir(tmp_path)
+    stats = ingest_all(conn, [_aider_adapter_at(proj)])
+
+    assert stats.files_errored == 0
+    rows = conn.execute("SELECT id, external_id FROM conversations").fetchall()
+    assert len(rows) == 1, "the absolute scan stored a second copy"
+    assert rows[0]["external_id"] == f"aider::{_digest(str(proj.resolve() / '.aider.chat.history.md'))}::2025-07-15 14:32:01"
+    assert "decision:moved-cwd" in tag_names(conn, "conversation", rows[0]["id"])
+    conn.close()
+
+
+def test_a_queued_tag_under_another_files_legacy_key_stays_with_that_file(tmp_path, monkeypatch):
+    """Review round 2, finding 2: only the verified legacy key's queue moves.
+
+    Project A's legacy row is keyed on the basename digest, and B's on the
+    `b/`-relative digest. Both are candidates for B's session. A's row is refused
+    (its prompt is not B's) and B's is adopted. A tag queued under A's key belongs
+    to A, so it must stay under A's key rather than move to B's new id.
+    """
+    a = tmp_path / "a"
+    b = tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    (a / ".aider.chat.history.md").write_text(_SESSION_ONE)
+    (b / ".aider.chat.history.md").write_text(_SESSION_ONE.replace("write a hello world script", "refactor the parser"))
+    conn = create_database(tmp_path / "siftd.db")
+
+    monkeypatch.chdir(a)
+    (a_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    a_key = f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01"
+    a_id = _store_legacy_row(conn, a_key, a_conversation, "decision:project-a")
+    queue_tag(conn, a_key, "decision:project-a", commit=True)
+
+    monkeypatch.chdir(tmp_path)
+    (b_conversation,) = adapt(aider).parse(Source(kind="file", location=Path("b/.aider.chat.history.md")))
+    _store_legacy_row(conn, f"aider::{_digest('b/.aider.chat.history.md')}::2025-07-15 14:32:01", b_conversation, "decision:project-b")
+
+    stats = ingest_all(conn, [_aider_adapter_at(b)])
+
+    assert stats.files_errored == 0
+    assert conn.execute("SELECT id FROM conversations WHERE id = ?", (a_id,)).fetchone() is not None
+    b_key = f"aider::{_digest(str(b.resolve() / '.aider.chat.history.md'))}::2025-07-15 14:32:01"
+    assert [t.tag_name for t in get_pending_tags(conn, b_key)] == [], "A's queued tag moved to project B"
+    assert [t.tag_name for t in get_pending_tags(conn, a_key)] == ["decision:project-a"]
+    conn.close()
+
+
+def test_a_parent_relative_legacy_row_is_adopted_from_any_directory(tmp_path, monkeypatch):
+    """Review round 2, finding 3: `--path ../proj` is a spelling no ancestor enumeration yields.
+
+    The previous release scanned `../proj` from `work/`, a directory that is a
+    sibling of the project, not an ancestor. Its id is the digest of that
+    spelling, and the file was recorded in the bookkeeping under that spelling.
+    Scanning absolutely from elsewhere must adopt the row, tag and all.
+    """
+    proj = tmp_path / "proj"
+    work = tmp_path / "work"
+    proj.mkdir()
+    work.mkdir()
+    (proj / ".aider.chat.history.md").write_text(_SESSION_ONE)
+    conn = create_database(tmp_path / "siftd.db")
+
+    spelled = "../proj/.aider.chat.history.md"
+    monkeypatch.chdir(work)
+    (legacy_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(spelled)))
+    legacy_id = _store_legacy_row(
+        conn,
+        f"aider::{_digest(spelled)}::2025-07-15 14:32:01",
+        legacy_conversation,
+        "decision:parent-relative",
+    )
+    record_session_file(
+        conn, spelled, compute_file_hash(proj / ".aider.chat.history.md"),
+        harness_id_for_conversation(conn, legacy_conversation),
+        commit=True,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    stats = ingest_all(conn, [_aider_adapter_at(proj)])
+
+    assert stats.files_errored == 0
+    rows = conn.execute("SELECT id, external_id FROM conversations").fetchall()
+    assert len(rows) == 1, "the absolute scan stored a second copy beside the parent-relative row"
+    assert rows[0]["id"] != legacy_id
+    assert "decision:parent-relative" in tag_names(conn, "conversation", rows[0]["id"])
+    conn.close()
+
+
+@pytest.mark.parametrize("resolves", [True, False], ids=["spelling-resolves", "scanned-from-elsewhere"])
+def test_a_legacy_row_its_old_bookkeeping_still_points_at_is_adopted_not_frozen(tmp_path, project, monkeypatch, resolves):
+    """Final review F1: the pre-#36 file strategy's row, under the old spelling, still points at the legacy session.
+
+    The session branch refused that row because another path claimed it, and moved on:
+    the session stayed under a key no parse produces again, and its growth never landed.
+    A session source's bookkeeping never points at a conversation, so a pointer from a
+    spelling of this same file is a leftover; the session branch releases it and adopts
+    the row, tags and all, whether or not the spelling resolves from where ingest runs.
+    """
+    monkeypatch.chdir(tmp_path)
+    conn = create_database(tmp_path / "siftd.db")
+    spelled = "proj/.aider.chat.history.md"
+    (conversation,) = adapt(aider).parse(Source(kind="file", location=Path(spelled)))
+    legacy_id = _store_legacy_row(
+        conn, f"aider::{_digest(spelled)}::2025-07-15 14:32:01", conversation, "decision:legacy-claim",
+    )
+    record_ingested_file(
+        conn, spelled, compute_file_hash(_history(project)), legacy_id, file_mtime=1.0, file_size=1, commit=True,
+    )
+    _append(project, "\n#### and add logging\n\nAdded.\n" + _SESSION_TWO)
+    adapter = _aider_adapter_at(project)
+    if not resolves:
+        (tmp_path / "elsewhere").mkdir()
+        monkeypatch.chdir(tmp_path / "elsewhere")
+
+    stats = ingest_all(conn, [adapter])
+
+    assert stats.files_errored == 0
+    assert stats.conversations_replaced == 1
+    current = f"aider::{_digest(str(project.resolve() / '.aider.chat.history.md'))}"
+    rows = {r["external_id"]: r["id"] for r in conn.execute("SELECT id, external_id FROM conversations")}
+    assert set(rows) == {f"{current}::2025-07-15 14:32:01", f"{current}::2025-07-15 15:10:00"}
+    first = rows[f"{current}::2025-07-15 14:32:01"]
+    assert _exchange_count(conn, first) == 2, "the growth of the adopted session was lost"
+    assert "decision:legacy-claim" in tag_names(conn, "conversation", first)
+    markers = dict(conn.execute("SELECT path, conversation_id FROM ingested_files").fetchall())
+    assert markers == {spelled: None, str(_history(project)): None}
+
+    again = ingest_all(conn, [adapter])
+    assert (again.conversations, again.files_skipped) == (0, 1)
+    conn.close()
+
+
+_COPY_PROMPT = "\n#### and add logging\n\nAdded.\n"
+
+
+def _copy_of(src: Path, dst: Path) -> Path:
+    """A copy of a project's history that has since grown a prompt of its own."""
+    dst.mkdir(parents=True)
+    _history(dst).write_text(_history(src).read_text() + _COPY_PROMPT)
+    return dst
+
+
+def _assert_original_kept(conn, original_id, tag, copy):
+    assert conn.execute("SELECT 1 FROM conversations WHERE id = ?", (original_id,)).fetchone(), (
+        "the copy's ingest deleted the original's conversation"
+    )
+    assert tag in tag_names(conn, "conversation", original_id)
+    current = f"aider::{_digest(str(_history(copy).resolve()))}::2025-07-15 14:32:01"
+    (copy_id,) = conn.execute("SELECT id FROM conversations WHERE external_id = ?", (current,)).fetchone()
+    assert _exchange_count(conn, copy_id) == 2
+    assert tag not in tag_names(conn, "conversation", copy_id)
+
+
+@pytest.mark.parametrize("pre_36", [True, False], ids=["file-strategy-pointer", "session-marker"])
+def test_a_copied_project_does_not_take_the_originals_conversation(tmp_path, pre_36):
+    """External review r1, finding 1: another project's recorded path is that project's own key.
+
+    Project A was ingested (by the file strategy, whose row still points at its
+    conversation, or by the session strategy, whose marker points at nothing), and its
+    path is in the bookkeeping. B is a copy of A's history with a prompt added, so it
+    holds A's prompts. B must store its session under its own key and leave A's row,
+    pointer and tag where they are.
+    """
+    a = tmp_path / "a"
+    a.mkdir()
+    _history(a).write_text(_SESSION_ONE)
+    conn = create_database(tmp_path / "siftd.db")
+    ingest_all(conn, [_aider_adapter_at(a, strategy="file" if pre_36 else None)])
+    ((original_id,),) = conn.execute("SELECT id FROM conversations").fetchall()
+    apply_tag(conn, "conversation", original_id, get_or_create_tag(conn, "decision:project-a"), commit=True)
+    b = _copy_of(a, tmp_path / "b")
+
+    stats = ingest_all(conn, [_aider_adapter_at(b)])
+
+    assert stats.files_errored == 0
+    _assert_original_kept(conn, original_id, "decision:project-a", b)
+    markers = dict(conn.execute("SELECT path, conversation_id FROM ingested_files").fetchall())
+    assert markers[str(_history(a))] == (original_id if pre_36 else None)
+    conn.close()
+
+
+@pytest.mark.parametrize("pre_36", [True, False], ids=["file-strategy-pointer", "session-marker"])
+def test_a_claim_by_another_file_under_a_shared_relative_spelling_is_not_released(tmp_path, monkeypatch, pre_36):
+    """A spelling that names another file is neither a candidate nor a releasable pointer.
+
+    Two projects are both named ``proj``. A was scanned as ``proj/...`` from its parent,
+    so its row is keyed on that relative spelling, recorded by the file strategy (a
+    pointer at the row) or the session strategy (a marker at nothing). The same spelling
+    is one of B's own ancestor candidates, and B (a copy of A, grown) holds A's prompts.
+    From A's parent the spelling resolves to A, not B, so B is stored beside the row,
+    which keeps its tag (external review r2, finding 1, is the marker form).
+    """
+    a = tmp_path / "x" / "proj"
+    a.mkdir(parents=True)
+    _history(a).write_text(_SESSION_ONE)
+    spelled = "proj/.aider.chat.history.md"
+    monkeypatch.chdir(tmp_path / "x")
+    conn = create_database(tmp_path / "siftd.db")
+    (conversation,) = adapt(aider).parse(Source(kind="file", location=Path(spelled)))
+    original_id = _store_legacy_row(
+        conn, f"aider::{_digest(spelled)}::2025-07-15 14:32:01", conversation, "decision:project-a",
+    )
+    if pre_36:
+        record_ingested_file(
+            conn, spelled, compute_file_hash(_history(a)), original_id, file_mtime=1.0, file_size=1, commit=True,
+        )
+    else:
+        record_session_file(
+            conn, spelled, compute_file_hash(_history(a)), harness_id_for_conversation(conn, conversation), commit=True,
+        )
+    b = _copy_of(a, tmp_path / "y" / "proj")
+
+    stats = ingest_all(conn, [_aider_adapter_at(b)])
+
+    assert stats.files_errored == 0
+    _assert_original_kept(conn, original_id, "decision:project-a", b)
+    markers = dict(conn.execute("SELECT path, conversation_id FROM ingested_files").fetchall())
+    assert markers[spelled] == (original_id if pre_36 else None)
     conn.close()

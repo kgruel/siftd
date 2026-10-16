@@ -1,5 +1,6 @@
 """Tag CRUD operations for siftd storage."""
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -714,6 +715,34 @@ def tag_shell_command(
     apply_tag(conn, "tool_call", tool_call_id, tag_id)
 
     return category
+
+
+def is_shell_tag_rederived(tag_name: str, tool_name: str | None, input_json: str | None) -> bool:
+    """Whether a re-parse recomputes this tool-call tag, so it is not user data.
+
+    The schema records no origin for a tag assignment, and the tag name alone
+    cannot prove one: ``shell:<category>`` is also a name a person may apply by
+    hand. So this asks the question the re-parse answers: would
+    :func:`tag_shell_command` apply this same name to this same call? It
+    re-runs the categorizer on the stored input. True means the replacement
+    reproduces the tag and loses nothing; False means the tag is user data
+    (or derived from something that has since changed).
+
+    Mirrors :func:`tag_shell_command` exactly, including its canonical-name
+    gate (``shell.execute``) and its command lookup (``command`` then ``cmd``).
+    """
+    from siftd.domain.shell_categories import SHELL_TAG_PREFIX, categorize_shell_command
+
+    if tool_name != "shell.execute" or not tag_name.startswith(SHELL_TAG_PREFIX):
+        return False
+    try:
+        data = json.loads(input_json) if input_json else None
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(data, dict):
+        return False
+    cmd = data.get("command") or data.get("cmd") or ""
+    return categorize_shell_command(cmd) == tag_name[len(SHELL_TAG_PREFIX):]
 
 
 DERIVATIVE_TAG = "siftd:derivative"

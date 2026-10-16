@@ -11,6 +11,7 @@ import pytest
 
 from siftd.adapters import pi_agent
 from siftd.adapters._jsonl import load_jsonl
+from siftd.adapters.contract import adapt
 from siftd.api import _pi_identity_preflight as api
 from siftd.domain import Source
 from siftd.storage import _pi_identity_preflight as storage
@@ -49,7 +50,7 @@ def fixture(tmp_path):
     write_source(source, records())
     conn = open_database(db)
     conn.execute("INSERT INTO harnesses(id,name) VALUES('pi','pi_agent'),('other','non_pi')")
-    conv = list(pi_agent.parse(Source("file", source)))[0]
+    conv = list(adapt(pi_agent).parse(Source("file", source)))[0]
     cid = store_conversation(conn, conv, filter_binary=False)
     link(conn, source, cid)
     conn.commit()
@@ -284,7 +285,7 @@ def test_readonly_sql_and_forbidden_collaborators(fixture, monkeypatch):
         if name.startswith(("ensure_", "insert_", "store_", "get_or_create_")):
             monkeypatch.setattr(sqlite, name, forbidden)
     monkeypatch.setattr(sessions, "ensure_session_tables", forbidden)
-    monkeypatch.setattr(pi_agent, "load_jsonl", forbidden)
+    monkeypatch.setattr(pi_agent, "read_jsonl", forbidden)
     monkeypatch.setattr(pi_agent, "discover", forbidden)
     for module in (config, plugin_discovery):
         for name in dir(module):

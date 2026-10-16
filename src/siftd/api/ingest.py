@@ -200,8 +200,15 @@ def run_ingest(
     filter_binary: bool | None = None,
     on_event: Callable[[IngestEvent], None] | None = None,
     on_notice: Callable[[str], None] | None = None,
+    reparse: bool = False,
+    force: bool = False,
 ) -> IngestRunResult:
     """Run ingestion from discovered adapters.
+
+    ``reparse`` re-parses every already-ingested source, even when its stat and
+    hash are unchanged, so an adapter fix reaches stored rows; ``force`` (only
+    with ``reparse``) also replaces conversations whose user-applied tags would
+    not carry. See :func:`~siftd.ingestion.ingest_all`.
 
     API owns DB lifecycle for this write operation. ``on_notice`` is invoked (once, before
     any embedding egress) with the remote first-egress disclosure so the caller can surface
@@ -226,6 +233,8 @@ def run_ingest(
     already had while keeping database ingestion serialized. Strictly better for ingest,
     no worse than 0.12.0 for embedding.
     """
+    if force and not reparse:
+        raise UserInputError("--force applies only with --reparse")
     path = Path(db_path)
     started = perf_counter()
 
@@ -247,6 +256,8 @@ def run_ingest(
             scan_paths=scan_paths,
             filter_binary=filter_binary,
             on_event=on_event,
+            reparse=reparse,
+            force=force,
         )
 
     # Steady-state auto-index, outside the lock. Belt-and-suspenders: the hook already
@@ -268,6 +279,8 @@ def _run_ingest_locked(
     scan_paths: list[str] | None,
     filter_binary: bool | None,
     on_event: Callable[[IngestEvent], None] | None,
+    reparse: bool = False,
+    force: bool = False,
 ) -> IngestRunResult:
     """The database phase of :func:`run_ingest`, with the ingest lock held.
 
@@ -292,6 +305,8 @@ def _run_ingest_locked(
             adapters,
             on_event=on_event,
             filter_binary=filter_binary,
+            reparse=reparse,
+            force=force,
         )
         refresh_planner_stats_after_write(conn)
     finally:

@@ -225,7 +225,10 @@ def load_golden_input(adapter: str, case: str, tmp_path=None):
     ]
     if not candidates:
         raise FileNotFoundError(f"No input fixture for {adapter}/{case}")
-    return Source(kind="file", location=candidates[0])
+    # The identity path is stated as the CWD-relative spelling, so an adapter
+    # whose ids come from the file's absolute path (aider) still produces the
+    # same expected.json on every machine. Adapters that do not read it ignore it.
+    return Source(kind="file", location=candidates[0], metadata={"identity_path": str(candidates[0])})
 
 
 def load_golden_expected(adapter: str, case: str) -> list[dict]:
@@ -235,7 +238,7 @@ def load_golden_expected(adapter: str, case: str) -> list[dict]:
 
 
 def assert_golden(adapter_module, adapter: str, case: str, tmp_path=None) -> None:
-    """Run adapter.parse() on the golden input and compare to expected.json.
+    """Run the adapter's parse() (derived, for a decoding adapter) on the golden input and compare to expected.json.
 
     Serializes via ``collapse`` (not ``dataclasses.asdict``): fields equal to
     their dataclass default are omitted, so expected.json encodes only what the
@@ -245,8 +248,10 @@ def assert_golden(adapter_module, adapter: str, case: str, tmp_path=None) -> Non
     """
     from _golden import collapse
 
+    from siftd.adapters.contract import adapt
+
     source = load_golden_input(adapter, case, tmp_path)
-    actual = [collapse(c) for c in adapter_module.parse(source)]
+    actual = [collapse(c) for c in adapt(adapter_module).parse(source)]
     expected = load_golden_expected(adapter, case)
     assert (
         json.loads(json.dumps(actual, sort_keys=True))

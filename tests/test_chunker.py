@@ -159,7 +159,7 @@ def test_extract_tool_summary_chunks_branches_and_filters():
     conn.execute(
         "CREATE TABLE events"
         " (id TEXT PRIMARY KEY, kind TEXT NOT NULL, conversation_id TEXT NOT NULL,"
-        " parent_id TEXT, external_id TEXT, timestamp TEXT)"
+        " parent_id TEXT, external_id TEXT, timestamp TEXT, sequence INTEGER)"
     )
     conn.execute(
         "CREATE TABLE event_tool_call"

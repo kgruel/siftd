@@ -1,6 +1,7 @@
 from pathlib import Path
 from types import ModuleType
 
+from siftd.adapters.contract import adapt
 from siftd.peek.reader import _find_adapter_for_file, _resolve_peek_scan
 from siftd.plugin_discovery import PluginInfo
 
@@ -12,7 +13,7 @@ class TestFindAdapterContainment:
         m = ModuleType("fake_adapter")
         m.normalize_record = lambda r: None  # type: ignore[attr-defined]
         m.DEFAULT_LOCATIONS = [str(base)]  # type: ignore[attr-defined]
-        return PluginInfo(name="fake", origin="builtin", module=m)
+        return PluginInfo(name="fake", origin="builtin", module=adapt(m))
 
     def test_common_prefix_path_is_rejected(self, monkeypatch, tmp_path):
         """A path sharing a prefix (e.g. /tmp/foo vs /tmp/foobar) must NOT match."""
@@ -45,4 +46,4 @@ def test_resolve_peek_scan_derived_function_invokes_sdk_scan(monkeypatch):
         "siftd.adapters.sdk.peek_scan_from_records",
         lambda records, norm, **kwargs: (list(records), norm is mod.normalize_record, kwargs["default_session_id"]),
     )
-    assert _resolve_peek_scan(mod)(Path("/tmp/s1.jsonl")) == ([{"x": 1}], True, "s1")
+    assert _resolve_peek_scan(adapt(mod))(Path("/tmp/s1.jsonl")) == ([{"x": 1}], True, "s1")

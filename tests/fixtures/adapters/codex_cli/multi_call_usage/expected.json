@@ -1,0 +1,418 @@
+[
+  {
+    "ended_at": "2026-02-02T03:19:31.028Z",
+    "external_id": "codex_cli::019c1c5c-22ee-7921-b6f2-14227ff6d436",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-02-02T03:18:46.263Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "sequence": 1,
+        "timestamp": "2026-02-02T03:18:46.263Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 3,
+            "timestamp": "2026-02-02T03:18:48.805Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "6656",
+              "cached_input_tokens": "6656",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 4,
+            "timestamp": "2026-02-02T03:18:49.011Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:49.288000+00:00"
+                },
+                "external_id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 5,
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:49.011Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 11350,
+              "output_tokens": 40
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 6,
+            "timestamp": "2026-02-02T03:18:53.857Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "11264",
+              "cached_input_tokens": "11264",
+              "reasoning_output_tokens": "64"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 7,
+            "timestamp": "2026-02-02T03:18:53.936Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:54.215000+00:00"
+                },
+                "external_id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 8,
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:53.936Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 12247,
+              "output_tokens": 99
+            }
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "12288",
+              "cached_input_tokens": "12288",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 9,
+            "timestamp": "2026-02-02T03:18:56.442Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:56.712000+00:00"
+                },
+                "external_id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 10,
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:56.442Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 14178,
+              "output_tokens": 30
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 11,
+            "timestamp": "2026-02-02T03:18:59.343Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "14080",
+              "cached_input_tokens": "14080",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 12,
+            "timestamp": "2026-02-02T03:18:59.490Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:59.741000+00:00"
+                },
+                "external_id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 13,
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:59.490Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 15148,
+              "output_tokens": 49
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 14,
+            "timestamp": "2026-02-02T03:19:01.309Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "15104",
+              "cached_input_tokens": "15104",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_do5y7RZK0OYtfMp77togGaPl",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 15,
+            "timestamp": "2026-02-02T03:19:01.392Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:01.698000+00:00"
+                },
+                "external_id": "call_do5y7RZK0OYtfMp77togGaPl",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 16,
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:01.392Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 15300,
+              "output_tokens": 38
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 17,
+            "timestamp": "2026-02-02T03:19:27.360Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "7680",
+              "cached_input_tokens": "7680",
+              "reasoning_output_tokens": "1408"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 18,
+            "timestamp": "2026-02-02T03:19:27.505Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:27.910000+00:00"
+                },
+                "external_id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 19,
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:27.505Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 16119,
+              "output_tokens": 1490
+            }
+          },
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 20,
+            "timestamp": "2026-02-02T03:19:30.239Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "15232",
+              "cached_input_tokens": "15232",
+              "reasoning_output_tokens": "0"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_07CG5JWmjup6OtC0ZU2XMp35",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "sequence": 21,
+            "timestamp": "2026-02-02T03:19:30.475Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:30.767000+00:00"
+                },
+                "external_id": "call_07CG5JWmjup6OtC0ZU2XMp35",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "sequence": 22,
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:30.475Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 17669,
+              "output_tokens": 51
+            }
+          }
+        ],
+        "sequence": 2,
+        "timestamp": "2026-02-02T03:18:46.269Z"
+      }
+    ],
+    "started_at": "2026-02-02T03:18:46.263Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

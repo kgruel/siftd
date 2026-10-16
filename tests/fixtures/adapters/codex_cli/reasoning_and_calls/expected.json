@@ -1,0 +1,91 @@
+[
+  {
+    "ended_at": "2026-02-10T20:30:36.283Z",
+    "external_id": "codex_cli::019c493f-00bb-7890-a8b5-9b1f288e39ba",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "AGENTS.md",
+              "meta_text": "# AGENTS.md instructions for /Users/user/project\n\nredacted text"
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-02-10T20:29:51.683Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "environment_context",
+              "meta_text": "<environment_context>redacted text</environment_context>"
+            }
+          }
+        ],
+        "sequence": 1,
+        "timestamp": "2026-02-10T20:29:51.683Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.3-codex",
+            "sequence": 3,
+            "timestamp": "2026-02-10T20:30:27.530Z"
+          },
+          {
+            "attributes": {
+              "cache_read_input_tokens": "6528",
+              "cached_input_tokens": "6528",
+              "reasoning_output_tokens": "1631"
+            },
+            "content": [
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "redacted text"
+                }
+              }
+            ],
+            "model": "gpt-5.3-codex",
+            "sequence": 4,
+            "timestamp": "2026-02-10T20:30:36.278Z",
+            "usage": {
+              "input_tokens": 8407,
+              "output_tokens": 2110
+            }
+          }
+        ],
+        "sequence": 2,
+        "timestamp": "2026-02-10T20:29:51.684Z"
+      }
+    ],
+    "started_at": "2026-02-10T20:29:51.683Z",
+    "workspace_path": "/Users/user/Code/gruel.network"
+  }
+]

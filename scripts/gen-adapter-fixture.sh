@@ -12,7 +12,7 @@ usage() {
     echo "  adapter  Adapter name (e.g. claude_code, aider)"
     echo "  case     Case name (e.g. minimal, subagent)"
     echo ""
-    echo "Runs adapter.parse() on the input fixture, writes expected.json."
+    echo "Runs the adapter's parse() (derived for a decoding adapter) on the input fixture, writes expected.json."
     echo "Verifies output is byte-identical across two runs (non-determinism check)."
     exit 1
 }
@@ -47,6 +47,7 @@ from _golden import GOLDEN_TZ, collapse
 os.environ["TZ"] = GOLDEN_TZ
 time.tzset()
 
+from siftd.adapters.contract import adapt
 from siftd.domain.source import Source
 
 adapter_name, case_name, out_path_str = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -67,11 +68,13 @@ def make_source(tmp_dir):
     if not candidates:
         print(f"ERROR: No input fixture in {case_dir}", file=sys.stderr)
         sys.exit(1)
-    return Source(kind="file", location=candidates[0])
+    # Same identity path the golden test states (see tests/conftest.py).
+    return Source(kind="file", location=candidates[0], metadata={"identity_path": str(candidates[0])})
 
 with tempfile.TemporaryDirectory() as tmp_dir:
     source = make_source(tmp_dir)
-    adapter = importlib.import_module(f"siftd.adapters.{adapter_name}")
+    # Derived parse() for a decoding adapter, as conftest.assert_golden runs it.
+    adapter = adapt(importlib.import_module(f"siftd.adapters.{adapter_name}"))
 
     def run():
         convs = list(adapter.parse(source))

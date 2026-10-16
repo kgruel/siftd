@@ -31,8 +31,9 @@ class EmbeddingsStaleCheck:
         conn = ctx.get_db_conn()
         embed_conn = ctx.get_embed_conn()
 
-        cur = conn.execute("SELECT DISTINCT conversation_id FROM events WHERE kind = 'prompt'")
-        main_ids = {row[0] for row in cur.fetchall()}
+        from siftd.storage.turns import conversation_ids_with_turns
+
+        main_ids = conversation_ids_with_turns(conn)
 
         # indexed_state markers (fully-indexed conversations), not chunk presence: an
         # empty conversation still counts as indexed, and a v1 index reads as empty

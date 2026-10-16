@@ -886,7 +886,7 @@ class TestTransactionOwnershipS3:
         fconn.execute(
             "INSERT INTO conversations VALUES ('c1','e1','h1','w1',NULL,'2024-01-01T00:00:00Z',NULL)"
         )
-        fconn.execute("INSERT INTO events VALUES ('ev1','prompt','c1',NULL,NULL,'2024-01-01T00:00:00Z')")
+        fconn.execute("INSERT INTO events VALUES ('ev1','prompt','c1',NULL,NULL,'2024-01-01T00:00:00Z',NULL)")
         fconn.execute(
             """INSERT INTO event_content VALUES ('ec1','ev1',0,'text','{"text":"hello world"}')"""
         )

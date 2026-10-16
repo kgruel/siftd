@@ -1,7 +1,9 @@
 """Claude Code adapter for siftd.
 
 Pure parser: reads JSONL files and yields Conversation domain objects.
-No storage coupling.
+No storage coupling. The adapter only decodes: :class:`ClaudeDecoder` turns
+each JSONL line into canonical records, and the shared assembler
+(:mod:`siftd.adapters.assembly`) decides where they attach.
 """
 
 import json
@@ -9,27 +11,27 @@ import re
 from collections.abc import Iterable
 from pathlib import Path
 
-from siftd.adapters._jsonl import load_jsonl, now_iso, parse_block
-from siftd.adapters.sdk import (
-    NormalizedRecord,
-    build_harness,
-    discover_files,
-    flush_pending_calls,
-    make_peek_hooks,
-    yield_conversation,
+from siftd.adapters._jsonl import parse_block
+from siftd.adapters.assembly import read_jsonl
+from siftd.adapters.records import (
+    Ignored,
+    LineageRec,
+    Meta,
+    PatchRec,
+    PromptRec,
+    Record,
+    ResponseRec,
+    Session,
+    ToolCallRec,
+    ToolResultRec,
+    Unknown,
 )
-from siftd.domain import (
-    ContentBlock,
-    Conversation,
-    Prompt,
-    Response,
-    Source,
-    ToolCall,
-    Usage,
-)
+from siftd.adapters.sdk import discover_files
+from siftd.domain import ContentBlock, Source, Usage
+from siftd.domain.peek import PeekScanResult
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "core"
 NAME = "claude_code"
 # ~/.config/claude/projects is where modern installs write live logs;
@@ -89,11 +91,15 @@ TOOL_ALIASES: dict[str, str] = {
     "ExitPlanMode": "ui.plan",
 }
 
-# A backgrounded Bash call's tool_result is plain prose naming its own id,
-# e.g. "Command running in background with ID: buxu4lquj. Output is being
-# written to: ...". BashOutput's later polls carry the same id structurally
-# in input["bash_id"] -- no parsing needed on that side.
-_BASH_BG_ID_RE = re.compile(r"background with ID:\s*(\S+?)\.")
+# The harness's notice for a backgrounded Bash call is a tool_result that
+# *begins* with prose naming its own id, e.g. "Command running in background
+# with ID: buxu4lquj. Output is being written to: ...". It is anchored at the
+# start because other output may quote the phrase (a Read of this file does);
+# the claim is about the result's text alone, so it holds whichever of the
+# call and result the file wrote first. A call the harness backgrounded on
+# its own (a timeout, no `run_in_background` input) gets the same notice.
+# BashOutput's later polls carry the id structurally in input["bash_id"].
+_BASH_BG_ID_RE = re.compile(r"Command running in background with ID:\s*(\S+?)\.")
 
 # promptSource values that mean a human authored the prompt. Anything else
 # (e.g. "system") is harness-injected content riding a user-role record.
@@ -174,6 +180,70 @@ def _is_injected_user_record(record: dict) -> bool:
     return prompt_source is not None and prompt_source not in _USER_PROMPT_SOURCES
 
 
+def _is_human_prompt(attachment: dict) -> bool:
+    """True for a `queued_command` attachment carrying a message the user typed mid-turn."""
+    origin = attachment.get("origin")
+    return attachment.get("commandMode") == "prompt" and isinstance(origin, dict) and origin.get("kind") == "human"
+
+
+def effective_role(record: dict) -> str | None:
+    """How every reader of a record classifies it: "user", "assistant", or None.
+
+    The record type gates which records are read (only "user" and "assistant" records
+    are messages), and message.role, defaulting to the type, decides prompt versus
+    response. The decoder and follow mode both call this one function, so they cannot
+    disagree about what a record is. Returns the role verbatim otherwise, so a role
+    that is neither user nor assistant is skipped by every caller.
+    """
+    record_type = record.get("type")
+    if record_type not in ("user", "assistant"):
+        return None
+    message = record.get("message")
+    role = message.get("role") if isinstance(message, dict) else None
+    return role or record_type
+
+
+def message_id_of(record: dict) -> str | None:
+    """The API message.id a record belongs to, or None when absent."""
+    message = record.get("message")
+    message_id = message.get("id") if isinstance(message, dict) else None
+    return message_id if isinstance(message_id, str) and message_id else None
+
+
+def _usage_snapshot(usage_data) -> tuple[Usage | None, dict[str, int]]:
+    """Domain Usage plus the usage-detail counters for one message.usage.
+
+    A snapshot of the message's total so far: every streamed record of a
+    message repeats it, and the assembler keeps the last one. Counters at zero
+    or absent are left out, as they always were.
+    """
+    if not isinstance(usage_data, dict) or not usage_data:
+        return None, {}
+    usage = Usage(
+        input_tokens=usage_data.get("input_tokens"),
+        output_tokens=usage_data.get("output_tokens"),
+    )
+
+    details: dict[str, int] = {}
+
+    def keep(name: str, value) -> None:
+        if value:
+            details[name] = int(value)
+
+    keep("cache_creation_input_tokens", usage_data.get("cache_creation_input_tokens"))
+    keep("cache_read_input_tokens", usage_data.get("cache_read_input_tokens"))
+    # 5m vs 1h cache writes are priced at different multipliers, so the TTL
+    # split is captured under distinct keys (capture-only: the cost model
+    # still prices the combined cache_creation total).
+    cache_creation = usage_data.get("cache_creation") or {}
+    keep("cache_creation_ephemeral_5m_input_tokens", cache_creation.get("ephemeral_5m_input_tokens"))
+    keep("cache_creation_ephemeral_1h_input_tokens", cache_creation.get("ephemeral_1h_input_tokens"))
+    server_tool_use = usage_data.get("server_tool_use") or {}
+    keep("server_tool_use_web_search_requests", server_tool_use.get("web_search_requests"))
+    keep("server_tool_use_web_fetch_requests", server_tool_use.get("web_fetch_requests"))
+    return usage, details
+
+
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all Claude Code session files."""
     yield from discover_files(locations, DEFAULT_LOCATIONS, ["**/*.jsonl"])
@@ -201,266 +271,337 @@ def can_handle(source: Source) -> bool:
     return True
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a Claude Code JSONL file and yield Conversation objects.
+# Record types that are not conversation turns. Each is Ignored by name; the
+# docstring of ClaudeDecoder says why, and tests/adapters/test_claude_code.py
+# keeps that table and these sets equal.
+_IGNORED_TYPES = frozenset({
+    "attachment",
+    "last-prompt",
+    "mode",
+    "permission-mode",
+    "queue-operation",
+    "file-history-snapshot",
+    "file-history-delta",
+    "atis-latch",
+    "bridge-session",
+    "api-request",
+    "api-request-blob",
+    "api-request-shape",
+    "cost-state",
+    "frame-link",
+    "artifact-autoreact-ledger",
+    "artifact-comment-monitor",
+    "pr-link",
+    "agent-name",
+    "started",
+    "launched",
+    "failed",
+    "result",
+})
+_IGNORED_SYSTEM_SUBTYPES = frozenset({
+    "stop_hook_summary",
+    "local_command",
+    "informational",
+    "compact_boundary",
+    "bridge_status",
+})
 
-    Typically yields a single conversation per file, but the interface
-    supports multiple for generality.
+
+class ClaudeDecoder:
+    """Turns each Claude Code JSONL line into canonical records.
+
+    Every record `type` in the corpus (about 200k lines across 1,175 files) is
+    classified here; a type this table does not name is ``Unknown``. A decoder
+    holds only decoding state: the first session id, agent id, cwd and branch
+    seen, and whether a response has appeared (a turn-duration with none to
+    describe is ignored, not carried to the next response).
+
+    | Record | Becomes | Why |
+    |---|---|---|
+    | `user`, a prompt | PromptRec | A human turn. Injected content (`isMeta`, or a `promptSource` other than typed/queued) stays a prompt with `meta_text` blocks, so it never reaches user-text search. |
+    | `user`, with `tool_result` blocks | one ToolResultRec per block | Results pair to their call in either order. A text block beside a result is Ignored (`user:block-beside-tool_result`): four records, the fork directive. |
+    | `assistant` | ResponseRec, then one ToolCallRec per `tool_use` block | Chunks of one API message share `message.id` and merge, so a message's usage is counted once. |
+    | `system/turn_duration` | PatchRec on the latest response | Wall-clock duration of the turn. |
+    | `system/stop_hook_summary` | Ignored | Telemetry of hooks that ran. |
+    | `system/local_command` | Ignored | Output of a local slash command, not a model turn. |
+    | `system/informational` | Ignored | A notice shown in the UI. |
+    | `system/compact_boundary` | Ignored | Marks where compaction happened; the summary that follows is its own user record. |
+    | `system/bridge_status` | Ignored | Remote-control banner. |
+    | `ai-title` | Meta (`title`) | Re-emitted per turn; the last one wins. |
+    | `fork-context-ref` | LineageRec (fork) | The only explicit pointer from a fork to its parent session and the record it forked at. |
+    | `attachment` | Ignored (`attachment:<subtype>`) | Context the harness showed the model (reminders, listings, hook output, file snapshots), not a turn. 45 subtypes. One is a known omission, below. |
+    | `attachment`, a human `queued_command` | Ignored (`attachment:queued_command:human-prompt`) | A message the user typed while a turn ran: delivered to the model inside the turn, and recorded only here (29 in the corpus, none repeated as a user record). Not stored today, as before the port; named apart so the ledger counts it rather than hiding it among the harness's own context. Storing it would add a prompt in mid-turn, which is its own change. |
+    | `last-prompt` | Ignored | Restates the latest prompt, which is its own user record. |
+    | `mode` | Ignored | UI mode toggle. |
+    | `permission-mode` | Ignored | Permission mode toggle. |
+    | `queue-operation` | Ignored | Input-queue bookkeeping; a delivered prompt arrives as its own user record or a `queued_command` attachment. |
+    | `file-history-snapshot` | Ignored | File backups for rewind. |
+    | `file-history-delta` | Ignored | File backups for rewind. |
+    | `atis-latch` | Ignored | Client feature latch; no conversation content. |
+    | `bridge-session` | Ignored | Remote-control bookkeeping. |
+    | `api-request` | Ignored | Request debugging: parameters of an API call. |
+    | `api-request-blob` | Ignored | Request debugging: content-addressed pieces of an API call. |
+    | `api-request-shape` | Ignored | Request debugging: the shape behind a request hash. |
+    | `cost-state` | Ignored | Client-computed running cost; the cost model prices from tokens. |
+    | `frame-link` | Ignored | Link to a published artifact frame. |
+    | `artifact-autoreact-ledger` | Ignored | Artifact comment-monitor state. |
+    | `artifact-comment-monitor` | Ignored | Artifact comment-monitor state. |
+    | `pr-link` | Ignored | The pull request a session is linked to; not stored today. |
+    | `agent-name` | Ignored | The session's agent name; not stored today. |
+    | `started` | Ignored | Workflow run journal; the child's transcript is its own file. |
+    | `launched` | Ignored | Workflow run journal; the child's transcript is its own file. |
+    | `failed` | Ignored | Workflow run journal; the child's transcript is its own file. |
+    | `result` | Ignored | Workflow run journal; the child's transcript is its own file. |
+
+    Identity. The first ``sessionId`` and the first ``agentId`` on any user or
+    assistant record name the conversation: ``claude_code::<sessionId>``, plus
+    ``::agent::<agentId>`` for a sub-agent file. Claude Code writes both on every
+    record, but a file that states them on different records still gets one
+    name, so it is stated once, by ``finish()``, from all of them. A file with no
+    ``sessionId`` anywhere is named for its stem. A sub-agent's lineage names
+    the session it ran in; a fork's lineage names the parent and the record it
+    forked at. The assembler keeps both, as they are different relations (a
+    forked sub-agent is both), and peek's sub-agent identity reads the first.
+
+    Time. Only user and assistant records state a time, so conversation bounds
+    are the first and last of those. Every other record is given none: a hook
+    summary or queue entry is not part of the conversation's span.
     """
-    path = Path(source.location)
-    records = load_jsonl(path)
-    if not records:
-        return
 
-    # Extract session metadata
-    session_id = None
-    agent_id = None
-    session_cwd = None
-    started_at = None
-    ended_at = None
-    branch = None
-    ai_title = None
+    def __init__(self, source: Source):
+        self._path = source.as_path
+        self._seen_message = False
+        self._session_id: str | None = None
+        self._agent_id: str | None = None
+        self._cwd: str | None = None
+        self._branch: str | None = None
+        self._responded = False
 
-    for record in records:
-        if record.get("type") == "ai-title":
-            # Emitted per turn; the last occurrence is the current title.
-            ai_title = record.get("aiTitle") or ai_title
-        elif record.get("type") in ("user", "assistant"):
-            session_id = session_id or record.get("sessionId")
-            agent_id = agent_id or record.get("agentId")
-            session_cwd = session_cwd or record.get("cwd")
-            branch = branch or record.get("gitBranch")
-            ts = record.get("timestamp")
-            if ts:
-                if started_at is None or ts < started_at:
-                    started_at = ts
-                if ended_at is None or ts > ended_at:
-                    ended_at = ts
+    def decode(self, unit: dict) -> list[Record]:
+        kind = unit.get("type")
+        if not isinstance(kind, str):
+            return [Unknown(reason="no type")]
+        if kind in ("user", "assistant"):
+            return self._message(unit)
+        if kind == "system":
+            return [self._system(unit)]
+        if kind == "ai-title":
+            title = unit.get("aiTitle")
+            if not title:
+                return [Ignored(reason="ai-title:empty")]
+            return [Meta(attributes={"title": str(title)})]
+        if kind == "fork-context-ref":
+            parent = unit.get("parentSessionId")
+            if not parent:
+                return [Unknown(reason="fork-context-ref:no-parent")]
+            anchor = unit.get("parentLastUuid")
+            return [LineageRec(at=None, kind="fork", parent=f"{NAME}::{parent}", anchor=anchor or None)]
+        if kind == "attachment":
+            attachment = unit.get("attachment")
+            subtype = attachment.get("type") if isinstance(attachment, dict) else None
+            if isinstance(attachment, dict) and subtype == "queued_command" and _is_human_prompt(attachment):
+                return [Ignored(reason="attachment:queued_command:human-prompt")]
+            return [Ignored(reason=f"attachment:{subtype}" if subtype else "attachment")]
+        if kind in _IGNORED_TYPES:
+            return [Ignored(reason=kind)]
+        return [Unknown(reason=f"type:{kind}")]
 
-    # Build harness
-    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
+    def finish(self) -> list[Record]:
+        """What only the end of the file settles: the conversation's name, and the branch.
 
-    # Build external_id (include agentId for subagent files)
-    if agent_id:
-        external_id = f"{NAME}::{session_id or path.stem}::agent::{agent_id}"
-    else:
-        external_id = f"{NAME}::{session_id or path.stem}"
+        The name is the whole file's decision (the first sessionId and the first
+        agentId, wherever each appears), so it is stated once, here. Content
+        that arrived earlier belongs to the conversation this names.
+        """
+        out: list[Record] = []
+        if self._seen_message:
+            out.append(Session(external_id=self._external_id()))
+            if self._agent_id:
+                out.extend(self._sidecar())
+                if self._session_id:
+                    out.append(LineageRec(at=None, kind="subagent", parent=f"{NAME}::{self._session_id}"))
+        # Records carry the branch that was live when each message was written
+        # (`gitBranch`). Recomputing from the cwd's *current* git state at ingest
+        # time mislabels any session ingested after a branch switch, so the live
+        # lookup is only a fallback for old logs that predate the per-record field.
+        if self._branch is None and self._cwd:
+            from siftd.git import get_worktree_branch
 
-    # Sub-agent type/description live in an `agent-<id>.meta.json` sidecar beside
-    # the transcript — the child JSONL itself carries no type. The sidecar
-    # authoritatively binds this agentId to {agentType, description}, so we
-    # capture it as conversation attributes here rather than reconstructing it
-    # downstream from the spawning parent's tool_call (which has no agentId key
-    # and only a lossy prompt-equality join back to the child). Absent for
-    # top-level sessions and for historical sub-agents whose sidecar rotated off
-    # disk before ingest — both degrade silently to no attribute.
-    conv_attributes: dict[str, str] = {}
-    if ai_title:
-        conv_attributes["title"] = str(ai_title)
-    if agent_id:
-        meta = _read_subagent_meta(path)
-        if meta is not None:
-            if atype := meta.get("agentType"):
-                conv_attributes["subagent_type"] = str(atype)
-            if desc := meta.get("description"):
-                conv_attributes["agent_description"] = str(desc)
+            branch = get_worktree_branch(self._cwd)
+            if branch:
+                out.append(Meta(branch=branch))
+        return out
 
-    # Records carry the branch that was live when each message was written
-    # (`gitBranch`, captured above). Recomputing from the cwd's *current* git
-    # state at ingest time mislabels any session ingested after a branch
-    # switch, so the live lookup is only a fallback for old logs that predate
-    # the per-record field.
-    if branch is None and session_cwd:
-        from siftd.git import get_worktree_branch
+    # -- system --
 
-        branch = get_worktree_branch(session_cwd)
+    def _system(self, unit: dict) -> Record:
+        subtype = unit.get("subtype")
+        if subtype == "turn_duration":
+            # Emitted after a turn's last assistant message; the wall-clock
+            # duration is an attribute of that response (the domain has no
+            # latency home).
+            duration = unit.get("durationMs")
+            if duration is None:
+                return Ignored(reason="system:turn_duration:no-duration")
+            if not self._responded:
+                return Ignored(reason="system:turn_duration:no-response")
+            return PatchRec(at=None, attributes={"turn_duration_ms": str(duration)})
+        if subtype in _IGNORED_SYSTEM_SUBTYPES:
+            return Ignored(reason=f"system:{subtype}")
+        return Unknown(reason=f"system:{subtype}")
 
-    # Create conversation (will be populated with prompts)
-    conversation = Conversation(
-        external_id=external_id,
-        harness=harness,
-        started_at=started_at or now_iso(),
-        ended_at=ended_at,
-        workspace_path=session_cwd,
-        branch=branch,
-        attributes=conv_attributes,
-    )
+    # -- user / assistant --
 
-    # Process messages
-    # pending_tool_uses tracks tool_use blocks waiting for tool_result
-    # key: tool_use_id, value: (response object, tool_name, input_dict)
-    pending_tool_uses: dict[str, tuple[Response, str, dict]] = {}
-    current_prompt: Prompt | None = None
-    last_response: Response | None = None
-
-    for record in records:
-        record_type = record.get("type")
-        if record_type == "system" and record.get("subtype") == "turn_duration":
-            # Emitted after a turn's last assistant message; attach the
-            # wall-clock duration to that response (attributes, not a domain
-            # slot — the domain has no latency home).
-            duration_ms = record.get("durationMs")
-            if duration_ms is not None and last_response is not None:
-                last_response.attributes["turn_duration_ms"] = str(duration_ms)
-            continue
-        if record_type not in ("user", "assistant"):
-            continue
-
-        message_data = record.get("message") or {}
-        role = message_data.get("role") or record_type
-        timestamp = record.get("timestamp", now_iso())
-        external_msg_id = record.get("uuid")
-        content_blocks = _normalize_content(message_data.get("content"))
-
+    def _message(self, unit: dict) -> list[Record]:
+        out = self._context(unit)
+        role = effective_role(unit)
+        message = unit.get("message")
+        message = message if isinstance(message, dict) else {}
+        at = unit.get("timestamp") or None
+        blocks = _normalize_content(message.get("content"))
         if role == "user":
-            # Check if this is a tool_result message
-            has_tool_result = any(
-                isinstance(b, dict) and b.get("type") == "tool_result"
-                for b in content_blocks
-            )
-
-            if has_tool_result:
-                # The top-level structured toolUseResult belongs to the
-                # record's single tool_result block; skip it in the rare
-                # multi-block case where the pairing would be ambiguous.
-                tool_result_blocks = [
-                    b for b in content_blocks
-                    if isinstance(b, dict) and b.get("type") == "tool_result"
-                ]
-                structured_attrs: dict[str, str] = {}
-                if len(tool_result_blocks) == 1:
-                    structured_attrs = _tool_use_result_attributes(record.get("toolUseResult"))
-
-                # Process tool results - attach to pending tool uses
-                for block in content_blocks:
-                    if isinstance(block, dict) and block.get("type") == "tool_result":
-                        tool_use_id = block.get("tool_use_id")
-                        if tool_use_id and tool_use_id in pending_tool_uses:
-                            response, tool_name, input_dict = pending_tool_uses.pop(tool_use_id)
-                            is_error = block.get("is_error", False)
-                            result_content = block.get("content")
-                            status = "error" if is_error else "success"
-
-                            attributes: dict[str, str] = dict(structured_attrs)
-                            if (
-                                tool_name == "Bash"
-                                and input_dict.get("run_in_background")
-                                and isinstance(result_content, str)
-                            ):
-                                bg_match = _BASH_BG_ID_RE.search(result_content)
-                                if bg_match:
-                                    attributes["background_task_id"] = bg_match.group(1)
-                            elif tool_name == "BashOutput":
-                                bash_id = input_dict.get("bash_id")
-                                if bash_id:
-                                    attributes["background_task_id"] = bash_id
-
-                            # Create completed tool call
-                            tool_call = ToolCall(
-                                tool_name=tool_name,
-                                input=input_dict,
-                                result={"content": result_content},
-                                status=status,
-                                external_id=tool_use_id,
-                                timestamp=timestamp,
-                                attributes=attributes,
-                            )
-                            response.tool_calls.append(tool_call)
-            else:
-                # Regular prompt
-                current_prompt = Prompt(
-                    timestamp=timestamp,
-                    external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
-                )
-
-                # Injected content (isMeta / non-user promptSource) keeps its
-                # place in the conversation but is reclassified so it never
-                # pollutes user-prompt FTS search: the text moves off the
-                # "text" key (which is what gets indexed) onto "meta_text",
-                # and the block type records the injection source.
-                injected = _is_injected_user_record(record)
-
-                # Parse content blocks
-                for block in content_blocks:
-                    content_block = parse_block(block)
-                    if injected and "text" in content_block.content:
-                        content = dict(content_block.content)
-                        content["meta_text"] = content.pop("text")
-                        content["meta_source"] = record.get("promptSource") or "isMeta"
-                        content_block = ContentBlock(block_type="meta_text", content=content)
-                    current_prompt.content.append(content_block)
-
-                conversation.prompts.append(current_prompt)
-
+            out.extend(self._user(unit, at, blocks))
         elif role == "assistant":
-            # Response
-            usage_data = message_data.get("usage") or {}
-            usage = None
-            if usage_data:
-                usage = Usage(
-                    input_tokens=usage_data.get("input_tokens"),
-                    output_tokens=usage_data.get("output_tokens"),
-                )
+            out.extend(self._assistant(unit, message, at, blocks))
+        else:
+            out.append(Ignored(reason=f"role:{role}"))
+        return out
 
-            # Extract cache token attributes
-            attributes: dict[str, str] = {}
-            if usage_data.get("cache_creation_input_tokens"):
-                attributes["cache_creation_input_tokens"] = str(usage_data["cache_creation_input_tokens"])
-            if usage_data.get("cache_read_input_tokens"):
-                attributes["cache_read_input_tokens"] = str(usage_data["cache_read_input_tokens"])
+    def _context(self, unit: dict) -> list[Record]:
+        """The workspace and branch this record states, the first time each is stated.
 
-            # 5m vs 1h cache writes are priced at different multipliers, so
-            # the TTL split is captured under distinct keys (capture-only —
-            # the cost model still prices the combined cache_creation total).
-            cache_creation = usage_data.get("cache_creation") or {}
-            if cache_creation.get("ephemeral_5m_input_tokens"):
-                attributes["cache_creation_ephemeral_5m_input_tokens"] = str(
-                    cache_creation["ephemeral_5m_input_tokens"]
-                )
-            if cache_creation.get("ephemeral_1h_input_tokens"):
-                attributes["cache_creation_ephemeral_1h_input_tokens"] = str(
-                    cache_creation["ephemeral_1h_input_tokens"]
-                )
-            server_tool_use = usage_data.get("server_tool_use") or {}
-            if server_tool_use.get("web_search_requests"):
-                attributes["server_tool_use_web_search_requests"] = str(
-                    server_tool_use["web_search_requests"]
-                )
-            if server_tool_use.get("web_fetch_requests"):
-                attributes["server_tool_use_web_fetch_requests"] = str(
-                    server_tool_use["web_fetch_requests"]
-                )
+        The session's name is not stated here: ``sessionId`` and ``agentId`` may
+        each first appear on a different record, and a name stated early cannot
+        be corrected, so ``finish()`` states it from all of them.
+        """
+        self._seen_message = True
+        self._session_id = self._session_id or unit.get("sessionId") or None
+        self._agent_id = self._agent_id or unit.get("agentId") or None
+        cwd = None if self._cwd else unit.get("cwd") or None
+        branch = None if self._branch else unit.get("gitBranch") or None
+        self._cwd = self._cwd or cwd
+        self._branch = self._branch or branch
+        return [Meta(workspace_path=cwd, branch=branch)] if cwd or branch else []
 
-            response = Response(
-                timestamp=timestamp,
-                usage=usage,
-                model=message_data.get("model"),
-                external_id=f"{NAME}::{external_msg_id}" if external_msg_id else None,
-                attributes=attributes,
+    def _external_id(self) -> str:
+        external_id = f"{NAME}::{self._session_id or self._path.stem}"
+        return f"{external_id}::agent::{self._agent_id}" if self._agent_id else external_id
+
+    def _sidecar(self) -> list[Record]:
+        """Sub-agent type and description from the `agent-<id>.meta.json` beside the transcript.
+
+        The sidecar authoritatively binds this agentId to {agentType, description};
+        the child JSONL itself carries no type, and reconstructing it from the
+        spawning parent's tool_call (which has no agentId key) is a lossy join.
+        Absent for top-level sessions and for historical sub-agents whose sidecar
+        rotated off disk before ingest: both degrade silently to no attribute.
+        """
+        meta = _read_subagent_meta(self._path)
+        if meta is None:
+            return []
+        attributes: dict[str, str] = {}
+        if agent_type := meta.get("agentType"):
+            attributes["subagent_type"] = str(agent_type)
+        if description := meta.get("description"):
+            attributes["agent_description"] = str(description)
+        return [Meta(attributes=attributes)] if attributes else []
+
+    def _user(self, unit: dict, at: str | None, blocks: list) -> list[Record]:
+        results = [b for b in blocks if isinstance(b, dict) and b.get("type") == "tool_result"]
+        if results:
+            return self._tool_results(unit, at, blocks, results)
+        # Injected content (isMeta / non-user promptSource) keeps its place in the
+        # conversation but is reclassified so it never pollutes user-prompt FTS
+        # search: the text moves off the "text" key (which is what gets indexed)
+        # onto "meta_text", and the block type records the injection source.
+        injected = _is_injected_user_record(unit)
+        content: list[ContentBlock] = []
+        for block in blocks:
+            content_block = parse_block(block)
+            if injected and "text" in content_block.content:
+                fields = dict(content_block.content)
+                fields["meta_text"] = fields.pop("text")
+                fields["meta_source"] = unit.get("promptSource") or "isMeta"
+                content_block = ContentBlock(block_type="meta_text", content=fields)
+            content.append(content_block)
+        uuid = unit.get("uuid")
+        return [PromptRec(at=at, content=content, external_id=f"{NAME}::{uuid}" if uuid else None)]
+
+    def _tool_results(self, unit: dict, at: str | None, blocks: list, results: list[dict]) -> list[Record]:
+        # The top-level structured toolUseResult belongs to the record's single
+        # tool_result block; it is left out in the rare multi-block case where
+        # the pairing would be ambiguous.
+        structured = _tool_use_result_attributes(unit.get("toolUseResult")) if len(results) == 1 else {}
+        out: list[Record] = []
+        for block in results:
+            call_id = block.get("tool_use_id")
+            if not call_id:
+                out.append(Unknown(reason="tool_result:no-tool_use_id"))
+                continue
+            content = block.get("content")
+            attributes = dict(structured)
+            if isinstance(content, str) and (match := _BASH_BG_ID_RE.match(content)):
+                attributes["background_task_id"] = match.group(1)
+            out.append(
+                ToolResultRec(
+                    at=at,
+                    call_id=call_id,
+                    result={"content": content},
+                    status="error" if block.get("is_error") else "success",
+                    attributes=attributes,
+                )
             )
-            last_response = response
+        if len(results) != len(blocks):
+            out.append(Ignored(reason="user:block-beside-tool_result"))
+        return out
 
-            # Parse content blocks and track tool uses
-            for block in content_blocks:
-                content_block = parse_block(block)
-                response.content.append(content_block)
+    def _assistant(self, unit: dict, message: dict, at: str | None, blocks: list) -> list[Record]:
+        usage, usage_details = _usage_snapshot(message.get("usage"))
+        message_id = message_id_of(unit)
+        uuid = unit.get("uuid")
+        self._responded = True
+        out: list[Record] = [
+            ResponseRec(
+                at=at,
+                content=[parse_block(b) for b in blocks],
+                external_id=f"{NAME}::{uuid}" if uuid else None,
+                key=message_id,
+                model=message.get("model"),
+                usage=usage,
+                usage_details=usage_details,
+            )
+        ]
+        for block in blocks:
+            if not (isinstance(block, dict) and block.get("type") == "tool_use"):
+                continue
+            call_id = block.get("id")
+            name = block.get("name", "unknown")
+            raw_input = block.get("input")
+            tool_input = raw_input if isinstance(raw_input, dict) else {}
+            attributes: dict[str, str] = {}
+            if name == "BashOutput" and tool_input.get("bash_id"):
+                # A poll names the task it reads structurally: no parsing needed.
+                attributes["background_task_id"] = str(tool_input["bash_id"])
+            out.append(
+                ToolCallRec(
+                    at=at,
+                    name=name,
+                    input=tool_input,
+                    call_id=call_id or None,
+                    parent_key=message_id,
+                    attributes=attributes,
+                )
+            )
+        return out
 
-                # Track tool_use for later matching with tool_result
-                if isinstance(block, dict) and block.get("type") == "tool_use":
-                    tool_id = block.get("id")
-                    tool_name = block.get("name", "unknown")
-                    input_dict = block.get("input", {})
-                    if tool_id:
-                        pending_tool_uses[tool_id] = (response, tool_name, input_dict)
 
-            # Attach response to current prompt
-            if current_prompt is not None:
-                current_prompt.responses.append(response)
+read = read_jsonl
+decoder = ClaudeDecoder
 
-    # Handle any pending tool calls that never got results
-    flush_pending_calls(pending_tool_uses)
 
-    yield from yield_conversation(conversation)
+def default_session(source: Source) -> Session:
+    """The conversation of a file that names no session of its own."""
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 
 
 def _normalize_content(content) -> list:
@@ -480,89 +621,6 @@ def _normalize_content(content) -> list:
     return []
 
 
-# =============================================================================
-# Record normalization — general pattern for SDK integration
-# =============================================================================
-
-
-def normalize_record(raw: dict) -> NormalizedRecord | None:
-    """Map a Claude Code native record to NormalizedRecord.
-
-    Claude Code record types:
-        "user"      → user (or tool_result if content has tool_result blocks)
-        "assistant" → assistant (with content blocks, usage, model)
-    """
-    record_type = raw.get("type")
-    ts = raw.get("timestamp")
-
-    if record_type not in ("user", "assistant"):
-        return None
-
-    msg = raw.get("message") or {}
-    content = msg.get("content")
-    # Normalize content to list
-    if content is None:
-        content_blocks = []
-    elif isinstance(content, str):
-        content_blocks = [{"type": "text", "text": content}]
-    elif isinstance(content, list):
-        content_blocks = content
-    else:
-        content_blocks = []
-
-    if record_type == "user":
-        # Check if this is a tool_result message
-        has_tool_result = any(
-            isinstance(b, dict) and b.get("type") == "tool_result"
-            for b in content_blocks
-        )
-        if has_tool_result:
-            return NormalizedRecord(kind="tool_result", timestamp=ts)
-
-        # Injected content (isMeta / non-user promptSource) is not a real
-        # user prompt — surface it as metadata so peek exchange counts and
-        # prompt previews only reflect what the human actually typed.
-        if _is_injected_user_record(raw):
-            return NormalizedRecord(
-                kind="metadata",
-                timestamp=ts,
-                session_id=raw.get("sessionId"),
-                workspace_path=raw.get("cwd"),
-            )
-
-        extra: dict = {}
-        agent_id = raw.get("agentId")
-        if agent_id is not None:
-            extra["agent_id"] = agent_id
-
-        return NormalizedRecord(
-            kind="user",
-            timestamp=ts,
-            content_blocks=content_blocks,
-            session_id=raw.get("sessionId"),
-            workspace_path=raw.get("cwd"),
-            extra=extra,
-        )
-
-    # assistant
-    usage = msg.get("usage") or {}
-    return NormalizedRecord(
-        kind="assistant",
-        timestamp=ts,
-        content_blocks=content_blocks,
-        model=msg.get("model"),
-        input_tokens=usage.get("input_tokens", 0) or 0,
-        output_tokens=usage.get("output_tokens", 0) or 0,
-    )
-
-
-# Peek hooks — derived from normalizer
-_peek_scan_base, peek_exchanges, peek_tail = make_peek_hooks(
-    normalize_record,
-    tool_aliases=TOOL_ALIASES,
-    subagent_path_marker=SUBAGENT_PATH_MARKER,
-)
-
 # Subagent .meta.json keys → PeekScanResult.attributes keys. Names match the
 # parent-side tool_call attributes vocabulary (_tool_use_result_attributes:
 # agent_name/agent_type/agent_model/spawn_depth). Note the ingest-side
@@ -576,16 +634,15 @@ _SUBAGENT_META_KEYS: dict[str, str] = {
 }
 
 
-def peek_scan(path: Path):
-    """peek_scan with subagent .meta.json enrichment.
+def peek_enrich(path: Path, result: PeekScanResult) -> PeekScanResult:
+    """The derived scan with subagent .meta.json enrichment.
 
     A subagent log at .../subagents/agent-<name>-<hash>.jsonl has a sibling
     agent-<name>-<hash>.meta.json carrying identity the JSONL itself lacks
     (name/agentType/spawnDepth/model). Surface it via the scan attributes
     channel; fill result.model from the meta when the log had none.
     """
-    result = _peek_scan_base(path)
-    if result is None or SUBAGENT_PATH_MARKER not in str(path):
+    if SUBAGENT_PATH_MARKER not in str(path):
         return result
     meta = _read_subagent_meta(path)
     if meta is None:

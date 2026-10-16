@@ -5,6 +5,7 @@ from types import ModuleType
 
 import pytest
 
+from siftd.adapters.contract import adapt
 from siftd.peek.reader import (
     AmbiguousSessionError,
     _fallback_tail,
@@ -32,7 +33,7 @@ def _mod(name="m", **kw):
 def _wire(monkeypatch, m):
     monkeypatch.setattr(
         "siftd.peek.reader.load_all_adapters",
-        lambda: [PluginInfo(name="test", origin="builtin", module=m)],
+        lambda: [PluginInfo(name="test", origin="builtin", module=adapt(m))],
     )
 
 
@@ -57,7 +58,11 @@ class TestResolvePeekScan:
         assert _resolve_peek_scan(_mod()) is None
 
     def test_derived(self):
-        assert callable(_resolve_peek_scan(_mod(normalize_record=lambda r: None)))
+        assert callable(_resolve_peek_scan(adapt(_mod(normalize_record=lambda r: None))))
+
+    def test_derivation_is_the_adapters_not_the_readers(self):
+        """The reader asks the adapter; a bare module with a normalizer has no peek_scan of its own."""
+        assert _resolve_peek_scan(_mod(normalize_record=lambda r: None)) is None
 
 
 class TestFallbackTail:
@@ -90,12 +95,12 @@ class TestFindAdapterForFile:
 
     def test_by_location(self, tmp_path, monkeypatch):
         m, f = _adapter(tmp_path, monkeypatch, peek_scan=lambda p: None)
-        assert _find_adapter_for_file(f) is m
+        assert _find_adapter_for_file(f).peek_scan is m.peek_scan
 
     def test_by_can_handle(self, tmp_path, monkeypatch):
         m = _mod("ch", peek_scan=lambda p: None, can_handle=lambda s: True, DEFAULT_LOCATIONS=[])
         _wire(monkeypatch, m)
-        assert _find_adapter_for_file(tmp_path / "x.jsonl") is m
+        assert _find_adapter_for_file(tmp_path / "x.jsonl").peek_scan is m.peek_scan
 
     def test_skips_no_hooks(self, tmp_path, monkeypatch):
         m = _mod("bare", DEFAULT_LOCATIONS=[str(tmp_path)])

@@ -226,6 +226,20 @@ _Virtual table using fts5._
 | `parent_id` | TEXT | REFERENCES events(id) ON DELETE CASCADE |  |
 | `external_id` | TEXT |  | harness's identifier (NULL for synthetic) |
 | `timestamp` | TEXT | NOT NULL |  |
+| `sequence` | INTEGER |  | recorded order within the conversation, NULL on rows from before v13 |
+
+### conversation_links
+
+A conversation's parents, at most one per relation (where it ran: subagent;
+-- what it continues: fork/resume/branch), held by external_id and resolved at
+-- read time (see storage/links.py)
+
+| Column | Type | Constraints | Notes |
+|--------|------|-------------|-------|
+| `conversation_id` | TEXT | NOT NULL REFERENCES conversations(id) ON DELETE CASCADE |  |
+| `kind` | TEXT | NOT NULL | 'subagent' \| 'fork' \| 'resume' \| 'branch' |
+| `parent_external_id` | TEXT | NOT NULL | the parent's external_id, never a conversation id |
+| `anchor` | TEXT |  | the parent record the child continues from, when known |
 
 ### event_response
 

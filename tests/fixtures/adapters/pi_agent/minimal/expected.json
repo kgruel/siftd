@@ -50,9 +50,14 @@
               }
             ],
             "model": "claude-opus-4-6",
+            "provider": "anthropic",
+            "sequence": 1,
             "timestamp": "2024-03-10T14:00:03Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2024-03-10T14:00:04+00:00"
+                },
                 "external_id": "tc-001",
                 "input": {
                   "file_path": "/test/workspace/README.md"
@@ -60,13 +65,14 @@
                 "result": {
                   "output": "# Test Project\n\nA sample project for testing."
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2024-03-10T14:00:04Z",
+                "timestamp": "2024-03-10T14:00:03Z",
                 "tool_name": "Read"
               }
             ],
             "usage": {
-              "input_tokens": 500,
+              "input_tokens": 550,
               "output_tokens": 120
             }
           },
@@ -85,13 +91,16 @@
               }
             ],
             "model": "claude-opus-4-6",
+            "provider": "anthropic",
+            "sequence": 3,
             "timestamp": "2024-03-10T14:00:05Z",
             "usage": {
-              "input_tokens": 700,
+              "input_tokens": 800,
               "output_tokens": 30
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2024-03-10T14:00:02Z"
       }
     ],

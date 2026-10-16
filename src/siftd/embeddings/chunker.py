@@ -18,6 +18,7 @@ from __future__ import annotations
 import sqlite3
 
 from siftd.storage.queries import fetch_conversation_exchanges, fetch_exchanges
+from siftd.storage.sql_helpers import event_order
 
 # Characters per token — the standard English heuristic (~4 chars/token). Deliberately
 # an estimate: the real tokenizer lives in the backend, and every backend's true count
@@ -239,11 +240,12 @@ def extract_typed_exchange_chunks(
 
     chunks: list[dict] = []
     for ex in exchanges:
+        anchor = [ex.prompt_id] if ex.prompt_id else []  # a preamble turn has no prompt
         sides = (
-            (ex.prompt_text, "prompt", [ex.prompt_id]),
+            (ex.prompt_text, "prompt", anchor),
             # response id anchors the FTS->chunk bridge; fall back to the turn
             # anchor if a response somehow carries text but no ids.
-            (ex.response_text, "response", ex.response_ids or [ex.prompt_id]),
+            (ex.response_text, "response", ex.response_ids or anchor),
         )
         for text, chunk_type, source_ids in sides:
             for piece in chunk_text(
@@ -268,9 +270,10 @@ def _load_exchanges(
     exclude_ids: set[str] | None,
     conversation_id: str | None,
 ) -> dict[str, list[dict]]:
-    """Load prompt/response pairs grouped by conversation, ordered by timestamp.
+    """Load turn text grouped by conversation, in recorded order.
 
-    Each exchange is: {"text": str, "prompt_id": str, "event_ids": list[str]}
+    Each exchange is: {"text": str, "prompt_id": str | None, "event_ids": list[str]}
+    ``prompt_id`` is None for a conversation's preamble turn.
     """
     return fetch_conversation_exchanges(
         conn,
@@ -300,7 +303,7 @@ def _window_exchanges(
         text = exchange["text"]
         # Prompt id first (turn anchor), response ids follow; older callers that
         # only carried prompt_id degrade to a one-element list.
-        event_ids = exchange.get("event_ids") or [exchange["prompt_id"]]
+        event_ids = exchange.get("event_ids") or ([exchange["prompt_id"]] if exchange["prompt_id"] else [])
         token_count = estimate_tokens(text)
 
         # If single exchange exceeds max, split it
@@ -395,7 +398,7 @@ def extract_tool_summary_chunks(
             JOIN event_tool_call etc ON etc.event_id = e.id
             LEFT JOIN tools t ON t.id = etc.tool_id
             WHERE e.kind = 'tool_call'{conv_filter}
-            ORDER BY e.conversation_id, e.timestamp""",
+            ORDER BY e.conversation_id, {event_order("e")}""",
         params,
     ).fetchall()
 

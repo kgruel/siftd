@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from siftd.adapters.contract import adapt
 from siftd.peek import (
     AmbiguousSessionError,
     SessionDetail,
@@ -30,9 +31,9 @@ def _make_fake_plugin(name: str, locations: list[str], *, with_peek: bool = True
     if with_peek:
         # Add peek hooks that delegate to claude_code adapter
         from siftd.adapters import claude_code
-        fake_module.peek_scan = claude_code.peek_scan
-        fake_module.peek_exchanges = claude_code.peek_exchanges
-        fake_module.peek_tail = claude_code.peek_tail
+        fake_module.peek_scan = adapt(claude_code).peek_scan
+        fake_module.peek_exchanges = adapt(claude_code).peek_exchanges
+        fake_module.peek_tail = adapt(claude_code).peek_tail
 
     return PluginInfo(name=name, origin="builtin", module=fake_module)
 
@@ -147,7 +148,8 @@ class TestPeekScan:
 
     def test_claude_code_peek_scan(self, sample_session):
         """Claude Code adapter peek_scan extracts metadata."""
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         result = peek_scan(sample_session)
         assert result is not None
@@ -157,36 +159,50 @@ class TestPeekScan:
         assert result.exchange_count == 3
 
     def test_peek_scan_empty_file_returns_none(self, session_dir):
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         empty = session_dir / "empty.jsonl"
         empty.write_text("")
         assert peek_scan(empty) is None
 
-    def test_peek_scan_no_user_records_returns_none(self, session_dir):
-        from siftd.adapters.claude_code import peek_scan
+    def test_peek_scan_assistant_only_session_is_one_promptless_exchange(self, session_dir):
+        """The record fold hid a session with no user record from the scan while the exchange list showed it;
+        the scan now agrees with the list (and with ingest, which keeps those responses in the preamble)."""
+        from siftd.adapters import claude_code as _claude_code
+        peek_exchanges = adapt(_claude_code).peek_exchanges
+        peek_scan = adapt(_claude_code).peek_scan
 
         path = session_dir / "no-users.jsonl"
         records = [_make_assistant_record("Solo response")]
         _write_session(path, records)
-        assert peek_scan(path) is None
+        result = peek_scan(path)
+        assert result is not None and result.exchange_count == 1
+        (exchange,) = peek_exchanges(path, 5)
+        assert exchange.prompt_text is None and exchange.response_text == "Solo response"
 
     def test_peek_scan_handles_malformed_json(self, session_dir):
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         path = session_dir / "bad.jsonl"
-        path.write_text('{"type":"user","cwd":"/test","sessionId":"s1","message":{"role":"user","content":"hi"}}\n{broken json\n')
+        path.write_text(
+            '{"type":"user","cwd":"/test","sessionId":"s1","timestamp":"2025-01-20T10:00:00Z",'
+            '"message":{"role":"user","content":"hi"}}\n{broken json\n'
+        )
         result = peek_scan(path)
         assert result is not None
         assert result.exchange_count == 1
 
     def test_peek_scan_session_id_from_filename_when_no_record_id(self, session_dir):
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         path = session_dir / "file-uuid-1234.jsonl"
         record = {
             "type": "user",
             "cwd": "/test",
+            "timestamp": "2025-01-20T10:00:00Z",
             "message": {"role": "user", "content": "hi"},
         }
         _write_session(path, [record])
@@ -203,7 +219,8 @@ class TestPeekScan:
         - session_id is synthesized as "{sessionId}:{agentId}"
         - parent_session_id is the sessionId from records
         """
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         path = session_dir / "subagent-session.jsonl"
         records = [
@@ -220,7 +237,8 @@ class TestPeekScan:
 
     def test_peek_scan_parent_session_id_none_for_main_session(self, sample_session):
         """Main sessions have parent_session_id = None."""
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         result = peek_scan(sample_session)
         assert result is not None
@@ -229,7 +247,8 @@ class TestPeekScan:
 
     def test_peek_scan_reads_subagent_meta_json(self, session_dir):
         """A sibling .meta.json enriches a subagent scan with identity attributes."""
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         sub_dir = session_dir / "parent-session-123" / "subagents"
         path = sub_dir / "agent-reviewer-abc123.jsonl"
@@ -256,7 +275,8 @@ class TestPeekScan:
 
     def test_peek_scan_meta_model_fills_missing_model_only(self, session_dir):
         """meta.json model never overrides an in-log model."""
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         sub_dir = session_dir / "parent-session-123" / "subagents"
         path = sub_dir / "agent-x-1.jsonl"
@@ -274,7 +294,8 @@ class TestPeekScan:
 
     def test_peek_scan_subagent_without_meta_json(self, session_dir):
         """Missing or malformed .meta.json degrades to a plain subagent scan."""
-        from siftd.adapters.claude_code import peek_scan
+        from siftd.adapters import claude_code as _claude_code
+        peek_scan = adapt(_claude_code).peek_scan
 
         sub_dir = session_dir / "parent-session-123" / "subagents"
         path = sub_dir / "agent-y-2.jsonl"
@@ -287,13 +308,13 @@ class TestPeekScan:
         result = peek_scan(path)
         assert result is not None
         assert result.parent_session_id == "parent-session-123"
-        assert result.attributes == {}
+        assert not {"agent_name", "agent_type", "agent_model", "spawn_depth"} & set(result.attributes)
 
         # Malformed meta: same outcome
         (sub_dir / "agent-y-2.meta.json").write_text("{not json")
         result = peek_scan(path)
         assert result is not None
-        assert result.attributes == {}
+        assert not {"agent_name", "agent_type", "agent_model", "spawn_depth"} & set(result.attributes)
 
 
 class TestReadSessionDetail:
@@ -911,16 +932,16 @@ class TestSubagentFiltering:
             _make_assistant_record("Done"),
         ])
 
-        from siftd.plugin_discovery import PluginInfo
         from siftd.adapters import claude_code
+        from siftd.plugin_discovery import PluginInfo
         fake_module = SimpleNamespace(
             NAME="test",
             DEFAULT_LOCATIONS=[str(session_dir.parent)],
             ADAPTER_INTERFACE_VERSION=1,
             HARNESS_LOG_FORMAT="jsonl",
-            peek_scan=claude_code.peek_scan,
-            peek_exchanges=claude_code.peek_exchanges,
-            peek_tail=claude_code.peek_tail,
+            peek_scan=adapt(claude_code).peek_scan,
+            peek_exchanges=adapt(claude_code).peek_exchanges,
+            peek_tail=adapt(claude_code).peek_tail,
         )
         plugin = PluginInfo(name="test", origin="builtin", module=fake_module)
 
@@ -979,16 +1000,16 @@ class TestSubagentFiltering:
             _make_assistant_record("Done 2"),
         ])
 
-        from siftd.plugin_discovery import PluginInfo
         from siftd.adapters import claude_code
+        from siftd.plugin_discovery import PluginInfo
         fake_module = SimpleNamespace(
             NAME="test",
             DEFAULT_LOCATIONS=[str(session_dir.parent)],
             ADAPTER_INTERFACE_VERSION=1,
             HARNESS_LOG_FORMAT="jsonl",
-            peek_scan=claude_code.peek_scan,
-            peek_exchanges=claude_code.peek_exchanges,
-            peek_tail=claude_code.peek_tail,
+            peek_scan=adapt(claude_code).peek_scan,
+            peek_exchanges=adapt(claude_code).peek_exchanges,
+            peek_tail=adapt(claude_code).peek_tail,
         )
         plugin = PluginInfo(name="test", origin="builtin", module=fake_module)
 
@@ -1027,3 +1048,31 @@ class TestSubagentFiltering:
         # All should have parent-123 as parent
         for s in sessions:
             assert s["parent_session_id"] == "parent-123"
+
+
+class TestFindAiderSessionByListedId:
+    """Review round 2, finding 4: an id peek lists must be an id a lookup finds.
+
+    Aider's id is a digest of the file's path, so the id never appears in the
+    path. ``find_session_file`` skips a file whose path lacks the prefix, which
+    made every listed aider session "not found".
+    """
+
+    def test_listed_id_and_its_digest_prefix_find_the_file(self, tmp_path, monkeypatch):
+        from siftd.adapters import aider
+
+        history = tmp_path / "scan" / "proj" / ".aider.chat.history.md"
+        history.parent.mkdir(parents=True)
+        history.write_text(
+            "# aider chat started at 2025-07-15 14:32:01\n\n"
+            "#### write a hello world script\n\nHere it is.\n"
+        )
+        monkeypatch.setattr(aider, "DEFAULT_LOCATIONS", [str(tmp_path / "scan")])
+        plugin = PluginInfo(name="aider", origin="builtin", module=adapt(aider))
+        monkeypatch.setattr("siftd.peek.scanner.load_all_adapters", lambda: [plugin])
+
+        listed = adapt(aider).peek_scan(history).session_id
+        assert listed.endswith("::2025-07-15 14:32:01")
+        assert find_session_file(listed) == history
+        digest_prefix = listed.split("::", 1)[0]
+        assert find_session_file(digest_prefix) == history

@@ -3,7 +3,7 @@
 import io
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -43,6 +43,9 @@ class FakeEvent:
     exchange_count: int | None = 5
     model: str | None = "claude-3"
     error: str | None = None
+    unknown: int = 0
+    orphan: int = 0
+    ignored: int = 0
 
 
 @dataclass
@@ -59,6 +62,7 @@ class FakeStats:
     responses: int = 10
     tool_calls: int = 3
     by_harness: dict = None
+    refused_adoptions: list = field(default_factory=list)
 
     def __post_init__(self):
         if self.by_harness is None:
@@ -1664,7 +1668,7 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.api.ingest.wrap_adapter_paths", lambda m, p: m)
         monkeypatch.setattr(
             "siftd.api.ingest.ingest_all",
-            lambda conn, adapters, on_event=None, filter_binary=None: FakeStats(),
+            lambda conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False: FakeStats(),
         )
         monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: {})
         monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("x")))

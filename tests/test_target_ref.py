@@ -18,16 +18,18 @@ def _make_db(tmp_path):
         "VALUES (?, ?, ?, NULL, NULL, ?, NULL)",
         (conv_id, "ext", harness_id, "2024-01-01T00:00:00Z"),
     )
+    # Parent links are part of the fixture: a turn is its prompt's children, so a
+    # response with no parent would be the preamble turn, not exchange 1's answer.
     events = [
-        ("01EVTPROMPT0000000000000001", "prompt", "2024-01-01T00:00:01Z"),
-        ("01EVTRESP000000000000000002", "response", "2024-01-01T00:00:02Z"),
-        ("01EVTPROMPT0000000000000003", "prompt", "2024-01-01T00:00:03Z"),
-        ("01EVTTOOL000000000000000004", "tool_call", "2024-01-01T00:00:04Z"),
+        ("01EVTPROMPT0000000000000001", "prompt", None, "2024-01-01T00:00:01Z"),
+        ("01EVTRESP000000000000000002", "response", "01EVTPROMPT0000000000000001", "2024-01-01T00:00:02Z"),
+        ("01EVTPROMPT0000000000000003", "prompt", None, "2024-01-01T00:00:03Z"),
+        ("01EVTTOOL000000000000000004", "tool_call", "01EVTRESP000000000000000002", "2024-01-01T00:00:04Z"),
     ]
-    for eid, kind, ts in events:
+    for eid, kind, parent, ts in events:
         conn.execute(
-            "INSERT INTO events (id, kind, conversation_id, timestamp) VALUES (?, ?, ?, ?)",
-            (eid, kind, conv_id, ts),
+            "INSERT INTO events (id, kind, conversation_id, parent_id, timestamp) VALUES (?, ?, ?, ?, ?)",
+            (eid, kind, conv_id, parent, ts),
         )
     conn.commit()
     return db_path, conn, conv_id

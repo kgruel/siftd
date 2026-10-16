@@ -7,35 +7,35 @@ Supports two storage formats:
 - JSON: single file with complete session (legacy default)
 - JSONL: patch-based format (chat.useLogSessionStorage); each line is a patch
   operation that builds up the session incrementally
+
+Pipeline: :func:`read_strict` replays a session file into its units (one
+session header, then one unit per request); :class:`VSCodeDecoder` turns each
+unit into canonical records; the shared assembler
+(:mod:`siftd.adapters.assembly`) decides where they attach.
 """
 
 import json
-import logging
 from collections.abc import Iterable, Iterator
-from datetime import UTC, datetime
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from siftd.adapters.sdk import (
-    AdapterParseError,
-    NormalizedRecord,
-    build_harness,
-    discover_files,
-    make_peek_hooks,
-    yield_conversation,
+from siftd.adapters.records import (
+    Ignored,
+    Malformed,
+    PromptRec,
+    Record,
+    ResponseRec,
+    Session,
+    ToolCallRec,
+    ToolResultRec,
+    Unknown,
 )
-from siftd.domain import (
-    ContentBlock,
-    Conversation,
-    Prompt,
-    Response,
-    Source,
-    ToolCall,
-)
+from siftd.adapters.sdk import AdapterParseError, discover_files
+from siftd.domain import ContentBlock, Source, Usage
 from siftd.safecall import epoch_ms_to_iso
 
-log = logging.getLogger(__name__)
-
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "contrib"
 NAME = "vscode"
 DEDUP_STRATEGY = "file"
@@ -87,6 +87,23 @@ _GLOB_PATTERNS = [
     "emptyWindowChatSessions/*.jsonl",
 ]
 
+# Raw tool name -> canonical tool name, for the names the corpus holds. A name
+# not listed here is shown as it was written.
+TOOL_ALIASES: dict[str, str] = {
+    "copilot_readFile": "file.read",
+    "copilot_findTextInFiles": "search.grep",
+    "run_in_terminal": "shell.execute",
+}
+
+# Response parts whose kind is content kept as the raw part, with no Unknown.
+_RAW_CONTENT_KINDS = frozenset({"inlineReference", "mcpServersStarting", "progressMessage", "warning", "command"})
+
+# JSONL patch kinds the replay folds into the session state (see _replay).
+_FOLDED_PATCH_KINDS = frozenset({0, 1, 2})
+
+_IGNORED_THINKING_MARKER = "thinking:marker"
+_IGNORED_RESTATED_PENDING = "tool-invocation:pending-restated"
+
 
 def discover(locations=None) -> Iterable[Source]:
     """Yield Source objects for all VSCode chat session files."""
@@ -104,227 +121,500 @@ def can_handle(source: Source) -> bool:
     return "chatSessions" in parts or "emptyWindowChatSessions" in parts
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a VSCode chat session file and yield Conversation objects."""
-    path = Path(source.location)
-
-    if path.suffix == ".jsonl":
-        data = _replay_jsonl_strict(path)
-    else:
-        data = _load_json_strict(path)
-
-    yield from _session_to_conversation(data, path)
+# --- Units: what the reader yields ---------------------------------------------
 
 
-def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
-    """Convert a reconstructed session dict into a Conversation."""
-    requests = data.get("requests")
-    if not isinstance(requests, list):
-        raise AdapterParseError(
-            f"VSCode source {path} is missing a requests array"
-        )
-    if not requests:
-        return
+@dataclass(frozen=True)
+class SessionUnit:
+    """The session's header: identity, creation time. Its requests follow as RequestUnits."""
 
-    session_id = data.get("sessionId", path.stem)
-    creation_date = data.get("creationDate")
-    workspace_path = _resolve_workspace(path)
-
-    started_at = epoch_ms_to_iso(creation_date)
-    ended_at = _last_timestamp(requests)
-
-    harness = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
-
-    conversation = Conversation(
-        external_id=f"{NAME}::{session_id}",
-        harness=harness,
-        started_at=started_at or ended_at or datetime.now(UTC).isoformat(),
-        ended_at=ended_at,
-        workspace_path=workspace_path,
-    )
-
-    for request in requests:
-        prompt = _parse_request(request)
-        if prompt:
-            conversation.prompts.append(prompt)
-
-    yield from yield_conversation(conversation)
+    session: dict
 
 
-def _replay_jsonl(path: Path, *, strict: bool = False) -> dict | None:
-    """Reconstruct a session from JSONL patch operations.
+@dataclass(frozen=True)
+class RequestUnit:
+    """One request of the session: a user turn and the response it drew. ``request`` may be any JSON value."""
 
-    VSCode's JSONL format uses three patch kinds:
-    - kind=0: Initial state (full session object in 'v')
-    - kind=1: Set value at key path 'k' (replace)
-    - kind=2: Append items to array at key path 'k' (extend)
+    request: Any
+
+
+@dataclass(frozen=True)
+class PatchUnit:
+    """A JSONL patch the replay could not apply. ``reason`` names why."""
+
+    reason: str
+
+
+def read_strict(source: Source) -> Iterator[object]:
+    """Yield the units of a session file. Ingest reads with this: a file it cannot read fails."""
+    return _read(source, strict=True)
+
+
+def read_lenient(source: Source) -> Iterator[object]:
+    """Yield the units of a session file that may still be being written, for peek.
+
+    A line or file that does not parse is yielded as ``Malformed`` instead of
+    failing the read, so a live session can still be shown.
     """
-    # Lenient path preserved for peek; ingest uses strict=True.
+    return _read(source, strict=False)
+
+
+def _read(source: Source, *, strict: bool) -> Iterator[object]:
+    path = source.as_path
+    if path.suffix == ".jsonl":
+        state, unapplied, malformed = _replay(path, strict=strict)
+    else:
+        state, malformed = _load_whole(path, strict=strict)
+        unapplied = []
+    if not isinstance(state, dict):
+        if strict:
+            raise AdapterParseError(f"VSCode source {path} did not reconstruct a session object")
+        yield from malformed
+        return
+    requests = state.get("requests")
+    if not isinstance(requests, list):
+        if strict:
+            raise AdapterParseError(f"VSCode source {path} is missing a requests array")
+        yield from malformed
+        return
+    yield SessionUnit(session=state)
+    for request in requests:
+        yield RequestUnit(request=request)
+    yield from malformed
+    for reason in unapplied:
+        yield PatchUnit(reason=reason)
+
+
+def _load_whole(path: Path, *, strict: bool) -> tuple[dict[str, Any] | None, list[Malformed]]:
+    """A whole-file session: the parsed object, or what a lenient read yields instead."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError) as e:
+        if strict:
+            raise AdapterParseError(f"VSCode source {path} could not be read: {e}") from e
+        return None, [Malformed(line=0, error=str(e))]
+    except json.JSONDecodeError as e:
+        if strict:
+            raise AdapterParseError(f"VSCode source {path} contains invalid JSON: {e}") from e
+        return None, [Malformed(line=0, error=str(e))]
+    if not isinstance(data, dict):
+        if strict:
+            raise AdapterParseError(f"VSCode source {path} must contain a JSON object")
+        return None, [Malformed(line=0, error="not an object")]
+    return data, []
+
+
+def _replay(path: Path, *, strict: bool) -> tuple[dict[str, Any] | None, list[str], list[Malformed]]:
+    """Replay a JSONL patch log into the session it builds.
+
+    kind 0 sets the root (the session object), kind 1 sets the value at a key
+    path, kind 2 appends a list at a key path. Returns the state, the reasons
+    for patches that could not apply, and the lines that did not parse.
+    """
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except (OSError, UnicodeDecodeError) as e:
         if strict:
-            raise AdapterParseError(
-                f"VSCode source {path} could not be read: {e}"
-            ) from e
-        return None
+            raise AdapterParseError(f"VSCode source {path} could not be read: {e}") from e
+        return None, [], [Malformed(line=0, error=str(e))]
 
-    state = None
+    state: dict[str, Any] | None = None
     saw_content = False
-
-    for line in lines:
-        line = line.strip()
-        if not line:
+    unapplied: list[str] = []
+    malformed: list[Malformed] = []
+    for line_no, raw in enumerate(lines, start=1):
+        text = raw.strip()
+        if not text:
             continue
         saw_content = True
-
         try:
-            patch = json.loads(line)
+            patch = json.loads(text)
         except json.JSONDecodeError as e:
             if strict:
-                raise AdapterParseError(
-                    f"VSCode source {path} contains invalid JSONL: {e}"
-                ) from e
+                raise AdapterParseError(f"VSCode source {path} contains invalid JSONL: {e}") from e
+            malformed.append(Malformed(line=line_no, error=str(e)))
+            continue
+        if not isinstance(patch, dict):
+            if strict:
+                raise AdapterParseError(f"VSCode source {path} contains invalid JSONL: line {line_no} is not an object")
+            malformed.append(Malformed(line=line_no, error="not an object"))
             continue
 
         kind = patch.get("kind")
         value = patch.get("v")
-
         if kind == 0:
             if strict and not isinstance(value, dict):
-                raise AdapterParseError(
-                    f"VSCode source {path} has an invalid initial session payload"
-                )
-            state = value
+                raise AdapterParseError(f"VSCode source {path} has an invalid initial session payload")
+            state = value if isinstance(value, dict) else None
             continue
-
+        if kind not in (1, 2):
+            unapplied.append(f"patch:kind-{kind}")
+            continue
         if state is None:
+            unapplied.append("patch:before-root")
             continue
-
-        key_path = patch.get("k", [])
-        if not key_path:
+        key_path = patch.get("k")
+        if not isinstance(key_path, list) or not key_path:
+            unapplied.append("patch:no-path")
             continue
-
-        if kind == 1:
-            _set_at_path(state, key_path, value)
-        elif kind == 2:
-            _append_at_path(state, key_path, value)
+        applied = _set_at_path(state, key_path, value) if kind == 1 else _append_at_path(state, key_path, value)
+        if not applied:
+            unapplied.append("patch:path-missing")
 
     if strict and state is None and saw_content:
-        raise AdapterParseError(
-            f"VSCode source {path} did not reconstruct a session"
-        )
-
-    return state
+        raise AdapterParseError(f"VSCode source {path} did not reconstruct a session")
+    return state, unapplied, malformed
 
 
-def _replay_jsonl_strict(path: Path) -> dict:
-    """Strict JSONL replay for ingest paths that require a session object."""
-    data = _replay_jsonl(path, strict=True)
-    if not isinstance(data, dict):
-        raise AdapterParseError(
-            f"VSCode source {path} did not reconstruct a session object"
-        )
-    return data
-
-
-def _set_at_path(obj: dict | list, path: list, value) -> None:
-    """Set a value at a nested key path."""
+def _set_at_path(obj: dict | list, path: list, value) -> bool:
+    """Set a value at a nested key path. False when the path does not exist."""
     if not path:
-        return
+        return False
     for key in path[:-1]:
         if isinstance(obj, list) and isinstance(key, int):
             if 0 <= key < len(obj):
                 obj = obj[key]
             else:
-                return
+                return False
         elif isinstance(obj, dict):
             child = obj.get(key)
             if child is None:
-                return
+                return False
             obj = child
         else:
-            return
+            return False
 
     final = path[-1]
     if isinstance(obj, list) and isinstance(final, int):
         if 0 <= final < len(obj):
             obj[final] = value
-    elif isinstance(obj, dict):
+            return True
+        return False
+    if isinstance(obj, dict):
         obj[final] = value
+        return True
+    return False
 
 
-def _append_at_path(obj: dict | list, path: list, value) -> None:
-    """Append items to an array at a nested key path."""
+def _append_at_path(obj: dict | list, path: list, value) -> bool:
+    """Append items to an array at a nested key path. False when the path or value does not fit."""
     for key in path:
         if isinstance(obj, list) and isinstance(key, int):
             if 0 <= key < len(obj):
                 obj = obj[key]
             else:
-                return
+                return False
         elif isinstance(obj, dict):
             child = obj.get(key)
             if child is None:
-                return
+                return False
             obj = child
         else:
-            return
+            return False
 
     if isinstance(obj, list) and isinstance(value, list):
         obj.extend(value)
+        return True
+    return False
 
 
-def _parse_request(request: dict) -> Prompt | None:
-    """Parse a single request object into a Prompt with Response."""
-    message = request.get("message", "")
+# --- Decoding ------------------------------------------------------------------
+
+
+class VSCodeDecoder:
+    """Turns each unit of a VSCode session into canonical records.
+
+    A decoder holds only decoding state: the tool call ids it has already given
+    a :class:`ToolCallRec`. Every unit kind and every response part kind in the
+    corpus is named in the table below; ``tests/adapters/test_vscode.py`` keeps
+    the table and the code equal. The reader does the patch-log replay, so
+    JSON and JSONL sessions of the same state decode to the same records.
+
+    | Unit or part | Becomes | Why |
+    |---|---|---|
+    | `session` | Session | The header. `sessionId` names the conversation (`vscode::<sessionId>`, the file stem when absent), `creationDate` starts it (without one, the latest request's timestamp), and the workspace comes from the sibling `workspace.json`. The header is the whole session, so it is also where each tool call's final emission is learned. |
+    | `request` | PromptRec, ResponseRec, then the tool records of its parts | One request is one user turn and the answer it drew. The prompt is keyed by `requestId`, the response by `responseId`, and `result.usage` is the response's usage. A request with no answer still gets an empty response. |
+    | `part:text` | content (text block) | Answer prose: a part with no `kind` and a string `value`. All 29 answer parts in the corpus. |
+    | `part:thinking` | content (thinking block) | Model reasoning with text. |
+    | `part:thinking:marker` | Ignored (`thinking:marker`) | A thinking part with an empty value: a metadata marker carrying an id and a title, or an encrypted-content id. 47 in the corpus, none with text. |
+    | `part:toolInvocationSerialized` | ToolCallRec, then ToolResultRec per emission that changes its state | A tool call. VS Code re-emits one invocation under its `toolCallId` as it progresses, possibly in a later request. The call is made at its first emission and takes the name and input of the session's last emission. Each emission that settles it is a result; only the session's last emission is final, so a later emission can still settle a call. A pending emission after a settled one reverts the call to pending (a non-final result with status `pending`). A pending restatement of a pending call is Ignored (`tool-invocation:pending-restated`). |
+    | `part:inlineReference` | content (raw block) | A file or symbol the answer cites. Kept as the raw part. |
+    | `part:mcpServersStarting` | content (raw block) | An MCP server starting for the request. |
+    | `part:progressMessage` | content (raw block) | Progress shown while the chat was getting ready. |
+    | `part:warning` | content (raw block) | A warning shown in the chat, such as a slow start. |
+    | `part:command` | content (raw block) | A command the chat offered as a button. |
+    | `part:other` | content (raw block), Unknown (`part:<kind>`) | Any other kind, such as `textEditGroup`: kept raw, and counted, because the corpus does not hold it. |
+    | `part:no-kind` | content (unkeyed block), Unknown (`part:no-kind`) | A part with no `kind` and no string `value`. Kept raw, counted. |
+    | `part:not-an-object` | Unknown (`part:not-an-object`) | A response entry that is not an object. |
+    | `tool-invocation:no-toolCallId` | Unknown (`tool-invocation:no-toolCallId`) | An invocation with no id to pair its result by. |
+    | `request:not-an-object` | Unknown (`request:not-an-object`) | A request entry that is not an object. |
+    | `patch:0` | folded by the reader | JSONL root: the session object the later patches build on. Not a record. |
+    | `patch:1` | folded by the reader | JSONL set at a key path. Not a record. |
+    | `patch:2` | folded by the reader | JSONL append to an array at a key path. Not a record. |
+    | `patch:unapplied` | Unknown (`patch:<reason>`) | A patch the replay could not apply: an unknown kind, no key path, a path that does not exist, or no root yet. The state it would have changed is missing, so the record is counted. |
+
+    Not stored, and not records: session fields such as `customTitle`,
+    `selectedModel` and `inputState`; request fields such as `agent`,
+    `modelState`, `followups`, `timeSpentWaiting` and `variableData`; and the
+    `result` fields other than `usage.promptTokens` and `usage.completionTokens`
+    (`timings`, `metadata`, `details`, `promptTokenDetails`).
+
+    Time. A request's timestamp dates its prompt, its response and the calls
+    it made. A completed call's result carries no time of its own, so the
+    call keeps the time of the response that made it. Undated events take
+    their neighbours' time.
+    """
+
+    def __init__(self, source: Source):
+        self._path = source.as_path
+        # Learned from the header, for the whole session (see _session): each
+        # call's final emission, the calls already given a ToolCallRec, and the
+        # calls whose latest emission so far settled them.
+        self._final: dict[str, dict] = {}
+        self._calls: set[str] = set()
+        self._settled: set[str] = set()
+
+    def decode(self, unit: object) -> list[Record]:
+        if isinstance(unit, SessionUnit):
+            return self._session(unit.session)
+        if isinstance(unit, RequestUnit):
+            if not isinstance(unit.request, dict):
+                return [Unknown(reason="request:not-an-object")]
+            return self._request(unit.request)
+        if isinstance(unit, PatchUnit):
+            return [Unknown(reason=unit.reason)]
+        return [Unknown(reason="unit:unrecognized")]
+
+    def _session(self, session: dict) -> list[Record]:
+        session_id = _ident(session.get("sessionId")) or self._path.stem
+        requests = session.get("requests")
+        requests = requests if isinstance(requests, list) else []
+        # The reader replays the whole session before it yields this header, so
+        # the header can see every request. A call's last emission may sit in a
+        # later request than the one that made it, so its final state and input
+        # are a fact of the whole session.
+        self._final = {}
+        for request in requests:
+            for part in _parts(request):
+                call_id = _invocation_id(part)
+                if call_id is not None:
+                    self._final[call_id] = part
+        # Without a creation date the session starts at its latest request, as
+        # it always has. The assembler would take the earliest instead.
+        started = epoch_ms_to_iso(session.get("creationDate")) or epoch_ms_to_iso(_latest_timestamp(requests))
+        return [
+            Session(
+                external_id=f"{NAME}::{session_id}",
+                started_at=started,
+                workspace_path=_resolve_workspace(self._path),
+            )
+        ]
+
+    def _request(self, request: dict) -> list[Record]:
+        at = epoch_ms_to_iso(request.get("timestamp"))
+        request_id = _ident(request.get("requestId"))
+        response_id = _ident(request.get("responseId"))
+
+        message = request.get("message", "")
+        if isinstance(message, dict):
+            message = message.get("text", str(message))
+
+        out: list[Record] = [
+            PromptRec(at=at, content=[ContentBlock(block_type="text", content={"text": message})],
+                      external_id=request_id, key=request_id)
+        ]
+
+        content: list[ContentBlock] = []
+        tool_parts: list[dict] = []
+        marked: set[str] = set()
+        for part in _parts(request):
+            if not isinstance(part, dict):
+                out.append(Unknown(reason="part:not-an-object"))
+                continue
+            kind = part.get("kind") if isinstance(part.get("kind"), str) else ""
+            if _is_text_part(part):
+                content.append(ContentBlock(block_type="text", content={"text": part["value"]}))
+            elif kind == "toolInvocationSerialized":
+                tool_parts.append(part)
+                # A call made by this request is marked where it sits in the answer,
+                # as a tool_use block (the shape codex_cli writes), so the answer's
+                # content keeps the position. Its ToolCallRec comes from _tool_records.
+                call_id = _invocation_id(part)
+                if call_id is not None and call_id not in self._calls and call_id not in marked:
+                    marked.add(call_id)
+                    final = self._final.get(call_id, part)
+                    content.append(ContentBlock(block_type="tool_use", content={
+                        "id": call_id, "name": _tool_name(final), "input": _tool_input(final),
+                    }))
+            elif kind == "thinking":
+                value = part.get("value")
+                if isinstance(value, str) and value:
+                    content.append(ContentBlock(block_type="thinking", content={"text": value}))
+                elif value in ("", []):
+                    out.append(Ignored(reason=_IGNORED_THINKING_MARKER))
+                else:
+                    out.append(Unknown(reason="thinking:value-type"))
+            elif kind in _RAW_CONTENT_KINDS:
+                content.append(ContentBlock(block_type=kind, content=part))
+            elif kind:
+                content.append(ContentBlock(block_type=kind, content=part))
+                out.append(Unknown(reason=f"part:{kind}"))
+            else:
+                content.append(ContentBlock(block_type="unkeyed", content=part))
+                out.append(Unknown(reason="part:no-kind"))
+
+        out.append(
+            ResponseRec(
+                at=at,
+                content=content,
+                external_id=response_id,
+                key=response_id,
+                model=request.get("modelId"),
+                usage=_usage(request.get("result")),
+            )
+        )
+        out.extend(self._tool_records(tool_parts, at=at, parent_key=response_id))
+        return out
+
+    def _tool_records(self, parts: list[dict], *, at: str | None, parent_key: str | None) -> list[Record]:
+        """The records of one request's tool invocations.
+
+        An invocation is emitted again as it progresses, under one toolCallId. The
+        call is made at its first emission, as a ToolCallRec naming the session's
+        last emission (see _session). Each emission that settles the call is a
+        ToolResultRec, final only when it is the session's last emission, so a
+        call stays open for a settling emission in a later request. A pending
+        emission after a settled one reverts the call to pending, as a non-final
+        result with status ``pending``. The ledger counts each emission.
+        """
+        out: list[Record] = []
+        for part in parts:
+            call_id = _invocation_id(part)
+            if call_id is None:
+                out.append(Unknown(reason="tool-invocation:no-toolCallId"))
+                continue
+            # A request decoded without its session header (no SessionUnit before it)
+            # has no later emissions to wait for, so each one counts as final.
+            final = self._final.get(call_id, part)
+            new_call = call_id not in self._calls
+            if new_call:
+                self._calls.add(call_id)
+                out.append(
+                    ToolCallRec(at=at, name=_tool_name(final), input=_tool_input(final),
+                                call_id=call_id, parent_key=parent_key)
+                )
+            state = _settled_state(part)
+            if state is not None:
+                status, result = state
+                self._settled.add(call_id)
+                out.append(ToolResultRec(at=None, call_id=call_id, result=result, status=status,
+                                         final=final is part))
+            elif call_id in self._settled:
+                # The call was settled and this emission reverts it. An empty result
+                # is what a pending call stores: storage keeps neither {} nor None.
+                self._settled.discard(call_id)
+                out.append(ToolResultRec(at=None, call_id=call_id, result={}, status="pending", final=False))
+            elif not new_call:
+                out.append(Ignored(reason=_IGNORED_RESTATED_PENDING))
+        return out
+
+
+def _ident(value: object) -> str | None:
+    """A source identifier, or None when absent or empty."""
+    return value if isinstance(value, str) and value else None
+
+
+def _parts(request: Any) -> list:
+    response = request.get("response") if isinstance(request, dict) else None
+    return response if isinstance(response, list) else []
+
+
+def _invocation_id(part: Any) -> str | None:
+    """The toolCallId of a tool invocation part, or None for any other part or a missing id."""
+    if isinstance(part, dict) and part.get("kind") == "toolInvocationSerialized":
+        return _ident(part.get("toolCallId"))
+    return None
+
+
+def _latest_timestamp(requests: list) -> float | None:
+    """The latest request timestamp, in epoch milliseconds."""
+    stamps = []
+    for request in requests:
+        stamp = request.get("timestamp") if isinstance(request, dict) else None
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            stamps.append(stamp)
+    return max(stamps, default=None)
+
+
+def _is_text_part(part: dict) -> bool:
+    """Answer prose: a response part with no kind and a string value."""
+    return "kind" not in part and isinstance(part.get("value"), str)
+
+
+def _tool_name(part: dict) -> str:
+    return part.get("toolId") or "unknown"
+
+
+def _invocation_text(part: dict) -> str:
+    message = part.get("invocationMessage")
     if isinstance(message, dict):
-        message = message.get("text", str(message))
+        message = message.get("value")
+    return message if isinstance(message, str) else ""
 
-    timestamp_ms = request.get("timestamp")
-    timestamp = epoch_ms_to_iso(timestamp_ms)
 
-    prompt = Prompt(
-        timestamp=timestamp or datetime.now(UTC).isoformat(),
-        external_id=request.get("requestId"),
-        content=[ContentBlock(block_type="text", content={"text": message})],
-    )
+def _tool_input(part: dict) -> dict:
+    """Recover the call's input from what VS Code stores for it.
 
-    response_parts = request.get("response") or []
-    content_blocks: list[ContentBlock] = []
-    tool_calls: list[ToolCall] = []
+    VS Code keeps no argument object. The invocation text is usually present; it
+    is stored as "description", the key the SDK's peek hint reads first. Without
+    that key the peek view shows no input at all. run_in_terminal also stores the
+    command under toolSpecificData, and some tools echo their input in
+    resultDetails.
+    """
+    tool_input: dict = {}
+    text = _invocation_text(part)
+    if text:
+        tool_input["description"] = text
+    specific = part.get("toolSpecificData")
+    if isinstance(specific, dict) and isinstance(specific.get("commandLine"), dict):
+        original = specific["commandLine"].get("original")
+        if isinstance(original, str) and original:
+            tool_input["command"] = original
+    details = part.get("resultDetails")
+    if isinstance(details, dict) and "input" in details:
+        tool_input["input"] = details["input"]
+    return tool_input
 
-    for part in response_parts:
-        kind = part.get("kind", "")
 
-        if kind == "markdownContent":
-            value = part.get("content", {}).get("value", "")
-            content_blocks.append(ContentBlock(block_type="text", content={"text": value}))
+def _settled_state(part: dict) -> tuple[str, dict] | None:
+    """An emission's status and result, or None while the invocation is still pending.
 
-        elif kind == "toolInvocationSerialized":
-            tool_calls.append(ToolCall(
-                tool_name=part.get("toolName") or part.get("name", "unknown"),
-                input=part.get("input", {}),
-                result=part.get("result"),
-                status="success" if part.get("result") is not None else "pending",
-                external_id=part.get("toolCallId"),
-            ))
+    A settled invocation with no result details has an empty result: the
+    completion is the fact, not a payload.
+    """
+    details = part.get("resultDetails")
+    result = {"resultDetails": details} if details is not None else {}
+    if isinstance(details, dict) and details.get("isError") is True:
+        return "error", result
+    if part.get("isComplete") is True or details is not None:
+        return "success", result
+    return None
 
-        elif kind == "textEditGroup":
-            content_blocks.append(ContentBlock(block_type="text_edit", content=part))
 
-        elif kind:
-            content_blocks.append(ContentBlock(block_type=kind, content=part))
+def _usage(result: Any) -> Usage | None:
+    """The request's token usage: a snapshot of the whole request, from ``result.usage``."""
+    if not isinstance(result, dict) or not isinstance(result.get("usage"), dict):
+        return None
+    usage = result["usage"]
+    prompt = usage.get("promptTokens")
+    completion = usage.get("completionTokens")
+    if prompt is None and completion is None:
+        return None
+    return Usage(input_tokens=_count(prompt), output_tokens=_count(completion))
 
-    response = Response(
-        timestamp=timestamp or datetime.now(UTC).isoformat(),
-        model=request.get("modelId"),
-        external_id=request.get("responseId"),
-        content=content_blocks,
-        tool_calls=tool_calls,
-    )
-    prompt.responses.append(response)
 
-    return prompt
+def _count(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
 def _resolve_workspace(session_path: Path) -> str | None:
@@ -347,136 +637,15 @@ def _resolve_workspace(session_path: Path) -> str | None:
     return folder or None
 
 
-
-def _last_timestamp(requests: list[dict]) -> str | None:
-    """Extract the latest timestamp from requests."""
-    latest = None
-    for req in requests:
-        ts = req.get("timestamp")
-        if ts is not None and (latest is None or ts > latest):
-            latest = ts
-    return epoch_ms_to_iso(latest)
+read = read_strict
+# Peek reads leniently: a session being written may end in a partial line.
+peek_read = read_lenient
+decoder = VSCodeDecoder
 
 
-# =============================================================================
-# Record normalization — enables SDK-derived peek support
-# =============================================================================
-
-
-def _load_session(path: Path) -> dict | None:
-    """Load a VSCode session from JSON or JSONL format."""
-    from siftd.safecall import load_json
-
-    if path.suffix == ".jsonl":
-        return _replay_jsonl(path)
-    return load_json(path, context="vscode")
-
-
-def _load_json_strict(path: Path) -> dict:
-    """Load and validate a VSCode JSON session file for ingest."""
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError) as e:
-        raise AdapterParseError(
-            f"VSCode source {path} could not be read: {e}"
-        ) from e
-    except json.JSONDecodeError as e:
-        raise AdapterParseError(
-            f"VSCode source {path} contains invalid JSON: {e}"
-        ) from e
-
-    if not isinstance(data, dict):
-        raise AdapterParseError(
-            f"VSCode source {path} must contain a JSON object"
-        )
-
-    return data
-
-
-def iter_vscode_records(path: Path) -> Iterator[dict]:
-    """Iterate synthetic records from a VSCode session file.
-
-    VSCode stores each session as a single JSON object with a requests array.
-    This iterator yields synthetic records: one metadata record, then for each
-    request, a user record followed by an assistant record.
-    """
-    data = _load_session(path)
-    if not data:
-        return
-
-    creation_date = data.get("creationDate")
-    yield {
-        "_kind": "metadata",
-        "sessionId": data.get("sessionId", path.stem),
-        "creationDate": creation_date,
-        "_path": str(path),
-    }
-
-    for request in data.get("requests", []):
-        ts = request.get("timestamp")
-        yield {"_kind": "user", **request, "_ts": epoch_ms_to_iso(ts)}
-        yield {"_kind": "assistant", **request, "_ts": epoch_ms_to_iso(ts)}
-
-
-def normalize_record(raw: dict) -> NormalizedRecord | None:
-    """Map a VSCode synthetic record to NormalizedRecord.
-
-    Synthetic record kinds (produced by iter_vscode_records):
-        "_kind": "metadata"   → metadata (sessionId, workspace via path)
-        "_kind": "user"       → user (prompt text from request.message)
-        "_kind": "assistant"  → assistant (response parts from request.response)
-    """
-    kind = raw.get("_kind")
-    ts = raw.get("_ts")
-
-    if kind == "metadata":
-        creation_date = raw.get("creationDate")
-        return NormalizedRecord(
-            kind="metadata",
-            timestamp=epoch_ms_to_iso(creation_date),
-            session_id=raw.get("sessionId"),
-            workspace_path=_resolve_workspace(Path(raw["_path"])) if raw.get("_path") else None,
-        )
-
-    if kind == "user":
-        message = raw.get("message", "")
-        if isinstance(message, dict):
-            message = message.get("text", str(message))
-        content_blocks = [{"type": "text", "text": message}] if message else []
-        return NormalizedRecord(
-            kind="user",
-            timestamp=ts,
-            content_blocks=content_blocks,
-        )
-
-    if kind == "assistant":
-        content_blocks: list[dict] = []
-        for part in raw.get("response") or []:
-            part_kind = part.get("kind", "")
-            if part_kind == "markdownContent":
-                value = part.get("content", {}).get("value", "")
-                if value:
-                    content_blocks.append({"type": "text", "text": value})
-            elif part_kind == "toolInvocationSerialized":
-                content_blocks.append({
-                    "type": "tool_use",
-                    "name": part.get("toolName") or part.get("name", "unknown"),
-                    "input": part.get("input", {}),
-                })
-        return NormalizedRecord(
-            kind="assistant",
-            timestamp=ts,
-            model=raw.get("modelId"),
-            content_blocks=content_blocks,
-        )
-
-    return None
+def default_session(source: Source) -> Session:
+    """The conversation of a file that names no session of its own."""
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 
 
 PEEK_GLOB_PATTERNS = _GLOB_PATTERNS
-
-# Peek hooks — derived from normalizer with custom JSON iterator
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
-    normalize_record,
-    record_iterator=iter_vscode_records,
-)

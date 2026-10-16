@@ -8,6 +8,8 @@ in the serve lane (test_serve_swiss_shell.py).
 
 from __future__ import annotations
 
+import re
+
 from painted import Fidelity
 
 from siftd.api.conversations import (
@@ -100,8 +102,11 @@ def test_folio_three_regions_and_head_metadata():
     # Head metadata for enhance.js (chrome head + active nav follow the swap).
     assert 'data-view="transcript"' in html
     assert 'data-title="Transcript"' in html
-    # Count is rail items: 2 exchanges × (user + assistant) = 4 turns.
-    assert 'data-count="4"' in html
+    # Count is turns, as the listing and API count them: 2 exchanges = 2 turns.
+    # (It once counted rendered user/assistant blocks, so a 2-turn conversation
+    # read "4 Turns" in the folio and 2 everywhere else.)
+    assert 'data-count="2"' in html
+    assert '<span class="folio__navmeta">2</span>' in html
 
 
 def test_folio_rail_has_user_and_assistant_items():
@@ -112,6 +117,36 @@ def test_folio_rail_has_user_and_assistant_items():
     assert 'data-role="assistant"' in html
     # Body turns carry anchors the rail links into.
     assert 'id="t-1"' in html and 'href="#t-1"' in html
+
+
+def test_folio_turn_count_is_the_folds_turns_and_rail_rows_carry_turn_numbers():
+    """A preamble turn counts as a turn, and a turn's two rail rows share its number.
+
+    The rail lists up to two rows (user, assistant) per turn; anchors count rendered
+    blocks so ids stay unique, while the displayed number is the turn's own, which is
+    the number --at-turn and ``siftd id`` use.
+    """
+    detail = _detail()
+    preamble = Turn(
+        timestamp="2026-03-15T10:29:00Z",
+        prompt_text=None,
+        total_input_tokens=1,
+        total_output_tokens=1,
+        narrative=[NarrativeBlock(block_type="text", content="before any prompt")],
+        preamble=True,
+    )
+    detail.turns = [preamble, *detail.turns]
+
+    html = render_folio(detail, _FID)
+
+    # 1 preamble + 2 prompts = 3 turns; the preamble renders 1 row, the others 2.
+    assert 'data-count="3"' in html
+    assert '<span class="folio__navmeta">3</span>' in html
+    assert html.count('class="turn-item"') == 5
+    numbers = re.findall(r'turn-item__n">(\d+)<', html)
+    assert numbers == ["01", "02", "02", "03", "03"]
+    # Anchors count blocks, so every one is unique and resolves.
+    assert [f'href="#t-{k}"' in html and f'id="t-{k}"' in html for k in range(1, 6)] == [True] * 5
 
 
 def test_folio_ledger_counts_tools_across_turns_descending():

@@ -6,6 +6,7 @@ import sqlite3
 import pytest
 
 from siftd.backfill import (
+    _usage_carrier_indices,
     backfill_derivative_tags,
     backfill_filter_binary,
     backfill_models,
@@ -161,6 +162,50 @@ class TestBackfillResponseAttributes:
         assert backfill_response_attributes(db) == 2
         keys = {r["key"] for r in db.execute("SELECT key FROM attributes WHERE target_kind='response' AND target_id='r1'").fetchall()}
         assert keys == {"cache_creation_input_tokens", "cache_read_input_tokens"}
+
+    def test_streamed_message_attributes_land_on_final_record_only(self, db, tmp_path):
+        """Issue #97, on a database ingested before streamed chunks merged: every chunk is its own
+        Response and repeats its message's usage; only the final chunk's Response gets the attributes."""
+        usage = {"cache_creation_input_tokens": 500, "cache_read_input_tokens": 1200}
+        _chain(db, rid="r1", ext_id="claude_code::u1")
+        _chain(db, rid="r2", ext_id="claude_code::u2")
+        p = _jsonl(tmp_path, [
+            {"type": "assistant", "uuid": "u1", "message": {"id": "msg_1", "usage": usage}},
+            {"type": "assistant", "uuid": "u2", "message": {"id": "msg_1", "usage": usage}},
+        ])
+        _ingest(db, p)
+        db.commit()
+        assert backfill_response_attributes(db) == 2
+        keys = lambda rid: {r["key"] for r in db.execute(  # noqa: E731
+            "SELECT key FROM attributes WHERE target_kind='response' AND target_id=?", (rid,)).fetchall()}
+        assert keys("r1") == set()
+        assert keys("r2") == {"cache_creation_input_tokens", "cache_read_input_tokens"}
+
+    def test_a_merged_message_is_not_double_counted(self, db, tmp_path):
+        """Since chunks merge at ingest, a message's one response carries its first chunk's id and ingest already
+        stored its attributes. The final record matches no response, and the first (a response) is not a carrier."""
+        usage = {"cache_creation_input_tokens": 500, "cache_read_input_tokens": 1200}
+        _chain(db, rid="r1", ext_id="claude_code::u1")
+        p = _jsonl(tmp_path, [
+            {"type": "assistant", "uuid": "u1", "message": {"id": "msg_1", "usage": usage}},
+            {"type": "assistant", "uuid": "u2", "message": {"id": "msg_1", "usage": usage}},
+        ])
+        _ingest(db, p)
+        db.commit()
+        assert backfill_response_attributes(db) == 0
+
+    def test_usage_carrier_indices_rule(self):
+        records = [
+            {"type": "user", "message": {"role": "user", "content": "hi"}},            # 0 not a response
+            {"type": "assistant", "message": {"id": "m1"}},                             # 1 chunk of m1
+            {"type": "user", "message": {"role": "user", "content": "between"}},        # 2 not a response
+            {"type": "assistant", "message": {"id": "m1"}},                             # 3 final m1
+            {"type": "assistant", "message": {"id": ""}},                               # 4 empty id = no id
+            {"type": "assistant", "message": {"role": "user", "id": "m9"}},             # 5 not a response
+            {"type": "assistant", "message": {"id": "m9"}},                             # 6 only m9 record
+            {"type": "assistant"},                                                      # 7 no message
+        ]
+        assert _usage_carrier_indices(records) == frozenset({3, 4, 6, 7})
 
     @pytest.mark.parametrize("record,desc", [
         ({"type": "human", "uuid": "x"}, "non-assistant"),

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import mean as _mean
@@ -25,11 +26,15 @@ from siftd.domain.search_types import (
 from siftd.errors import UserInputError
 from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.queries import (
+    ExchangeRow,
     fetch_all_conversation_ids,
     fetch_conversation_timestamps,
     fetch_prompt_response_texts,
     fetch_prompt_timestamps,
+    fetch_turn_exchanges,
 )
+from siftd.storage.sql_helpers import event_order
+from siftd.storage.turns import TurnSpan, load_turns, ordinals_by_event
 
 if TYPE_CHECKING:
     from siftd.embeddings.base import EmbeddingBackend, EmbeddingConfigError
@@ -513,58 +518,110 @@ def _enrich_block_tags(
         chunk.tags = by_id.get(block_id, [])
 
 
+class _Folds(dict[str, list[TurnSpan]]):
+    """Conversation id -> its turns, folded on first use and then reused.
+
+    Every enrichment below maps a hit's events to turns and then reads those
+    turns' text, so several hits from one long transcript must share one fold
+    (one read of its events) rather than fold it once per hit.
+    """
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        super().__init__()
+        self._conn = conn
+
+    def __missing__(self, conversation_id: str) -> list[TurnSpan]:
+        turns = self[conversation_id] = load_turns(self._conn, conversation_id)
+        return turns
+
+
+def _covered_turns(turns: Sequence[TurnSpan], source_ids: Sequence[str]) -> list[int]:
+    """Ordinals of the turns holding any of ``source_ids``, ascending."""
+    ordinals = ordinals_by_event(turns)
+    return sorted({ordinals[sid] for sid in source_ids if sid in ordinals})
+
+
 def enrich_file_refs(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
-    """Attach file references to each chunk in-place."""
-    from siftd.api import fetch_file_refs
+    """Attach file references to each chunk in-place: those of every turn it covers.
 
-    all_source_ids: list[str] = []
-    for r in results:
-        all_source_ids.extend(r.source_ids or [])
-    if not all_source_ids:
+    One fold per conversation, and one read of the union of its covered turns'
+    file calls, however many of its chunks matched.
+    """
+    from siftd.api.file_refs import fetch_turn_file_refs
+
+    if not any(r.source_ids for r in results):
         return
-
-    refs_by_prompt = fetch_file_refs(conn, all_source_ids)
+    folds = _Folds(conn)
+    covered_by_result: list[tuple[SearchChunk, list[int]]] = []
+    union: dict[str, set[int]] = {}
     for r in results:
-        refs = []
-        for sid in (r.source_ids or []):
-            refs.extend(refs_by_prompt.get(sid, []))
-        r.file_refs = refs
+        covered = _covered_turns(folds[r.conversation_id], r.source_ids) if r.source_ids else []
+        covered_by_result.append((r, covered))
+        union.setdefault(r.conversation_id, set()).update(covered)
+    refs_by_conv = {
+        conv_id: fetch_turn_file_refs(conn, conv_id, sorted(ordinals), turns=folds[conv_id])
+        for conv_id, ordinals in union.items()
+        if ordinals
+    }
+    for r, covered in covered_by_result:
+        refs_by_turn = refs_by_conv.get(r.conversation_id, {})
+        r.file_refs = [ref for o in covered for ref in refs_by_turn[o]]
 
 
 def enrich_exchanges(conn: sqlite3.Connection, results: list[SearchChunk]) -> None:
-    """Attach full prompt+response exchanges for each chunk in-place."""
+    """Attach the full exchange of every turn a chunk covers, in-place.
+
+    A chunk covers a turn when any of its ``source_ids`` (prompt, response or
+    tool call) is an event of that turn, so a chunk anchored on responses alone
+    (a preamble turn has no prompt) still shows its exchange. One fold per
+    conversation, and one read of the union of its covered turns' text.
+    """
+    folds = _Folds(conn)
+    covered_by_result: list[tuple[SearchChunk, list[int]]] = []
+    union: dict[str, set[int]] = {}
     for r in results:
-        source_ids = r.source_ids or []
-        if source_ids:
-            r.exchanges = fetch_prompt_response_texts(conn, source_ids)
+        if not r.source_ids:
+            continue
+        covered = _covered_turns(folds[r.conversation_id], r.source_ids)
+        covered_by_result.append((r, covered))
+        union.setdefault(r.conversation_id, set()).update(covered)
+    exchange_of: dict[tuple[str, int], ExchangeRow] = {}
+    for conv_id, ordinals in union.items():
+        wanted = sorted(ordinals)
+        rows = fetch_turn_exchanges(conn, conv_id, wanted, turns=folds[conv_id])
+        exchange_of.update(zip(((conv_id, o) for o in wanted), rows, strict=True))
+    for r, covered in covered_by_result:
+        r.exchanges = [
+            (ex.prompt_id, ex.prompt_text, ex.response_text)
+            for ex in (exchange_of[(r.conversation_id, o)] for o in covered)
+        ]
+
+
+def _event_ordinals(conn: sqlite3.Connection, conversation_id: str) -> dict[str, int]:
+    """Every event of the conversation mapped to its turn ordinal (one fold)."""
+    return ordinals_by_event(load_turns(conn, conversation_id))
 
 
 def enrich_context_window(conn: sqlite3.Connection, results: list[SearchChunk], n: int) -> None:
-    """Attach +/-N context exchanges around each chunk's source prompts."""
+    """Attach +/-N context exchanges around each chunk's source turns."""
+    folds = _Folds(conn)
     for r in results:
-        source_ids = r.source_ids or []
-        if not source_ids:
+        if not r.source_ids:
             continue
 
-        all_prompts = conn.execute(
-            """
-            SELECT e.id FROM events e
-            WHERE e.conversation_id = ? AND e.kind = 'prompt'
-            ORDER BY e.timestamp
-        """,
-            (r.conversation_id,),
-        ).fetchall()
-        prompt_order = [row[0] for row in all_prompts]
-        source_set = set(source_ids)
-        source_indices = [i for i, pid in enumerate(prompt_order) if pid in source_set]
-        if not source_indices:
+        turns = folds[r.conversation_id]
+        source_turns = _covered_turns(turns, r.source_ids)
+        if not source_turns:
             continue
 
-        start = max(0, min(source_indices) - n)
-        end = min(len(prompt_order), max(source_indices) + n + 1)
-        context_ids = prompt_order[start:end]
-        exchanges = fetch_prompt_response_texts(conn, context_ids)
-        r.context_window = [(pid, pt, rt, pid in source_set) for pid, pt, rt in exchanges]
+        start = max(0, source_turns[0] - n)
+        end = min(len(turns), source_turns[-1] + n + 1)
+        window = range(start, end)
+        exchanges = fetch_turn_exchanges(conn, r.conversation_id, window, turns=turns)
+        r.context_window = [
+            (ex.prompt_id, ex.prompt_text, ex.response_text, ordinal in source_turns)
+            for ordinal, ex in zip(window, exchanges, strict=True)
+        ]
 
 
 def _events_to_turn_indices(
@@ -572,42 +629,13 @@ def _events_to_turn_indices(
     event_ids: list[str],
     conv_id: str,
 ) -> list[int | None]:
-    """Map a list of event_ids to turn indices for a given conversation.
+    """Map a list of event_ids to turn ordinals for a given conversation.
 
-    Batches the prompt-list lookup: fetches all prompts for conv_id once,
-    then maps each event_id to its ordinal. Called by both _annotate_turn_positions
-    and the query CLI ambiguous-match pre-pass.
+    Folds the conversation once, then looks each event up. Called by the query
+    CLI ambiguous-match pre-pass.
     """
-
-    prompt_rows = conn.execute(
-        "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
-        (conv_id,),
-    ).fetchall()
-    prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
-
-    result: list[int | None] = []
-    for eid in event_ids:
-        row = conn.execute(
-            "SELECT kind, timestamp FROM events WHERE id = ?",
-            (eid,),
-        ).fetchone()
-        if row is None:
-            result.append(None)
-            continue
-        kind = row["kind"]
-        ts = row["timestamp"]
-        if kind == "prompt":
-            result.append(prompt_id_to_idx.get(eid))
-        else:
-            prompt_row = conn.execute(
-                "SELECT id FROM events WHERE conversation_id = ? AND kind = 'prompt' AND timestamp <= ? ORDER BY timestamp DESC LIMIT 1",
-                (conv_id, ts),
-            ).fetchone()
-            if prompt_row is None:
-                result.append(None)
-            else:
-                result.append(prompt_id_to_idx.get(prompt_row["id"]))
-    return result
+    ordinals = _event_ordinals(conn, conv_id)
+    return [ordinals.get(eid) for eid in event_ids]
 
 
 def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]) -> None:
@@ -617,21 +645,15 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
     FTS5 chunks have event_id already set (from fts5_search_content result dict).
     Semantic/hybrid chunks derive event_id from source_ids[0] and look up its ordinal.
     """
-    from siftd.storage.fts import fts5_event_turn_index
-
     by_conv: dict[str, list[SearchChunk]] = {}
     for chunk in chunks:
         by_conv.setdefault(chunk.conversation_id, []).append(chunk)
 
     for conv_id, conv_chunks in by_conv.items():
         try:
-            prompt_rows = conn.execute(
-                "SELECT id, timestamp FROM events WHERE conversation_id = ? AND kind = 'prompt' ORDER BY timestamp",
-                (conv_id,),
-            ).fetchall()
+            ordinals = _event_ordinals(conn, conv_id)
         except Exception:
             continue  # enrichment is non-fatal — turn_index stays None
-        prompt_id_to_idx = {row["id"]: i for i, row in enumerate(prompt_rows)}
 
         for chunk in conv_chunks:
             if chunk.source_ids or chunk.match_event_id:
@@ -645,15 +667,10 @@ def _annotate_turn_positions(conn: sqlite3.Connection, chunks: list[SearchChunk]
                 # wrong turn_index and folio jump for a bridged RRF chunk.
                 anchor = chunk.match_event_id or chunk.source_ids[0]
                 chunk.event_id = anchor
-                turn_idx = prompt_id_to_idx.get(anchor)
-                if turn_idx is None:
-                    # Non-prompt anchor (response, tool_summary) — derive from
-                    # the event's surrounding prompt.
-                    turn_idx = fts5_event_turn_index(conn, anchor, conv_id)
-                chunk.turn_index = turn_idx
+                chunk.turn_index = ordinals.get(anchor)
             elif chunk.event_id:
                 # FTS5 chunk: event_id already set; derive turn index
-                chunk.turn_index = fts5_event_turn_index(conn, chunk.event_id, conv_id)
+                chunk.turn_index = ordinals.get(chunk.event_id)
 
 
 def phrase_events_in_conversation(
@@ -685,10 +702,11 @@ def enrich_around_window(
     in the conversation are dropped (not silently carried through with stale
     turn_index). Caller should warn the user when n_skipped > 0.
     """
-    from siftd.storage.fts import fts5_event_turn_index, fts5_first_event_in_conversation
+    from siftd.storage.fts import fts5_first_event_in_conversation
 
     kept: list = []
     n_skipped = 0
+    folds = _Folds(conn)
 
     for chunk in chunks:
         conv_id = chunk.conversation_id if hasattr(chunk, "conversation_id") else chunk.get("conversation_id")
@@ -701,7 +719,8 @@ def enrich_around_window(
             n_skipped += 1
             continue
 
-        turn_idx = fts5_event_turn_index(conn, event_id, conv_id)
+        turns = folds[conv_id]
+        turn_idx = ordinals_by_event(turns).get(event_id)
         if turn_idx is None:
             n_skipped += 1
             continue
@@ -709,19 +728,13 @@ def enrich_around_window(
         if hasattr(chunk, "turn_index"):
             chunk.turn_index = turn_idx
 
-        all_prompts = conn.execute(
-            "SELECT e.id FROM events e WHERE e.conversation_id = ? AND e.kind = 'prompt' ORDER BY e.timestamp",
-            (conv_id,),
-        ).fetchall()
-        prompt_order = [row[0] for row in all_prompts]
-
-        start = max(0, turn_idx + window_start)
-        end = min(len(prompt_order), turn_idx + window_end + 1)
-        window_ids = prompt_order[start:end]
-        exchanges = fetch_prompt_response_texts(conn, window_ids)
-        anchor_prompt_id = prompt_order[turn_idx] if turn_idx < len(prompt_order) else None
+        window = range(max(0, turn_idx + window_start), min(len(turns), turn_idx + window_end + 1))
+        exchanges = fetch_turn_exchanges(conn, conv_id, window, turns=turns)
         if hasattr(chunk, "context_window"):
-            chunk.context_window = [(pid, pt, rt, pid == anchor_prompt_id) for pid, pt, rt in exchanges]
+            chunk.context_window = [
+                (ex.prompt_id, ex.prompt_text, ex.response_text, ordinal == turn_idx)
+                for ordinal, ex in zip(window, exchanges, strict=True)
+            ]
         kept.append(chunk)
 
     return kept, n_skipped
@@ -1908,7 +1921,7 @@ def enumerate_tagged(
                 "JOIN events e ON e.id = ec.event_id "
                 "WHERE e.conversation_id = ? AND e.kind = 'prompt' "
                 "AND json_extract(ec.content, '$.text') IS NOT NULL "
-                "ORDER BY e.timestamp LIMIT 1",
+                f"ORDER BY {event_order('e')} LIMIT 1",
                 (cid,),
             ).fetchone()
             started = row["started_at"]

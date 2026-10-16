@@ -1,0 +1,57 @@
+[
+  {
+    "ended_at": "2026-04-23T20:30:33.958000+00:00",
+    "external_id": "vscode::4a2190b1-f80f-4776-90b0-60b975e84507",
+    "harness": {
+      "display_name": "VSCode",
+      "log_format": "json",
+      "name": "vscode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 72."
+            }
+          }
+        ],
+        "external_id": "request_083dcfcc-3f7a-42ab-8699-f6b0afa9531d",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thinking text 73."
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "answer text 74."
+                }
+              }
+            ],
+            "external_id": "response_7f6439d3-68ee-4a24-8a08-8dd62283e413",
+            "model": "copilot/auto",
+            "sequence": 1,
+            "timestamp": "2026-04-23T20:30:33.958000+00:00"
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-04-23T20:30:33.958000+00:00"
+      }
+    ],
+    "started_at": "2026-04-23T20:30:25.396000+00:00"
+  }
+]

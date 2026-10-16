@@ -1,0 +1,45 @@
+[
+  {
+    "ended_at": "2026-09-26T12:13:43.666Z",
+    "external_id": "pi_agent::01a0dda2-9ea5-74b0-9e90-b1b3c92785b2",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 2"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0"
+            },
+            "model": "jaahas/qwen3.5-uncensored:9b",
+            "provider": "omlx",
+            "sequence": 1,
+            "timestamp": "2026-09-26T12:13:43.663Z",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-09-26T12:13:43.624Z"
+      }
+    ],
+    "started_at": "2026-09-26T12:13:37.317Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

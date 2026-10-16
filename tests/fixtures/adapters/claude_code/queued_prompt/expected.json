@@ -1,0 +1,87 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2026-09-23T06:38:12.581Z",
+    "external_id": "claude_code::788182e2-506c-465f-b2ba-9794966442e0",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "x",
+              "meta_text": "x",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::c2a3dab2-8e78-4ed0-8e2a-247b33480286",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "5218",
+              "cache_creation_input_tokens": "5218",
+              "cache_read_input_tokens": "359953"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01LGwy2Q7QpiH39YDBDNU7Vg",
+                  "input": {
+                    "command": "x",
+                    "description": "x"
+                  },
+                  "name": "Bash",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::4849460f-d43d-4924-b0c0-40adee552ac9",
+            "model": "claude-opus-5-5",
+            "sequence": 1,
+            "timestamp": "2026-09-23T06:38:12.492Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-23T06:38:12.581000+00:00",
+                  "stderr": "x",
+                  "stdout": "x"
+                },
+                "external_id": "toolu_01LGwy2Q7QpiH39YDBDNU7Vg",
+                "input": {
+                  "command": "x",
+                  "description": "x"
+                },
+                "result": {
+                  "content": "x"
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-09-23T06:38:12.492Z",
+                "tool_name": "Bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 2,
+              "output_tokens": 767
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-09-23T06:38:05.616Z"
+      }
+    ],
+    "started_at": "2026-09-23T06:38:05.616Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

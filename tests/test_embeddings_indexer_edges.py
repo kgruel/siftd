@@ -16,6 +16,7 @@ from siftd.storage.embeddings import (
     get_indexed_state,
     get_meta,
     open_embeddings_db,
+    upsert_indexed_state,
 )
 from siftd.storage.sqlite import (
     create_database,
@@ -463,3 +464,62 @@ def test_interrupt_preserves_prior_coverage_of_uncommitted_conversations(tmp_pat
         assert chunk_count(conn) == 2
     finally:
         conn.close()
+
+
+def _add_preamble(db_path, conversation_id: str, text: str) -> None:
+    """Store a response with no parent prompt: the preamble (see storage/turns.py)."""
+    conn = create_database(db_path)
+    m = get_or_create_model(conn, "test-model")
+    rid = insert_response(
+        conn, conversation_id, None, m, None, "pre-r0", "2023-12-31T23:59:00Z",
+        input_tokens=1, output_tokens=1,
+    )
+    insert_response_content(conn, rid, 0, "text", f'{{"text": {text!r}}}')
+    conn.commit()
+    conn.close()
+
+
+def _chunk_texts(edb, conversation_id: str) -> list[str]:
+    conn = open_embeddings_db(edb, read_only=True)
+    try:
+        return [r[0] for r in conn.execute("SELECT text FROM chunks WHERE conversation_id = ?", (conversation_id,))]
+    finally:
+        conn.close()
+
+
+def test_index_built_before_the_preamble_was_extracted_picks_it_up_incrementally(tmp_path, fake_backend):
+    """An index built when the extractor skipped parent-less responses must not keep
+    omitting them: the preamble conversations alone are re-indexed by the next
+    incremental build, and conversations without one are left untouched.
+
+    Regression for the stale-index defect: the fingerprint was event count, newest
+    timestamp and content count, none of which an extractor change moves, so the
+    incremental diff found nothing stale and the preamble stayed out of semantic
+    search indefinitely.
+    """
+    db = tmp_path / "main.db"
+    edb = tmp_path / "e.db"
+    ids = _make_main_db(db, [("fork", [("question", "answer")]), ("plain", [("hello", "hi")])])
+    _add_preamble(db, ids["fork"], "zebra preamble words")
+
+    ix.build_embeddings_index(db_path=db, embed_db_path=edb)
+    assert any("zebra preamble words" in t for t in _chunk_texts(edb, ids["fork"]))
+
+    # Rewind the index to what the old extractor produced: no preamble text, and the
+    # fingerprint the old code recorded (the same three terms, no preamble term).
+    econn = open_embeddings_db(edb)
+    econn.execute("UPDATE chunks SET text = 'question\n\nanswer' WHERE conversation_id = ?", (ids["fork"],))
+    old_fp, count = get_indexed_state(econn)[ids["fork"]]
+    assert old_fp.endswith(":p1"), "a conversation with a preamble carries it in its fingerprint"
+    upsert_indexed_state(econn, ids["fork"], old_fp.rsplit(":", 1)[0], count, commit=True)
+    plain_fp = get_indexed_state(econn)[ids["plain"]][0]
+    econn.close()
+    assert not plain_fp.rsplit(":", 1)[1].startswith("p"), "no preamble term, so these fingerprints (and their chunks) are unchanged"
+    assert not any("zebra" in t for t in _chunk_texts(edb, ids["fork"]))
+
+    stats = ix.build_embeddings_index(db_path=db, embed_db_path=edb)
+    assert stats.conversations_indexed == 1  # only the preamble conversation
+    assert any("zebra preamble words" in t for t in _chunk_texts(edb, ids["fork"]))
+
+    again = ix.build_embeddings_index(db_path=db, embed_db_path=edb)
+    assert again.conversations_indexed == 0 and again.chunks_added == 0

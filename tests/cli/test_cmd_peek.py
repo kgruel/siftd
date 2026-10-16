@@ -572,3 +572,60 @@ class TestPeekEdgeBranches:
         monkeypatch.setattr("siftd.api.find_session_file", lambda _sid: None)
         assert cmd_peek(_peek_args(session_id="abc", follow=True)) == 1
         assert "Session not found" in capsys.readouterr().err
+
+
+class TestPeekFollowJsonUsageHandoff:
+    """The JSON initial context and the live tail share one usage count (#97).
+
+    The initial context is exchange totals, computed from the file as it stood when
+    peek read it. A streamed message whose final record arrives after that point must
+    charge only what the context did not already show, or the stream double counts.
+    """
+
+    def test_final_record_after_initial_context_does_not_recount_it(self, tmp_path, monkeypatch, capsys):
+        from conftest import FIXTURES_DIR
+
+        from siftd.peek import follow as follow_module
+
+        records = [
+            json.loads(line)
+            for line in (FIXTURES_DIR / "adapters" / "claude_code" / "streamed_message" / "input.jsonl")
+            .read_text()
+            .splitlines()
+            if line.strip()
+        ]
+        # The prompt and the message's first two records are on disk when peek starts;
+        # the final record (2/176 tokens) arrives after the initial context is printed.
+        path = tmp_path / "session.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in records[:3]), encoding="utf-8")
+        late = "".join(json.dumps(r) + "\n" for r in records[3:])
+
+        class _AppendOnFirstPoll:
+            """Stands in for follow's time module: the first poll appends the late records."""
+
+            def __init__(self):
+                self._pending = late
+
+            def time(self):
+                return time.time()
+
+            def sleep(self, seconds):
+                if self._pending:
+                    with path.open("a", encoding="utf-8") as f:
+                        f.write(self._pending)
+                    self._pending = ""
+                time.sleep(0.01)
+
+        monkeypatch.setattr(follow_module, "time", _AppendOnFirstPoll())
+        monkeypatch.setattr("siftd.api.find_session_file", lambda _sid: path)
+
+        rc = main(["peek", "abc123", "--follow", "--json", "--timeout", "1.0"])
+        assert rc == 0
+        events = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")]
+        assistant = [e for e in events if e["role"] == "assistant"]
+
+        # The late final record must actually be streamed, or the total below proves nothing.
+        assert any(e["output_tokens"] > 0 and e.get("message_id") for e in assistant)
+        # Streamed-message totals for the whole session: 2 input, 176 output (peek_exchanges).
+        assert sum(e["input_tokens"] for e in assistant) == 2
+        assert sum(e["output_tokens"] for e in assistant) == 176

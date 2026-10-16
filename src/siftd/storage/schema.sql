@@ -229,11 +229,26 @@ CREATE TABLE events (
     parent_id       TEXT REFERENCES events(id) ON DELETE CASCADE,
     external_id     TEXT,                       -- harness's identifier (NULL for synthetic)
     timestamp       TEXT NOT NULL,
+    sequence        INTEGER,                    -- recorded order within the conversation, NULL on rows from before v13
     UNIQUE (conversation_id, kind, external_id)
 );
 
 CREATE INDEX idx_events_conversation_kind ON events(conversation_id, kind);
 CREATE INDEX idx_events_parent ON events(parent_id);
+CREATE INDEX idx_events_conversation_sequence ON events(conversation_id, sequence);
+
+-- A conversation's parents, at most one per relation (where it ran: subagent;
+-- what it continues: fork/resume/branch), held by external_id and resolved at
+-- read time (see storage/links.py)
+CREATE TABLE conversation_links (
+    conversation_id    TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    kind               TEXT NOT NULL,           -- 'subagent' | 'fork' | 'resume' | 'branch'
+    parent_external_id TEXT NOT NULL,           -- the parent's external_id, never a conversation id
+    anchor             TEXT,                    -- the parent record the child continues from, when known
+    PRIMARY KEY (conversation_id, kind)
+);
+
+CREATE INDEX idx_conversation_links_parent ON conversation_links(parent_external_id);
 
 -- Sparse extension: only present for kind='response'
 CREATE TABLE event_response (

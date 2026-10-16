@@ -1,0 +1,169 @@
+[
+  {
+    "ended_at": "2026-10-09T16:20:07.371Z",
+    "external_id": "pi_agent::01a0ff9a-ca83-76bc-b60f-b1679ff755e8",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 1"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "220800",
+              "cost": "0.26604"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 1"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "text 1"
+                }
+              }
+            ],
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 1,
+            "timestamp": "2026-10-09T05:05:16.665Z",
+            "usage": {
+              "input_tokens": 221094,
+              "output_tokens": 846
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-10-09T04:09:36.517Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 2"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "324490",
+              "cache_read_input_tokens": "0",
+              "cost": "5.042965"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 2"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "text 2"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "toolu_01HTjtUcoTfJC7xhFDeRZYW3",
+                  "input": {
+                    "command": "value",
+                    "timeout": 15
+                  },
+                  "name": "bash"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "toolu_01KqNyNiLqTnVKr9WJC7sKvp",
+                  "input": {
+                    "command": "value",
+                    "timeout": 15
+                  },
+                  "name": "bash"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "toolu_0153ZkG8aG3TLX4fAwywqD1A",
+                  "input": {
+                    "limit": 50,
+                    "offset": 1420,
+                    "path": "value"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "claude-fable-5-1",
+            "provider": "anthropic",
+            "sequence": 3,
+            "timestamp": "2026-10-09T16:20:07.371Z",
+            "tool_calls": [
+              {
+                "external_id": "toolu_01HTjtUcoTfJC7xhFDeRZYW3",
+                "input": {
+                  "command": "value",
+                  "timeout": 15
+                },
+                "sequence": 4,
+                "timestamp": "2026-10-09T16:20:07.371Z",
+                "tool_name": "bash"
+              },
+              {
+                "external_id": "toolu_01KqNyNiLqTnVKr9WJC7sKvp",
+                "input": {
+                  "command": "value",
+                  "timeout": 15
+                },
+                "sequence": 5,
+                "timestamp": "2026-10-09T16:20:07.371Z",
+                "tool_name": "bash"
+              },
+              {
+                "external_id": "toolu_0153ZkG8aG3TLX4fAwywqD1A",
+                "input": {
+                  "limit": 50,
+                  "offset": 1420,
+                  "path": "value"
+                },
+                "sequence": 6,
+                "timestamp": "2026-10-09T16:20:07.371Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 4,
+              "output_tokens": 19736
+            }
+          }
+        ],
+        "sequence": 2,
+        "timestamp": "2026-10-09T16:14:47.686Z"
+      }
+    ],
+    "started_at": "2026-10-03T02:32:09.603Z",
+    "workspace_path": "/Users/user/Code/loops"
+  }
+]

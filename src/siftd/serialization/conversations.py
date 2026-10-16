@@ -30,6 +30,10 @@ def serialize_conversation_summary(conv: ConversationSummary) -> dict[str, Any]:
     owner = getattr(conv, "owner", None)
     if owner is not None:
         d["owner"] = owner
+    # Carried only when true, so a conversation without a preamble keeps the
+    # payload it always had; "prompts" still counts prompt events.
+    if getattr(conv, "has_preamble", False):
+        d["preamble"] = True
     return d
 
 
@@ -88,6 +92,13 @@ def serialize_conversation_detail(
         tool_call_ids = getattr(turn, "tool_call_ids", None) or []
         if tool_call_ids:
             turn_dict["tool_call_ids"] = list(tool_call_ids)
+        # The turn before the first prompt has no "prompt"/"prompt_id"; say so
+        # explicitly rather than leaving a consumer to infer it from their absence.
+        if getattr(turn, "preamble", False):
+            turn_dict["preamble"] = True
+            continued_from = getattr(turn, "continued_from", None)
+            if continued_from:
+                turn_dict["continued_from"] = continued_from
         turns_data.append(turn_dict)
 
     return {

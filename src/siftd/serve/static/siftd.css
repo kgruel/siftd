@@ -167,6 +167,8 @@ body { margin: 0; }
 .turn__time { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint); }
 .turn__tools { font-family:var(--font-mono); font-size:var(--fs-micro); color:var(--faint);
   margin-left:auto; }
+.turn__preamble { margin:0 0 10px; font-size:var(--fs-micro); font-style:italic;
+  color:var(--mid); }
 .turn__text { line-height:1.62; color:var(--ink); border-left:2px solid var(--hair);
   padding-left:18px; }
 .turn[data-role="assistant"] .turn__text { border-left-color:var(--accent); }

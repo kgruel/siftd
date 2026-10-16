@@ -1,0 +1,725 @@
+[
+  {
+    "ended_at": "2026-09-26T13:15:28.551Z",
+    "external_id": "pi_agent::01a0ddd6-2102-74fb-ad28-24e2c496fd7b",
+    "harness": {
+      "display_name": "Pi Coding Agent",
+      "log_format": "jsonl",
+      "name": "pi_agent",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 1"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0"
+            },
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 1,
+            "timestamp": "2026-09-26T13:11:29.659Z",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0"
+            },
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 2,
+            "timestamp": "2026-09-26T13:11:31.675Z",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0"
+            },
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 3,
+            "timestamp": "2026-09-26T13:11:35.692Z",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0"
+            },
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 4,
+            "timestamp": "2026-09-26T13:11:43.706Z",
+            "usage": {
+              "input_tokens": 0,
+              "output_tokens": 0
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-09-26T13:11:29.609Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "prompt 2"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0.04206000000000001"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_0W3IHnJF2wVGEMgQouopUp5x|fc_0389659780106a45016ab7c53757e887d29c739b020429ff82",
+                  "input": {
+                    "command": "value",
+                    "timeout": null
+                  },
+                  "name": "bash"
+                }
+              }
+            ],
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 6,
+            "timestamp": "2026-09-26T13:14:31.656Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:31.678000+00:00"
+                },
+                "external_id": "call_0W3IHnJF2wVGEMgQouopUp5x|fc_0389659780106a45016ab7c53757e887d29c739b020429ff82",
+                "input": {
+                  "command": "value",
+                  "timeout": null
+                },
+                "result": {
+                  "output": "output 3"
+                },
+                "sequence": 7,
+                "status": "error",
+                "timestamp": "2026-09-26T13:14:31.656Z",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 3886,
+              "output_tokens": 64
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "0",
+              "cost": "0.07472000000000001"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 4"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "reply 5"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_gQh4VsB2flUSKJehhZpiBFAX|fc_0389659780106a45016ab7c54e5c3c87d299ddd6a23366ce8a",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_HB9hkSGF50lAtzhlDexXnd9S|fc_0389659780106a45016ab7c54e5c4c87d2b8bd8e2ba84d5dae",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_kXbZein1vfNxrdxMuLh5l0aS|fc_0389659780106a45016ab7c54e5c5087d2a44316172cda98f1",
+                  "input": {
+                    "command": "value",
+                    "timeout": null
+                  },
+                  "name": "bash"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_YogTZzKW2bwJ8Nir6qANKMGp|fc_0389659780106a45016ab7c54e5c5887d2968c4fe6514dfa4b",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_TpdgjlAboNsZRbP2U5YOy5PZ|fc_0389659780106a45016ab7c54e5c5c87d2bc6497480ee43a7e",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_vSurPBgO6FoC9CTaegXnBnfA|fc_0389659780106a45016ab7c54e5c6487d2b0109c1ee506c215",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 8,
+            "timestamp": "2026-09-26T13:14:53.087Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_gQh4VsB2flUSKJehhZpiBFAX|fc_0389659780106a45016ab7c54e5c3c87d299ddd6a23366ce8a",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 6"
+                },
+                "sequence": 9,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_HB9hkSGF50lAtzhlDexXnd9S|fc_0389659780106a45016ab7c54e5c4c87d2b8bd8e2ba84d5dae",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 7"
+                },
+                "sequence": 10,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_kXbZein1vfNxrdxMuLh5l0aS|fc_0389659780106a45016ab7c54e5c5087d2a44316172cda98f1",
+                "input": {
+                  "command": "value",
+                  "timeout": null
+                },
+                "result": {
+                  "output": "output 8"
+                },
+                "sequence": 11,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "bash"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_YogTZzKW2bwJ8Nir6qANKMGp|fc_0389659780106a45016ab7c54e5c5887d2968c4fe6514dfa4b",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 9"
+                },
+                "sequence": 12,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_TpdgjlAboNsZRbP2U5YOy5PZ|fc_0389659780106a45016ab7c54e5c5c87d2bc6497480ee43a7e",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 10"
+                },
+                "sequence": 13,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:14:54.273000+00:00"
+                },
+                "external_id": "call_vSurPBgO6FoC9CTaegXnBnfA|fc_0389659780106a45016ab7c54e5c6487d2b0109c1ee506c215",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 11"
+                },
+                "sequence": 14,
+                "status": "success",
+                "timestamp": "2026-09-26T13:14:53.087Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 4472,
+              "output_tokens": 600
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "4352",
+              "cost": "0.146372"
+            },
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_t7vZSoQKWS8bmteH96c6CNSl|fc_0389659780106a45016ab7c560cefc87d2ab9cb967ec28ab78",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_g1FpQdQPJaEr1pflZrbtV0J2|fc_0389659780106a45016ab7c560cf0c87d2980733fd21ba973e",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_Zdbzqtr7Qe8cK7QI7QvBvV74|fc_0389659780106a45016ab7c560cf1487d28a4561a0896ea47b",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_LvwXCUgY29LZZEhBniEe592P|fc_0389659780106a45016ab7c560cf1887d2905077f75f437f9b",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_bMlZTfQosSGnZ0qdgI1p2Pjx|fc_0389659780106a45016ab7c560cf2087d290096e34477676f0",
+                  "input": {
+                    "command": "value",
+                    "timeout": null
+                  },
+                  "name": "bash"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_Ne2CrE2UJgR4PoU1rWbt5irB|fc_0389659780106a45016ab7c560cf2487d2b1674f5b5fca269e",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              }
+            ],
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 15,
+            "timestamp": "2026-09-26T13:15:11.990Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_t7vZSoQKWS8bmteH96c6CNSl|fc_0389659780106a45016ab7c560cefc87d2ab9cb967ec28ab78",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 12"
+                },
+                "sequence": 16,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_g1FpQdQPJaEr1pflZrbtV0J2|fc_0389659780106a45016ab7c560cf0c87d2980733fd21ba973e",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 13"
+                },
+                "sequence": 17,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_Zdbzqtr7Qe8cK7QI7QvBvV74|fc_0389659780106a45016ab7c560cf1487d28a4561a0896ea47b",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 14"
+                },
+                "sequence": 18,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_LvwXCUgY29LZZEhBniEe592P|fc_0389659780106a45016ab7c560cf1887d2905077f75f437f9b",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 15"
+                },
+                "sequence": 19,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "read"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_bMlZTfQosSGnZ0qdgI1p2Pjx|fc_0389659780106a45016ab7c560cf2087d290096e34477676f0",
+                "input": {
+                  "command": "value",
+                  "timeout": null
+                },
+                "result": {
+                  "output": "output 16"
+                },
+                "sequence": 20,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "bash"
+              },
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:12.037000+00:00"
+                },
+                "external_id": "call_Ne2CrE2UJgR4PoU1rWbt5irB|fc_0389659780106a45016ab7c560cf2487d2b1674f5b5fca269e",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 17"
+                },
+                "sequence": 21,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:11.990Z",
+                "tool_name": "read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 16359,
+              "output_tokens": 439
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_input_tokens": "0",
+              "cache_read_input_tokens": "16256",
+              "cost": "0.17572600000000002"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "text": "thought 18"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_VdrD26HtWMzPgJ5nB5AR64ZQ|fc_0389659780106a45016ab7c571940887d2a470de0b00894e0e",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_la3kij3nMbXwmje7PSXhk4zG|fc_0389659780106a45016ab7c571941887d2b3094b4e0ae12302",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_GFKML4Fc5H6LzL8Q7F2Uj8RX|fc_0389659780106a45016ab7c571942087d29a63e7485972dd5c",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_UuNtFnq6OtcbtvqVXtbb9pZO|fc_0389659780106a45016ab7c571942487d2af5a361723ba9b09",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_DmBudEQcZF9PaVo0RJmR8PXi|fc_0389659780106a45016ab7c571942c87d29902f179b5b5c21a",
+                  "input": {
+                    "limit": null,
+                    "offset": null,
+                    "path": "/Users/user/project/file.txt"
+                  },
+                  "name": "read"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_EYJQT41w999KRZsgRUYHl2aO|fc_0389659780106a45016ab7c571943087d2b7f91caed829823a",
+                  "input": {
+                    "command": "value",
+                    "timeout": null
+                  },
+                  "name": "bash"
+                }
+              }
+            ],
+            "model": "gpt-6-astra",
+            "provider": "openai",
+            "sequence": 22,
+            "timestamp": "2026-09-26T13:15:28.481Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T13:15:28.551000+00:00"
+                },
+                "external_id": "call_VdrD26HtWMzPgJ5nB5AR64ZQ|fc_0389659780106a45016ab7c571940887d2a470de0b00894e0e",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "result": {
+                  "output": "output 19"
+                },
+                "sequence": 23,
+                "status": "success",
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "read"
+              },
+              {
+                "external_id": "call_la3kij3nMbXwmje7PSXhk4zG|fc_0389659780106a45016ab7c571941887d2b3094b4e0ae12302",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "sequence": 24,
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "read"
+              },
+              {
+                "external_id": "call_GFKML4Fc5H6LzL8Q7F2Uj8RX|fc_0389659780106a45016ab7c571942087d29a63e7485972dd5c",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "sequence": 25,
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "read"
+              },
+              {
+                "external_id": "call_UuNtFnq6OtcbtvqVXtbb9pZO|fc_0389659780106a45016ab7c571942487d2af5a361723ba9b09",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "sequence": 26,
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "read"
+              },
+              {
+                "external_id": "call_DmBudEQcZF9PaVo0RJmR8PXi|fc_0389659780106a45016ab7c571942c87d29902f179b5b5c21a",
+                "input": {
+                  "limit": null,
+                  "offset": null,
+                  "path": "/Users/user/project/file.txt"
+                },
+                "sequence": 27,
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "read"
+              },
+              {
+                "external_id": "call_EYJQT41w999KRZsgRUYHl2aO|fc_0389659780106a45016ab7c571943087d2b7f91caed829823a",
+                "input": {
+                  "command": "value",
+                  "timeout": null
+                },
+                "sequence": 28,
+                "timestamp": "2026-09-26T13:15:28.481Z",
+                "tool_name": "bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 30123,
+              "output_tokens": 416
+            }
+          }
+        ],
+        "sequence": 5,
+        "timestamp": "2026-09-26T13:14:26.046Z"
+      }
+    ],
+    "started_at": "2026-09-26T13:09:53.026Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

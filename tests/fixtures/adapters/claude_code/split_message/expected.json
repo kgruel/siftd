@@ -1,0 +1,162 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2026-09-26T20:52:16.998Z",
+    "external_id": "claude_code::e7190ee2-d179-4ca3-b718-020e74a5e494",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "sdk",
+              "meta_text": "x",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::2d078e21-770b-420e-a5a6-5c045b6c4ba5",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "42987",
+              "cache_creation_input_tokens": "42987",
+              "merged_external_ids": "[\"claude_code::ef19020f-8908-4424-be8e-44e658dbb16a\"]"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "x",
+                  "type": "thinking"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01RPLzhWmAs6NqcxzavJzNt8",
+                  "input": {
+                    "file_path": "x"
+                  },
+                  "name": "Read",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::0a709a4a-7e64-4fc2-b4b7-cf316ca149e6",
+            "model": "claude-haiku-4-5-20251001",
+            "sequence": 1,
+            "timestamp": "2026-09-26T20:51:55.050Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T20:51:55.536000+00:00"
+                },
+                "external_id": "toolu_01RPLzhWmAs6NqcxzavJzNt8",
+                "input": {
+                  "file_path": "x"
+                },
+                "result": {
+                  "content": "x"
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-09-26T20:51:55.473Z",
+                "tool_name": "Read"
+              }
+            ],
+            "usage": {
+              "input_tokens": 9,
+              "output_tokens": 418
+            }
+          },
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "5697",
+              "cache_creation_input_tokens": "5697",
+              "cache_read_input_tokens": "42987",
+              "merged_external_ids": "[\"claude_code::071d25d8-fee0-41a9-8d63-01d7fff03142\", \"claude_code::89f7afe0-e2eb-4cac-aef3-96609100bd05\"]"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "x",
+                  "type": "thinking"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "x",
+                  "type": "text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01RaueQZJ68BCEXQfnS83Wuo",
+                  "input": {
+                    "file_path": "x",
+                    "new_string": "x",
+                    "old_string": "x",
+                    "replace_all": false
+                  },
+                  "name": "Edit",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::c4eb3ed9-eaed-4812-b7e2-00db2907895e",
+            "model": "claude-haiku-4-5-20251001",
+            "sequence": 3,
+            "timestamp": "2026-09-26T20:52:12.887Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-26T20:52:16.998000+00:00"
+                },
+                "external_id": "toolu_01RaueQZJ68BCEXQfnS83Wuo",
+                "input": {
+                  "file_path": "x",
+                  "new_string": "x",
+                  "old_string": "x",
+                  "replace_all": false
+                },
+                "result": {
+                  "content": "x"
+                },
+                "sequence": 4,
+                "status": "success",
+                "timestamp": "2026-09-26T20:52:16.966Z",
+                "tool_name": "Edit"
+              }
+            ],
+            "usage": {
+              "input_tokens": 8,
+              "output_tokens": 1972
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-09-26T20:51:49.779Z"
+      }
+    ],
+    "started_at": "2026-09-26T20:51:49.779Z",
+    "workspace_path": "/Users/user/Code/example"
+  }
+]

@@ -1,0 +1,55 @@
+[
+  {
+    "ended_at": "2026-02-18T00:58:20.760000+00:00",
+    "external_id": "vscode::2b76b98c-2f0f-48cb-9437-6f81e278dcf4",
+    "harness": {
+      "display_name": "VSCode",
+      "log_format": "json",
+      "name": "vscode",
+      "source": "multi"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "user prompt 1."
+            }
+          }
+        ],
+        "external_id": "request_0bb5e61b-8a36-4662-a9b8-71ad360950ca",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "mcpServersStarting",
+                "content": {
+                  "didStartServerIds": [],
+                  "kind": "mcpServersStarting"
+                }
+              },
+              {
+                "block_type": "text",
+                "content": {
+                  "text": "answer text 1."
+                }
+              }
+            ],
+            "external_id": "response_f34bb620-eef8-493a-a944-a3acb8d14df1",
+            "model": "copilot/oswe-vscode-prime",
+            "sequence": 1,
+            "timestamp": "2026-02-18T00:58:20.760000+00:00",
+            "usage": {
+              "input_tokens": 12302,
+              "output_tokens": 1739
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-02-18T00:58:20.760000+00:00"
+      }
+    ],
+    "started_at": "2026-02-18T00:57:19.664000+00:00"
+  }
+]

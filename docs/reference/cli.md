@@ -468,6 +468,7 @@ siftd > ingest
 Ingest logs from all sources
 
 usage: siftd ingest [-h] [-q | -v] [-p DIR] [-a NAME] [--json] [--rebuild-fts]
+                    [--reparse] [--force]
 
 OPTIONS
   -q, --quiet         Only show totals line
@@ -476,6 +477,13 @@ OPTIONS
   -a, --adapter NAME  Only run specific adapter(s) (can be repeated)
   --json              Output newline-delimited JSON events
   --rebuild-fts       Rebuild FTS index from existing data (skips ingestion)
+  --reparse           Re-parse already-ingested sources even when unchanged, so
+                      an adapter fix reaches stored conversations. Tags and
+                      ownership carry over; a conversation that would lose
+                      user-applied tags is skipped unless --force is given (use
+                      with -a to limit to one adapter)
+  --force             With --reparse, replace conversations even when that would
+                      lose user-applied tags
 
 examples:
   siftd ingest                      # ingest from all adapters
@@ -484,6 +492,8 @@ examples:
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
   siftd ingest --rebuild-fts        # rebuild FTS index from scratch
+  siftd ingest --reparse -a gemini_cli  # re-parse unchanged files under the current parser
+  siftd ingest --reparse --force    # ...and replace conversations that would lose user tags
 ```
 
 ## siftd adapters
