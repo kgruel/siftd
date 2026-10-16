@@ -83,6 +83,10 @@ class Conversation:
     harness: Harness
     started_at: str
     prompts: list[Prompt] = field(default_factory=list)
+    # Responses that arrived before any prompt: a forked sub-agent continuing
+    # from its parent, a session whose opening turn was never written. Stored
+    # with no parent event rather than dropped or given an invented prompt.
+    preamble: list[Response] = field(default_factory=list)
     workspace_path: str | None = None
     branch: str | None = None
     ended_at: str | None = None

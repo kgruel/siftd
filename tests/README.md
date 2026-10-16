@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 195 | 3401 |
-| `tests/adapters/` | 20 | 171 |
+| `tests/` | 196 | 3404 |
+| `tests/adapters/` | 21 | 218 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 640 |
 | `tests/snapshots/` | 1 | 5 |
@@ -292,6 +292,7 @@ docstring so its row is meaningful.
 | [test_stats_usage_owner_scope.py](test_stats_usage_owner_scope.py) | 5 | Owner-scoping regression tests for the /stats usage breakdowns. |
 | [test_status.py](test_status.py) | 11 | Contract tests for the status vocabulary (output/status.py). |
 | [test_storage.py](test_storage.py) | 96 | Tests for siftd storage layer coverage. |
+| [test_store_preamble.py](test_store_preamble.py) | 3 | A response that precedes every prompt is stored with no parent, not dropped. |
 | [test_sync.py](test_sync.py) | 95 | Tests for siftd.api.sync — sync protocol utilities. |
 | [test_sync_e2e.py](test_sync_e2e.py) | 9 | End-to-end sync tests: db send → db receive with real subprocesses. |
 | [test_sync_http_streaming.py](test_sync_http_streaming.py) | 20 | Tests for Y3: HTTP streaming for sync push and pull. |
@@ -326,6 +327,7 @@ docstring so its row is meaningful.
 | [adapters/test_aider.py](adapters/test_aider.py) | 9 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 42 | Tests for Antigravity CLI adapter. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 47 | The shared assembler places every record and accounts for every one. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 21 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 15 | Tests for Codex CLI adapter. |

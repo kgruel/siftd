@@ -16,7 +16,7 @@ import sqlite3
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
-from siftd.domain import Conversation
+from siftd.domain import Conversation, Response
 from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
@@ -3060,6 +3060,10 @@ def store_conversation(
     for attr_key, attr_value in conversation.attributes.items():
         set_attribute(conn, "conversation", conversation_id, attr_key, attr_value, scope="analyzer")
 
+    # Responses that precede every prompt (written first, as they came first): stored with no parent event.
+    for response in conversation.preamble:
+        _store_response(conn, conversation_id, None, response, harness_id, provider_id, filter_binary)
+
     # Process prompts
     for prompt in conversation.prompts:
         prompt_id = insert_prompt(conn, conversation_id, prompt.external_id, prompt.timestamp)
@@ -3070,66 +3074,9 @@ def store_conversation(
 
         # Process responses for this prompt
         for response in prompt.responses:
-            model_id = None
-            if response.model:
-                model_id = get_or_create_model(conn, response.model)
-
-            input_tokens = None
-            output_tokens = None
-            if response.usage:
-                input_tokens = response.usage.input_tokens
-                output_tokens = response.usage.output_tokens
-
-            response_id = insert_response(
-                conn,
-                conversation_id=conversation_id,
-                prompt_id=prompt_id,
-                model_id=model_id,
-                provider_id=provider_id,
-                external_id=response.external_id,
-                timestamp=response.timestamp,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
+            _store_response(
+                conn, conversation_id, prompt_id, response, harness_id, provider_id, filter_binary
             )
-
-            # Insert response content blocks
-            for idx, block in enumerate(response.content):
-                insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
-
-            for attr_key, attr_value in response.attributes.items():
-                set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
-
-            # Insert tool calls
-            for tool_call in response.tool_calls:
-                tool_id = get_or_create_tool_by_alias(
-                    conn, tool_call.tool_name, harness_id
-                )
-                if tool_id not in _tool_name_cache:
-                    _tool_name_cache[tool_id] = conn.execute(
-                        "SELECT name FROM tools WHERE id = ?", (tool_id,)
-                    ).fetchone()["name"]
-                canonical_name = _tool_name_cache[tool_id]
-
-                tool_call_id = insert_tool_call(
-                    conn,
-                    response_id=response_id,
-                    conversation_id=conversation_id,
-                    tool_id=tool_id,
-                    external_id=tool_call.external_id,
-                    input_json=json.dumps(tool_call.input),
-                    result_json=json.dumps(tool_call.result) if tool_call.result else None,
-                    status=tool_call.status,
-                    timestamp=tool_call.timestamp or response.timestamp,
-                    filter_binary=filter_binary,
-                )
-
-                for attr_key, attr_value in tool_call.attributes.items():
-                    set_attribute(conn, "tool_call", tool_call_id, attr_key, attr_value)
-
-                tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
-                tag_derivative_conversation(
-                    conn, conversation_id, canonical_name, tool_call.input
-                )
 
     # One index write for the whole conversation, after every event_content row
     # it owns exists. Insert-only: this conversation id was minted above.
@@ -3138,6 +3085,84 @@ def store_conversation(
     if commit:
         conn.commit()
     return conversation_id
+
+
+def _store_response(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    prompt_id: str | None,
+    response: Response,
+    harness_id: str,
+    provider_id: str | None,
+    filter_binary: bool,
+) -> None:
+    """Store one response, its content and its tool calls. ``prompt_id`` is None for a preamble response.
+
+    ``provider_id`` is the harness's provider, the fallback for a response that
+    names none; a multi-provider harness (pi) names one per response.
+    """
+    if response.provider:
+        provider_id = get_or_create_provider(conn, response.provider)
+    model_id = None
+    if response.model:
+        model_id = get_or_create_model(conn, response.model)
+
+    input_tokens = None
+    output_tokens = None
+    if response.usage:
+        input_tokens = response.usage.input_tokens
+        output_tokens = response.usage.output_tokens
+
+    response_id = insert_response(
+        conn,
+        conversation_id=conversation_id,
+        prompt_id=prompt_id,
+        model_id=model_id,
+        provider_id=provider_id,
+        external_id=response.external_id,
+        timestamp=response.timestamp,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )
+
+    # Insert response content blocks
+    for idx, block in enumerate(response.content):
+        insert_response_content(conn, response_id, idx, block.block_type, json.dumps(block.content))
+
+    for attr_key, attr_value in response.attributes.items():
+        set_attribute(conn, "response", response_id, attr_key, attr_value, scope="provider")
+
+    # Insert tool calls
+    for tool_call in response.tool_calls:
+        tool_id = get_or_create_tool_by_alias(
+            conn, tool_call.tool_name, harness_id
+        )
+        if tool_id not in _tool_name_cache:
+            _tool_name_cache[tool_id] = conn.execute(
+                "SELECT name FROM tools WHERE id = ?", (tool_id,)
+            ).fetchone()["name"]
+        canonical_name = _tool_name_cache[tool_id]
+
+        tool_call_id = insert_tool_call(
+            conn,
+            response_id=response_id,
+            conversation_id=conversation_id,
+            tool_id=tool_id,
+            external_id=tool_call.external_id,
+            input_json=json.dumps(tool_call.input),
+            result_json=json.dumps(tool_call.result) if tool_call.result else None,
+            status=tool_call.status,
+            timestamp=tool_call.timestamp or response.timestamp,
+            filter_binary=filter_binary,
+        )
+
+        for attr_key, attr_value in tool_call.attributes.items():
+            set_attribute(conn, "tool_call", tool_call_id, attr_key, attr_value)
+
+        tag_shell_command(conn, tool_call_id, canonical_name, tool_call.input)
+        tag_derivative_conversation(
+            conn, conversation_id, canonical_name, tool_call.input
+        )
 
 
 # =============================================================================

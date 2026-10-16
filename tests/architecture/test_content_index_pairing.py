@@ -86,7 +86,8 @@ LEAF_CALLERS: dict[str, set[tuple[str, str]]] = {
         ("storage/sqlite.py", "insert_response_content"),
     },
     "insert_prompt_content": {("storage/sqlite.py", "store_conversation")},
-    "insert_response_content": {("storage/sqlite.py", "store_conversation")},
+    "insert_response_content": {("storage/sqlite.py", "_store_response")},
+    "_store_response": {("storage/sqlite.py", "store_conversation")},
     # The bulk writers are helpers too: their owner is their caller, so a
     # second caller would copy blocks without the owner's index write.
     "_merge_attached": {("api/merge.py", "merge_database")},
