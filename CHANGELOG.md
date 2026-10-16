@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Claude Code token and cost totals count each message once.** A streamed
   message repeats its usage on every record, and every copy was summed (about
   2.3x the real figure); stored conversations correct on re-ingest. ([#97](https://github.com/kgruel/siftd/issues/97))
+- **Codex token and cost totals count every API call.** Each call's usage
+  overwrote the last, so about 19% of tokens were kept; stored conversations
+  correct on re-ingest. ([#98](https://github.com/kgruel/siftd/issues/98))
 - **Antigravity sessions now record their token usage**, which the adapter
   never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
 

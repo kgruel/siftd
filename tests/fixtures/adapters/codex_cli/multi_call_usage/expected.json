@@ -1,0 +1,236 @@
+[
+  {
+    "ended_at": "2026-02-02T03:19:31.028Z",
+    "external_id": "codex_cli::019c1c5c-22ee-7921-b6f2-14227ff6d436",
+    "harness": {
+      "display_name": "Codex CLI",
+      "log_format": "jsonl",
+      "name": "codex_cli",
+      "source": "openai"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "timestamp": "2026-02-02T03:18:46.263Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "timestamp": "2026-02-02T03:18:46.263Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "redacted text"
+            }
+          }
+        ],
+        "responses": [
+          {
+            "attributes": {
+              "cache_read_input_tokens": "82304",
+              "cached_input_tokens": "82304",
+              "reasoning_output_tokens": "1472"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_do5y7RZK0OYtfMp77togGaPl",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              },
+              {
+                "block_type": "thinking",
+                "content": {
+                  "thinking": "redacted text"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "call_07CG5JWmjup6OtC0ZU2XMp35",
+                  "input": {},
+                  "name": "exec_command"
+                }
+              }
+            ],
+            "model": "gpt-5.2-codex",
+            "timestamp": "2026-02-02T03:18:48.805Z",
+            "tool_calls": [
+              {
+                "external_id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:49.288Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:54.215Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:56.712Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:18:59.741Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_do5y7RZK0OYtfMp77togGaPl",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:01.698Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:27.910Z",
+                "tool_name": "exec_command"
+              },
+              {
+                "external_id": "call_07CG5JWmjup6OtC0ZU2XMp35",
+                "input": {},
+                "result": {
+                  "output": "ok"
+                },
+                "status": "success",
+                "timestamp": "2026-02-02T03:19:30.767Z",
+                "tool_name": "exec_command"
+              }
+            ],
+            "usage": {
+              "input_tokens": 102011,
+              "output_tokens": 1797
+            }
+          }
+        ],
+        "timestamp": "2026-02-02T03:18:46.269Z"
+      }
+    ],
+    "started_at": "2026-02-02T03:18:46.263Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

@@ -4,7 +4,7 @@ Pure parser: reads JSONL session files and yields Conversation domain objects.
 No storage coupling.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 from siftd.adapters._jsonl import load_jsonl, now_iso
@@ -13,6 +13,7 @@ from siftd.adapters.sdk import (
     build_harness,
     discover_files,
     flush_pending_calls,
+    iter_jsonl,
     make_peek_hooks,
 )
 from siftd.domain import (
@@ -49,6 +50,144 @@ TOOL_ALIASES: dict[str, str] = {
     "view_image": "file.read",
     "write_stdin": "shell.stdin",
 }
+
+
+def _drop_reemitted_token_counts(records: Iterable[dict]) -> Iterator[dict]:
+    """Yield records with token_count re-emissions removed.
+
+    Codex writes a token_count per API call, but it also re-logs the previous
+    token_count (same cumulative total, later timestamp), most often right
+    after a turn_context (14,624 of 18,435 repeats in the local corpus). The
+    repeat usually also carries the same last_token_usage (18,148 of 18,435),
+    but the cumulative total is the signal: a repeat means no new call. The
+    cumulative total moves on every call, and its per-call deltas equal
+    last_token_usage in every such event. Dropping repeats makes the per-call
+    sum equal the final total_token_usage in 1,041 of 1,043 corpus files; the
+    other two contain a total reset.
+
+    Only an event that carries last_token_usage advances the watermark. A
+    total-only event is not a call, so it must not make the next real call look
+    like a repeat (a reproduced sequence lost a 100-token call that way). The
+    corpus has no event with a total and no last_token_usage, so no corpus sum
+    changes.
+
+    Parse and peek both read through this one function, so they agree on which
+    token_count events carry usage.
+    """
+    last_total = None
+    for record in records:
+        if isinstance(record, dict) and record.get("type") == "event_msg":
+            payload = record.get("payload") or {}
+            info = payload.get("info") if payload.get("type") == "token_count" else None
+            if info and info.get("last_token_usage"):
+                total = info.get("total_token_usage")
+                if total is not None:
+                    if total == last_total:
+                        continue
+                    last_total = total
+        yield record
+
+
+def _drop_prompt_less_assistant(records: Iterable[dict]) -> Iterator[dict]:
+    """Yield records without assistant messages that precede the first user message.
+
+    parse() never stores such a message (there is no prompt to hold it), so it
+    is not a usage target there. Peek would otherwise show it as an exchange and
+    give it the usage that parse attaches to the first stored response.
+    """
+    seen_user = False
+    for record in records:
+        if isinstance(record, dict) and record.get("type") == "response_item":
+            payload = record.get("payload") or {}
+            if payload.get("type") == "message":
+                role = payload.get("role")
+                if role == "user":
+                    seen_user = True
+                elif role == "assistant" and not seen_user:
+                    continue
+        yield record
+
+
+def _iter_peek_records(path: Path) -> Iterator[dict]:
+    """Record iterator for peek: the same usage-selection rules parse() applies."""
+    return _drop_prompt_less_assistant(_drop_reemitted_token_counts(iter_jsonl(path)))
+
+
+def _plus(total: int | None, amount: int | None) -> int | None:
+    if amount is None:
+        return total
+    return amount if total is None else total + amount
+
+
+def _add_attribute(response: Response, key: str, amount: int) -> None:
+    prior = int(response.attributes.get(key, "0"))
+    response.attributes[key] = str(prior + amount)
+
+
+def _add_usage(response: Response, last_usage: dict) -> None:
+    """Accumulate one API call's usage onto a response.
+
+    Every field sums. A response can span several calls (one assistant turn
+    with N tool calls is N token_counts), so last-wins for usage and
+    first-wins for attributes each kept one call and dropped the rest.
+    """
+    input_tokens = last_usage.get("input_tokens")
+    output_tokens = last_usage.get("output_tokens")
+    if input_tokens is not None or output_tokens is not None:
+        prior_in = response.usage.input_tokens if response.usage else None
+        prior_out = response.usage.output_tokens if response.usage else None
+        response.usage = Usage(
+            input_tokens=_plus(prior_in, input_tokens),
+            output_tokens=_plus(prior_out, output_tokens),
+        )
+    cached_input = last_usage.get("cached_input_tokens")
+    if cached_input is not None:
+        _add_attribute(response, "cached_input_tokens", cached_input)
+        _add_attribute(response, "cache_read_input_tokens", cached_input)
+    reasoning_output = last_usage.get("reasoning_output_tokens")
+    if reasoning_output is not None:
+        _add_attribute(response, "reasoning_output_tokens", reasoning_output)
+
+
+class _UsageLedger:
+    """Routes each API call's usage to exactly one stored Response.
+
+    The rule: a token_count's last_token_usage goes to the most recent stored
+    response in the conversation. Usage that arrives before any stored response
+    is held and drained into the next response attached.
+
+    Only stored responses are targets. An assistant message with no user before
+    it is never appended to a prompt, so it is never attached; usage after it
+    waits for the next stored response instead of landing on an object that is
+    discarded.
+    """
+
+    def __init__(self) -> None:
+        self._latest: Response | None = None
+        self._held: list[dict] = []
+
+    @property
+    def latest(self) -> Response | None:
+        """The most recent stored response, or None before the first one."""
+        return self._latest
+
+    @property
+    def held_calls(self) -> int:
+        """Usage events still waiting for a stored response."""
+        return len(self._held)
+
+    def attach(self, response: Response) -> None:
+        """Mark a stored response as the target and drain held usage into it."""
+        self._latest = response
+        for last_usage in self._held:
+            _add_usage(response, last_usage)
+        self._held.clear()
+
+    def record(self, last_usage: dict) -> None:
+        if self._latest is None:
+            self._held.append(last_usage)
+        else:
+            _add_usage(self._latest, last_usage)
 
 
 def discover(locations=None) -> Iterable[Source]:
@@ -133,45 +272,21 @@ def parse(source: Source) -> Iterable[Conversation]:
     # key: call_id, value: (response, tool_name, input_data)
     pending_calls: dict[str, tuple[Response, str, dict | str]] = {}
     current_prompt: Prompt | None = None
-    pending_usage_response: Response | None = None
-    # Last response seen, independent of pending_usage_response (which is
-    # cleared by token_count). task_complete arrives after that clearing.
-    last_response: Response | None = None
+    usage = _UsageLedger()
 
-    for record in records:
+    for record in _drop_reemitted_token_counts(records):
         record_type = record.get("type")
         if record_type == "event_msg":
             payload = record.get("payload") or {}
             if payload.get("type") == "token_count":
-                info = payload.get("info") or {}
-                last_usage = info.get("last_token_usage") or {}
-                if pending_usage_response and last_usage:
-                    input_tokens = last_usage.get("input_tokens")
-                    output_tokens = last_usage.get("output_tokens")
-                    if input_tokens is not None or output_tokens is not None:
-                        pending_usage_response.usage = Usage(
-                            input_tokens=input_tokens,
-                            output_tokens=output_tokens,
-                        )
-                    cached_input = last_usage.get("cached_input_tokens")
-                    if cached_input is not None:
-                        pending_usage_response.attributes.setdefault(
-                            "cached_input_tokens", str(cached_input)
-                        )
-                        pending_usage_response.attributes.setdefault(
-                            "cache_read_input_tokens", str(cached_input)
-                        )
-                    reasoning_output = last_usage.get("reasoning_output_tokens")
-                    if reasoning_output is not None:
-                        pending_usage_response.attributes.setdefault(
-                            "reasoning_output_tokens", str(reasoning_output)
-                        )
-                    pending_usage_response = None
-            elif payload.get("type") == "task_complete" and last_response is not None:
+                last_usage = (payload.get("info") or {}).get("last_token_usage")
+                if last_usage:
+                    usage.record(last_usage)
+            elif payload.get("type") == "task_complete" and usage.latest is not None:
                 for key in ("duration_ms", "time_to_first_token_ms"):
                     value = payload.get(key)
                     if value is not None:
-                        last_response.attributes.setdefault(key, str(value))
+                        usage.latest.attributes.setdefault(key, str(value))
             continue
 
         if record_type != "response_item":
@@ -198,10 +313,11 @@ def parse(source: Source) -> Iterable[Conversation]:
                 )
                 for block in content_blocks:
                     response.content.append(_parse_block(block))
+                # Without a user prompt the response is not stored, so it
+                # must not become the usage target (see _UsageLedger).
                 if current_prompt is not None:
                     current_prompt.responses.append(response)
-                pending_usage_response = response
-                last_response = response
+                    usage.attach(response)
 
         elif item_type == "reasoning":
             # Encrypted reasoning carries no renderable content; only the
@@ -213,8 +329,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 response.content.append(
                     ContentBlock(block_type="thinking", content={"thinking": text})
                 )
-                pending_usage_response = response
-                last_response = response
+                usage.attach(response)
 
         elif item_type == "function_call":
             tool_name = payload.get("name", "unknown")
@@ -234,8 +349,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 block_type="tool_use",
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
-            pending_usage_response = response
-            last_response = response
+            usage.attach(response)
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -269,8 +383,7 @@ def parse(source: Source) -> Iterable[Conversation]:
                 block_type="tool_use",
                 content={"id": call_id, "name": tool_name, "input": input_data},
             ))
-            pending_usage_response = response
-            last_response = response
+            usage.attach(response)
 
             if call_id:
                 pending_calls[call_id] = (response, tool_name, input_data)
@@ -290,6 +403,18 @@ def parse(source: Source) -> Iterable[Conversation]:
                     timestamp=timestamp,
                 )
                 response.tool_calls.append(tool_call)
+
+    # Usage that never found a stored response (token_count with no message or
+    # call anywhere in the file) gets a synthetic response, as orphan tool calls
+    # do, so its tokens are counted rather than dropped.
+    if usage.held_calls:
+        response, current_prompt = _get_or_create_response(
+            current_prompt,
+            conversation,
+            conversation.ended_at or conversation.started_at,
+            model,
+        )
+        usage.attach(response)
 
     # Handle pending tool calls that never got output
     flush_pending_calls(pending_calls)
@@ -471,4 +596,5 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
 peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
     normalize_record,
     tool_aliases=TOOL_ALIASES,
+    record_iterator=_iter_peek_records,
 )

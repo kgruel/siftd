@@ -565,7 +565,9 @@ class NormalizedRecord:
         "tool_use"    — A tool invocation (separate from assistant content,
                         e.g., Codex function_call records).
         "metadata"    — Session metadata (session_id, workspace, model).
-        "usage"       — Standalone usage/token record.
+        "usage"       — Standalone usage/token record. Counted on the latest
+                        exchange that has a response (assistant or tool_use);
+                        held until the first such exchange exists.
     """
 
     kind: str
@@ -754,6 +756,13 @@ def peek_exchanges_from_records(
     # message_id -> (exchange charged for it, input, output). Lets a later
     # record of the same message replace the earlier charge.
     message_charge: dict[str, tuple[PeekExchange, int, int]] = {}
+    # Standalone usage goes to the latest exchange that has produced a response,
+    # the rule parse() applies (the most recent stored response). A user prompt
+    # with no response yet does not take usage that belongs to an earlier turn.
+    # Usage before any response is held and added to the first one.
+    usage_target: PeekExchange | None = None
+    held_input = 0
+    held_output = 0
 
     for raw in records:
         nr = normalize(raw)
@@ -776,6 +785,10 @@ def peek_exchanges_from_records(
                 )
                 exchanges.append(current_exchange)
                 tool_counter = Counter()
+            usage_target = current_exchange
+            usage_target.input_tokens += held_input
+            usage_target.output_tokens += held_output
+            held_input = held_output = 0
 
             # Accumulate usage. A message_id charges once, at its last record's
             # value: the earlier charge is withdrawn, then the new one applied.
@@ -854,12 +867,20 @@ def peek_exchanges_from_records(
                     tool_name = canonicalize_tool_name(tool_name, tool_aliases)
                 tool_counter[tool_name] += 1
                 current_exchange.tool_calls = list(tool_counter.most_common())
+                # A tool call is a response: it takes later usage, as in parse().
+                usage_target = current_exchange
+                usage_target.input_tokens += held_input
+                usage_target.output_tokens += held_output
+                held_input = held_output = 0
 
         elif nr.kind == "usage":
             # Standalone usage record (e.g., Codex event_msg token_count)
-            if current_exchange is not None:
-                current_exchange.input_tokens += nr.input_tokens
-                current_exchange.output_tokens += nr.output_tokens
+            if usage_target is not None:
+                usage_target.input_tokens += nr.input_tokens
+                usage_target.output_tokens += nr.output_tokens
+            else:
+                held_input += nr.input_tokens
+                held_output += nr.output_tokens
 
     return exchanges[-last_n:] if len(exchanges) > last_n else exchanges
 
