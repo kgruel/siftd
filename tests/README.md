@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 198 | 3440 |
-| `tests/adapters/` | 22 | 259 |
+| `tests/` | 198 | 3441 |
+| `tests/adapters/` | 22 | 266 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -211,7 +211,7 @@ docstring so its row is meaningful.
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
-| [test_live_tagging.py](test_live_tagging.py) | 28 | Integration tests for live session tagging flow. |
+| [test_live_tagging.py](test_live_tagging.py) | 29 | Integration tests for live session tagging flow. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
 | [test_merge.py](test_merge.py) | 42 | Tests for siftd db merge — importing a slice into the main database. |
@@ -347,7 +347,7 @@ docstring so its row is meaningful.
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
 | [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |
 | [adapters/test_validation.py](adapters/test_validation.py) | 15 | Tests for adapter signature validation (H16). |
-| [adapters/test_vscode.py](adapters/test_vscode.py) | 8 | Tests for VSCode adapter. |
+| [adapters/test_vscode.py](adapters/test_vscode.py) | 15 | Tests for VSCode adapter. |
 
 ### `tests/architecture/`
 

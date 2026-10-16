@@ -5,10 +5,11 @@ Tests the full workflow: register → queue tag → ingest → verify tag applie
 
 import json
 import logging
+import shutil
 
 import pytest
 
-from siftd.adapters import claude_code
+from siftd.adapters import claude_code, vscode
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, Usage
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
@@ -855,6 +856,51 @@ class TestReingestPreservesEventTags:
         assert _tag_target(live_db["conn"], "key-insight") == get_prompt_by_index(
             live_db["conn"], new_conv_id, 1
         )
+
+
+class TestReingestCarriesLegacySuffixedToolTags:
+    """A tag on a legacy duplicate tool call follows the call it duplicated.
+
+    The v4 migration rewrote duplicate tool_call external_ids to ``<id>:<rank>``
+    (storage/sqlite.py, step 3.5). A re-parse emits only the bare id, so a tag
+    on the ``:2`` row has no exact match and was lost with a warning.
+    """
+
+    def test_tag_on_legacy_duplicate_lands_on_surviving_call(
+        self, live_db, tmp_path, monkeypatch, caplog
+    ):
+        # workspaceStorage/<hash>/chatSessions/<session>, as discover() expects.
+        storage = tmp_path / "workspaceStorage"
+        hash_dir = storage / "abc123"
+        (hash_dir / "chatSessions").mkdir(parents=True)
+        (hash_dir / "workspace.json").write_text(json.dumps({"folder": "file:///test/ws"}))
+        session = hash_dir / "chatSessions" / "s.jsonl"
+        shutil.copy(FIXTURES_DIR / "adapters" / "vscode" / "jsonl_tool_calls" / "input.jsonl", session)
+        monkeypatch.setattr(vscode, "DEFAULT_LOCATIONS", [str(storage)])
+        conn = live_db["conn"]
+
+        ingest_all(conn, [vscode])
+        conv = list(vscode.parse(Source(kind="file", location=session)))[0]
+        call_id = next(tc.external_id for p in conv.prompts for r in p.responses for tc in r.tool_calls)
+
+        # Legacy state: the tagged row is the duplicate, and the bare id is not in the old conversation.
+        event_id = conn.execute(
+            "SELECT id FROM events WHERE kind = 'tool_call' AND external_id = ?", (call_id,)
+        ).fetchone()[0]
+        conn.execute("UPDATE events SET external_id = ? WHERE id = ?", (f"{call_id}:2", event_id))
+        apply_tag(conn, "tool_call", event_id, get_or_create_tag(conn, "legacy-tagged"), commit=True)
+
+        # A byte appended to the session changes its hash, so ingest replaces the conversation.
+        session.write_text(session.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        caplog.set_level(logging.WARNING)
+        ingest_all(conn, [vscode])
+
+        assert "could not be carried" not in caplog.text
+        carried = conn.execute(
+            "SELECT e.external_id FROM tag_assignments ta JOIN events e ON e.id = ta.target_id "
+            "JOIN tags t ON t.id = ta.tag_id WHERE t.name = 'legacy-tagged'"
+        ).fetchall()
+        assert [row[0] for row in carried] == [call_id]
 
 
 class TestDrainAcrossKeyForms:

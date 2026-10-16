@@ -51,6 +51,7 @@ door stayed invisible until #77.
 from __future__ import annotations
 
 import logging
+import re
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -59,6 +60,13 @@ from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.tags import apply_tag, get_tag_assignments
 
 logger = logging.getLogger(__name__)
+
+# The v4 migration (storage/sqlite.py, step 3.5) renamed each duplicate tool_call
+# external_id to ``<id>:<rank>`` with rank >= 2, so the events table could hold it
+# under UNIQUE (conversation_id, kind, external_id). A re-parse emits the bare id
+# only, so a tag on such a legacy row has to fall back to the bare id to follow
+# the call it duplicated.
+_LEGACY_DUPLICATE_SUFFIX = re.compile(r"^(?P<base>.+):(?:[2-9]|[1-9][0-9]+)$")
 
 
 @dataclass
@@ -204,6 +212,26 @@ def snapshot_conversation(
     return carryover
 
 
+def _find_event(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    event_kind: str,
+    external_id: str,
+) -> sqlite3.Row | None:
+    """The replacement's event for a carried assignment, or None.
+
+    Exact match first. Only a legacy duplicate suffix on a tool call is retried
+    on its bare id; the migration renamed nothing else.
+    """
+    sql = "SELECT id FROM events WHERE conversation_id = ? AND kind = ? AND external_id = ?"
+    row = conn.execute(sql, (conversation_id, event_kind, external_id)).fetchone()
+    if row is None and event_kind == "tool_call":
+        match = _LEGACY_DUPLICATE_SUFFIX.match(external_id)
+        if match:
+            row = conn.execute(sql, (conversation_id, event_kind, match["base"])).fetchone()
+    return row
+
+
 def restore_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -230,10 +258,7 @@ def restore_conversation(
 
     unmatched = 0
     for target_kind, event_kind, external_id, tag_id, applied_at in carryover.events:
-        row = conn.execute(
-            "SELECT id FROM events WHERE conversation_id = ? AND kind = ? AND external_id = ?",
-            (conversation_id, event_kind, external_id),
-        ).fetchone()
+        row = _find_event(conn, conversation_id, event_kind, external_id)
         if row is None:
             unmatched += 1
             continue

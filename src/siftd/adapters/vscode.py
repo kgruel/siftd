@@ -14,6 +14,7 @@ import logging
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from siftd.adapters.sdk import (
     AdapterParseError,
@@ -143,7 +144,7 @@ def _session_to_conversation(data: dict, path: Path) -> Iterable[Conversation]:
         workspace_path=workspace_path,
     )
 
-    for request in requests:
+    for request in _latest_tool_emissions(requests):
         prompt = _parse_request(request)
         if prompt:
             conversation.prompts.append(prompt)
@@ -294,26 +295,17 @@ def _parse_request(request: dict) -> Prompt | None:
     tool_calls: list[ToolCall] = []
 
     for part in response_parts:
-        kind = part.get("kind", "")
+        if _is_text_part(part):
+            content_blocks.append(ContentBlock(block_type="text", content={"text": part["value"]}))
 
-        if kind == "markdownContent":
-            value = part.get("content", {}).get("value", "")
-            content_blocks.append(ContentBlock(block_type="text", content={"text": value}))
+        elif part.get("kind") == "toolInvocationSerialized":
+            tool_calls.append(_tool_call(part))
 
-        elif kind == "toolInvocationSerialized":
-            tool_calls.append(ToolCall(
-                tool_name=part.get("toolName") or part.get("name", "unknown"),
-                input=part.get("input", {}),
-                result=part.get("result"),
-                status="success" if part.get("result") is not None else "pending",
-                external_id=part.get("toolCallId"),
-            ))
+        elif part.get("kind"):
+            content_blocks.append(ContentBlock(block_type=part["kind"], content=part))
 
-        elif kind == "textEditGroup":
-            content_blocks.append(ContentBlock(block_type="text_edit", content=part))
-
-        elif kind:
-            content_blocks.append(ContentBlock(block_type=kind, content=part))
+        else:
+            content_blocks.append(ContentBlock(block_type="unkeyed", content=part))
 
     response = Response(
         timestamp=timestamp or datetime.now(UTC).isoformat(),
@@ -325,6 +317,118 @@ def _parse_request(request: dict) -> Prompt | None:
     prompt.responses.append(response)
 
     return prompt
+
+
+# Real response-part shapes (session schema version 3, GitHub Copilot Chat 0.37.x,
+# as found in local session files):
+# - answer prose is a part with NO "kind" key, just {"value": str, ...}
+# - a tool call is {"kind": "toolInvocationSerialized", "toolId", "toolCallId",
+#   "invocationMessage", "isComplete", "resultDetails"?, "toolSpecificData"?}.
+#   There is no "input", "result" or "toolName" key.
+# Both parse and the peek normalizer read through these helpers so the two
+# walks cannot disagree about what a part is.
+
+
+def _is_text_part(part: dict) -> bool:
+    """Answer prose: a response part with no kind and a string value."""
+    return "kind" not in part and isinstance(part.get("value"), str)
+
+
+def _tool_name(part: dict) -> str:
+    return part.get("toolId") or "unknown"
+
+
+def _invocation_text(part: dict) -> str:
+    message = part.get("invocationMessage")
+    if isinstance(message, dict):
+        message = message.get("value")
+    return message if isinstance(message, str) else ""
+
+
+def _tool_input(part: dict) -> dict:
+    """Recover the call's input from what VS Code stores for it.
+
+    VS Code keeps no argument object. The invocation text is usually present; it
+    is stored as "description", the key the SDK's peek hint reads first. Without
+    that key the peek view shows no input at all. run_in_terminal also stores the
+    command under toolSpecificData, and some tools echo their input in
+    resultDetails.
+    """
+    tool_input: dict = {}
+    text = _invocation_text(part)
+    if text:
+        tool_input["description"] = text
+    specific = part.get("toolSpecificData")
+    if isinstance(specific, dict) and isinstance(specific.get("commandLine"), dict):
+        original = specific["commandLine"].get("original")
+        if isinstance(original, str) and original:
+            tool_input["command"] = original
+    details = part.get("resultDetails")
+    if isinstance(details, dict) and "input" in details:
+        tool_input["input"] = details["input"]
+    return tool_input
+
+
+def _tool_call(part: dict) -> ToolCall:
+    details = part.get("resultDetails")
+    if isinstance(details, dict) and details.get("isError") is True:
+        status = "error"
+    elif part.get("isComplete") is True or details is not None:
+        status = "success"
+    else:
+        status = "pending"
+    return ToolCall(
+        tool_name=_tool_name(part),
+        input=_tool_input(part),
+        result={"resultDetails": details} if details is not None else None,
+        status=status,
+        external_id=part.get("toolCallId"),
+    )
+
+
+def _response_list(request: Any) -> list | None:
+    if isinstance(request, dict) and isinstance(request.get("response"), list):
+        return request["response"]
+    return None
+
+
+def _tool_call_id(part: Any) -> str | None:
+    if isinstance(part, dict) and part.get("kind") == "toolInvocationSerialized":
+        call_id = part.get("toolCallId")
+        if isinstance(call_id, str) and call_id:
+            return call_id
+    return None
+
+
+def _latest_tool_emissions(requests: list) -> list:
+    """Keep only the last emission of each tool invocation.
+
+    VS Code re-emits a toolInvocationSerialized part as the call progresses
+    (running, then complete with a result), and every emission keeps the same
+    toolCallId. The last one carries the final state. Storage allows one
+    ToolCall per toolCallId per conversation, so the others are dropped here,
+    before parse and the peek normalizer both see the requests.
+    """
+    latest: dict[str, object] = {}
+    for request in requests:
+        for part in _response_list(request) or []:
+            call_id = _tool_call_id(part)
+            if call_id is not None:
+                latest[call_id] = part
+
+    out = []
+    for request in requests:
+        response = _response_list(request)
+        if response is None:
+            out.append(request)
+            continue
+        kept = []
+        for part in response:
+            call_id = _tool_call_id(part)
+            if call_id is None or latest[call_id] is part:
+                kept.append(part)
+        out.append({**request, "response": kept})
+    return out
 
 
 def _resolve_workspace(session_path: Path) -> str | None:
@@ -412,7 +516,7 @@ def iter_vscode_records(path: Path) -> Iterator[dict]:
         "_path": str(path),
     }
 
-    for request in data.get("requests", []):
+    for request in _latest_tool_emissions(data.get("requests", [])):
         ts = request.get("timestamp")
         yield {"_kind": "user", **request, "_ts": epoch_ms_to_iso(ts)}
         yield {"_kind": "assistant", **request, "_ts": epoch_ms_to_iso(ts)}
@@ -452,16 +556,14 @@ def normalize_record(raw: dict) -> NormalizedRecord | None:
     if kind == "assistant":
         content_blocks: list[dict] = []
         for part in raw.get("response") or []:
-            part_kind = part.get("kind", "")
-            if part_kind == "markdownContent":
-                value = part.get("content", {}).get("value", "")
-                if value:
-                    content_blocks.append({"type": "text", "text": value})
-            elif part_kind == "toolInvocationSerialized":
+            if _is_text_part(part):
+                if part["value"]:
+                    content_blocks.append({"type": "text", "text": part["value"]})
+            elif part.get("kind") == "toolInvocationSerialized":
                 content_blocks.append({
                     "type": "tool_use",
-                    "name": part.get("toolName") or part.get("name", "unknown"),
-                    "input": part.get("input", {}),
+                    "name": _tool_name(part),
+                    "input": _tool_input(part),
                 })
         return NormalizedRecord(
             kind="assistant",
