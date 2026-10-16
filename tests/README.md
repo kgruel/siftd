@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 194 | 3399 |
+| `tests/` | 195 | 3401 |
 | `tests/adapters/` | 20 | 165 |
 | `tests/architecture/` | 13 | 81 |
 | `tests/cli/` | 29 | 640 |
@@ -185,6 +185,7 @@ docstring so its row is meaningful.
 | [test_export_elements.py](test_export_elements.py) | 7 | WS6: element export (siftd export --view elements --tag X). |
 | [test_file_refs.py](test_file_refs.py) | 3 | — |
 | [test_findability_review.py](test_findability_review.py) | 6 | — |
+| [test_fixture_redaction.py](test_fixture_redaction.py) | 2 | Adapter fixtures carry no personal data, so captured transcripts can be committed. |
 | [test_follow.py](test_follow.py) | 21 | Tests for siftd.peek.follow — live session following utilities. |
 | [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
