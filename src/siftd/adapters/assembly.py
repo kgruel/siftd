@@ -102,7 +102,7 @@ from siftd.adapters.records import (
     UsageRec,
 )
 from siftd.dateparse import to_utc
-from siftd.domain import Conversation, Harness, Lineage, Prompt, Response, ToolCall, Usage
+from siftd.domain import ContentBlock, Conversation, Harness, Lineage, Prompt, Response, ToolCall, Usage
 from siftd.domain.models import CALL_OCCURRENCE_ATTRIBUTE, CONTAINMENT_KINDS, MERGED_EXTERNAL_IDS_ATTRIBUTE
 from siftd.domain.source import Source
 from siftd.errors import SiftdError
@@ -580,6 +580,8 @@ class Assembler:
 
     def _place_call(self, rec: ToolCallRec, call: ToolCall, parent: Response) -> None:
         build = self._current()
+        if rec.call_id is not None and call.external_id not in (None, rec.call_id):
+            _relabel_marker(parent, rec.call_id, call.external_id)
         parent.tool_calls.append(call)
         build.placed.add(id(call))
         self.ledger.record(rec, Disposition.EVENT)
@@ -668,6 +670,23 @@ class Assembler:
         Ignored: _on_ignored,
         Unknown: _on_unknown,
     }
+
+
+def _relabel_marker(parent: Response, call_id: str, identity: str) -> None:
+    """Give a repeated call's ``tool_use`` marker the call's occurrence identity.
+
+    The response's markers still naming ``call_id`` stand, in order, for its
+    calls that still bear that id and then for this one (a relabelled call took
+    its marker with it), so the marker after those is this call's. A marker that
+    has not arrived yet is left alone: the call then follows the content, as any
+    call without a marker does.
+    """
+    rank = sum(1 for c in parent.tool_calls if c.external_id == call_id)
+    markers = [i for i, b in enumerate(parent.content)
+               if b.block_type == "tool_use" and isinstance(b.content, dict) and b.content.get("id") == call_id]
+    if rank < len(markers):
+        block = parent.content[markers[rank]]
+        parent.content[markers[rank]] = ContentBlock(block.block_type, {**block.content, "id": identity})
 
 
 def _apply_result(call: ToolCall, rec: ToolResultRec) -> None:

@@ -706,6 +706,31 @@ def test_calls_sharing_a_call_id_are_distinct_events_with_stable_identities():
     )
 
 
+def test_a_repeated_calls_marker_takes_its_occurrence_identity():
+    """Delta review: a ``tool_use`` marker must name the call it stands for, or peek and show misplace it."""
+    from siftd.adapters.peek_projection import _ordered_parts
+
+    def marker(name):
+        return ContentBlock("tool_use", {"id": "dup", "name": name})
+
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ResponseRec(at=None, key="r", content=[
+            ContentBlock("text", {"text": "before"}), marker("A"),
+            ContentBlock("text", {"text": "between"}), marker("B"), marker("C"),
+            ContentBlock("text", {"text": "after"}),
+        ]),
+        ToolCallRec(at=None, name="A", input={}, call_id="dup", parent_key="r"),
+        ToolCallRec(at=None, name="B", input={}, call_id="dup", parent_key="r"),
+        ToolCallRec(at=None, name="C", input={}, call_id="dup", parent_key="r"),
+    )
+    response = only(out).prompts[0].responses[0]
+    assert [b.content["id"] for b in response.content if b.block_type == "tool_use"] == ["dup", "dup:2", "dup:3"]
+    parts = [p.tool_name if hasattr(p, "tool_name") else p["text"] for p in _ordered_parts(response)]
+    assert parts == ["before", "A", "between", "B", "C", "after"]
+
+
 def test_a_call_keeps_the_time_it_was_made_and_records_when_its_result_arrived():
     out = run(
         S,

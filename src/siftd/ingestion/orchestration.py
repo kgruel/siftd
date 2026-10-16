@@ -34,7 +34,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from pathlib import Path
-from typing import TYPE_CHECKING, NamedTuple, Protocol
+from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 
 from siftd.adapters.assembly import Ledger
 from siftd.adapters.contract import adapt, decodes
@@ -416,23 +416,32 @@ def _message_keys(messages: Iterable[tuple[str, str | None, str | None, str | No
     return {key for key in keys if key is not None}
 
 
+def _block_text(fields: Any) -> str | None:
+    """The text a content block's fields hold, indexed (``text``) or not (``meta_text``).
+
+    Whether text is indexed is a display choice that changes between releases
+    (codex_cli moved injected context onto ``meta_text``), not part of which
+    message it is, so a stored row and a new parse of one message agree.
+    """
+    if not isinstance(fields, dict):
+        return None
+    text = fields.get("text") or fields.get("meta_text")
+    return text if isinstance(text, str) and text else None
+
+
 def _stored_text(raw: str | None) -> str | None:
     """The text of a stored first content block (``json.dumps`` of its dict), or None."""
     if not raw:
         return None
     try:
-        text = json.loads(raw).get("text")
-    except (ValueError, AttributeError):
+        return _block_text(json.loads(raw))
+    except ValueError:
         return None
-    return text if isinstance(text, str) and text else None
 
 
 def _parsed_text(content) -> str | None:
     """The text of a parsed message's first content block, or None."""
-    if not content or not isinstance(content[0].content, dict):
-        return None
-    text = content[0].content.get("text")
-    return text if isinstance(text, str) and text else None
+    return _block_text(content[0].content) if content else None
 
 
 def _stored_message_keys(

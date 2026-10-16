@@ -582,3 +582,46 @@ def test_a_legacy_row_holding_an_older_read_of_the_child_is_adopted(tmp_path):
     assert _prompt_texts(conn, own) == ["alpha question", "bravo child question", "bravo follow-up"]
     assert tag in tag_names(conn, "conversation", own)
     assert stats.refused_adoptions == []
+
+
+def test_a_legacy_child_stored_with_indexed_injected_text_keeps_its_tags_through_recovery(tmp_path):
+    """Delta review: the release before the arc stored injected context as indexed ``text``.
+
+    The parser now keeps it on ``meta_text``. If a message's identity followed that
+    display choice, the child could not recognise its own legacy row, the parent would
+    link and then replace it, and the child's tag would move to the parent.
+    """
+    root = tmp_path / "sessions"
+    parent, _child_a, _child_b = _family(root)
+    _child_b.unlink()
+    lineage = {"forked_from_id": PARENT,
+               "source": {"subagent": {"thread_spawn": {"parent_thread_id": PARENT}}}}
+    child = _write(_child_a, [
+        _meta("2026-07-15T17:54:47.000Z", CHILD_A, **lineage),
+        _meta("2026-07-15T17:54:48.000Z", PARENT),
+        *_parent_history(),
+        _user("2026-07-15T17:54:49.000Z", "# AGENTS.md instructions for /Users/user/project\n\nbe brief"),
+        _user("2026-07-15T17:54:50.000Z", "bravo child question"),
+        _assistant("2026-07-15T17:54:51.000Z", "bravo child answer"),
+    ])
+    conn = create_database(tmp_path / "siftd.db")
+    legacy_id = _store_legacy_child(conn, root, child)
+    restated = conn.execute(
+        "UPDATE event_content SET block_type = 'text',"
+        " content = json_object('text', json_extract(content, '$.meta_text'))"
+        " WHERE block_type = 'meta_text'"
+    ).rowcount
+    conn.commit()
+    assert restated == 1
+    tag = _tag(conn, legacy_id)
+    conn.execute("DELETE FROM ingested_files")
+    conn.commit()
+
+    for _ in range(2):
+        _ingest(conn, root, order=[parent, child])
+
+    by_id = _external_ids(conn)
+    own = by_id[f"{codex_cli.NAME}::{CHILD_A}"]
+    assert tag in tag_names(conn, "conversation", own)
+    assert tag not in tag_names(conn, "conversation", by_id[LEGACY_KEY])
+    assert _prompt_texts(conn, by_id[LEGACY_KEY]) == ["alpha question"]

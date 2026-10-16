@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 206 | 3629 |
-| `tests/adapters/` | 22 | 482 |
+| `tests/` | 206 | 3630 |
+| `tests/adapters/` | 22 | 483 |
 | `tests/architecture/` | 15 | 91 |
 | `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
@@ -208,7 +208,7 @@ docstring so its row is meaningful.
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 16 | Regression tests for #36: aider history files with more than one session. |
-| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 14 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
+| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 15 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
 | [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
@@ -337,7 +337,7 @@ docstring so its row is meaningful.
 | [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 54 | Tests for Antigravity CLI adapter. |
-| [adapters/test_assembly.py](adapters/test_assembly.py) | 59 | The shared assembler places every record and accounts for every one. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 60 | The shared assembler places every record and accounts for every one. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
