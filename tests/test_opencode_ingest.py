@@ -13,6 +13,7 @@ import json
 import sqlite3
 
 from siftd.adapters import opencode
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
@@ -55,7 +56,7 @@ def _adapter_over(*db_paths):
         DEDUP_STRATEGY = opencode.DEDUP_STRATEGY
         HARNESS_SOURCE = opencode.HARNESS_SOURCE
         can_handle = staticmethod(opencode.can_handle)
-        parse = staticmethod(opencode.parse)
+        parse = staticmethod(adapt(opencode).parse)
         change_paths = staticmethod(opencode.change_paths)
 
         @staticmethod
@@ -369,7 +370,7 @@ def test_a_commit_that_lands_after_the_first_parse_is_seen_by_the_next_ingest(tm
     source.close()
 
     writer = sqlite3.connect(str(db))
-    parse = opencode.parse
+    parse = adapt(opencode).parse
     written = []
 
     def parse_then_commit(src):

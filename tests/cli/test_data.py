@@ -43,6 +43,9 @@ class FakeEvent:
     exchange_count: int | None = 5
     model: str | None = "claude-3"
     error: str | None = None
+    unknown: int = 0
+    orphan: int = 0
+    ignored: int = 0
 
 
 @dataclass

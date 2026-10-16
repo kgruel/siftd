@@ -7,7 +7,7 @@ from pathlib import Path
 from conftest import FIXTURES_DIR, pinned_tz
 
 from siftd.adapters import aider
-from siftd.adapters.assembly import assemble
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition, Unknown
 from siftd.domain import Usage
 from siftd.domain.source import Source
@@ -25,8 +25,8 @@ class TestAiderAdapter:
         # Pinned because started_at resolves against the host zone; UTC is the
         # zone in which the rendered value matches the header verbatim.
         with pinned_tz("UTC"):
-            convos = list(aider.parse(source))
-            assert [c.external_id for c in aider.parse(source)] == [
+            convos = list(adapt(aider).parse(source))
+            assert [c.external_id for c in adapt(aider).parse(source)] == [
                 c.external_id for c in convos
             ]
         assert len(convos) == 2
@@ -54,7 +54,7 @@ class TestAiderAdapter:
         """
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
         with pinned_tz("America/Chicago"):  # UTC-5 in July
-            conv = next(iter(aider.parse(source)))
+            conv = next(iter(adapt(aider).parse(source)))
 
         assert conv.started_at == "2025-07-15T19:32:01+00:00"
         # Every timestamp the conversation carries moves with it.
@@ -70,19 +70,19 @@ class TestAiderAdapter:
         """
         source = Source(kind="file", location=FIXTURES_DIR / ".aider.chat.history.md")
         with pinned_tz("America/Chicago"):
-            chicago = [c.external_id for c in aider.parse(source)]
+            chicago = [c.external_id for c in adapt(aider).parse(source)]
         with pinned_tz("Asia/Tokyo"):
-            tokyo = [c.external_id for c in aider.parse(source)]
+            tokyo = [c.external_id for c in adapt(aider).parse(source)]
         assert chicago == tokyo
         assert chicago[0].endswith("::2025-07-15 14:32:01")
 
     def test_parse_empty_and_header_only(self, tmp_path):
         empty = tmp_path / "e.md"
         empty.write_text("")
-        assert list(aider.parse(Source(kind="file", location=empty))) == []
+        assert list(adapt(aider).parse(Source(kind="file", location=empty))) == []
         header = tmp_path / "h.md"
         header.write_text("\n# aider chat started at 2025-01-01 00:00:00\n\n")
-        assert list(aider.parse(Source(kind="file", location=header))) == []
+        assert list(adapt(aider).parse(Source(kind="file", location=header))) == []
 
     def test_parse_token_count_helper(self):
         for raw, expected in [("4.5k", 4500), ("1.2k", 1200), ("256", 256), ("1.5M", 1_500_000), ("bad", None)]:
@@ -110,7 +110,7 @@ class TestAiderAdapter:
         """Tool output appearing before any assistant response creates a response with tool_output block."""
         md = "# aider chat started at 2025-01-01 00:00:00\n\n#### do it\n\n> Applied edit to main.py\n\nDone\n"
         (tmp_path / ".aider.chat.history.md").write_text(md)
-        conv = list(aider.parse(Source(kind="file", location=tmp_path / ".aider.chat.history.md")))[0]
+        conv = list(adapt(aider).parse(Source(kind="file", location=tmp_path / ".aider.chat.history.md")))[0]
         assert conv.prompts[0].responses and any(b.block_type == "tool_output" for r in conv.prompts[0].responses for b in r.content)
 
 
@@ -137,12 +137,7 @@ _SAMPLE_UNITS = {
 
 
 def _assembled(path):
-    return assemble(
-        Source(kind="file", location=path),
-        read=aider.read_aider,
-        decoder=aider.AiderDecoder,
-        harness=aider.HARNESS,
-    )
+    return adapt(aider).assemble(Source(kind="file", location=path))
 
 
 def _history(tmp_path, text, name="proj"):
@@ -210,8 +205,8 @@ class TestDecodedShape:
         """Relative and absolute spellings of one file were two ids, so one file could be stored twice."""
         path = _history(tmp_path, _ONE_SESSION)
         monkeypatch.chdir(tmp_path)
-        relative = aider.parse(Source(kind="file", location=Path("proj/.aider.chat.history.md")))[0]
-        absolute = aider.parse(Source(kind="file", location=path))[0]
+        relative = adapt(aider).parse(Source(kind="file", location=Path("proj/.aider.chat.history.md")))[0]
+        absolute = adapt(aider).parse(Source(kind="file", location=path))[0]
         assert relative.external_id == absolute.external_id
         assert absolute.external_id == f"aider::{_digest(str(path.resolve()))}::2025-01-01 00:00:00"
         # The ids a previous release may have stored this file under are named by either spelling, so
@@ -235,8 +230,8 @@ class TestDecodedShape:
         """
         path = _history(tmp_path, _ONE_SESSION)
         spelled = "../proj/.aider.chat.history.md"
-        recorded = aider.parse(Source(kind="file", location=path, metadata={"recorded_locations": [spelled]}))[0]
-        bare = aider.parse(Source(kind="file", location=path))[0]
+        recorded = adapt(aider).parse(Source(kind="file", location=path, metadata={"recorded_locations": [spelled]}))[0]
+        bare = adapt(aider).parse(Source(kind="file", location=path))[0]
         recorded_id = f"aider::{_digest(spelled)}::2025-01-01 00:00:00"
         assert recorded_id in recorded.superseded_external_ids
         assert recorded_id not in bare.superseded_external_ids
@@ -246,13 +241,13 @@ class TestDecodedShape:
         """Golden fixtures state their CWD-relative spelling, so their expected ids hold on every machine."""
         stated = "tests/fixtures/adapters/aider/minimal/.aider.chat.history.md"
         source = Source(kind="file", location=Path(stated), metadata={"identity_path": stated})
-        (conversation,) = aider.parse(source)
+        (conversation,) = adapt(aider).parse(source)
         assert conversation.external_id == f"aider::{_digest(stated)}::2025-07-15 14:32:01"
         assert conversation.superseded_external_ids == ()
 
     def test_each_session_ends_where_the_next_begins_and_the_last_stays_open(self, tmp_path):
         """Aider states no end, so the only bound is the next header; the last session is still being written."""
-        conversations = aider.parse(Source(kind="file", location=_history(tmp_path, _THREE_SESSIONS)))
+        conversations = adapt(aider).parse(Source(kind="file", location=_history(tmp_path, _THREE_SESSIONS)))
         assert [c.ended_at for c in conversations] == [
             conversations[1].started_at,
             conversations[2].started_at,
@@ -277,15 +272,15 @@ class TestDecodedShape:
 
     def test_peek_shows_the_live_session_of_a_multi_session_file(self):
         path = GOLDEN / "multi_conversation" / ".aider.chat.history.md"
-        scan = aider.peek_scan(path)
+        scan = adapt(aider).peek_scan(path)
         assert scan.session_id.endswith("::2025-07-15 15:10:00")
         assert scan.exchange_count == 1
-        (exchange,) = aider.peek_exchanges(path, 5)
+        (exchange,) = adapt(aider).peek_exchanges(path, 5)
         assert exchange.prompt_text == "fix the bug in auth.py"
 
     def test_peek_tail_is_the_last_raw_lines(self):
         path = GOLDEN / "minimal" / ".aider.chat.history.md"
-        assert list(aider.peek_tail(path, 1)) == ["> Applied edit to hello.py"]
+        assert list(adapt(aider).peek_tail(path, 1)) == ["> Applied edit to hello.py"]
 
     def test_output_after_a_new_prompt_does_not_join_the_previous_turn(self, tmp_path):
         """A turn ends at the next prompt. Output that follows a prompt with no reply yet is that prompt's, not the last reply's."""

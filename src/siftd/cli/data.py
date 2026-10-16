@@ -324,6 +324,9 @@ class _IngestJsonRenderer:
                 "exchanges": event.exchange_count,
                 "model": event.model,
                 "error": event.error,
+                "unknown": event.unknown,
+                "orphan": event.orphan,
+                "ignored": event.ignored,
             })
         self._emit(payload)
 
@@ -358,6 +361,15 @@ class _IngestJsonRenderer:
     @staticmethod
     def _emit(payload: dict) -> None:
         print(json.dumps(payload))
+
+
+def _unrecognized_message(name: str, unknown: int, orphan: int) -> str:
+    parts = []
+    if unknown:
+        parts.append(f"{fmt_count(unknown)} record(s) unrecognized")
+    if orphan:
+        parts.append(f"{fmt_count(orphan)} orphaned")
+    return f"Adapter '{name}': {', '.join(parts)} in the sources read this run"
 
 
 def _report_reparse(stats, *, renderer) -> None:
@@ -541,6 +553,14 @@ def cmd_ingest(args) -> int:
         for name, counts in stats.by_harness.items()
         if counts.get("errors", 0) and tiers.get(name, DEFAULT_SUPPORT_TIER) != "core"
     )
+    # Records an adapter that decodes could not recognize or place, in the sources
+    # it parsed this run. A location claim ("here, N records"), not a verdict on
+    # why: the ledger is not persisted, so there is no later report to point at.
+    unrecognized = sorted(
+        (name, counts["unknown"], counts["orphan"])
+        for name, counts in stats.by_harness.items()
+        if counts.get("unknown") or counts.get("orphan")
+    )
     # Disabled-adapter notices are scoped to the run: on an --adapter run, a
     # globally disabled adapter that was never requested is not news.
     disabled_notices = [
@@ -564,6 +584,16 @@ def cmd_ingest(args) -> int:
                 "tier": tier,
                 "errors": errors,
                 "message": f"Adapter '{name}' had {errors} file error(s) — {tier}-tier adapter, supported best-effort",
+            })
+        for name, unknown, orphan in unrecognized:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "unrecognized_records",
+                "adapter": name,
+                "unknown": unknown,
+                "orphan": orphan,
+                "ignored": stats.by_harness[name]["ignored"],
+                "message": _unrecognized_message(name, unknown, orphan),
             })
         for path, error in result.dropin_failures:
             renderer._emit({
@@ -591,6 +621,12 @@ def cmd_ingest(args) -> int:
                 status.info(
                     f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)"
                 )
+        # Records an adapter lost track of are data quality, not chatter: auto-quiet
+        # (any non-TTY, which is every scripted ingest) must not swallow them, as it
+        # must not swallow a skipped-by-lock run. Only an explicit --quiet does.
+        if not quiet_explicit:
+            for name, unknown, orphan in unrecognized:
+                status.warning(_unrecognized_message(name, unknown, orphan))
         # Drop-in import failures are hard errors and stay visible even in quiet
         # mode; the info-level notices above ride the quiet gate.
         for path, error in result.dropin_failures:

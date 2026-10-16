@@ -16,7 +16,6 @@ import sqlite3
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 
-from siftd.adapters.assembly import assemble
 from siftd.adapters.records import (
     CONTENT_REVISION_ATTRIBUTE,
     Ignored,
@@ -29,19 +28,19 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import AdapterParseError, build_harness, open_external_db
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.adapters.sdk import AdapterParseError, open_external_db
+from siftd.domain import ContentBlock, Source, Usage
 from siftd.safecall import epoch_ms_to_iso
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "contrib"
 NAME = "opencode"
 DEFAULT_LOCATIONS = ["~/.local/share/opencode"]
 DEDUP_STRATEGY = "session"  # multiple conversations from one DB
-# Peek is deferred for this adapter (see the end of this module). The glob keeps
-# the scan to the database rather than every file in the data directory.
-PEEK_GLOB_PATTERNS = ["opencode.db"]
+# Peek is deferred for this adapter: one database holds every session, and peek
+# shows one file as one conversation.
+SUPPORTS_PEEK = False
 
 # Harness metadata
 HARNESS_SOURCE = "multi"
@@ -88,9 +87,6 @@ def change_paths(source: Source) -> list[Path]:
     """
     db = source.as_path
     return [db, db.with_name(db.name + "-wal")]
-
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 
 def read_rows(source: Source) -> Iterator[dict]:
@@ -243,7 +239,7 @@ class OpencodeDecoder:
     (see ``ingestion/orchestration.py``).
 
     Peek. Deferred: peek reads one conversation per file, and a database holds one
-    per session. The adapter offers no peek hooks until a container-aware peek exists.
+    per session. The adapter declares ``SUPPORTS_PEEK = False`` until a container-aware peek exists.
     """
 
     def __init__(self) -> None:
@@ -511,11 +507,9 @@ def _has_content(raw) -> bool:
     )
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse an OpenCode SQLite database and yield Conversation objects."""
-    return assemble(
-        source,
-        read=read_rows,
-        decoder=lambda _source: OpencodeDecoder(),
-        harness=HARNESS,
-    ).conversations
+read = read_rows
+
+
+def decoder(source: Source) -> OpencodeDecoder:
+    """A decoder is made per source; opencode's rows state everything it needs, so this one ignores it."""
+    return OpencodeDecoder()

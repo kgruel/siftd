@@ -114,9 +114,9 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 204 | 3610 |
-| `tests/adapters/` | 21 | 430 |
-| `tests/architecture/` | 15 | 89 |
-| `tests/cli/` | 30 | 671 |
+| `tests/adapters/` | 22 | 468 |
+| `tests/architecture/` | 15 | 90 |
+| `tests/cli/` | 31 | 686 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -339,6 +339,7 @@ docstring so its row is meaningful.
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
+| [adapters/test_contract.py](adapters/test_contract.py) | 38 | The adapter contract: versions, optional hooks, derivation, drop-ins, template. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
@@ -364,7 +365,7 @@ docstring so its row is meaningful.
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
 | [architecture/test_event_order.py](architecture/test_event_order.py) | 3 | One definition of event order; every reader that orders events asks it. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
-| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 33 | Static code analysis tests for architectural invariants. |
+| [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 34 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
@@ -389,6 +390,7 @@ docstring so its row is meaningful.
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
+| [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
 | [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 30 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |

@@ -1,10 +1,10 @@
 # Writing Adapters
 
-Adapters are drop-in modules that parse log files from coding assistants and yield `Conversation` domain objects. This guide covers the adapter interface and common patterns.
+Adapters are drop-in modules that read log files from coding assistants and turn them into siftd's `Conversation` domain objects. An adapter only *decodes*: it says how its source is read and what each raw unit means, and siftd does the rest. This guide covers the adapter interface (version 2, which new adapters use) and common patterns; [the legacy `parse()` interface](#legacy-interface-version-1) still loads and is described last.
 
 ## Quick Start
 
-Copy `src/siftd/adapters/template.py` to `~/.config/siftd/adapters/my_harness.py` and customize:
+Copy `src/siftd/adapters/template.py` (`siftd copy adapter template`) to `~/.config/siftd/adapters/my_harness.py` and customize:
 
 ```python
 NAME = "my_harness"
@@ -12,22 +12,53 @@ DEFAULT_LOCATIONS = ["~/.my_harness/logs"]
 HARNESS_SOURCE = "openai"  # provider name
 ```
 
-Then run `siftd ingest` — drop-in adapters are auto-discovered.
+then change the decoder to match your log format. Run `siftd ingest` — drop-in adapters are auto-discovered. The template is a working version-2 adapter for a tiny made-up JSONL format; it is tested to load, validate and decode a fixture.
 
 ## Required Exports
 
-Every adapter must export:
+Every adapter must export these, in every version:
 
 | Name | Type | Description |
 |------|------|-------------|
-| `ADAPTER_INTERFACE_VERSION` | `int` | Must be `1` |
+| `ADAPTER_INTERFACE_VERSION` | `int` | `2` (decoding). `1` is the legacy `parse()` interface |
 | `NAME` | `str` | Unique adapter identifier |
 | `DEFAULT_LOCATIONS` | `list[str]` | Paths to scan (~ expanded) |
 | `DEDUP_STRATEGY` | `str` | `"file"` or `"session"` |
 | `HARNESS_SOURCE` | `str` | Provider name |
 | `discover(locations=None)` | callable | Find log sources |
 | `can_handle(source)` | callable | Check if adapter handles source |
-| `parse(source)` | callable | Parse source into conversations (see [Decoding to records](#decoding-to-records)) |
+
+and, for version 2:
+
+| Name | Type | Description |
+|------|------|-------------|
+| `read(source)` | callable | Yield each raw unit of the source (see [Decoding to records](#decoding-to-records)) |
+| `decoder(source)` | callable | A `Decoder` for the source: an object with `decode(unit) -> list[Record]`, or a class whose constructor takes the source |
+
+`siftd.adapters.validation` is the one definition of this list (`required_names(version)`); the registry, `siftd doctor` and the test suite read it.
+
+## Optional Hooks
+
+All optional, and validated for type when present, so a misspelled value is an error instead of a silently missing feature.
+
+| Name | Type | Description |
+|------|------|-------------|
+| `SUPPORT_TIER` | `str` | `"core"`, `"contrib"` (default) or `"frozen"` |
+| `HARNESS_LOG_FORMAT` | `str` | `"jsonl"`, `"json"`, `"markdown"`, ... |
+| `HARNESS_DISPLAY_NAME` | `str` | Human-readable name; defaults to `NAME.replace("_", " ").title()` |
+| `TOOL_ALIASES` | `dict[str, str]` | Raw tool name to canonical name (see [Tool Aliases](#tool-aliases)) |
+| `default_session(source)` | callable | The `Session` of a source whose records state none. Without it a source with no `Session` record fails assembly |
+| `change_paths(source)` | callable | The files whose change means the source changed. A WAL-mode database keeps recent commits in a `-wal` file, so OpenCode names both. Default: the source's own file |
+| `SUPPORTS_LIVE_REGISTRATION` | `bool` | Tagging during a live session is supported; ingest drains queued session tags for this adapter |
+| `SUBAGENT_PATH_MARKER` | `str` | Path fragment that identifies a subagent log (Claude Code: `"/subagents/"`) |
+| `PEEK_GLOB_PATTERNS` | `list[str]` | Globs `siftd peek` scans under `DEFAULT_LOCATIONS`; otherwise inferred from `HARNESS_LOG_FORMAT` |
+| `SESSION_ID_IN_PATH` | `bool` | False when a session's id never appears in its file path, so peek lookup scans every file for it (aider) |
+| `TOOL_HINT_KEYS` | `dict[str, list[str]]` | Canonical tool name to the input keys that summarize a call, in priority order |
+| `SUPPORTS_PEEK` | `bool` | False when peek must not be derived (OpenCode: one database holds many sessions, and peek shows one file as one conversation). Default True |
+| `PEEK_LAST_OF_MANY` | `bool` | A source that holds several conversations peeks as its last, the live one (aider's history file) |
+| `peek_read(source)` | callable | A reader for peek when it must differ from `read` (VSCode reads a half-written session leniently) |
+| `peek_enrich(path, scan)` | callable | Adds to the derived scan what the log alone cannot say (Claude Code reads a subagent's sidecar `.meta.json`) |
+| `peek_scan`, `peek_exchanges`, `peek_tail` | callables | An explicit hook replaces the derived one (aider's markdown has no records to tail). See [Peek](#peek-hooks) |
 
 ## Deduplication Strategy
 
@@ -109,10 +140,11 @@ the canonical records in `siftd.adapters.records`; the shared assembler in
 where each record attaches, merges streamed chunks of one message, pairs tool
 results with their calls in either order, places a response that precedes
 every prompt in `Conversation.preamble`, and counts every record in a ledger.
-`parse()` is then one call:
+The adapter declares the reader and the decoder, and siftd derives `parse()`
+from them (`siftd.adapters.contract`):
 
 ```python
-from siftd.adapters.assembly import assemble, read_jsonl
+from siftd.adapters.assembly import read_jsonl
 from siftd.adapters.records import Ignored, PromptRec, ResponseRec, Session, ToolCallRec, ToolResultRec
 
 class MyDecoder:
@@ -125,15 +157,25 @@ class MyDecoder:
     def finish(self) -> list:  # optional: what only the end of the stream settles
         return []
 
-def parse(source):
-    return assemble(
-        source,
-        read=read_jsonl,
-        decoder=MyDecoder,
-        harness=HARNESS,
-        default_session=Session(external_id=f"{NAME}::{source.as_path.stem}"),
-    ).conversations
+read = read_jsonl      # a unit it cannot parse is yielded as Malformed, never skipped
+decoder = MyDecoder    # called with the source; a function returning a decoder works too
+
+def default_session(source):  # optional
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 ```
+
+What siftd supplies from those declarations, and where a consumer gets it: the
+registry hands every consumer an adapter with `parse(source)` (the conversations),
+`assemble(source)` (the conversations *and* the ledger, from one parse),
+`HARNESS` (built from `NAME`, `HARNESS_SOURCE`, `HARNESS_LOG_FORMAT` and
+`HARNESS_DISPLAY_NAME`) and the peek hooks. A bare module has none of these; call
+`siftd.adapters.contract.adapt(module)` to get them.
+
+The ledger counts every record by its disposition. `siftd ingest` adds the
+`UNKNOWN` (not recognized), `ORPHAN` (could not be placed) and `IGNORED` (skipped
+on purpose) counts to `IngestStats.by_harness` and reports an adapter's
+unrecognized and orphaned counts when they are not zero, so a new record type in a
+tool's log surfaces instead of vanishing. The ledger is not stored in the database.
 
 The rules a decoder follows:
 
@@ -156,7 +198,7 @@ The rules a decoder follows:
 names what every record type in the tool's log becomes.
 
 A container source (`DEDUP_STRATEGY = "session"`) is also a row-level reader:
-`opencode.read_rows` yields each session, message and part row, and
+`opencode.read` yields each session, message and part row, and
 `opencode.OpencodeDecoder` decodes them. Where a database keeps recent commits
 in a write-ahead log, the adapter declares its change files with an optional
 `change_paths(source)` returning the paths whose change means the source may
@@ -230,13 +272,32 @@ Common categories:
 
 Tool aliases enable cross-harness analysis (e.g., "all file reads").
 
-## Peek Hooks (Optional)
+## Peek Hooks
 
-Peek hooks enable live session inspection via `siftd peek` without ingesting into SQLite. These are **optional** — adapters without peek hooks will still work for ingest, but their sessions will show "preview unavailable" in peek listings.
+Peek hooks enable live session inspection via `siftd peek` without ingesting into SQLite.
 
-### Hook Functions
+### Derived from the decoder
 
-Export these functions to support peek:
+A version-2 adapter needs to write nothing for peek: `peek_scan`,
+`peek_exchanges` and `peek_tail` are derived from `read` and `decoder`, so peek
+and ingest classify each record once. Peek assembles the whole file, then
+projects the conversation, so a session peek shows is a session ingest would
+store. A file that yields several conversations is an error for peek, not a
+guess, unless the adapter says which one is live (`PEEK_LAST_OF_MANY = True`). A
+subagent is shown as `<parent>:<agent>`, derived from its
+`LineageRec(kind="subagent", ...)`. Tool names are canonicalized through
+`TOOL_ALIASES`.
+
+Three declarations refine the derivation, and an explicit hook of the same name
+replaces it:
+
+- `peek_read(source)` is the reader peek uses when it must differ from `read`.
+- `peek_enrich(path, scan)` returns the derived scan with more in it.
+- `SUPPORTS_PEEK = False` turns peek off for the adapter.
+- A module-level `peek_scan(path)`, `peek_exchanges(path, last_n)` or
+  `peek_tail(path, lines)` is used as written.
+
+The shapes of those hooks, for an adapter that writes one:
 
 ```python
 from pathlib import Path
@@ -290,61 +351,10 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[dict]:
 | `input_tokens` | `int` | Input token count |
 | `output_tokens` | `int` | Output token count |
 
-### Peek Hooks From a Decoder
-
-An adapter that decodes to records gets its peek hooks from the same decoder,
-so peek and ingest classify each record once:
-
-```python
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
-
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_jsonl,
-    MyDecoder,
-    HARNESS,
-    default_session_for=lambda path: Session(external_id=f"{NAME}::{path.stem}"),
-    tool_aliases=TOOL_ALIASES,
-)
-```
-
-Peek assembles the whole file, then projects the conversation, so a session
-peek shows is a session ingest would store. A file that yields several
-conversations is an error for peek, not a guess. A subagent is shown as
-`<parent>:<agent>`, derived from its `LineageRec(kind="subagent", ...)`.
-
-### SDK Helpers for Peek (Record Folds)
-
-The adapters not yet ported derive their hooks from a record normalizer
-instead:
-
-```python
-from siftd.adapters.sdk import (
-    make_peek_hooks,             # peek_scan/peek_exchanges/peek_tail from a normalizer
-    peek_scan_from_records,      # Lower-level: scan normalized records
-    peek_exchanges_from_records, # Lower-level: extract exchanges
-    peek_jsonl_tail,             # Generic JSONL tail
-    canonicalize_tool_name,      # Apply TOOL_ALIASES
-    extract_text_with_placeholders,  # Text + [image]/[tool] markers
-)
-
-# Most adapters: write one record normalizer, derive all three hooks.
-def _normalize(record: dict) -> NormalizedRecord | None:
-    ...  # map your log's record shape to a NormalizedRecord
-
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
-    _normalize,
-    tool_aliases=TOOL_ALIASES,
-    subagent_path_marker="/subagents/",  # optional
-)
-```
-
-The `*_from_records` functions are there when a hook needs behavior
-`make_peek_hooks` doesn't cover (custom session ids, non-JSONL iteration via
-`record_iterator`).
-
 ### Graceful Degradation
 
-Adapters without peek hooks are automatically handled:
+A version-1 adapter without peek hooks, and a version-2 adapter that sets
+`SUPPORTS_PEEK = False`, are still handled:
 - Sessions from these adapters are still discovered (via `DEFAULT_LOCATIONS`)
 - They appear in listings with `preview_available=False`
 - Detail view shows "(preview unavailable)"
@@ -353,7 +363,11 @@ This allows partial peek support across a mixed adapter ecosystem.
 
 ## SDK Helpers
 
-Import from `siftd.adapters.sdk`:
+Import from `siftd.adapters.sdk`. `discover_files` serves every adapter. The rest
+(`build_harness`, `timestamp_bounds`, `load_jsonl`, `ToolCallLinker`) are what a
+legacy `parse()` builds its own tree with; a decoding adapter does not need them,
+because siftd builds the harness and the assembler places records, pairs tool
+results and bounds the timestamps.
 
 ### `discover_files(locations, default_locations, glob_patterns)`
 Standard file discovery with glob patterns:
@@ -406,6 +420,41 @@ linker.add_result(block.tool_use_id, content=block.content)
 for tool_id, use_data, result_data in linker.get_pairs():
     # Build ToolCall objects
 ```
+
+## Legacy interface (version 1)
+
+An adapter that sets `ADAPTER_INTERFACE_VERSION = 1` and exports `parse(source)`
+instead of `read` and `decoder` keeps loading and ingesting unchanged. Drop-ins
+written before version 2 are version 1, and siftd does not convert them: a
+conversation tree built by hand would give a ledger that measures nothing, so a
+version-1 adapter has no ledger and `siftd ingest` has no unrecognized or
+orphaned counts to report for it.
+
+```python
+def parse(source):
+    """Yield Conversation objects: build the Prompt -> Response -> ToolCall tree yourself."""
+    ...
+```
+
+A version-1 adapter writes its own peek hooks (or none), from the record folds in
+`siftd.adapters.sdk`:
+
+```python
+from siftd.adapters.sdk import make_peek_hooks, NormalizedRecord
+
+def _normalize(record: dict) -> NormalizedRecord | None:
+    ...  # map your log's record shape to a NormalizedRecord
+
+peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
+    _normalize,
+    tool_aliases=TOOL_ALIASES,
+    subagent_path_marker="/subagents/",  # optional
+)
+```
+
+Moving to version 2 is a rewrite of `parse()` as a decoder, not a flag: delete the
+tree-building, return a record per unit, and let the assembler place them.
+`gemini_cli` (deprecated, removed in 0.13.0) is the one built-in still on version 1.
 
 ## Installation Methods
 

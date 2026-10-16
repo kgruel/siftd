@@ -29,6 +29,7 @@ import pytest
 from conftest import tag_names
 
 from siftd.adapters import codex_cli
+from siftd.adapters.contract import adapt
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
 from siftd.storage.sqlite import (
@@ -131,7 +132,7 @@ def _codex_adapter_at(root: Path, order=None):
         HARNESS_DISPLAY_NAME = codex_cli.HARNESS_DISPLAY_NAME
         TOOL_ALIASES = codex_cli.TOOL_ALIASES
         can_handle = staticmethod(codex_cli.can_handle)
-        parse = staticmethod(codex_cli.parse)
+        parse = staticmethod(adapt(codex_cli).parse)
 
         @staticmethod
         def discover(locations=None):

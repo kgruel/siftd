@@ -12,8 +12,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import parse_block
-from siftd.adapters.assembly import assemble, read_jsonl
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.assembly import read_jsonl
 from siftd.adapters.records import (
     Ignored,
     LineageRec,
@@ -27,11 +26,12 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import build_harness, discover_files
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.adapters.sdk import discover_files
+from siftd.domain import ContentBlock, Source, Usage
+from siftd.domain.peek import PeekScanResult
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "core"
 NAME = "claude_code"
 # ~/.config/claude/projects is where modern installs write live logs;
@@ -270,8 +270,6 @@ def can_handle(source: Source) -> bool:
     # Accept .jsonl files that aren't under other adapters
     return True
 
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 # Record types that are not conversation turns. Each is Ignored by name; the
 # docstring of ClaudeDecoder says why, and tests/adapters/test_claude_code.py
@@ -597,24 +595,13 @@ class ClaudeDecoder:
         return out
 
 
-def _default_session(path: Path) -> Session:
+read = read_jsonl
+decoder = ClaudeDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a file that names no session of its own."""
-    return Session(external_id=f"{NAME}::{path.stem}")
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a Claude Code JSONL file and yield Conversation objects.
-
-    Typically yields a single conversation per file, but the interface
-    supports multiple for generality.
-    """
-    return assemble(
-        source,
-        read=read_jsonl,
-        decoder=ClaudeDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source.as_path),
-    ).conversations
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 
 
 def _normalize_content(content) -> list:
@@ -634,16 +621,6 @@ def _normalize_content(content) -> list:
     return []
 
 
-# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
-# ingest classify each record once.
-_peek_scan_base, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_jsonl,
-    ClaudeDecoder,
-    HARNESS,
-    default_session_for=_default_session,
-    tool_aliases=TOOL_ALIASES,
-)
-
 # Subagent .meta.json keys → PeekScanResult.attributes keys. Names match the
 # parent-side tool_call attributes vocabulary (_tool_use_result_attributes:
 # agent_name/agent_type/agent_model/spawn_depth). Note the ingest-side
@@ -657,16 +634,15 @@ _SUBAGENT_META_KEYS: dict[str, str] = {
 }
 
 
-def peek_scan(path: Path):
-    """peek_scan with subagent .meta.json enrichment.
+def peek_enrich(path: Path, result: PeekScanResult) -> PeekScanResult:
+    """The derived scan with subagent .meta.json enrichment.
 
     A subagent log at .../subagents/agent-<name>-<hash>.jsonl has a sibling
     agent-<name>-<hash>.meta.json carrying identity the JSONL itself lacks
     (name/agentType/spawnDepth/model). Surface it via the scan attributes
     channel; fill result.model from the meta when the log had none.
     """
-    result = _peek_scan_base(path)
-    if result is None or SUBAGENT_PATH_MARKER not in str(path):
+    if SUBAGENT_PATH_MARKER not in str(path):
         return result
     meta = _read_subagent_meta(path)
     if meta is None:

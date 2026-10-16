@@ -5,6 +5,7 @@ from pathlib import Path
 from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import pi_agent
+from siftd.adapters.contract import adapt
 from siftd.domain.source import Source
 
 
@@ -18,7 +19,7 @@ class TestPiAgentAdapter:
 
     def test_parse_full(self, tmp_path):
         pi_source = fixture_source(tmp_path, "pi_agent_minimal.jsonl", ".pi/agent/sessions/--test--")
-        conv = list(pi_agent.parse(pi_source))[0]
+        conv = list(adapt(pi_agent).parse(pi_source))[0]
         assert conv.external_id == "pi_agent::pi-session-001" and conv.workspace_path == "/test/workspace"
         assert conv.harness.name == "pi_agent" and conv.harness.source == "multi"
         assert len(conv.prompts) == 1
@@ -37,4 +38,4 @@ class TestPiAgentAdapter:
         sessions_dir = tmp_path / ".pi" / "agent" / "sessions"
         sessions_dir.mkdir(parents=True)
         (sessions_dir / "empty.jsonl").write_text("")
-        assert list(pi_agent.parse(Source(kind="file", location=sessions_dir / "empty.jsonl"))) == []
+        assert list(adapt(pi_agent).parse(Source(kind="file", location=sessions_dir / "empty.jsonl"))) == []

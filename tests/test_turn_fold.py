@@ -26,6 +26,7 @@ from conftest import load_golden_input
 from painted import Fidelity
 
 from siftd.adapters import claude_code, codex_cli
+from siftd.adapters.contract import adapt
 from siftd.api.conversations import get_conversation, list_conversations
 from siftd.api.export import export_document
 from siftd.domain import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
@@ -42,7 +43,7 @@ from siftd.storage.turns import (
 )
 
 ALL = Fidelity(depth=2, visible=frozenset({"text", "thinking", "tools"}))
-ADAPTERS = {"claude_code": claude_code, "codex_cli": codex_cli}
+ADAPTERS = {"claude_code": adapt(claude_code), "codex_cli": adapt(codex_cli)}
 # (adapter, golden case, has a lineage link, prompts)
 GOLDEN = [
     ("claude_code", "fork_context_ref", True, 0),
@@ -335,11 +336,11 @@ class TestEverySurfaceShowsThePreamble:
         preamble flag nor its lineage: the same fork read live had no "Continued from"
         header, unlike its stored transcript."""
         _, _, parsed, detail = fork
+        from siftd.domain.peek import SessionDetail, SessionInfo
         from siftd.output.html_fmt import folio_detail_from_session, render_folio
-        from siftd.domain.peek import SessionInfo, SessionDetail
 
         source = load_golden_input("claude_code", "fork_context_ref")
-        exchanges = claude_code.peek_exchanges(source.location, last_n=5)
+        exchanges = adapt(claude_code).peek_exchanges(source.location, last_n=5)
         (first,) = exchanges
         assert first.preamble and first.continued_from == "claude_code::06194393-48f0-4e17-aee4-c6b228547a1c (fork)"
 
@@ -350,8 +351,8 @@ class TestEverySurfaceShowsThePreamble:
         assert "Continued from claude_code::06194393" in render_folio(detail, ALL)  # the stored header, same words
 
     def test_a_live_preamble_without_lineage_gets_the_neutral_header(self):
-        from siftd.output.html_fmt import folio_detail_from_session, render_folio
         from siftd.domain.peek import PeekExchange, PeekNarrativeBlock, SessionDetail, SessionInfo
+        from siftd.output.html_fmt import folio_detail_from_session, render_folio
 
         ex = PeekExchange(preamble=True, narrative=[PeekNarrativeBlock(block_type="text", content="hello")])
         live = SessionDetail(info=SessionInfo(session_id="s", file_path=Path("s.jsonl")), exchanges=[ex])

@@ -6,11 +6,12 @@ JSONL line into canonical records, and the shared assembler
 (:mod:`siftd.adapters.assembly`) decides where they attach.
 """
 
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-from siftd.adapters.assembly import assemble, read_jsonl
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.assembly import read_jsonl
+from siftd.adapters.contract import DecodingAdapter
 from siftd.adapters.records import (
     Ignored,
     Meta,
@@ -23,13 +24,13 @@ from siftd.adapters.records import (
     Unknown,
     UsageRec,
 )
-from siftd.adapters.sdk import build_harness, discover_files
+from siftd.adapters.sdk import discover_files
 from siftd.content.filters import filter_binary_block
 from siftd.domain import ContentBlock, Conversation, Source, Usage
 from siftd.safecall import parse_json_args
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "contrib"
 NAME = "pi_agent"
 DEFAULT_LOCATIONS = ["~/.pi/agent/sessions"]
@@ -39,8 +40,6 @@ DEDUP_STRATEGY = "file"  # one conversation per file
 HARNESS_SOURCE = "multi"
 HARNESS_LOG_FORMAT = "jsonl"
 HARNESS_DISPLAY_NAME = "Pi Coding Agent"
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 # Raw tool name → canonical tool name
 TOOL_ALIASES: dict[str, str] = {}
@@ -315,43 +314,20 @@ def _image(block: dict) -> dict:
     }
 
 
-def _default_session(path: Path) -> Session:
+read = read_jsonl
+decoder = PiDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a file that names no session of its own."""
-    return Session(external_id=f"{NAME}::{path.stem}")
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a Pi Agent JSONL file and yield Conversation objects."""
-    return assemble(
-        source,
-        read=read_jsonl,
-        decoder=PiDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source.as_path),
-    ).conversations
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 
 
 def _parse_records(records: list[dict], path: Path) -> list[Conversation]:
     """The conversations ``records`` make, as if read from ``path``. Reads nothing itself.
 
     The identity preflight parses records it has already validated this way; the
-    file reader stays at :func:`parse`.
+    file reader stays at :func:`read`.
     """
-    return assemble(
-        Source(kind="file", location=path),
-        read=lambda _source: records,
-        decoder=PiDecoder,
-        harness=HARNESS,
-        default_session=_default_session(path),
-    ).conversations
-
-
-# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
-# ingest classify each record once.
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_jsonl,
-    PiDecoder,
-    HARNESS,
-    default_session_for=_default_session,
-    tool_aliases=TOOL_ALIASES,
-)
+    adapter = DecodingAdapter(sys.modules[__name__])
+    return adapter.assemble(Source(kind="file", location=path), units=records).conversations

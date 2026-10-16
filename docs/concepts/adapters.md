@@ -205,7 +205,7 @@ siftd copy adapter claude_code    # copy a built-in to modify
 This creates a file in `~/.config/siftd/adapters/`. Edit it to:
 
 1. Set `NAME` and `DEFAULT_LOCATIONS` for your tool
-2. Implement `parse()` to read your tool's log format
+2. Implement `read()` (yield each raw unit of the log) and a `decoder` (turn each unit into canonical records); siftd derives `parse()` and peek from them
 3. Map tool names to canonical forms in `TOOL_ALIASES`
 
 Drop-in adapters are auto-discovered — just save the file and run `siftd ingest`.
@@ -232,8 +232,9 @@ When you run `siftd ingest`:
 2. Each adapter's `discover()` finds candidate files
 3. Files are checked against `ingested_files` table (skip if already processed and unchanged; `siftd ingest --reparse` re-parses them anyway, see [Re-parsing stored sources](#re-parsing-stored-sources))
 4. For new/changed files, `can_handle()` confirms the adapter can parse it
-5. `parse()` produces `Conversation` objects
-6. Storage layer writes to SQLite, normalizes tool names, builds FTS index
+5. `read` and `decoder` produce records, and the shared assembler turns them into `Conversation` objects (a version-1 adapter's `parse()` does this itself)
+6. A decoding adapter's ledger counts every record; records it did not recognize or could not place are reported at the end of `siftd ingest`
+7. Storage layer writes to SQLite, normalizes tool names, builds FTS index
 
 ```bash
 siftd ingest -v    # verbose output shows per-adapter skip breakdowns

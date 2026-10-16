@@ -64,8 +64,7 @@ from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 from siftd.adapters._jsonl import load_jsonl
-from siftd.adapters.assembly import assemble, read_jsonl
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.assembly import read_jsonl
 from siftd.adapters.records import (
     Ignored,
     Malformed,
@@ -79,11 +78,11 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import build_harness, open_external_db
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.adapters.sdk import open_external_db
+from siftd.domain import ContentBlock, Source, Usage
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "core"
 NAME = "antigravity_cli"
 DEFAULT_LOCATIONS = ["~/.gemini/antigravity-cli"]
@@ -188,9 +187,6 @@ def can_handle(source: Source) -> bool:
     return "brain" in parts and ".system_generated" in parts and "logs" in parts
 
 
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
-
-
 class AntigravityDecoder:
     """Turns each transcript step into canonical records.
 
@@ -217,7 +213,7 @@ class AntigravityDecoder:
     records carry no time, so a step's time travels in a Meta beside them.
 
     Identity. The steps name no session. The conversation is named for its brain
-    directory by :func:`_default_session`.
+    directory by :func:`default_session`.
     """
 
     def __init__(self, source: Source):
@@ -345,7 +341,7 @@ class AntigravityDecoder:
         return [ToolResultRec(at=at, call_id=call_id, result={"output": output}, status="success")]
 
 
-def _read_steps(source: Source) -> list:
+def read(source: Source) -> list:
     """The transcript's units in step order, not file order.
 
     A transcript is appended as steps complete, so when a model turn calls several
@@ -443,26 +439,14 @@ def _parse_tool_args(raw_args: dict) -> dict:
     return parsed
 
 
-def _default_session(source: Source) -> Session:
+decoder = AntigravityDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a transcript: named for its brain directory, with the workspace it ran in."""
     path = source.as_path
     workspace = source.metadata.get("workspace_path") or _resolve_workspace(path)
     return Session(external_id=f"{NAME}::{_session_id(path)}", workspace_path=workspace)
-
-
-def _peek_session(path: Path) -> Session:
-    return _default_session(Source(kind="file", location=path))
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse an Antigravity CLI transcript JSONL file into a Conversation."""
-    return assemble(
-        source,
-        read=_read_steps,
-        decoder=AntigravityDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source),
-    ).conversations
 
 
 @functools.cache
@@ -648,14 +632,3 @@ def _resolve_model(transcript_path: Path) -> str | None:
     if len(models) == 1:
         return models.pop()
     return None
-
-
-# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
-# ingest classify each step once.
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    _read_steps,
-    AntigravityDecoder,
-    HARNESS,
-    default_session_for=_peek_session,
-    tool_aliases=TOOL_ALIASES,
-)

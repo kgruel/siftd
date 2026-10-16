@@ -8,24 +8,19 @@ import pytest
 from conftest import FIXTURES_DIR, default_location_source, write_jsonl
 
 from siftd.adapters import claude_code
-from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
+from siftd.adapters.assembly import AssemblyError
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition
 from siftd.domain.source import Source
 
 
 def _assembly(path):
     """The assembled source and its ledger, as parse() sees them."""
-    return assemble(
-        Source(kind="file", location=path),
-        read=read_jsonl,
-        decoder=claude_code.ClaudeDecoder,
-        harness=claude_code.HARNESS,
-        default_session=claude_code._default_session(Path(path)),
-    )
+    return adapt(claude_code).assemble(Source(kind="file", location=path))
 
 
 def _only(path):
-    (conversation,) = claude_code.parse(Source(kind="file", location=path))
+    (conversation,) = adapt(claude_code).parse(Source(kind="file", location=path))
     return conversation
 
 
@@ -57,7 +52,7 @@ class TestClaudeCodeAdapter:
         assert not claude_code.can_handle(Source(kind="file", location=FIXTURES_DIR / "gemini_cli_minimal.json"))
 
     def test_parse_full(self):
-        conv = list(claude_code.parse(Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=FIXTURES_DIR / "claude_code_minimal.jsonl")))[0]
         assert conv.external_id == "claude_code::test-session-1" and conv.workspace_path == "/test/workspace"
         assert conv.harness.name == "claude_code" and conv.harness.source == "anthropic"
         assert len(conv.prompts) == 1
@@ -77,7 +72,7 @@ class TestClaudeCodeAdapter:
              "message": {"role": "assistant", "model": "claude-3", "content": None,
                  "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 3}}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert "agent" in conv.external_id and conv.prompts[0].content[0].content["text"] == "plain string"
         assert conv.prompts[0].responses[0].attributes.get("cache_read_input_tokens") == "3"
         assert not claude_code.can_handle(Source(kind="file", location=Path("/home/.codex/sessions/s.jsonl")))
@@ -98,7 +93,7 @@ class TestClaudeCodeAdapter:
             json.dumps({"agentType": "Explore", "description": "scout the repo",
                         "toolUseId": "toolu_x"})
         )
-        conv = list(claude_code.parse(Source(kind="file", location=jsonl)))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=jsonl)))[0]
         assert conv.attributes["subagent_type"] == "Explore"
         assert conv.attributes["agent_description"] == "scout the repo"
 
@@ -111,7 +106,7 @@ class TestClaudeCodeAdapter:
              "message": {"role": "user", "content": "hi"}},
         ]
         jsonl = write_jsonl(tmp_path, records, name="agent-def.jsonl")
-        conv = list(claude_code.parse(Source(kind="file", location=jsonl)))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=jsonl)))[0]
         assert "subagent_type" not in conv.attributes and "agent_description" not in conv.attributes
 
     def test_backgrounded_bash_and_bash_output_correlate(self, tmp_path):
@@ -140,7 +135,7 @@ class TestClaudeCodeAdapter:
                   "content": {"content": "<status>killed</status>\n\n<stdout>done</stdout>"}},
              ]}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         bash_tc = conv.prompts[0].responses[0].tool_calls[0]
         output_tc = conv.prompts[0].responses[1].tool_calls[0]
         assert bash_tc.tool_name == "Bash"
@@ -176,7 +171,7 @@ class TestClaudeCodeAdapter:
                  {"type": "tool_result", "tool_use_id": "tu-1", "content": "README.md"},
              ]}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         tc = conv.prompts[0].responses[0].tool_calls[0]
         assert tc.attributes == {}
 
@@ -205,7 +200,7 @@ class TestClaudeCodeAdapter:
              "gitBranch": "feat/other-branch",
              "message": {"role": "assistant", "model": "m", "content": "ok"}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert conv.branch == "feat/session-branch"
 
     def test_branch_falls_back_to_live_lookup_when_field_absent(self, tmp_path, monkeypatch):
@@ -216,7 +211,7 @@ class TestClaudeCodeAdapter:
             {"type": "user", "sessionId": "s", "cwd": "/w", "timestamp": "T1", "uuid": "u1",
              "message": {"role": "user", "content": "hi"}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert conv.branch == "live-branch"
 
     def test_injected_user_records_reclassified(self, tmp_path):
@@ -234,7 +229,7 @@ class TestClaudeCodeAdapter:
              "promptSource": "typed",
              "message": {"role": "user", "content": "real human prompt"}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         meta1, meta2, real = conv.prompts
 
         b = meta1.content[0]
@@ -256,7 +251,7 @@ class TestClaudeCodeAdapter:
     def test_discover_and_parse_edges(self, tmp_path):
         assert list(claude_code.discover(locations=[str(FIXTURES_DIR)]))
         (tmp_path / "empty.jsonl").write_text("")
-        assert list(claude_code.parse(Source(kind="file", location=tmp_path / "empty.jsonl"))) == []
+        assert list(adapt(claude_code).parse(Source(kind="file", location=tmp_path / "empty.jsonl"))) == []
         assert not claude_code.can_handle(Source(kind="directory", location=FIXTURES_DIR))
         assert claude_code.can_handle(default_location_source(claude_code))
         # Record with non-user/assistant type gets skipped (L167)
@@ -265,7 +260,7 @@ class TestClaudeCodeAdapter:
             {"type": "result", "sessionId": "s", "timestamp": "T2"},
             {"type": "assistant", "sessionId": "s", "timestamp": "T3", "uuid": "a1",
              "message": {"role": "assistant", "model": "m", "content": "ok"}}]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert len(conv.prompts) == 1
 
     def test_tool_use_result_agent_spawn_attributes(self, tmp_path):
@@ -297,7 +292,7 @@ class TestClaudeCodeAdapter:
                  {"type": "tool_result", "tool_use_id": "tu-2", "content": "Async agent launched"},
              ]}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         teammate = conv.prompts[0].responses[0].tool_calls[0]
         assert teammate.attributes["agent_id"] == "agent-xyz"
         assert teammate.attributes["agent_type"] == "general-purpose"
@@ -326,7 +321,7 @@ class TestClaudeCodeAdapter:
                  {"type": "tool_result", "tool_use_id": "tu-1", "content": "README.md"},
              ]}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         tc = conv.prompts[0].responses[0].tool_calls[0]
         assert tc.attributes["stdout"] == "README.md\n"
         assert tc.attributes["stderr"] == "warn: x"
@@ -348,7 +343,7 @@ class TestClaudeCodeAdapter:
                   "content": "Error: File has not been read yet."},
              ]}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         tc = conv.prompts[0].responses[0].tool_calls[0]
         assert tc.status == "error" and tc.attributes == {}
 
@@ -366,7 +361,7 @@ class TestClaudeCodeAdapter:
                            "server_tool_use": {"web_search_requests": 2,
                                                "web_fetch_requests": 0}}}},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         attrs = conv.prompts[0].responses[0].attributes
         assert attrs["cache_creation_ephemeral_5m_input_tokens"] == "100"
         assert attrs["cache_creation_ephemeral_1h_input_tokens"] == "44695"
@@ -381,7 +376,7 @@ class TestClaudeCodeAdapter:
              "message": {"role": "user", "content": "hi"}},
             {"type": "ai-title", "aiTitle": "Add Antigravity adapter configuration", "sessionId": "s"},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         assert conv.attributes["title"] == "Add Antigravity adapter configuration"
 
     def test_turn_duration_attaches_to_last_response(self, tmp_path):
@@ -401,7 +396,7 @@ class TestClaudeCodeAdapter:
             {"type": "system", "subtype": "local_command", "sessionId": "s",
              "timestamp": "T5", "uuid": "s2"},
         ]
-        conv = list(claude_code.parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
+        conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         responses = conv.prompts[0].responses
         assert "turn_duration_ms" not in responses[0].attributes
         assert responses[1].attributes["turn_duration_ms"] == "114244"
@@ -452,7 +447,7 @@ class TestAssembledShape:
     def test_a_forked_subagent_peeks_as_a_subagent_of_the_session_it_ran_in(self):
         """The fork ref arrives first. Peek derived a sub-agent's id from the only lineage the assembler kept, so
         a forked sub-agent showed as '<session>::agent::<id>' instead of '<session>:<id>' and named no parent."""
-        scan = claude_code.peek_scan(_fixture("fork_context_ref"))
+        scan = adapt(claude_code).peek_scan(_fixture("fork_context_ref"))
         assert scan.session_id == "06194393-48f0-4e17-aee4-c6b228547a1c:a313e0c2c15430b41"
         assert scan.parent_session_id == "06194393-48f0-4e17-aee4-c6b228547a1c"
 
@@ -720,13 +715,13 @@ class TestStreamedMessageUsage:
             path = write_jsonl(tmp_path, records, name=f"{name}.jsonl")
             conversation = _only(path)
             parsed_output = sum(r.usage.output_tokens for p in conversation.prompts for r in p.responses if r.usage)
-            exchanges = claude_code.peek_exchanges(path, 5)
+            exchanges = adapt(claude_code).peek_exchanges(path, 5)
             assert len(conversation.prompts) == len(exchanges) == prompt_count, name
             assert parsed_output == sum(x.output_tokens for x in exchanges) == output_total, name
 
     def test_peek_counts_streamed_message_once(self, tmp_path):
         records = [_user("u1", "T1", "hi"), self._chunk("a1", 2, 100), self._chunk("a2", 2, 100), self._chunk("a3", 176, 100)]
-        exchanges = claude_code.peek_exchanges(write_jsonl(tmp_path, records), 5)
+        exchanges = adapt(claude_code).peek_exchanges(write_jsonl(tmp_path, records), 5)
         assert len(exchanges) == 1
         assert exchanges[0].input_tokens == 5 and exchanges[0].output_tokens == 176
 
@@ -742,18 +737,18 @@ class TestPeek:
             _assistant("a1", "T3", "ok"),
         ]
         path = write_jsonl(tmp_path, records)
-        scan = claude_code.peek_scan(path)
+        scan = adapt(claude_code).peek_scan(path)
         assert scan.exchange_count == len(_only(path).prompts) == 2
 
     def test_a_session_of_only_injected_prompts_is_visible(self, tmp_path):
         """peek_scan returned None for a file whose prompts were all injected (35 in the real corpus) while ingest
         stored them."""
         path = write_jsonl(tmp_path, [_user("u1", "T1", "inject", isMeta=True), _assistant("a1", "T2", "ok")])
-        assert claude_code.peek_scan(path) is not None
+        assert adapt(claude_code).peek_scan(path) is not None
 
     def test_leading_assistant_is_one_promptless_exchange_and_the_scan_agrees(self):
         path = _fixture("assistant_before_prompt")
-        scan = claude_code.peek_scan(path)
-        exchanges = claude_code.peek_exchanges(path, 10)
+        scan = adapt(claude_code).peek_scan(path)
+        exchanges = adapt(claude_code).peek_exchanges(path, 10)
         assert scan.exchange_count == len(exchanges) == 2
         assert exchanges[0].prompt_text is None and exchanges[1].prompt_text is not None

@@ -87,7 +87,7 @@ def discover_files(
 def build_harness(
     name: str,
     source: str,
-    log_format: str,
+    log_format: str | None,
     display_name: str | None = None,
 ) -> Harness:
     """Construct a Harness with consistent defaults.
@@ -95,7 +95,7 @@ def build_harness(
     Args:
         name: Adapter name (e.g., "claude_code").
         source: Provider source (e.g., "anthropic", "google").
-        log_format: Log format (e.g., "jsonl", "json", "markdown").
+        log_format: Log format (e.g., "jsonl", "json", "markdown"), or None if the adapter declares none.
         display_name: Human-readable name. Defaults to name.title().
 
     Returns:

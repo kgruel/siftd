@@ -4,13 +4,14 @@ import pytest
 from conftest import ClaudeSession, CodexSession, CopilotSession, PiAgentSession
 
 from siftd.adapters import claude_code, codex_cli, copilot_cli, pi_agent
+from siftd.adapters.contract import adapt
 
 # Every adapter with module-level peek hooks, all built from a decoder.
 PEEK_ADAPTERS = [
-    pytest.param(ClaudeSession, claude_code, id="claude_code"),
-    pytest.param(PiAgentSession, pi_agent, id="pi_agent"),
-    pytest.param(CopilotSession, copilot_cli, id="copilot_cli"),
-    pytest.param(CodexSession, codex_cli, id="codex_cli"),
+    pytest.param(ClaudeSession, adapt(claude_code), id="claude_code"),
+    pytest.param(PiAgentSession, adapt(pi_agent), id="pi_agent"),
+    pytest.param(CopilotSession, adapt(copilot_cli), id="copilot_cli"),
+    pytest.param(CodexSession, adapt(codex_cli), id="codex_cli"),
 ]
 
 
@@ -25,7 +26,7 @@ class TestMakePeekHooksIntegration:
 
 class TestClaudeCodeSubagent:
     def test_subagent_detection(self, tmp_path):
-        result = claude_code.peek_scan(ClaudeSession(tmp_path).with_subagent("sub-1").build())
+        result = adapt(claude_code).peek_scan(ClaudeSession(tmp_path).with_subagent("sub-1").build())
         assert result.parent_session_id is not None and ":sub-1" in result.session_id
-        result2 = claude_code.peek_scan(ClaudeSession(tmp_path, exchanges=1, name="main.jsonl").build())
+        result2 = adapt(claude_code).peek_scan(ClaudeSession(tmp_path, exchanges=1, name="main.jsonl").build())
         assert result2.parent_session_id is None

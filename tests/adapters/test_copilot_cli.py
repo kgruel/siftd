@@ -8,7 +8,8 @@ import pytest
 from conftest import FIXTURES_DIR, default_location_source, fixture_source
 
 from siftd.adapters import copilot_cli
-from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
+from siftd.adapters.assembly import AssemblyError
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition, Ignored, Meta, Unknown
 from siftd.domain.source import Source
 
@@ -19,17 +20,11 @@ SPAWN_CALL = "toolu_01Xj5hydeGkf1X1sZDqEPmix"
 
 def _assembly(path):
     """The assembled source and its ledger, as parse() sees them."""
-    return assemble(
-        Source(kind="file", location=path),
-        read=read_jsonl,
-        decoder=copilot_cli.CopilotDecoder,
-        harness=copilot_cli.HARNESS,
-        default_session=copilot_cli._default_session(Path(path)),
-    )
+    return adapt(copilot_cli).assemble(Source(kind="file", location=path))
 
 
 def _only(path):
-    (conversation,) = copilot_cli.parse(Source(kind="file", location=path))
+    (conversation,) = adapt(copilot_cli).parse(Source(kind="file", location=path))
     return conversation
 
 
@@ -69,7 +64,7 @@ class TestCopilotCliAdapter:
 
     def test_parse_full(self, tmp_path):
         copilot_source = fixture_source(tmp_path, "copilot_cli_minimal.jsonl", ".copilot/session-state/test-uuid", "events.jsonl")
-        conv = list(copilot_cli.parse(copilot_source))[0]
+        conv = list(adapt(copilot_cli).parse(copilot_source))[0]
         assert conv.external_id == "copilot_cli::copilot-session-001" and conv.workspace_path == "/test/workspace"
         assert conv.branch == "main" and conv.harness.name == "copilot_cli" and len(conv.prompts) == 1
         assert "List the files" in conv.prompts[0].content[0].content["text"] and len(conv.prompts[0].responses) == 2
@@ -82,7 +77,7 @@ class TestCopilotCliAdapter:
         d = tmp_path / ".copilot" / "session-state" / "uuid"
         d.mkdir(parents=True)
         (d / "events.jsonl").write_text("")
-        assert list(copilot_cli.parse(Source(kind="file", location=d / "events.jsonl"))) == []
+        assert list(adapt(copilot_cli).parse(Source(kind="file", location=d / "events.jsonl"))) == []
 
     def test_discover_wrapper_and_can_handle_fallback_false(self, monkeypatch, tmp_path):
         monkeypatch.setattr(copilot_cli, "discover_files", lambda *a, **k: [Source(kind="file", location=tmp_path / "x")])
@@ -97,7 +92,7 @@ class TestCopilotCliAdapter:
             '{"type":"assistant.message","timestamp":"2024-01-03T00:00:00Z","data":{"content":"later"}}',
             '{"type":"user.message","timestamp":"2024-01-02T00:00:00Z","data":{"content":"earlier"}}'
         ]))
-        conv = list(copilot_cli.parse(Source(kind="file", location=p)))[0]
+        conv = list(adapt(copilot_cli).parse(Source(kind="file", location=p)))[0]
         assert conv.started_at == "2024-01-02T00:00:00Z"
 
     def test_windows_default_locations_branch_reload(self, monkeypatch):
@@ -181,7 +176,7 @@ class TestDecoding:
         """A file with a session header and no messages was yielded as a conversation with zero events,
         stored as a hollow row. No conversation without an event is yielded."""
         path = _write(tmp_path, [_start(), _event("session.model_change", "T1", {"newModel": "m"})])
-        assert list(copilot_cli.parse(Source(kind="file", location=path))) == []
+        assert list(adapt(copilot_cli).parse(Source(kind="file", location=path))) == []
 
     @pytest.mark.parametrize("case", GOLDEN_CASES)
     def test_fixtures_decode_with_nothing_unknown_or_orphaned(self, case):
@@ -191,7 +186,7 @@ class TestDecoding:
     def test_an_undated_file_is_an_error_not_a_wall_clock_stamp(self, tmp_path):
         path = _write(tmp_path, [{"type": "user.message", "data": {"content": "hi"}}])
         with pytest.raises(AssemblyError, match="no timestamp"):
-            copilot_cli.parse(Source(kind="file", location=path))
+            adapt(copilot_cli).parse(Source(kind="file", location=path))
 
 
 class TestAssembledShape:
@@ -305,8 +300,8 @@ class TestAssembledShape:
 class TestPeek:
     def test_peek_scan_and_exchanges_agree_with_parse_on_the_real_capture(self):
         path = GOLDEN / "subagent" / "input.jsonl"
-        scan = copilot_cli.peek_scan(path)
-        exchanges = copilot_cli.peek_exchanges(path, 5)
+        scan = adapt(copilot_cli).peek_scan(path)
+        exchanges = adapt(copilot_cli).peek_exchanges(path, 5)
         assert scan.exchange_count == len(exchanges) == 1
         assert scan.model == "claude-haiku-4.5"
         assert sum(count for _, count in exchanges[0].tool_calls) == 36
@@ -314,4 +309,4 @@ class TestPeek:
     def test_peek_reads_the_same_decoder_as_ingest(self, tmp_path):
         path = _write(tmp_path, [_start(), _event("user.message", "T1", {"content": "hi"}),
                                  _event("assistant.message", "T2", {"messageId": "m", "content": "ok"})])
-        assert copilot_cli.peek_scan(path).exchange_count == len(_only(path).prompts) == 1
+        assert adapt(copilot_cli).peek_scan(path).exchange_count == len(_only(path).prompts) == 1

@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from siftd.adapters import opencode
-from siftd.adapters.assembly import assemble
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, Disposition
 from siftd.adapters.sdk import AdapterParseError
 from siftd.domain.source import Source
@@ -73,12 +73,7 @@ def _source(path: Path) -> Source:
 
 
 def _assembly(path: Path):
-    return assemble(
-        _source(path),
-        read=opencode.read_rows,
-        decoder=lambda _s: opencode.OpencodeDecoder(),
-        harness=opencode.HARNESS,
-    )
+    return adapt(opencode).assemble(_source(path))
 
 
 def _reasons(assembly, disposition):
@@ -107,7 +102,7 @@ class TestDecoding:
         conn.commit()
         conn.close()
 
-        (conv,) = opencode.parse(_source(path))
+        (conv,) = adapt(opencode).parse(_source(path))
         assert conv.external_id == "opencode::ses_1"
         assert (conv.started_at, conv.ended_at, conv.workspace_path) == (_iso(0), _iso(60), "/work/repo")
         prompt = conv.prompts[0]
@@ -138,7 +133,7 @@ class TestDecoding:
             _part(conn, sid, f"{sid}-u", f"{sid}-p", _TS + 100, {"type": "text", "text": sid})
         conn.commit()
         conn.close()
-        assert [c.external_id for c in opencode.parse(_source(path))] == ["opencode::ses_early", "opencode::ses_late"]
+        assert [c.external_id for c in adapt(opencode).parse(_source(path))] == ["opencode::ses_early", "opencode::ses_late"]
 
     def test_a_pending_call_has_no_result_and_a_running_call_keeps_its_interim_output(self, tmp_path):
         path = tmp_path / "opencode.db"
@@ -155,7 +150,7 @@ class TestDecoding:
         conn.commit()
         conn.close()
 
-        calls = {c.external_id: c for c in opencode.parse(_source(path))[0].prompts[0].responses[0].tool_calls}
+        calls = {c.external_id: c for c in adapt(opencode).parse(_source(path))[0].prompts[0].responses[0].tool_calls}
         assert calls["queued"].status == "pending" and calls["queued"].result is None
         assert calls["running"].status == "pending" and calls["running"].result == {"output": "partial"}
 
@@ -169,7 +164,7 @@ class TestDecoding:
         _part(conn, "ses_1", "m2", "p2", _TS + 1000, {"type": "text", "text": "The real text"})
         conn.commit()
         conn.close()
-        first, second = opencode.parse(_source(path))[0].prompts
+        first, second = adapt(opencode).parse(_source(path))[0].prompts
         assert [b.content["text"] for b in first.content] == ["Attachment only"]
         assert [b.content["text"] for b in second.content] == ["The real text"]
 
@@ -181,7 +176,7 @@ class TestDecoding:
         _part(conn, "ses_child", "m1", "p1", _TS, {"type": "text", "text": "sub task"})
         conn.commit()
         conn.close()
-        (conv,) = opencode.parse(_source(path))
+        (conv,) = adapt(opencode).parse(_source(path))
         assert conv.parent("subagent").parent == "opencode::ses_parent"
 
     def test_a_response_with_no_prompt_before_it_is_kept_in_the_preamble(self, tmp_path):
@@ -198,7 +193,7 @@ class TestDecoding:
         conn.commit()
         conn.close()
 
-        only, mixed = opencode.parse(_source(path))
+        only, mixed = adapt(opencode).parse(_source(path))
         assert only.prompts == [] and [r.content[0].content["text"] for r in only.preamble] == ["I was already working."]
         assert [r.content[0].content["text"] for r in mixed.preamble] == ["Before the prompt."]
         assert mixed.prompts[0].content[0].content == {"text": "Now the prompt."}
@@ -298,7 +293,7 @@ class TestDecoding:
         _part(conn, "ses_old", "m1", "p1", _TS, {"type": "text", "text": "old schema"})
         conn.commit()
         conn.close()
-        (conv,) = opencode.parse(_source(path))
+        (conv,) = adapt(opencode).parse(_source(path))
         assert conv.prompts[0].content[0].content == {"text": "old schema"} and "lineage.kind" not in conv.attributes
 
 
@@ -307,7 +302,7 @@ class TestSourceErrors:
         no_session = tmp_path / "no_session.db"
         sqlite3.connect(str(no_session)).close()
         with pytest.raises(AdapterParseError, match="missing the session table"):
-            list(opencode.parse(_source(no_session)))
+            list(adapt(opencode).parse(_source(no_session)))
 
         no_message = tmp_path / "no_message.db"
         conn = _db(no_message)
@@ -316,7 +311,7 @@ class TestSourceErrors:
         conn.commit()
         conn.close()
         with pytest.raises(AdapterParseError, match="no readable message table"):
-            list(opencode.parse(_source(no_message)))
+            list(adapt(opencode).parse(_source(no_message)))
 
         no_part = tmp_path / "no_part.db"
         conn = _db(no_part)
@@ -325,19 +320,19 @@ class TestSourceErrors:
         conn.commit()
         conn.close()
         with pytest.raises(AdapterParseError, match="no readable part table"):
-            list(opencode.parse(_source(no_part)))
+            list(adapt(opencode).parse(_source(no_part)))
 
     def test_a_missing_or_non_file_source_is_a_named_error(self, tmp_path):
         (tmp_path / "isdir.db").mkdir()
         with pytest.raises(AdapterParseError, match="is not a file"):
-            list(opencode.parse(_source(tmp_path / "isdir.db")))
+            list(adapt(opencode).parse(_source(tmp_path / "isdir.db")))
         with pytest.raises(AdapterParseError, match="does not exist"):
-            list(opencode.parse(_source(tmp_path / "nope.db")))
+            list(adapt(opencode).parse(_source(tmp_path / "nope.db")))
 
     def test_an_empty_database_has_no_conversations(self, tmp_path):
         path = tmp_path / "empty.db"
         _db(path).close()
-        assert list(opencode.parse(_source(path))) == []
+        assert list(adapt(opencode).parse(_source(path))) == []
 
 
 class TestDecoderTable:
@@ -385,8 +380,8 @@ class TestContentRevision:
         _part(conn, "ses_1", "m1", "p1", _TS, {"type": "text", "text": "go"})
         conn.commit()
         conn.close()
-        (first,) = opencode.parse(_source(path))
-        (second,) = opencode.parse(_source(path))
+        (first,) = adapt(opencode).parse(_source(path))
+        (second,) = adapt(opencode).parse(_source(path))
         assert first.attributes[CONTENT_REVISION_ATTRIBUTE]
         assert first.attributes[CONTENT_REVISION_ATTRIBUTE] == second.attributes[CONTENT_REVISION_ATTRIBUTE]
 
@@ -397,12 +392,12 @@ class TestContentRevision:
         _message(conn, "ses_1", "m1", _TS, {"role": "user"})
         _part(conn, "ses_1", "m1", "p1", _TS, {"type": "text", "text": "go"})
         conn.commit()
-        (before,) = opencode.parse(_source(path))
+        (before,) = adapt(opencode).parse(_source(path))
         _message(conn, "ses_1", "m2", _TS + 30000, {"role": "assistant"})
         _part(conn, "ses_1", "m2", "p2", _TS + 30000, {"type": "text", "text": "reply"})
         conn.commit()
         conn.close()
-        (after,) = opencode.parse(_source(path))
+        (after,) = adapt(opencode).parse(_source(path))
         assert after.ended_at == before.ended_at
         assert after.attributes[CONTENT_REVISION_ATTRIBUTE] != before.attributes[CONTENT_REVISION_ATTRIBUTE]
 
@@ -413,11 +408,11 @@ class TestContentRevision:
         _message(conn, "ses_1", "m1", _TS, {"role": "user"})
         _part(conn, "ses_1", "m1", "p1", _TS, {"type": "text", "text": "go"})
         conn.commit()
-        (before,) = opencode.parse(_source(path))
+        (before,) = adapt(opencode).parse(_source(path))
         conn.execute("UPDATE part SET data = ? WHERE id = 'p1'", (json.dumps({"type": "text", "text": "go again"}),))
         conn.commit()
         conn.close()
-        (after,) = opencode.parse(_source(path))
+        (after,) = adapt(opencode).parse(_source(path))
         assert after.ended_at == before.ended_at
         assert after.attributes[CONTENT_REVISION_ATTRIBUTE] != before.attributes[CONTENT_REVISION_ATTRIBUTE]
 
@@ -429,11 +424,11 @@ class TestContentRevision:
         _message(conn, "ses_1", "m1", _TS, {"role": "user"})
         _part(conn, "ses_1", "m1", "p1", _TS, {"type": "text", "text": "go"})
         conn.commit()
-        (before,) = opencode.parse(_source(path))
+        (before,) = adapt(opencode).parse(_source(path))
         conn.execute("UPDATE part SET data = ?, time_updated = ? WHERE id = 'p1'", (json.dumps({"type": "text", "text": "go again"}), _TS + 3600000))
         conn.commit()
         conn.close()
-        (after,) = opencode.parse(_source(path))
+        (after,) = adapt(opencode).parse(_source(path))
         assert before.ended_at == _iso(60)
         assert after.ended_at == before.ended_at
         assert after.attributes[CONTENT_REVISION_ATTRIBUTE] != before.attributes[CONTENT_REVISION_ATTRIBUTE]
@@ -459,5 +454,5 @@ class TestPeekIsDeferred:
             _part(conn, sid, f"{sid}m", f"{sid}p", _TS, {"type": "text", "text": sid})
         conn.commit()
         conn.close()
-        info = _scan_session_file(DiscoveredFile(path=path, mtime=0.0, adapter_module=opencode, adapter_name="opencode"))
+        info = _scan_session_file(DiscoveredFile(path=path, mtime=0.0, adapter_module=adapt(opencode), adapter_name="opencode"))
         assert info is not None and info.preview_available is False

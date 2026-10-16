@@ -29,6 +29,7 @@ from pathlib import Path
 import pytest
 from conftest import tag_names
 
+from siftd.adapters.contract import adapt
 from siftd.adapters import aider
 from siftd.ingestion import ingest_all
 from siftd.domain.source import Source
@@ -81,7 +82,7 @@ def _aider_adapter_at(project_dir, *, strategy=None):
         HARNESS_DISPLAY_NAME = aider.HARNESS_DISPLAY_NAME
         TOOL_ALIASES = aider.TOOL_ALIASES
         can_handle = staticmethod(aider.can_handle)
-        parse = staticmethod(aider.parse)
+        parse = staticmethod(adapt(aider).parse)
 
         @staticmethod
         def discover(locations=None):
@@ -342,7 +343,7 @@ def test_a_row_the_previous_release_stored_under_a_relative_id_is_adopted(tmp_pa
     conn = create_database(tmp_path / "siftd.db")
     legacy = f"aider::{_digest('proj/.aider.chat.history.md')}::2025-07-15 14:32:01"
     # What the previous release wrote for this session: the same conversation under the spelled-relative id.
-    (conversation,) = aider.parse(Source(kind="file", location=Path("proj/.aider.chat.history.md")))
+    (conversation,) = adapt(aider).parse(Source(kind="file", location=Path("proj/.aider.chat.history.md")))
     conversation.external_id = legacy
     conversation.superseded_external_ids = ()
     legacy_id = store_conversation(conn, conversation, filter_binary=False)
@@ -387,7 +388,7 @@ def test_a_same_second_session_of_another_project_is_never_adopted(tmp_path, mon
     conn = create_database(tmp_path / "siftd.db")
 
     monkeypatch.chdir(a)
-    (a_conversation,) = aider.parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    (a_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
     a_id = _store_legacy_row(
         conn,
         f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01",
@@ -420,7 +421,7 @@ def test_a_legacy_row_is_adopted_after_the_working_directory_changes(tmp_path, m
     conn = create_database(tmp_path / "siftd.db")
 
     monkeypatch.chdir(proj)
-    (legacy_conversation,) = aider.parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    (legacy_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
     legacy_id = _store_legacy_row(
         conn,
         f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01",
@@ -456,13 +457,13 @@ def test_a_queued_tag_under_another_files_legacy_key_stays_with_that_file(tmp_pa
     conn = create_database(tmp_path / "siftd.db")
 
     monkeypatch.chdir(a)
-    (a_conversation,) = aider.parse(Source(kind="file", location=Path(".aider.chat.history.md")))
+    (a_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(".aider.chat.history.md")))
     a_key = f"aider::{_digest('.aider.chat.history.md')}::2025-07-15 14:32:01"
     a_id = _store_legacy_row(conn, a_key, a_conversation, "decision:project-a")
     queue_tag(conn, a_key, "decision:project-a", commit=True)
 
     monkeypatch.chdir(tmp_path)
-    (b_conversation,) = aider.parse(Source(kind="file", location=Path("b/.aider.chat.history.md")))
+    (b_conversation,) = adapt(aider).parse(Source(kind="file", location=Path("b/.aider.chat.history.md")))
     _store_legacy_row(conn, f"aider::{_digest('b/.aider.chat.history.md')}::2025-07-15 14:32:01", b_conversation, "decision:project-b")
 
     stats = ingest_all(conn, [_aider_adapter_at(b)])
@@ -492,7 +493,7 @@ def test_a_parent_relative_legacy_row_is_adopted_from_any_directory(tmp_path, mo
 
     spelled = "../proj/.aider.chat.history.md"
     monkeypatch.chdir(work)
-    (legacy_conversation,) = aider.parse(Source(kind="file", location=Path(spelled)))
+    (legacy_conversation,) = adapt(aider).parse(Source(kind="file", location=Path(spelled)))
     legacy_id = _store_legacy_row(
         conn,
         f"aider::{_digest(spelled)}::2025-07-15 14:32:01",

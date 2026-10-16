@@ -183,6 +183,28 @@ class TestBuiltinAdapters:
         if violations:
             pytest.fail("Built-in adapter violations:\n" + "\n".join(violations))
 
+    def test_the_required_interface_is_listed_once(self, src_dir):
+        """validation.py is the one place the required adapter names are listed.
+
+        The registry, the drop-in doctor check and this suite read it. A second
+        list (a collection literal naming both ``discover`` and ``can_handle``
+        as strings) is how the three used to drift. The allowlist is empty and
+        shrink-only: a new reader of the contract calls ``required_names``.
+        """
+        allowed: set[str] = set()
+        offenders = []
+        for py_file in source_files(src_dir):
+            if py_file.name == "validation.py" and py_file.parent.name == "adapters":
+                continue
+            rel = str(py_file.relative_to(REPO_ROOT))
+            for node in ast.walk(ast.parse(py_file.read_text())):
+                if not isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+                    continue
+                names = {e.value for e in node.elts if isinstance(e, ast.Constant) and isinstance(e.value, str)}
+                if {"discover", "can_handle"} <= names and rel not in allowed:
+                    offenders.append(f"{rel}:{node.lineno}")
+        assert not offenders, "a second list of the required adapter interface:\n" + "\n".join(offenders)
+
 
 # =============================================================================
 # 4. Formatter Registration Validity

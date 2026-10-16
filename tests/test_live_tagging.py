@@ -9,6 +9,7 @@ import shutil
 
 import pytest
 
+from siftd.adapters.contract import adapt
 from siftd.adapters import claude_code, vscode
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, Usage
 from siftd.domain.source import Source
@@ -880,7 +881,7 @@ class TestReingestCarriesLegacySuffixedToolTags:
         conn = live_db["conn"]
 
         ingest_all(conn, [vscode])
-        conv = list(vscode.parse(Source(kind="file", location=session)))[0]
+        conv = list(adapt(vscode).parse(Source(kind="file", location=session)))[0]
         call_id = next(tc.external_id for p in conv.prompts for r in p.responses for tc in r.tool_calls)
 
         # Legacy state: the tagged row is the duplicate, and the bare id is not in the old conversation.

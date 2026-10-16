@@ -148,8 +148,9 @@ def make_peek_hooks_from_decoder(
     one, instead of refusing a file that holds several.
 
     Returns ``(peek_scan, peek_exchanges, peek_tail)`` with the signatures
-    :func:`siftd.adapters.sdk.make_peek_hooks` returns, so an adapter switches
-    by replacing that call.
+    :func:`siftd.adapters.sdk.make_peek_hooks` returns. An adapter does not call
+    this itself: :mod:`siftd.adapters.contract` derives its hooks from its
+    ``read`` and ``decoder`` declarations.
     """
 
     def assembled(path: Path) -> Assembly:

@@ -78,7 +78,7 @@ this file stays the map; the READMEs hold the local rules. Spans between
 - `commit=False` default on storage functions; caller controls transactions
 - ULIDs for primary keys (except `content_blobs` which uses SHA256 hash)
 - XDG paths: data `~/.local/share/siftd`, config `~/.config/siftd`
-- Adapters: implement `can_handle()`, `parse()`, `discover()`, set `ADAPTER_INTERFACE_VERSION = 1`
+- Adapters: set `ADAPTER_INTERFACE_VERSION = 2`; implement `discover()`, `can_handle()`, `read(source)` and `decoder(source)` (the framework derives `parse()` and the peek hooks, and every record lands in a ledger). Version 1 (`parse()`) is legacy and still loads
 - Queries: `~/.config/siftd/queries/*.sql` with `$var` or `:var` substitution
 - CLI is a package; logic lives in `cli/<command>.py` submodules
 - API layer (`api/`) is the boundary — CLI and serve both consume it, neither touches storage directly

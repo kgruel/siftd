@@ -10,8 +10,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 from siftd.adapters._jsonl import parse_block
-from siftd.adapters.assembly import assemble, read_jsonl
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.assembly import read_jsonl
 from siftd.adapters.records import (
     Ignored,
     LineageRec,
@@ -26,12 +25,12 @@ from siftd.adapters.records import (
     Unknown,
     UsageRec,
 )
-from siftd.adapters.sdk import build_harness, discover_files
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.adapters.sdk import discover_files
+from siftd.domain import ContentBlock, Source, Usage
 from siftd.safecall import parse_json_args
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "core"
 NAME = "codex_cli"
 DEFAULT_LOCATIONS = ["~/.codex/sessions"]
@@ -110,8 +109,6 @@ _IGNORED_EVENT_TYPES = frozenset({
     "thread_rolled_back",
 })
 
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 
 def discover(locations=None) -> Iterable[Source]:
@@ -490,28 +487,10 @@ def _reasoning_summary_texts(payload: dict) -> list[str]:
     return texts
 
 
-def _default_session(path: Path) -> Session:
+read = read_jsonl
+decoder = CodexDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a file that names no session of its own."""
-    return Session(external_id=f"{NAME}::{path.stem}")
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a Codex CLI JSONL file and yield Conversation objects."""
-    return assemble(
-        source,
-        read=read_jsonl,
-        decoder=CodexDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source.as_path),
-    ).conversations
-
-
-# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
-# ingest classify each record once.
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_jsonl,
-    CodexDecoder,
-    HARNESS,
-    default_session_for=_default_session,
-    tool_aliases=TOOL_ALIASES,
-)
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")

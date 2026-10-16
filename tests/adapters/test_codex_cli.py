@@ -14,7 +14,7 @@ import pytest
 from conftest import FIXTURES_DIR, CodexSession, default_location_source, fixture_source, write_jsonl
 
 from siftd.adapters import codex_cli
-from siftd.adapters.assembly import assemble, read_jsonl
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition, ResponseRec, ToolCallRec
 from siftd.domain.source import Source
 
@@ -23,17 +23,11 @@ GOLDEN = FIXTURES_DIR / "adapters" / "codex_cli"
 
 def _assembly(path):
     """The assembled source and its ledger, as parse() sees them."""
-    return assemble(
-        Source(kind="file", location=path),
-        read=read_jsonl,
-        decoder=codex_cli.CodexDecoder,
-        harness=codex_cli.HARNESS,
-        default_session=codex_cli._default_session(Path(path)),
-    )
+    return adapt(codex_cli).assemble(Source(kind="file", location=path))
 
 
 def _only(path):
-    (conversation,) = codex_cli.parse(Source(kind="file", location=path))
+    (conversation,) = adapt(codex_cli).parse(Source(kind="file", location=path))
     return conversation
 
 
@@ -129,7 +123,7 @@ class TestCodexCliAdapter:
         (d / "s.jsonl").write_text("{}\n")
         assert list(codex_cli.discover(locations=[str(tmp_path)]))
         (d / "empty.jsonl").write_text("")
-        assert list(codex_cli.parse(Source(kind="file", location=d / "empty.jsonl"))) == []
+        assert list(adapt(codex_cli).parse(Source(kind="file", location=d / "empty.jsonl"))) == []
 
     def test_tool_aliases_cover_exec_and_wait(self):
         assert codex_cli.TOOL_ALIASES["exec"] == "shell.execute"
@@ -231,7 +225,7 @@ class TestIdentity:
         for n in range(3):
             path = write_jsonl(tmp_path, [_meta(f"child{n}"), _meta("parent"), _user(), _assistant("T2")],
                                f"child{n}.jsonl")
-            ids.append(codex_cli.parse(Source(kind="file", location=path))[0].external_id)
+            ids.append(adapt(codex_cli).parse(Source(kind="file", location=path))[0].external_id)
         assert len(set(ids)) == 3
 
     def test_a_file_with_no_id_is_named_for_its_stem(self, tmp_path):
@@ -492,7 +486,7 @@ class TestUsageAccounting:
         path = write_jsonl(tmp_path, [_meta(), _token_count("T1", inp=80, cached=0, out=8, reasoning=0, total_in=80)])
         ledger = _assembly(path).ledger
         assert ledger.reasons[(Disposition.ORPHAN, "nothing to attach to")] == 1
-        assert list(codex_cli.parse(Source(kind="file", location=path))) == []
+        assert list(adapt(codex_cli).parse(Source(kind="file", location=path))) == []
 
     def test_token_usage_record_is_ignored(self, tmp_path):
         """token_usage_record mirrors token_count for the same calls; it is not a second source."""
@@ -579,15 +573,15 @@ class TestPeek:
     def test_peek_counts_the_preamble_and_agrees_with_parse(self, tmp_path):
         path = write_jsonl(tmp_path, [_meta(), _assistant("T0", "early"), _user("T1"), _assistant("T2")])
         conv = _only(path)
-        scan = codex_cli.peek_scan(path)
-        exchanges = codex_cli.peek_exchanges(path, last_n=10)
+        scan = adapt(codex_cli).peek_scan(path)
+        exchanges = adapt(codex_cli).peek_exchanges(path, last_n=10)
         assert scan.exchange_count == len(exchanges) == len(conv.prompts) + 1
         assert exchanges[0].prompt_text is None and exchanges[1].prompt_text == "go"
 
     def test_peek_of_a_subagent_names_its_parent_session(self, tmp_path):
         meta = _meta("child", source={"subagent": {"thread_spawn": {"parent_thread_id": "P1"}}})
         path = write_jsonl(tmp_path, [meta, _user(), _assistant("T2")])
-        assert codex_cli.peek_scan(path).parent_session_id == "P1"
+        assert adapt(codex_cli).peek_scan(path).parent_session_id == "P1"
 
     def test_a_subagent_is_found_by_its_own_id_through_the_real_reader(self, tmp_path, monkeypatch):
         """Peek lookup uses the file's own thread id, which is what its name and stored identity carry."""
@@ -598,15 +592,15 @@ class TestPeek:
         parent = "019f66ea-963d-7101-a549-37c4fd3fccaa"
         meta = _meta(child, source={"subagent": {"thread_spawn": {"parent_thread_id": parent}}})
         path = write_jsonl(tmp_path, [meta, _user(), _assistant("T2")], name=f"rollout-2026-07-15T12-54-47-{child}.jsonl")
-        assert codex_cli.peek_scan(path).session_id == child
+        assert adapt(codex_cli).peek_scan(path).session_id == child
         monkeypatch.setattr("siftd.peek.reader._discover_files", lambda **kw: [
-            DiscoveredFile(path=path, mtime=1000.0, adapter_module=codex_cli, adapter_name="codex_cli")])
+            DiscoveredFile(path=path, mtime=1000.0, adapter_module=adapt(codex_cli), adapter_name="codex_cli")])
         assert find_session_file(child) == path
         assert find_session_file(child[:13]) == path
 
     def test_peek_tool_names_are_canonicalized(self, tmp_path):
         path = CodexSession(tmp_path, exchanges=1).with_tools(["exec_command"]).build()
-        (exchange,) = codex_cli.peek_exchanges(path, last_n=5)
+        (exchange,) = adapt(codex_cli).peek_exchanges(path, last_n=5)
         assert exchange.tool_calls == [("shell.execute", 1)]
 
 

@@ -20,8 +20,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from siftd.adapters.assembly import assemble
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
 from siftd.adapters.records import (
     Ignored,
     Malformed,
@@ -33,19 +31,17 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import AdapterParseError, build_harness, discover_files
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.adapters.sdk import AdapterParseError, discover_files
+from siftd.domain import ContentBlock, Source, Usage
 from siftd.safecall import epoch_ms_to_iso
 
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "contrib"
 NAME = "vscode"
 DEDUP_STRATEGY = "file"
 HARNESS_SOURCE = "multi"
 HARNESS_LOG_FORMAT = "json"
 HARNESS_DISPLAY_NAME = "VSCode"
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 DEFAULT_LOCATIONS = [
     # workspaceStorage: per-workspace chat sessions.
@@ -630,31 +626,15 @@ def _resolve_workspace(session_path: Path) -> str | None:
     return folder or None
 
 
-def _default_session(path: Path) -> Session:
+read = read_strict
+# Peek reads leniently: a session being written may end in a partial line.
+peek_read = read_lenient
+decoder = VSCodeDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a file that names no session of its own."""
-    return Session(external_id=f"{NAME}::{path.stem}")
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a VSCode chat session file and yield Conversation objects."""
-    return assemble(
-        source,
-        read=read_strict,
-        decoder=VSCodeDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source.as_path),
-    ).conversations
+    return Session(external_id=f"{NAME}::{source.as_path.stem}")
 
 
 PEEK_GLOB_PATTERNS = _GLOB_PATTERNS
-
-# Peek hooks: the same reader and decoder as ingest, assembled and projected, so
-# peek and ingest classify each record once. Peek reads leniently: a session
-# being written may end in a partial line.
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_lenient,
-    VSCodeDecoder,
-    HARNESS,
-    default_session_for=_default_session,
-    tool_aliases=TOOL_ALIASES,
-)

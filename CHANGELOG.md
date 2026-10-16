@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`siftd ingest --reparse` applies adapter fixes to conversations already
   stored.** It re-parses every source, unchanged or not, and declines any
   replacement that would lose a tag you applied unless `--force` is given.
+- **`siftd ingest` says when an adapter meets records it does not recognize.**
+  A line per adapter appears only when records went unrecognized or could not
+  be placed, and `--json` carries the counts. This is the first sign of a
+  changed log format.
+- **Adapter contract version 2.** An adapter declares `read` and `decoder` and
+  siftd derives `parse()` and peek from them; the adapter template is a
+  working decoder. Version 1 drop-in adapters load unchanged.
 - **`./dev probe` reports what each adapter drops.** A read-only comparison of
   every adapter's raw files with its parsed output, for development.
 

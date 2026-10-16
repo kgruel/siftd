@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from siftd.adapters import pi_agent
-from siftd.adapters.assembly import assemble, read_jsonl
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition, Ignored, Unknown
 from siftd.domain import Conversation
 from siftd.domain.source import Source
@@ -48,13 +48,7 @@ def _call(call_id, name="read", arguments=None):
 def _assembly(tmp_path, records, name="s.jsonl"):
     path = tmp_path / name
     path.write_text("".join(json.dumps(r) + "\n" for r in records))
-    return assemble(
-        Source(kind="file", location=path),
-        read=read_jsonl,
-        decoder=pi_agent.PiDecoder,
-        harness=pi_agent.HARNESS,
-        default_session=pi_agent._default_session(path),
-    )
+    return adapt(pi_agent).assemble(Source(kind="file", location=path))
 
 
 def _only(tmp_path, records) -> Conversation:
@@ -132,7 +126,7 @@ class TestIdentity:
         records = [_header(), _user(TS, "hi"), _assistant(TS, [_call("c1")]), _result(TS, "c1", [{"type": "text", "text": "ok"}])]
         path = tmp_path / "s.jsonl"
         path.write_text("".join(json.dumps(r) + "\n" for r in records))
-        from_file = list(pi_agent.parse(Source(kind="file", location=path)))
+        from_file = list(adapt(pi_agent).parse(Source(kind="file", location=path)))
         assert from_file == pi_agent._parse_records(records, path)
 
 
@@ -349,8 +343,7 @@ class TestPlacement:
     def test_a_malformed_line_is_counted(self, tmp_path):
         path = tmp_path / "s.jsonl"
         path.write_text(json.dumps(_header()) + "\n{truncated\n" + json.dumps(_user(TS, "q")) + "\n")
-        assembly = assemble(Source(kind="file", location=path), read=read_jsonl, decoder=pi_agent.PiDecoder,
-                            harness=pi_agent.HARNESS, default_session=pi_agent._default_session(path))
+        assembly = adapt(pi_agent).assemble(Source(kind="file", location=path))
         assert assembly.ledger.reasons[(Disposition.UNKNOWN, "malformed")] == 1
         assert assembly.ledger.disposed == assembly.ledger.records
 
@@ -359,16 +352,16 @@ class TestPeek:
     def test_peek_counts_the_same_tool_calls_as_parse(self):
         """Peek showed 0 of 24,156 pi tool calls: the record fold read the raw block type."""
         path = GOLDEN / "cache_convention" / "input.jsonl"
-        (conversation,) = pi_agent.parse(Source(kind="file", location=path))
+        (conversation,) = adapt(pi_agent).parse(Source(kind="file", location=path))
         parsed_calls = len(_calls(conversation))
-        exchanges = pi_agent.peek_exchanges(path, 10 ** 6)
+        exchanges = adapt(pi_agent).peek_exchanges(path, 10 ** 6)
         assert parsed_calls > 0
         assert sum(len(e.tool_use_ids) for e in exchanges) == parsed_calls
 
     def test_peek_and_ingest_name_the_same_last_model_and_activity(self):
         path = GOLDEN / "trailing_records" / "input.jsonl"
-        (conversation,) = pi_agent.parse(Source(kind="file", location=path))
-        scan = pi_agent.peek_scan(path)
+        (conversation,) = adapt(pi_agent).parse(Source(kind="file", location=path))
+        scan = adapt(pi_agent).peek_scan(path)
         assert scan.model == _responses(conversation)[-1].model
         assert scan.last_activity_at == conversation.ended_at
         assert scan.exchange_count == len(conversation.prompts)
@@ -377,8 +370,7 @@ class TestPeek:
 @pytest.mark.parametrize("case", sorted(p.name for p in GOLDEN.iterdir() if (p / "input.jsonl").exists()))
 def test_fixtures_decode_with_nothing_unknown_or_orphaned(case):
     path = GOLDEN / case / "input.jsonl"
-    ledger = assemble(Source(kind="file", location=path), read=read_jsonl, decoder=pi_agent.PiDecoder,
-                      harness=pi_agent.HARNESS, default_session=pi_agent._default_session(path)).ledger
+    ledger = adapt(pi_agent).assemble(Source(kind="file", location=path)).ledger
     assert ledger.count(Disposition.UNKNOWN) == 0 and ledger.count(Disposition.ORPHAN) == 0
 
 

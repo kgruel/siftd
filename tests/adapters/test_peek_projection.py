@@ -20,6 +20,7 @@ from conftest import ClaudeSession
 
 from siftd.adapters import claude_code
 from siftd.adapters.assembly import AssemblyError, assemble, read_jsonl
+from siftd.adapters.contract import adapt
 from siftd.adapters.peek_projection import (
     make_peek_hooks_from_decoder,
     peek_exchanges_from_assembly,
@@ -47,7 +48,7 @@ def _claude_hooks():
     return make_peek_hooks_from_decoder(
         read=read_jsonl,
         decoder=claude_code.ClaudeDecoder,
-        harness=claude_code.HARNESS,
+        harness=adapt(claude_code).HARNESS,
         default_session_for=lambda path: Session(external_id=f"{claude_code.NAME}::{path.stem}"),
         tool_aliases=claude_code.TOOL_ALIASES,
     )

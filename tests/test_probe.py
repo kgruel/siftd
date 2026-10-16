@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 from siftd.adapters import copilot_cli, pi_agent, vscode
+from siftd.adapters.contract import adapt
 from siftd.domain import Source
 from siftd.domain.models import Conversation, Harness, Prompt, Response, ToolCall, Usage
 
@@ -332,7 +333,7 @@ def test_vscode_native_counts_match_parse_on_real_captures(case):
     parse(): two independent readings of the same file, so a drift in either shows."""
     path = _golden_input("vscode", case)
     native = probe._native_vscode(path)
-    parsed = probe.parsed_tally(vscode.parse(Source(kind="file", location=path)))
+    parsed = probe.parsed_tally(adapt(vscode).parse(Source(kind="file", location=path)))
     assert (native.user, native.assistant) == (parsed.user, parsed.assistant)
 
 
@@ -427,7 +428,7 @@ class _FakeModule:
 def test_measure_adapter_deduplicates_by_resolved_path_and_honours_limit():
     pi_file = _golden_input("pi_agent", "minimal")
     source = Source(kind="file", location=pi_file)
-    fake = _FakeModule(sources=[source, source, source], parse=pi_agent.parse)
+    fake = _FakeModule(sources=[source, source, source], parse=adapt(pi_agent).parse)
     report = probe.measure_adapter("pi_agent", fake)
     assert report.sources == 1
     assert report.duplicate_yields == 2
@@ -437,7 +438,7 @@ def test_measure_adapter_deduplicates_by_resolved_path_and_honours_limit():
 
 def test_measure_adapter_records_errors_without_stopping():
     missing = Source(kind="file", location=Path("/nonexistent/probe/fixture.jsonl"))
-    fake = _FakeModule(sources=[missing], parse=pi_agent.parse)
+    fake = _FakeModule(sources=[missing], parse=adapt(pi_agent).parse)
     report = probe.measure_adapter("pi_agent", fake)
     assert report.sources == 1
     assert report.native_errors == 1
@@ -451,14 +452,14 @@ def test_limit_caps_unique_sources(tmp_path):
     copy.write_text(original.read_text(encoding="utf-8"), encoding="utf-8")
     first = Source(kind="file", location=original)
     second = Source(kind="file", location=copy)
-    fake = _FakeModule(sources=[first, second], parse=pi_agent.parse)
+    fake = _FakeModule(sources=[first, second], parse=adapt(pi_agent).parse)
     report = probe.measure_adapter("pi_agent", fake, limit=1)
     assert report.sources == 1
 
 
 def test_diff_is_none_for_token_fields_when_format_records_no_usage():
     copilot = _FakeModule(
-        sources=[Source(kind="file", location=_golden_input("copilot_cli", "minimal"))], parse=copilot_cli.parse
+        sources=[Source(kind="file", location=_golden_input("copilot_cli", "minimal"))], parse=adapt(copilot_cli).parse
     )
     report = probe.measure_adapter("copilot_cli", copilot)
     diff = report.diff()
@@ -468,7 +469,7 @@ def test_diff_is_none_for_token_fields_when_format_records_no_usage():
 
 def test_render_json_shape_and_text_mentions_every_adapter():
     fake = _FakeModule(
-        sources=[Source(kind="file", location=_golden_input("pi_agent", "minimal"))], parse=pi_agent.parse
+        sources=[Source(kind="file", location=_golden_input("pi_agent", "minimal"))], parse=adapt(pi_agent).parse
     )
     report = probe.measure_adapter("pi_agent", fake)
     payload = json.loads(probe.render_json([report]))

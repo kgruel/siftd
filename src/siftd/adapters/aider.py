@@ -27,20 +27,19 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
-from siftd.adapters.assembly import assemble
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
 from siftd.adapters.records import Ignored, PatchRec, PromptRec, Record, ResponseRec, Session, Unknown, UsageRec
-from siftd.adapters.sdk import build_harness, seek_last_lines
+from siftd.adapters.sdk import seek_last_lines
 from siftd.dateparse import local_to_utc
-from siftd.domain import ContentBlock, Conversation, Source, Usage
+from siftd.domain import ContentBlock, Source, Usage
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "frozen"
 NAME = "aider"
 DEFAULT_LOCATIONS = ["~/.aider"]
 DEDUP_STRATEGY = "session"  # one file accumulates every session for a project
 PEEK_GLOB_PATTERNS = ["**/.aider.chat.history.md"]
+PEEK_LAST_OF_MANY = True  # every session is appended to one file; the last is the live one
 # Aider's session id is a digest of the file's path, so the id never appears in the path.
 SESSION_ID_IN_PATH = False
 
@@ -51,8 +50,6 @@ HARNESS_DISPLAY_NAME = "Aider"
 
 # No structured tool names in aider's markdown format
 TOOL_ALIASES: dict[str, str] = {}
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 # Regex for session headers: # aider chat started at 2025-07-15 14:32:01
 _SESSION_RE = re.compile(r"^# aider chat started at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
@@ -104,13 +101,6 @@ def can_handle(source: Source) -> bool:
     return Path(source.location).name == ".aider.chat.history.md"
 
 
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse an aider chat history file and yield one Conversation per session."""
-    if Path(source.location).name != ".aider.chat.history.md":
-        return []
-    return assemble(source, read=read_aider, decoder=AiderDecoder, harness=HARNESS).conversations
-
-
 def read_aider(source: Source) -> Iterator[_Unit]:
     """Yield the file's markdown constructs as units, in file order.
 
@@ -118,7 +108,10 @@ def read_aider(source: Source) -> Iterator[_Unit]:
     content. Text before the first header is one ``outside`` unit, so it is
     counted rather than discarded. A session's end is the next header's start,
     which only the whole file states, so the reader looks it up and hands it on.
+    A file not named like a history file has no units.
     """
+    if source.as_path.name != ".aider.chat.history.md":
+        return
     text = source.as_path.read_text(encoding="utf-8", errors="replace")
     lines = text.split("\n")
     headers = [index for index, line in enumerate(lines) if _SESSION_RE.match(line)]
@@ -352,11 +345,5 @@ def peek_tail(path: Path, lines: int = 20) -> Iterator[str]:
     yield from seek_last_lines(path, lines)
 
 
-peek_scan, peek_exchanges, _ = make_peek_hooks_from_decoder(
-    read_aider,
-    AiderDecoder,
-    HARNESS,
-    default_session_for=lambda _path: None,
-    tool_aliases=TOOL_ALIASES,
-    last_of_many=True,
-)
+read = read_aider
+decoder = AiderDecoder

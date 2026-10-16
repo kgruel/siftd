@@ -35,7 +35,9 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, NamedTuple, Protocol
 
-from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE
+from siftd.adapters.assembly import Ledger
+from siftd.adapters.contract import adapt, decodes
+from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE, Disposition
 from siftd.adapters.sdk import AdapterParseError
 from siftd.dateparse import to_utc
 from siftd.domain import Conversation, Source
@@ -120,6 +122,8 @@ class IngestStats:
     prompts: int = 0
     responses: int = 0
     tool_calls: int = 0
+    # Per adapter name: conversations, prompts, responses, tool_calls, replaced,
+    # errors, plus the ledger counts (LEDGER_COUNTS) of the sources parsed this run.
     by_harness: dict = field(default_factory=dict)
     # --reparse only: sources re-parsed although their stat or hash was unchanged.
     reparsed: int = 0
@@ -146,6 +150,42 @@ class IngestEvent:
     exchange_count: int | None = None
     model: str | None = None
     error: str | None = None
+    # Records of this source the adapter did not recognize / could not place /
+    # deliberately skipped. Zero for a source that was not parsed or whose adapter
+    # does not decode (interface version 1), which has no ledger.
+    unknown: int = 0
+    orphan: int = 0
+    ignored: int = 0
+
+
+#: The ledger dispositions surfaced per harness: what the decoder did not
+#: recognize, what could not be placed, and what it deliberately skipped.
+LEDGER_COUNTS = {
+    "unknown": Disposition.UNKNOWN,
+    "orphan": Disposition.ORPHAN,
+    "ignored": Disposition.IGNORED,
+}
+
+
+def _count_ledger(stats: IngestStats, harness_name: str, ledger: Ledger) -> None:
+    """Add one parsed source's ledger to its harness's counts."""
+    counts = stats.by_harness[harness_name]
+    for key, disposition in LEDGER_COUNTS.items():
+        counts[key] += ledger.count(disposition)
+
+
+def _parse_source(adapter: AdapterModule, source: Source, stats: IngestStats | None) -> list:
+    """The conversations of a source; for an adapter that decodes, its ledger lands in ``stats``.
+
+    Only a parse whose result is stored passes ``stats``: the parses that only
+    check identity read the same source again and must not count it twice.
+    """
+    if not decodes(adapter):
+        return list(adapter.parse(source))
+    assembly = adapter.assemble(source)
+    if stats is not None:
+        _count_ledger(stats, adapter.NAME, assembly.ledger)
+    return list(assembly.conversations)
 
 
 def _compare_timestamps(new_ts: str | None, existing_ts: str | None) -> bool:
@@ -622,6 +662,7 @@ def _parse_source_conversation(
     source: Source,
     adapter: AdapterModule,
     source_path: str,
+    stats: IngestStats | None = None,
 ):
     """Parse a source and enforce the file-strategy contract (0/1 conversation).
 
@@ -633,7 +674,7 @@ def _parse_source_conversation(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
     return _get_single_conversation(
-        list(adapter.parse(source)), source_path, adapter.NAME
+        _parse_source(adapter, source, stats), source_path, adapter.NAME
     )
 
 
@@ -641,6 +682,7 @@ def _parse_source_conversations(
     source: Source,
     adapter: AdapterModule,
     source_path: str,
+    stats: IngestStats | None = None,
 ) -> list:
     """Parse a session-strategy source into all of its conversations.
 
@@ -653,7 +695,7 @@ def _parse_source_conversations(
         raise AdapterParseError(
             f"Adapter {adapter.NAME} cannot handle source {source_path}"
         )
-    return list(adapter.parse(source))
+    return _parse_source(adapter, source, stats)
 
 
 def _normalize_status(status: str) -> tuple[str, str | None]:
@@ -773,6 +815,9 @@ def ingest_all(
         filter_binary = get_ingestion_filter_binary()
 
     stats = IngestStats()
+    # A module that decodes is given the interface derived for it (a no-op for
+    # one that already has it, and for version 1).
+    adapters = [adapt(a) for a in adapters]
 
     # Performance pragmas for bulk ingest:
     # - synchronous=OFF: skip fsync on commits (safe with WAL against process crashes)
@@ -841,6 +886,10 @@ def ingest_all(
                 exchange_count=meta.get("exchange_count"),
                 model=meta.get("model"),
                 error=reason if status == "error" else None,
+                **{
+                    key: stats.by_harness[harness_name][key] - ledger_before[key]
+                    for key in LEDGER_COUNTS
+                },
             )
             on_event(event)
 
@@ -857,7 +906,9 @@ def ingest_all(
                 "conversations": 0,
                 "prompts": 0, "responses": 0, "tool_calls": 0,
                 "replaced": 0, "errors": 0,
+                **dict.fromkeys(LEDGER_COUNTS, 0),
             }
+        ledger_before = {key: stats.by_harness[harness_name][key] for key in LEDGER_COUNTS}
 
         try:
             # Strategy: file-based dedup
@@ -893,8 +944,9 @@ def ingest_all(
                         stats.reparsed += 1
                         # Parse before any delete, so a replacement the tag gate
                         # declines touches nothing. The parse is handed on to
-                        # _reingest_file, which would otherwise parse it again.
-                        parsed = _parse_source_conversation(source, adapter, file_path)
+                        # _reingest_file, which would otherwise parse it again,
+                        # so this is the parse whose ledger is counted.
+                        parsed = _parse_source_conversation(source, adapter, file_path, stats)
                         target = _replacement_target(
                             conn, existing_info["conversation_id"], parsed
                         )
@@ -912,7 +964,8 @@ def ingest_all(
                             conn, existing_info["conversation_id"], file_path
                         )
                         if carryover is None and isinstance(parsed, _Unparsed):
-                            parsed = _parse_source_conversation(source, adapter, file_path)
+                            # Handed on to _reingest_file, so its ledger is counted here.
+                            parsed = _parse_source_conversation(source, adapter, file_path, stats)
                         if carryover is None and (
                             parsed is None
                             or _refused_claim_is_a_copy(
@@ -1035,7 +1088,7 @@ def ingest_all(
                 )
                 conversations = [
                     _with_content_source(c, file_path)
-                    for c in _parse_source_conversations(recorded, adapter, file_path)
+                    for c in _parse_source_conversations(recorded, adapter, file_path, stats)
                 ]
                 if not conversations:
                     _count_file_skipped(source, "skipped (empty)", stats, on_file, emit_event)
@@ -1727,7 +1780,7 @@ def _ingest_file(
     st = location.stat()
     file_hash = compute_file_hash(location)
 
-    conversation = _parse_source_conversation(source, adapter, file_path)
+    conversation = _parse_source_conversation(source, adapter, file_path, stats)
 
     if conversation is None:
         # Empty file - record with NULL conversation_id
@@ -1833,7 +1886,7 @@ def _reingest_file(
     harness_name = adapter.NAME
 
     if isinstance(conversation, _Unparsed):
-        conversation = _parse_source_conversation(source, adapter, file_path)
+        conversation = _parse_source_conversation(source, adapter, file_path, stats)
 
     if conversation is None:
         # The transcript parsed to nothing — there is no replacement row to

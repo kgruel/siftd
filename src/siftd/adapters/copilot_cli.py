@@ -10,8 +10,7 @@ import sys
 from collections.abc import Iterable
 from pathlib import Path
 
-from siftd.adapters.assembly import assemble, read_jsonl
-from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
+from siftd.adapters.assembly import read_jsonl
 from siftd.adapters.records import (
     Ignored,
     Meta,
@@ -23,12 +22,12 @@ from siftd.adapters.records import (
     ToolResultRec,
     Unknown,
 )
-from siftd.adapters.sdk import build_harness, discover_files
-from siftd.domain import ContentBlock, Conversation, Source
+from siftd.adapters.sdk import discover_files
+from siftd.domain import ContentBlock, Source
 from siftd.safecall import parse_json_args
 
 # Adapter self-description
-ADAPTER_INTERFACE_VERSION = 1
+ADAPTER_INTERFACE_VERSION = 2
 SUPPORT_TIER = "contrib"
 NAME = "copilot_cli"
 DEDUP_STRATEGY = "file"  # one conversation per events.jsonl
@@ -82,9 +81,6 @@ def can_handle(source: Source) -> bool:
     if ".copilot" in path.parts and "session-state" in path.parts:
         return True
     return False
-
-
-HARNESS = build_harness(NAME, HARNESS_SOURCE, HARNESS_LOG_FORMAT, HARNESS_DISPLAY_NAME)
 
 
 class CopilotDecoder:
@@ -231,28 +227,10 @@ class CopilotDecoder:
         return f"{NAME}::{self._session_id or self._path.parent.name}"
 
 
-def _default_session(path: Path) -> Session:
+read = read_jsonl
+decoder = CopilotDecoder
+
+
+def default_session(source: Source) -> Session:
     """The conversation of a file whose header names no session: its directory."""
-    return Session(external_id=f"{NAME}::{path.parent.name}")
-
-
-def parse(source: Source) -> Iterable[Conversation]:
-    """Parse a Copilot CLI events.jsonl file and yield Conversation objects."""
-    return assemble(
-        source,
-        read=read_jsonl,
-        decoder=CopilotDecoder,
-        harness=HARNESS,
-        default_session=_default_session(source.as_path),
-    ).conversations
-
-
-# Peek hooks: the same decoder as ingest, assembled and projected, so peek and
-# ingest classify each event once.
-peek_scan, peek_exchanges, peek_tail = make_peek_hooks_from_decoder(
-    read_jsonl,
-    CopilotDecoder,
-    HARNESS,
-    default_session_for=_default_session,
-    tool_aliases=TOOL_ALIASES,
-)
+    return Session(external_id=f"{NAME}::{source.as_path.parent.name}")

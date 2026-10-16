@@ -9,7 +9,7 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import antigravity_cli
-from siftd.adapters.assembly import assemble
+from siftd.adapters.contract import adapt
 from siftd.adapters.records import Disposition
 from siftd.api.database import create_database
 from siftd.domain.source import Source
@@ -96,17 +96,11 @@ def _source(path: Path) -> Source:
 def _assembly(path: Path):
     """The assembled source and its ledger, as parse() sees them."""
     source = _source(path)
-    return assemble(
-        source,
-        read=antigravity_cli._read_steps,
-        decoder=antigravity_cli.AntigravityDecoder,
-        harness=antigravity_cli.HARNESS,
-        default_session=antigravity_cli._default_session(source),
-    )
+    return adapt(antigravity_cli).assemble(source)
 
 
 def _only(path: Path):
-    (conversation,) = antigravity_cli.parse(_source(path))
+    (conversation,) = adapt(antigravity_cli).parse(_source(path))
     return conversation
 
 
@@ -137,7 +131,7 @@ class TestAntigravityCliAdapter:
         assert not antigravity_cli.can_handle(Source(kind="sqlite", location=Path("/mock/x.jsonl")))
 
     def test_parse_full(self):
-        conv = list(antigravity_cli.parse(_source(GOLDEN / "minimal" / "input.jsonl")))[0]
+        conv = list(adapt(antigravity_cli).parse(_source(GOLDEN / "minimal" / "input.jsonl")))[0]
         assert conv.harness.name == "antigravity_cli" and conv.harness.source == "google"
         assert len(conv.prompts) == 1
         prompt = conv.prompts[0]
@@ -250,8 +244,8 @@ class TestAntigravityCliDiscoverAndWorkspace:
 
         monkeypatch.setattr(antigravity_cli, "load_jsonl", counting_load_jsonl)
 
-        list(antigravity_cli.parse(_source(path1)))
-        list(antigravity_cli.parse(_source(path2)))
+        list(adapt(antigravity_cli).parse(_source(path1)))
+        list(adapt(antigravity_cli).parse(_source(path2)))
         assert read_count["n"] == 1
 
     def test_session_id_falls_back_to_stem_when_path_too_shallow(self):
@@ -600,12 +594,12 @@ class TestAntigravityCliBackgroundTasks:
 class TestAntigravityCliPeek:
     def test_peek_scan_and_exchanges_and_tail(self):
         path = GOLDEN / "minimal" / "input.jsonl"
-        scan = antigravity_cli.peek_scan(path)
+        scan = adapt(antigravity_cli).peek_scan(path)
         assert scan.exchange_count == 1
-        exchanges = antigravity_cli.peek_exchanges(path, last_n=5)
+        exchanges = adapt(antigravity_cli).peek_exchanges(path, last_n=5)
         assert exchanges and exchanges[0].prompt_text == "What files are in the repo root?"
         assert exchanges[0].tool_calls
-        assert list(antigravity_cli.peek_tail(path, 3))
+        assert list(adapt(antigravity_cli).peek_tail(path, 3))
 
     def test_a_text_and_tool_response_shows_each_tool_once(self, tmp_path):
         """The tool_use block stands for its call where the model placed it; the call is not shown again after the text."""
@@ -615,21 +609,21 @@ class TestAntigravityCliPeek:
             _result(2, "VIEW_FILE"),
             _result(3, "RUN_COMMAND"),
         ])
-        (exchange,) = antigravity_cli.peek_exchanges(path, last_n=10)
+        (exchange,) = adapt(antigravity_cli).peek_exchanges(path, last_n=10)
         assert exchange.response_text == "Checking the repo.\n[tool: view_file]\n[tool: run_command]"
 
     def test_peek_scan_empty_file(self, tmp_path):
         empty = tmp_path / "transcript_full.jsonl"
         empty.write_text("")
-        assert antigravity_cli.peek_scan(empty) is None
-        assert not list(antigravity_cli.peek_tail(empty, 5))
+        assert adapt(antigravity_cli).peek_scan(empty) is None
+        assert not list(adapt(antigravity_cli).peek_tail(empty, 5))
 
     @pytest.mark.parametrize("case", ["file_order", "error_not_a_result", "background_task", "no_user_turn"])
     def test_peek_counts_what_parse_stores(self, case):
         """Peek and ingest classify each step once, so a preamble is an exchange and a call is a tool call."""
         path = GOLDEN / case / "input.jsonl"
         conv = _only(path)
-        exchanges = antigravity_cli.peek_exchanges(path, last_n=10_000)
+        exchanges = adapt(antigravity_cli).peek_exchanges(path, last_n=10_000)
         assert len(exchanges) == len(conv.prompts) + (1 if conv.preamble else 0)
         # Peek tallies calls as (canonical name, count) pairs.
         peeked_calls = sum(count for e in exchanges for _, count in e.tool_calls)
@@ -692,7 +686,7 @@ _MODEL_RECORDS = [
 
 class TestAntigravityCliModelIdentity:
     def _parse_one(self, path):
-        (conv,) = antigravity_cli.parse(_source(path))
+        (conv,) = adapt(antigravity_cli).parse(_source(path))
         return conv
 
     def test_model_set_from_sibling_db(self, tmp_path):
@@ -788,7 +782,7 @@ def _native_planner_tokens(path: Path) -> tuple[int, int, int]:
 
 
 def _parse_responses(path: Path):
-    (conv,) = antigravity_cli.parse(_source(path))
+    (conv,) = adapt(antigravity_cli).parse(_source(path))
     return conv, [r for p in conv.prompts for r in p.responses]
 
 

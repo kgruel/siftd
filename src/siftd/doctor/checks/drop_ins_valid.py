@@ -21,17 +21,6 @@ class DropInsValidCheck:
         findings.extend(self._check_queries(ctx.queries_dir))
         return findings
 
-    _ADAPTER_REQUIRED_NAMES = [
-        "ADAPTER_INTERFACE_VERSION",
-        "NAME",
-        "DEFAULT_LOCATIONS",
-        "DEDUP_STRATEGY",
-        "HARNESS_SOURCE",
-        "discover",
-        "can_handle",
-        "parse",
-    ]
-
     _FORMATTER_REQUIRED_NAMES = [
         "NAME",
         "create_formatter",
@@ -41,7 +30,7 @@ class DropInsValidCheck:
         """Validate drop-in adapters: AST name check, then import for signature validation."""
         import importlib.util
 
-        from siftd.adapters.validation import validate_adapter
+        from siftd.adapters.validation import SUPPORTED_VERSIONS, required_names, validate_adapter
         from siftd.plugin_discovery import validate_dropin_ast
 
         findings = []
@@ -51,7 +40,14 @@ class DropInsValidCheck:
         for py_file in sorted(adapters_dir.glob("*.py")):
             if py_file.name.startswith("_"):
                 continue
-            errors = validate_dropin_ast(py_file, self._ADAPTER_REQUIRED_NAMES)
+            # The file does not say which interface version it means until it is
+            # imported, so report the gaps of the version it is closest to (the
+            # newest on a tie: a file that defines read() but no decoder is
+            # reaching for version 2).
+            gaps: list[list[str]] = [
+                validate_dropin_ast(py_file, required_names(v)) for v in sorted(SUPPORTED_VERSIONS, reverse=True)
+            ]
+            errors = min(gaps, key=lambda gap: len(gap))  # the first minimum: the newest version wins a tie
             if errors:
                 findings.append(
                     Finding(
