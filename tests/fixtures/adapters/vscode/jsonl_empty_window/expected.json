@@ -32,21 +32,7 @@
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 73."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "text",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 73."
                 }
               },
               {

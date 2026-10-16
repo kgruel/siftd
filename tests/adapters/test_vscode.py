@@ -9,6 +9,7 @@ toolName/input/result), so the adapter dropped every answer and named every tool
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -16,8 +17,12 @@ import pytest
 from conftest import FIXTURES_DIR
 
 from siftd.adapters import vscode
+from siftd.adapters.assembly import assemble, decode
+from siftd.adapters.records import Disposition, Ignored, Unknown
 from siftd.adapters.sdk import AdapterParseError
+from siftd.domain import Usage
 from siftd.domain.source import Source
+from siftd.safecall import epoch_ms_to_iso
 
 S = Source
 
@@ -26,6 +31,7 @@ JSON_CASE = GOLDEN / "json_format" / "input.json"
 JSONL_CASE = GOLDEN / "jsonl_tool_calls" / "input.jsonl"
 JSONL_EMPTY_WINDOW = GOLDEN / "jsonl_empty_window" / "input.jsonl"
 JSONL_WHOLE_REQUEST = GOLDEN / "jsonl_whole_request" / "input.jsonl"
+JSONL_USAGE = GOLDEN / "jsonl_usage" / "input.jsonl"
 
 # Real tool calls in jsonl_tool_calls: 15 emissions, 8 distinct toolCallIds.
 REAL_TOOL_NAMES = {
@@ -50,6 +56,70 @@ def _tool_calls(conv):
 
 def _text_blocks(conv):
     return [b for p in conv.prompts for r in p.responses for b in r.content if b.block_type == "text"]
+
+
+def _assembly(path: Path):
+    """The assembled source and its ledger, as parse() sees them."""
+    return assemble(
+        Source(kind="file", location=path),
+        read=vscode.read_strict,
+        decoder=vscode.VSCodeDecoder,
+        harness=vscode.HARNESS,
+        default_session=vscode._default_session(path),
+    )
+
+
+def _input_of(case: str) -> Path:
+    return next(p for p in (GOLDEN / case).iterdir() if p.name != "expected.json")
+
+
+def _request(*parts, request_id="r1", response_id="resp1", timestamp=1771376214522, **extra) -> dict:
+    """A request as VS Code writes it, with only the keys the decoder reads."""
+    return {"requestId": request_id, "responseId": response_id, "timestamp": timestamp,
+            "message": {"text": "hi"}, "modelId": "m", "response": list(parts), **extra}
+
+
+def _invocation(call_id: str, text: str = "Reading", **state) -> dict:
+    return {"kind": "toolInvocationSerialized", "toolCallId": call_id, "toolId": "copilot_readFile",
+            "invocationMessage": {"value": text}, "isConfirmed": {"type": 1}, **state}
+
+
+def _session_json(tmp_path, requests, *, creation=1771376214522, name="s.json") -> Path:
+    """A whole-file session with the given requests, in a chatSessions dir."""
+    cs = tmp_path / "h" / "chatSessions"
+    cs.mkdir(parents=True, exist_ok=True)
+    data = {"version": 3, "sessionId": "s", "requests": requests}
+    if creation is not None:
+        data["creationDate"] = creation
+    path = cs / name
+    path.write_text(json.dumps(data))
+    return path
+
+
+# One example per row of the decoder's table. The test below checks each row's
+# "Becomes" text against what its example decodes to.
+EXAMPLES = {
+    "session": vscode.SessionUnit(session={"sessionId": "s", "creationDate": 1771376214522}),
+    "request": vscode.RequestUnit(request=_request()),
+    "part:text": vscode.RequestUnit(request=_request({"value": "answer"})),
+    "part:thinking": vscode.RequestUnit(request=_request({"kind": "thinking", "value": "reasoning", "id": "t"})),
+    "part:thinking:marker": vscode.RequestUnit(request=_request({"kind": "thinking", "value": "", "id": "t"})),
+    "part:toolInvocationSerialized": vscode.RequestUnit(request=_request(_invocation("c1", isComplete=True))),
+    "part:inlineReference": vscode.RequestUnit(request=_request({"kind": "inlineReference", "inlineReference": {}})),
+    "part:mcpServersStarting": vscode.RequestUnit(request=_request({"kind": "mcpServersStarting",
+                                                                   "didStartServerIds": []})),
+    "part:progressMessage": vscode.RequestUnit(request=_request({"kind": "progressMessage",
+                                                                "content": {"value": "Getting ready"}})),
+    "part:warning": vscode.RequestUnit(request=_request({"kind": "warning", "content": {"value": "slow"}})),
+    "part:command": vscode.RequestUnit(request=_request({"kind": "command", "command": {"id": "x"}})),
+    "part:other": vscode.RequestUnit(request=_request({"kind": "textEditGroup", "uri": {}, "edits": []})),
+    "part:no-kind": vscode.RequestUnit(request=_request({"value": 5})),
+    "part:not-an-object": vscode.RequestUnit(request=_request("stray")),
+    "tool-invocation:no-toolCallId": vscode.RequestUnit(request=_request(
+        {"kind": "toolInvocationSerialized", "toolId": "t", "isComplete": True})),
+    "request:not-an-object": vscode.RequestUnit(request="stray"),
+    "patch:unapplied": vscode.PatchUnit(reason="patch:path-missing"),
+}
 
 
 class TestVscode:
@@ -92,39 +162,33 @@ class TestVscode:
         ids = [tc.external_id for tc in _tool_calls(conv)]
         assert len(ids) == 8 and len(set(ids)) == 8
 
-    def test_superseded_emission_is_dropped_latest_wins(self):
-        running = {"kind": "toolInvocationSerialized", "toolCallId": "c1", "toolId": "copilot_readFile",
-                   "invocationMessage": {"value": "Reading"}, "isConfirmed": {"type": 1}}
-        done = {**running, "isComplete": True, "generatedTitle": "Read file"}
-        requests = [{"requestId": "r", "response": [running, {"value": "text"}, done]}]
-        kept = vscode._latest_tool_emissions(requests)[0]["response"]
-        assert kept == [{"value": "text"}, done]
-
-    @pytest.mark.parametrize("part, status", [
-        ({"isComplete": False}, "pending"),
-        ({"isComplete": True}, "success"),
-        ({"isComplete": True, "resultDetails": [{"uri": {}}]}, "success"),
-        ({"isComplete": True, "resultDetails": {"isError": True, "output": []}}, "error"),
+    @pytest.mark.parametrize("part, status, result", [
+        ({"isComplete": False}, "pending", None),
+        ({"isComplete": True}, "success", {}),
+        ({"isComplete": True, "resultDetails": [{"uri": {}}]}, "success", {"resultDetails": [{"uri": {}}]}),
+        ({"isComplete": True, "resultDetails": {"isError": True, "output": []}}, "error",
+         {"resultDetails": {"isError": True, "output": []}}),
     ])
-    def test_tool_status_from_real_fields(self, part, status):
-        call = vscode._tool_call({"kind": "toolInvocationSerialized", "toolId": "t", "toolCallId": "c", **part})
-        assert call.status == status
+    def test_tool_status_and_result_from_real_fields(self, tmp_path, part, status, result):
+        path = _session_json(tmp_path, [_request(_invocation("c", **part))])
+        (call,) = _tool_calls(list(vscode.parse(S(kind="file", location=path)))[0])
+        assert (call.status, call.result) == (status, result)
 
     def test_jsonl_and_json_of_the_same_session_parse_identically(self, tmp_path):
         from_jsonl = list(vscode.parse(_session_file(tmp_path / "a", JSONL_CASE, "same.jsonl")))
         from_json = list(vscode.parse(_session_file(tmp_path / "b", JSON_CASE, "same.json")))
         assert from_jsonl == from_json and from_jsonl
 
-    def test_peek_and_parse_agree_on_answers_and_tool_calls(self):
-        records = list(vscode.iter_vscode_records(JSONL_CASE))
-        normalized = [vscode.normalize_record(r) for r in records]
-        peek_text = sum(1 for n in normalized if n and n.kind == "assistant"
-                        for b in n.content_blocks if b["type"] == "text")
-        peek_tools = sum(1 for n in normalized if n and n.kind == "assistant"
-                         for b in n.content_blocks if b["type"] == "tool_use")
-        conv = list(vscode.parse(Source(kind="file", location=JSONL_CASE)))[0]
-        assert peek_text == len(_text_blocks(conv)) == 24
-        assert peek_tools == len(_tool_calls(conv)) == 8
+    def test_peek_projects_the_conversation_ingest_stores(self):
+        conv = list(vscode.parse(S(kind="file", location=JSONL_CASE)))[0]
+        exchanges = vscode.peek_exchanges(JSONL_CASE, last_n=50)
+        assert vscode.peek_scan(JSONL_CASE).exchange_count == len(conv.prompts) == len(exchanges)
+        narrative = [b for ex in exchanges for b in ex.narrative]
+        assert sum(1 for b in narrative if b.block_type == "text") > 0
+        names = {tc.tool_name for b in narrative if b.block_type == "tool_calls" for tc in b.tool_calls}
+        # Aliased names are canonical in peek; an unaliased name is shown as written.
+        assert {"file.read", "search.grep", "shell.execute", "configure_python_environment"} == names
+        assert len([tc for b in narrative if b.block_type == "tool_calls" for tc in b.tool_calls]) == len(_tool_calls(conv))
 
     def test_peek_exchanges_show_every_tool_call_input(self):
         # The SDK exchange builder reads only a fixed set of input keys
@@ -183,7 +247,7 @@ class TestVscode:
         (cs2.parent / "workspace.json").write_text(json.dumps({"folder": ""}))
         assert list(vscode.parse(S(kind="file", location=cs2 / "s.json")))[0].workspace_path is None
 
-    def test_peek_normalizer_discover(self, tmp_path):
+    def test_peek_discover_and_unparseable_file(self, tmp_path):
         cs = tmp_path / "ws" / "chatSessions"
         cs.mkdir(parents=True)
         shutil.copy(JSON_CASE, cs / "test.json")
@@ -194,16 +258,6 @@ class TestVscode:
         (tmp_path / "chatSessions").mkdir()
         (tmp_path / "chatSessions" / "e.json").write_text("{}")
         assert vscode.peek_scan(tmp_path / "chatSessions" / "e.json") is None
-        n = vscode.normalize_record
-        assert n({"_kind": "user", "_ts": "T", "message": {"text": "hi"}}).content_blocks[0]["text"] == "hi"
-        nr = n({"_kind": "assistant", "_ts": "T", "modelId": "m", "response": [
-            {"value": "ok"},
-            {"kind": "toolInvocationSerialized", "toolId": "copilot_readFile", "toolCallId": "c",
-             "invocationMessage": {"value": "Reading"}, "isComplete": True}]})
-        assert nr.kind == "assistant" and len(nr.content_blocks) == 2
-        assert nr.content_blocks[1] == {"type": "tool_use", "name": "copilot_readFile",
-                                        "input": {"description": "Reading"}}
-        assert n({"_kind": "unknown"}) is None
         assert list(vscode.discover(locations=[str(tmp_path)]))
 
     def test_real_empty_window_session(self, tmp_path):
@@ -253,3 +307,186 @@ class TestVscode:
         (cs / "missing-requests.json").write_text(json.dumps({"sessionId": "x"}))
         with pytest.raises(AdapterParseError, match="missing a requests array"):
             list(vscode.parse(S(kind="file", location=cs / "missing-requests.json")))
+
+
+class TestDecoding:
+    def test_every_unit_and_part_kind_is_named_and_the_table_matches_the_code(self):
+        """The decoder's docstring table is the ledger of unit and part kinds; it must not drift from the code."""
+        rows = {}
+        for line in vscode.VSCodeDecoder.__doc__.splitlines():
+            cells = [c.strip() for c in line.strip().strip("|").split("|")]
+            if line.strip().startswith("| `") and len(cells) == 3:
+                rows[re.match(r"`([^`]+)`", cells[0]).group(1)] = cells[1]
+        folded = {f"patch:{k}" for k in vscode._FOLDED_PATCH_KINDS}
+        assert {"part:text", "part:thinking", "part:thinking:marker", "part:toolInvocationSerialized",
+                "part:inlineReference", "part:mcpServersStarting", "part:progressMessage",
+                "part:warning", "part:command"} <= set(rows)
+        assert set(rows) == set(EXAMPLES) | folded
+
+        decoder = vscode.VSCodeDecoder(Source(kind="file", location=Path("/x/s.json")))
+        for name, unit in EXAMPLES.items():
+            becomes = rows[name]
+            records = decoder.decode(unit)
+            classes = {type(r).__name__ for r in records}
+            reasons = {r.reason for r in records if isinstance(r, Ignored)}
+            if "Session" in becomes:
+                assert "Session" in classes, name
+            if "PromptRec" in becomes:
+                assert "PromptRec" in classes, name
+            if "ToolCallRec" in becomes:
+                assert "ToolCallRec" in classes, name
+            if becomes.startswith("content"):
+                (response,) = [r for r in records if type(r).__name__ == "ResponseRec"]
+                assert response.content, name
+            assert ("Ignored" in becomes) == bool(reasons), name
+            for named in re.findall(r"Ignored \(`([^`]+)`\)", becomes):
+                assert named in reasons, name
+            assert ("Unknown" in becomes) == any(isinstance(r, Unknown) for r in records), name
+
+    def test_thinking_text_is_a_thinking_block_and_empty_markers_are_ignored_by_name(self):
+        conv = list(vscode.parse(S(kind="file", location=JSONL_CASE)))[0]
+        blocks = [b for p in conv.prompts for r in p.responses for b in r.content if b.block_type == "thinking"]
+        assert len(blocks) == 23 and all(b.content["text"] for b in blocks)
+        assert _assembly(JSONL_CASE).ledger.reasons[(Disposition.IGNORED, "thinking:marker")] == 41
+
+    def test_usage_is_the_requests_total_from_result_usage(self):
+        (conv,) = vscode.parse(S(kind="file", location=JSONL_USAGE))
+        assert conv.prompts[0].responses[0].usage == Usage(input_tokens=12302, output_tokens=1739)
+        # A request whose result carries no usage has none, rather than zero.
+        (plain,) = vscode.parse(S(kind="file", location=JSONL_CASE))
+        assert all(r.usage is None for p in plain.prompts for r in p.responses)
+
+    def test_a_re_emitted_invocation_is_one_call_in_its_last_state(self, tmp_path):
+        running = _invocation("c1", "Reading")
+        done = {**running, "isComplete": True, "invocationMessage": {"value": "Read file"},
+                "resultDetails": [{"uri": {}}]}
+        path = _session_json(tmp_path, [_request(running, {"value": "text"}, done)])
+        conv = list(vscode.parse(S(kind="file", location=path)))[0]
+        (call,) = _tool_calls(conv)
+        assert call.input == {"description": "Read file"}
+        assert (call.status, call.result) == ("success", {"resultDetails": [{"uri": {}}]})
+        ledger = _assembly(path).ledger
+        assert ledger.count(Disposition.ORPHAN) == 0 and ledger.count(Disposition.UNKNOWN) == 0
+        assert ledger.dispositions[("ToolCallRec", Disposition.EVENT)] == 1
+        assert ledger.dispositions[("ToolResultRec", Disposition.PATCH)] == 1
+
+    def test_a_pending_invocation_has_no_result_and_a_pending_restatement_is_named(self, tmp_path):
+        path = _session_json(tmp_path, [_request(_invocation("c1"), _invocation("c1"))])
+        (call,) = _tool_calls(list(vscode.parse(S(kind="file", location=path)))[0])
+        assert (call.status, call.result) == ("pending", None)
+        ledger = _assembly(path).ledger
+        assert ledger.reasons[(Disposition.IGNORED, "tool-invocation:pending-restated")] == 1
+
+    def test_a_pending_emission_after_a_settled_one_reverts_the_call_to_pending(self, tmp_path):
+        # The last emission is the state the call is left in, even when an earlier one settled it.
+        settled = _invocation("c1", isComplete=True, resultDetails=[{"uri": {}}])
+        path = _session_json(tmp_path, [_request(settled, _invocation("c1"))])
+        (call,) = _tool_calls(list(vscode.parse(S(kind="file", location=path)))[0])
+        assert (call.status, call.result) == ("pending", {})
+        ledger = _assembly(path).ledger
+        assert ledger.count(Disposition.UNKNOWN) == 0 and ledger.count(Disposition.ORPHAN) == 0
+        assert ledger.dispositions[("ToolResultRec", Disposition.PATCH)] == 2
+
+    def test_a_call_repeated_in_a_later_request_is_one_call_completed_there(self, tmp_path):
+        first = _request(_invocation("c1", "Reading"), request_id="r1", response_id="resp1",
+                         timestamp=1771376214522)
+        second = _request(_invocation("c1", "Read file", isComplete=True), request_id="r2", response_id="resp2",
+                          timestamp=1771376314522)
+        path = _session_json(tmp_path, [first, second])
+        conv = list(vscode.parse(S(kind="file", location=path)))[0]
+        assert [len(r.tool_calls) for p in conv.prompts for r in p.responses] == [1, 0]
+        (call,) = _tool_calls(conv)
+        assert (call.status, call.input) == ("success", {"description": "Read file"})
+        assert _assembly(path).ledger.count(Disposition.ORPHAN) == 0
+
+    def test_a_call_restated_in_later_requests_keeps_its_last_input_and_final_state(self, tmp_path):
+        # Request 1 settles the call, request 2 restates it with other input, request 3
+        # settles it again as an error. Pairing is per call, so the last result is the error.
+        error = {"isError": True, "output": []}
+        first = _request(_invocation("c1", "Reading a", isComplete=True, resultDetails=[]),
+                         request_id="r1", response_id="resp1", timestamp=1771376214522)
+        second = _request(_invocation("c1", "Reading b", isComplete=True, resultDetails=[]),
+                          request_id="r2", response_id="resp2", timestamp=1771376314522)
+        third = _request(_invocation("c1", "Reading b", isComplete=True, resultDetails=error),
+                         request_id="r3", response_id="resp3", timestamp=1771376414522)
+        path = _session_json(tmp_path, [first, second, third])
+        conv = list(vscode.parse(S(kind="file", location=path)))[0]
+        assert [len(r.tool_calls) for p in conv.prompts for r in p.responses] == [1, 0, 0]
+        (call,) = _tool_calls(conv)
+        assert (call.input, call.status, call.result) == ({"description": "Reading b"}, "error",
+                                                          {"resultDetails": error})
+        ledger = _assembly(path).ledger
+        assert ledger.count(Disposition.ORPHAN) == 0 and ledger.count(Disposition.UNKNOWN) == 0
+        assert ledger.dispositions[("ToolCallRec", Disposition.EVENT)] == 1
+        assert ledger.dispositions[("ToolResultRec", Disposition.PATCH)] == 3
+
+    def test_a_part_whose_kind_is_not_a_string_is_unkeyed_and_counted(self):
+        decoder = vscode.VSCodeDecoder(Source(kind="file", location=Path("/x/s.json")))
+        records = decoder.decode(vscode.RequestUnit(request=_request({"kind": ["not", "a", "string"], "value": 1})))
+        (response,) = [r for r in records if type(r).__name__ == "ResponseRec"]
+        assert [b.block_type for b in response.content] == ["unkeyed"]
+        assert [r.reason for r in records if isinstance(r, Unknown)] == ["part:no-kind"]
+
+    def test_a_request_or_part_that_is_not_an_object_is_counted_not_fatal(self, tmp_path):
+        path = _session_json(tmp_path, ["a stray string", _request("a stray part", {"value": "answer"})])
+        (conv,) = vscode.parse(S(kind="file", location=path))
+        assert [b.content["text"] for b in _text_blocks(conv)] == ["answer"]
+        reasons = _assembly(path).ledger.reasons
+        assert reasons[(Disposition.UNKNOWN, "request:not-an-object")] == 1
+        assert reasons[(Disposition.UNKNOWN, "part:not-an-object")] == 1
+
+    def test_patches_that_cannot_apply_are_counted_by_reason(self, tmp_path):
+        header = {"version": 3, "sessionId": "j", "creationDate": 1771376214522, "requests": []}
+        lines = [
+            {"kind": 1, "k": ["x"], "v": 1},  # before the root
+            {"kind": 0, "v": header},
+            {"kind": 2, "k": ["requests"], "v": [_request("ok")]},
+            {"kind": 3, "k": ["requests"], "v": 1},  # unknown kind
+            {"kind": 1, "k": ["requests", 9, "result"], "v": {}},  # no such request
+            {"kind": 2, "k": [], "v": []},  # no key path
+        ]
+        path = tmp_path / "h" / "chatSessions" / "j.jsonl"
+        path.parent.mkdir(parents=True)
+        path.write_text("\n".join(json.dumps(line) for line in lines) + "\n")
+        (conv,) = vscode.parse(S(kind="file", location=path))
+        assert len(conv.prompts) == 1
+        reasons = _assembly(path).ledger.reasons
+        for reason in ("patch:before-root", "patch:kind-3", "patch:path-missing", "patch:no-path"):
+            assert reasons[(Disposition.UNKNOWN, reason)] == 1, reason
+
+    def test_a_session_without_creation_date_starts_at_its_latest_request(self, tmp_path):
+        # The adapter has always dated such a session by its latest request (not the earliest).
+        path = _session_json(tmp_path, [_request(timestamp=1771376214522), _request(
+            request_id="r2", response_id="resp2", timestamp=1771376314522)], creation=None)
+        conv = list(vscode.parse(S(kind="file", location=path)))[0]
+        assert conv.started_at == epoch_ms_to_iso(1771376314522)
+        assert conv.ended_at == epoch_ms_to_iso(1771376314522)
+
+    @pytest.mark.parametrize("case", sorted(p.name for p in GOLDEN.iterdir()))
+    def test_fixtures_decode_with_nothing_unknown_or_orphaned(self, case):
+        ledger = _assembly(_input_of(case)).ledger
+        assert ledger.count(Disposition.UNKNOWN) == 0 and ledger.count(Disposition.ORPHAN) == 0
+
+    def test_json_and_jsonl_forms_of_one_session_decode_to_the_same_records(self, tmp_path):
+        state, unapplied, malformed = vscode._replay(JSONL_CASE, strict=True)
+        assert unapplied == [] and malformed == []
+        jsonl = _session_file(tmp_path / "a", JSONL_CASE, "same.jsonl")
+        whole = tmp_path / "b" / "chatSessions" / "same.json"
+        whole.parent.mkdir(parents=True)
+        whole.write_text(json.dumps(state))
+        (whole.parent.parent / "workspace.json").write_text(json.dumps({"folder": "file:///test/workspace"}))
+        records = {}
+        for label, source in (("jsonl", jsonl), ("json", S(kind="file", location=whole))):
+            decoder = vscode.VSCodeDecoder(source)
+            records[label] = [rec for _, rec in decode(vscode.read_strict(source), decoder)]
+        assert records["jsonl"] == records["json"] and records["json"]
+
+    def test_a_truncated_patch_line_fails_ingest_and_still_peeks(self, tmp_path):
+        lines = JSONL_CASE.read_text(encoding="utf-8").splitlines()
+        cs = tmp_path / "h" / "chatSessions"
+        cs.mkdir(parents=True)
+        path = cs / "t.jsonl"
+        path.write_text("\n".join(lines[:-1] + [lines[-1][: len(lines[-1]) // 2]]) + "\n")
+        with pytest.raises(AdapterParseError, match="invalid JSONL"):
+            list(vscode.parse(S(kind="file", location=path)))
+        assert vscode.peek_scan(path).exchange_count >= 1

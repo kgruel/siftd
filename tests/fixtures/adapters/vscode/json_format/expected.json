@@ -32,29 +32,7 @@
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 2."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "text",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 2."
                 }
               },
               {
@@ -94,45 +72,13 @@
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 5."
+                  "text": "thinking text 5."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 6."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "text",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 6."
                 }
               },
               {
@@ -144,373 +90,79 @@
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 10."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 11."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 10."
+                  "text": "thinking text 13."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 14."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 15."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 20."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 21."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 11."
+                  "text": "thinking text 23."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 24."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 25."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 13."
+                  "text": "thinking text 28."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 29."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 14."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 15."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 20."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 21."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 23."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 24."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 25."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 28."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 29."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 30."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "text",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 30."
                 }
               },
               {
@@ -522,129 +174,43 @@
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 32."
+                  "text": "thinking text 32."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 33."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "other",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 34."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 33."
+                  "text": "thinking text 35."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
+                  "text": "thinking text 36."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 34."
+                  "text": "thinking text 37."
                 }
               },
               {
                 "block_type": "thinking",
                 "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 35."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 36."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 37."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": "thinking text 38."
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "redacted-thinking-id",
-                  "kind": "thinking",
-                  "value": ""
-                }
-              },
-              {
-                "block_type": "thinking",
-                "content": {
-                  "id": "",
-                  "kind": "thinking",
-                  "metadata": {
-                    "stopReason": "text",
-                    "vscodeReasoningDone": true
-                  },
-                  "value": ""
+                  "text": "thinking text 38."
                 }
               },
               {
@@ -1309,7 +875,9 @@
                 "input": {
                   "description": "Reading [](file:///Users/user/project/src/siftd/adapters/vscode.py)"
                 },
+                "result": {},
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
               },
               {
@@ -1352,6 +920,7 @@
                   ]
                 },
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
               },
               {
@@ -1359,7 +928,9 @@
                 "input": {
                   "description": "Reading [](file:///Users/user/project/tests/test_adapters.py)"
                 },
+                "result": {},
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
               },
               {
@@ -1402,6 +973,7 @@
                   ]
                 },
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
               },
               {
@@ -1444,6 +1016,7 @@
                   ]
                 },
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
               },
               {
@@ -1451,7 +1024,9 @@
                 "input": {
                   "description": "Reading [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220"
                 },
+                "result": {},
                 "status": "success",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
               },
               {
@@ -1474,6 +1049,7 @@
                   }
                 },
                 "status": "error",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "configure_python_environment"
               },
               {
@@ -1496,6 +1072,7 @@
                   }
                 },
                 "status": "error",
+                "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "run_in_terminal"
               }
             ]

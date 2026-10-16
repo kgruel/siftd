@@ -36,9 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Gemini CLI chat files that shared a session id are stored separately.**
   124 prompts on one machine were never stored; an existing database recovers
   them with the steps in the adapters concept page.
-- **VS Code chat sessions keep their answers and tool calls.** The adapter
-  read field names the real format never has, so every answer was dropped and
-  every tool call was named `unknown`.
+- **VS Code chat sessions keep their answers, tool calls and token usage.** The
+  adapter read field names the real format never has, so every answer was
+  dropped, every tool call was named `unknown`, and usage was never read.
 - **Pi sessions are priced.** Each message's provider is stored instead of
   `multi` (16,375 of 22,372 responses on one machine now match a price), cache
   reads are counted the way pricing expects, and `siftd peek` shows pi's tool

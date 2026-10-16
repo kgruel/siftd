@@ -114,7 +114,7 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 201 | 3540 |
-| `tests/adapters/` | 22 | 363 |
+| `tests/adapters/` | 22 | 377 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -350,7 +350,7 @@ docstring so its row is meaningful.
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
 | [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |
 | [adapters/test_validation.py](adapters/test_validation.py) | 15 | Tests for adapter signature validation (H16). |
-| [adapters/test_vscode.py](adapters/test_vscode.py) | 15 | Tests for VSCode adapter. |
+| [adapters/test_vscode.py](adapters/test_vscode.py) | 29 | Tests for VSCode adapter. |
 
 ### `tests/architecture/`
 
