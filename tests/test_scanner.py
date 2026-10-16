@@ -3,6 +3,7 @@
 from pathlib import Path
 from types import ModuleType
 
+from siftd.adapters.contract import adapt
 from siftd.domain.peek import SessionInfo
 from siftd.peek.scanner import (
     DiscoveredFile,
@@ -138,8 +139,8 @@ class TestScanSessionFile:
         p = tmp_path / "s.jsonl"
         p.write_text(json.dumps({"type": "user", "ts": "2024-01-01T10:00:00Z"}) + "\n"
                      + json.dumps({"type": "assistant", "ts": "2024-01-01T10:01:00Z"}) + "\n")
-        r = _scan_session_file(_discovered(path=p, mod=_mod("d", normalize_record=norm)))
-        assert r is not None and r.session_id is not None
+        r = _scan_session_file(_discovered(path=p, mod=adapt(_mod("d", normalize_record=norm))))
+        assert r is not None and r.preview_available is not False and r.session_id is not None
 
     def test_success(self, tmp_path):
         p = tmp_path / "t.jsonl"
@@ -201,7 +202,7 @@ class TestDiscoverFilesContainment:
         m = _mod("peek_adapter", normalize_record=lambda r: None)
         m.DEFAULT_LOCATIONS = [str(location)]
         m.PEEK_GLOB_PATTERNS = ["*.jsonl"]
-        return PluginInfo(name="fake", origin="builtin", module=m)
+        return PluginInfo(name="fake", origin="builtin", module=adapt(m))
 
     def test_symlink_escaping_location_is_not_discovered(self, monkeypatch, tmp_path):
         base = tmp_path / "sessions"

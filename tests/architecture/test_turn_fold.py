@@ -34,7 +34,7 @@ Both allowlists are shrink-only.
 
 import re
 
-from architecture.support import call_to, literal_matching, sites_by_function
+from architecture.support import SRC, call_to, literal_matching, sites_by_function
 
 PROMPT_KIND = re.compile(r"kind\s*=\s*'prompt'", re.IGNORECASE)
 
@@ -96,6 +96,24 @@ def test_every_listed_prompt_selection_still_exists():
     sites = sites_by_function(literal_matching(PROMPT_KIND, "prompt-selection"))
     stale = sorted(set(PROMPT_SELECTIONS) - set(sites))
     assert not stale, f"drop {stale} from PROMPT_SELECTIONS: it no longer selects kind = 'prompt'"
+
+
+# The preamble predicate, respelled with or without an alias. A respelling in any
+# file is a second definition of "a response with no parent prompt".
+PREAMBLE_PREDICATE = re.compile(r"kind\s*=\s*'response'\s+AND\s+(?:\w+\.)?parent_id\s+IS\s+NULL", re.IGNORECASE)
+
+
+def test_the_preamble_predicate_has_one_spelling():
+    """The preamble rule is written once, in storage/turns.py, and interpolated everywhere else (review F9)."""
+    holders = sorted(
+        path.relative_to(SRC).as_posix()
+        for path in SRC.rglob("*.py")
+        if PREAMBLE_PREDICATE.search(" ".join(path.read_text().split()))
+    )
+    assert holders == ["storage/turns.py"], (
+        f"the preamble predicate is spelled in {holders}. Interpolate "
+        "siftd.storage.turns.PREAMBLE_RESPONSE_SQL instead of respelling it."
+    )
 
 
 def test_fold_is_called_from_the_known_sites_only():

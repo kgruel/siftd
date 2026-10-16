@@ -9,9 +9,10 @@ exchanges list it. This module builds peek from the same
 :class:`~siftd.domain.Conversation` that ingest stores, so there is one
 classification.
 
-It lives here rather than in ``sdk.py`` because it is the successor to the
-folds, which are deleted once every adapter is ported; this module outlives
-them. The text, placeholder and hint helpers it reuses stay in ``sdk.py``.
+It lives here rather than in ``sdk.py``: the folds it supersedes serve version 1
+only and leave with it (``api/compat.py``, ``V1_INTERFACE_REMOVAL``), while this
+module serves version 2. The text, placeholder and hint helpers it reuses stay in
+``sdk.py``.
 
 Peek reads one file, so one file must yield one conversation. A source that
 yields several raises :class:`~siftd.adapters.assembly.AssemblyError` rather
@@ -287,7 +288,16 @@ def _fill_exchange(
         if text and not exchange.response_text and not _is_tool_placeholder_only(text):
             exchange.response_text = text
 
+        # Consecutive calls form one group, emitted where they sit: a text or
+        # thinking block after them closes the group, so before -> call -> after
+        # renders in that order.
         calls: list[PeekToolCall] = []
+
+        def flush() -> None:
+            if calls:
+                exchange.narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=list(calls)))
+                calls.clear()
+
         for part in parts:
             if isinstance(part, ToolCall):
                 tool_name = canonicalize_tool_name(part.tool_name, aliases)
@@ -306,13 +316,14 @@ def _fill_exchange(
             if block_type == "text":
                 text_val = part.get("text", "")
                 if text_val:
+                    flush()
                     exchange.narrative.append(PeekNarrativeBlock(block_type="text", content=text_val))
             elif block_type == "thinking" and include_thinking:
                 text_val = part.get("thinking") or part.get("text") or ""
                 if text_val:
+                    flush()
                     exchange.narrative.append(PeekNarrativeBlock(block_type="thinking", content=text_val))
-        if calls:
-            exchange.narrative.append(PeekNarrativeBlock(block_type="tool_calls", tool_calls=calls))
+        flush()
 
     if counter:
         exchange.tool_calls = list(counter.most_common())

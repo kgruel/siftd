@@ -20,7 +20,7 @@ from siftd.storage.sql_helpers import (
     has_conversation_owners_table,
     owner_predicate,
 )
-from siftd.storage.turns import TurnSpan, fold_turns, load_turns
+from siftd.storage.turns import PREAMBLE_RESPONSE_SQL, TurnSpan, fold_turns, load_turns
 
 
 @dataclass
@@ -329,13 +329,12 @@ def fetch_conversation_fingerprints(conn: sqlite3.Connection) -> dict[str, str]:
     column is the ingest-time ordering key (there is no ``events.created_at``).
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT e.conversation_id AS cid,
                COUNT(DISTINCT e.id) AS event_count,
                MAX(e.timestamp) AS max_ts,
                COUNT(ec.id) AS content_count,
-               COUNT(DISTINCT CASE WHEN e.kind = 'response' AND e.parent_id IS NULL
-                                   THEN e.id END) AS preamble_count
+               COUNT(DISTINCT CASE WHEN {PREAMBLE_RESPONSE_SQL} THEN e.id END) AS preamble_count
         FROM events e
         LEFT JOIN event_content ec ON ec.event_id = e.id
         GROUP BY e.conversation_id

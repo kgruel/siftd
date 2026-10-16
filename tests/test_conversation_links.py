@@ -510,3 +510,53 @@ class TestSessionsViewAcrossHarnesses:
             "claude_code::e": root.id,
             "claude_code::r1::agent::m": root.id,
         }
+
+
+class TestSessionsViewOwnerVisibility:
+    """A child is nested only under a parent its owner can see (review A4).
+
+    Root selection asks whether the parent is on the page, so it is decided within
+    the owner-visible graph: an invisible parent leaves its visible child a root,
+    and an invisible child is never listed beneath a visible parent.
+    """
+
+    @staticmethod
+    def _owned(db, owners: dict[str, str]) -> None:
+        from siftd.storage.sqlite import ensure_conversation_owners_table
+
+        raw = sqlite3.connect(db)
+        ensure_conversation_owners_table(raw)
+        for ext, user in owners.items():
+            raw.execute(
+                "INSERT INTO conversation_owners (conversation_id, user_id, assigned_at)"
+                " SELECT id, ?, ? FROM conversations WHERE external_id = ?", (user, T0, ext),
+            )
+        raw.commit()
+        raw.close()
+
+    def test_a_visible_child_of_an_inaccessible_parent_is_a_root(self, tmp_path):
+        db = _populated(
+            tmp_path / "p.db",
+            _conv("claude_code::bob-parent", started="2024-02-02T00:00:00Z"),
+            _conv("claude_code::alice-child", started="2024-02-02T00:01:00Z",
+                  lineage=Lineage("subagent", "claude_code::bob-parent")),
+        )
+        self._owned(db, {"claude_code::bob-parent": "bob", "claude_code::alice-child": "alice"})
+        for grouped in (False, True):
+            rows = list_conversations(fidelity=Fidelity(), db_path=db, n=5, group_subagents=grouped, owner="alice")
+            assert [r.external_id for r in rows] == ["claude_code::alice-child"], grouped
+
+    def test_an_inaccessible_child_under_a_visible_parent_is_not_listed(self, tmp_path):
+        db = _populated(
+            tmp_path / "c.db",
+            _conv("claude_code::alice-parent", started="2024-02-02T00:00:00Z"),
+            _conv("claude_code::bob-child", started="2024-02-02T00:01:00Z",
+                  lineage=Lineage("subagent", "claude_code::alice-parent")),
+        )
+        self._owned(db, {"claude_code::alice-parent": "alice", "claude_code::bob-child": "bob"})
+        for grouped in (False, True):
+            rows = list_conversations(fidelity=Fidelity(), db_path=db, n=5, group_subagents=grouped, owner="alice")
+            assert [r.external_id for r in rows] == ["claude_code::alice-parent"], grouped
+        # Bob's own page: his child has no visible parent, so it is a root there.
+        rows = list_conversations(fidelity=Fidelity(), db_path=db, n=5, group_subagents=True, owner="bob")
+        assert [r.external_id for r in rows] == ["claude_code::bob-child"]

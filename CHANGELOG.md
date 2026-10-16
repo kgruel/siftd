@@ -41,6 +41,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   prompt; stored rows gain it when re-parsed.
 - **A Claude Code reply that resumes after a Skill expansion or image stays in
   its own turn.** Its usage is still counted once.
+- **VS Code tool calls appear where they happened** in `siftd show` and
+  `siftd peek`, and peek no longer moves any adapter's calls after the text
+  that followed them.
+- **Grouped session lists show a sub-agent whose parent belongs to another
+  user.**
 - **Responses stored before a conversation's first prompt are shown.** A forked
   sub-agent's transcript rendered empty in `show`, export and the web folio; it
   now reads as a "Continued from" turn, and every surface counts turns the same

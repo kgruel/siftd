@@ -35,6 +35,13 @@ from dataclasses import dataclass
 
 from siftd.storage.sql_helpers import event_order
 
+#: The SQL predicate for "a response with no parent prompt", the preamble. Every
+#: SQL site that asks it interpolates this constant rather than respelling it, so
+#: the rule has one literal (tests/architecture/test_turn_fold.py holds it). Its
+#: columns are unqualified: it is interpolated only where ``events`` is the one
+#: table in scope that has them.
+PREAMBLE_RESPONSE_SQL = "kind = 'response' AND parent_id IS NULL"
+
 
 @dataclass(frozen=True)
 class TurnSpan:
@@ -160,6 +167,6 @@ def conversation_ids_with_turns(conn: sqlite3.Connection) -> set[str]:
     """
     rows = conn.execute(
         "SELECT DISTINCT conversation_id FROM events"
-        " WHERE kind = 'prompt' OR (kind = 'response' AND parent_id IS NULL)"
+        f" WHERE kind = 'prompt' OR ({PREAMBLE_RESPONSE_SQL})"
     ).fetchall()
     return {row[0] for row in rows}

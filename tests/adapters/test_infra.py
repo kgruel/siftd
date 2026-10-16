@@ -11,7 +11,6 @@ from siftd.adapters.contract import adapt
 from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
 from siftd.adapters.sdk import NormalizedRecord
 from siftd.adapters.validation import LEGACY_VERSION, validate_adapter
-from siftd.domain import Response
 
 
 def claude_norm(raw: dict) -> NormalizedRecord | None:
@@ -142,15 +141,12 @@ class TestSDK:
         records, errors = sdk.load_jsonl(f)
         assert len(records) == 2 and len(errors) == 1 and errors[0].line_number == 2
 
-    def test_tool_call_linker_and_flush(self):
+    def test_tool_call_linker(self):
         linker = sdk.ToolCallLinker()
         linker.add_use("t1", name="file.read")
         linker.add_use("t2", name="shell")
         linker.add_result("t1", content="data")
         assert len(linker.get_pairs()) == 2 and linker.get_pairs()[0][2] is not None and len(linker.pending_uses()) == 1
-        resp = Response(timestamp="T1")
-        sdk.flush_pending_calls({"c1": (resp, "sh", {"cmd": "ls"}), "c2": (resp, "t", "raw")})
-        assert len(resp.tool_calls) == 2 and all(tc.status == "pending" for tc in resp.tool_calls)
 
     def test_seek_last_lines(self, tmp_path):
         (tmp_path / "s.txt").write_text("a\nb\nc\n")

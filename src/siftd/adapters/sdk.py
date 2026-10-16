@@ -282,33 +282,6 @@ class ToolCallLinker:
         ]
 
 
-def flush_pending_calls(
-    pending_calls: dict,
-) -> None:
-    """Finalize tool calls that never received results.
-
-    Iterates pending_calls and appends a ToolCall with status="pending"
-    to each response. Adapters call this at the end of parse() to handle
-    tool uses that were cut off (session ended mid-tool-call).
-
-    Args:
-        pending_calls: Dict of call_id -> (response, tool_name, input_data).
-            This is the standard pending tracking dict used by adapters.
-    """
-    from siftd.domain import ToolCall
-
-    for call_id, (response, tool_name, input_data) in pending_calls.items():
-        tool_call = ToolCall(
-            tool_name=tool_name,
-            input=input_data if isinstance(input_data, dict) else {"raw": input_data},
-            result=None,
-            status="pending",
-            external_id=call_id,
-            timestamp=None,
-        )
-        response.tool_calls.append(tool_call)
-
-
 # =============================================================================
 # Peek helpers — for implementing optional peek hooks in adapters
 # =============================================================================
@@ -542,12 +515,14 @@ def peek_jsonl_tail(
 
 
 # =============================================================================
-# Record normalization — the general pattern for adapter peek support
+# Record normalization — the version-1 path to peek
 # =============================================================================
 #
-# Adapters that provide a normalize_record() function get peek_scan,
-# peek_exchanges, and peek_tail for free. The normalizer maps native
-# records to NormalizedRecord, and the SDK provides the scan/exchange logic.
+# A version-1 adapter's normalize_record() maps its native records to
+# NormalizedRecord, and the folds below scan and exchange them. contract.adapt
+# derives peek_scan and peek_exchanges from it (LegacyAdapter, via
+# make_peek_hooks). These folds leave with version 1 (api/compat.py,
+# V1_INTERFACE_REMOVAL); version-2 adapters peek through peek_projection.
 
 
 @dataclass

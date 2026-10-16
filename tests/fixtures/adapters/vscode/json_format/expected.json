@@ -90,15 +90,55 @@
                 }
               },
               {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "3708f620-2c5f-48b2-b422-9cb7bacdbe79",
+                  "input": {
+                    "description": "Reading [](file:///Users/user/project/src/siftd/adapters/vscode.py)"
+                  },
+                  "name": "copilot_readFile"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "5c37a577-6ff4-4db4-90fe-306e71e8efb0",
+                  "input": {
+                    "description": "redacted free text 18."
+                  },
+                  "name": "copilot_findTextInFiles"
+                }
+              },
+              {
                 "block_type": "thinking",
                 "content": {
                   "text": "thinking text 10."
                 }
               },
               {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "bc7b5414-0d64-4a19-83d0-80505455294e",
+                  "input": {
+                    "description": "Reading [](file:///Users/user/project/tests/test_adapters.py)"
+                  },
+                  "name": "copilot_readFile"
+                }
+              },
+              {
                 "block_type": "thinking",
                 "content": {
                   "text": "thinking text 11."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "0cc34de5-452d-491b-8913-7c67e6b36de7",
+                  "input": {
+                    "description": "Searching for text `from datetime import UTC` (`**/*.py`)"
+                  },
+                  "name": "copilot_findTextInFiles"
                 }
               },
               {
@@ -117,6 +157,26 @@
                 "block_type": "thinking",
                 "content": {
                   "text": "thinking text 15."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "28971a12-950c-4a18-8629-90acf21160f3",
+                  "input": {
+                    "description": "redacted free text 26."
+                  },
+                  "name": "copilot_findTextInFiles"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "4c3286bf-25e5-489d-802a-ae969167b18c",
+                  "input": {
+                    "description": "Reading [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220"
+                  },
+                  "name": "copilot_readFile"
                 }
               },
               {
@@ -174,9 +234,31 @@
                 }
               },
               {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "8f14e79b-d8c9-44fb-8fea-77ebefe50f03",
+                  "input": {
+                    "description": "Configuring a Python Environment",
+                    "input": "{\n  \"resourcePath\": \"/Users/user/project/\"\n}"
+                  },
+                  "name": "configure_python_environment"
+                }
+              },
+              {
                 "block_type": "thinking",
                 "content": {
                   "text": "thinking text 32."
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "id": "6da6f940-6f36-4b40-a51f-7139ea4fc095",
+                  "input": {
+                    "command": "pytest -q tests/test_adapters.py::TestVscodeAdapter -q",
+                    "input": " pytest -q tests/test_adapters.py::TestVscodeAdapter -q"
+                  },
+                  "name": "run_in_terminal"
                 }
               },
               {

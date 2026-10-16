@@ -15,7 +15,7 @@ import pytest
 
 from siftd.adapters import aider, claude_code, gemini_cli, opencode, template, vscode
 from siftd.adapters.assembly import AssemblyError
-from siftd.adapters.contract import DecodingAdapter, adapt, decodes
+from siftd.adapters.contract import DecodingAdapter, LegacyAdapter, adapt, decodes
 from siftd.adapters.records import Disposition
 from siftd.adapters.registry import load_builtin_adapters, load_dropin_adapters
 from siftd.adapters.validation import (
@@ -238,7 +238,9 @@ class TestDerivation:
 
     def test_gemini_cli_stays_on_the_legacy_interface(self):
         assert gemini_cli.ADAPTER_INTERFACE_VERSION == LEGACY_VERSION
-        assert adapt(gemini_cli) is gemini_cli and hasattr(gemini_cli, "parse")
+        # Wrapped, not returned bare: peek hooks have one source. parse is the module's own.
+        wrapped = adapt(gemini_cli)
+        assert isinstance(wrapped, LegacyAdapter) and wrapped.parse is gemini_cli.parse
 
     def test_every_other_builtin_decodes(self):
         decoding = {p.name for p in load_builtin_adapters() if decodes(p.module)}
@@ -275,6 +277,41 @@ class TestDerivation:
     def test_peek_is_derived_unless_the_adapter_opts_out(self):
         assert hasattr(adapt(claude_code), "peek_scan") and hasattr(adapt(vscode), "peek_exchanges")
         assert not hasattr(adapt(opencode), "peek_scan") and not hasattr(adapt(opencode), "peek_tail")
+
+    def test_a_version_1_module_derives_peek_from_its_normalizer(self):
+        """The one derivation for both versions: a v1 normalizer gives scan and exchanges, not a tail."""
+        normalizer = ModuleType("legacy")
+        normalizer.ADAPTER_INTERFACE_VERSION = 1
+        normalizer.parse = lambda source: []
+        normalizer.normalize_record = lambda record: None
+        wrapped = adapt(normalizer)
+        assert isinstance(wrapped, LegacyAdapter)
+        assert callable(wrapped.peek_scan) and callable(wrapped.peek_exchanges)
+        assert getattr(wrapped, "peek_tail", None) is None
+        assert wrapped.parse is normalizer.parse
+
+    def test_a_version_1_module_with_no_normalizer_and_no_hook_has_no_peek(self):
+        bare = ModuleType("bare")
+        bare.ADAPTER_INTERFACE_VERSION = 1
+        bare.parse = lambda source: []
+        assert getattr(adapt(bare), "peek_scan", None) is None
+
+    def test_an_explicit_version_1_peek_hook_wins(self):
+        def explicit(path):
+            return None
+
+        legacy = ModuleType("legacy")
+        legacy.ADAPTER_INTERFACE_VERSION = 1
+        legacy.normalize_record = lambda record: None
+        legacy.peek_scan = explicit
+        assert adapt(legacy).peek_scan is explicit
+
+    def test_peek_reads_the_derived_hooks_and_never_re_derives_from_a_normalizer(self):
+        """Ratchet: contract.adapt is the one derivation. Any peek code naming normalize_record re-derives it (review F8)."""
+        import siftd.peek
+
+        peek_dir = Path(siftd.peek.__file__).parent
+        assert [p.name for p in peek_dir.rglob("*.py") if "normalize_record" in p.read_text()] == []
 
     def test_an_explicit_peek_hook_wins_over_the_derived_one(self):
         assert adapt(aider).peek_tail is aider.peek_tail

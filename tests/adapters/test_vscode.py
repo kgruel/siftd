@@ -196,6 +196,20 @@ class TestVscode:
         assert len(calls) == 8
         assert [tc.tool_name for tc in calls if not tc.input] == []
 
+    def test_peek_keeps_each_call_between_the_prose_it_sat_between(self):
+        """Peek shows a call where the answer made it: prose, call, prose (review A5).
+
+        Before the fix the call group was emitted after all of a response's prose,
+        and VS Code kept no position for a call at all, so the fixture's interleaved
+        answers read prose, prose, calls.
+        """
+        exchanges = adapt(vscode).peek_exchanges(JSONL_CASE, last_n=50)
+        shapes = [[b.block_type for b in ex.narrative] for ex in exchanges]
+        assert any(
+            any(shape[i:i + 3] == ["text", "tool_calls", "text"] for i in range(len(shape) - 2))
+            for shape in shapes
+        ), shapes
+
     def test_path_helpers(self):
         obj = {"requests": [{"response": [], "result": None}]}
         vscode._set_at_path(obj, ["requests", 0, "result"], {"ok": True})

@@ -92,6 +92,61 @@ def get_conversation_parent(
     return edges[0] if edges else None
 
 
+def subagent_parent_sql(child: str = "c") -> str:
+    """SQL for the external_id of ``child``'s sub-agent parent, NULL for a top-level one.
+
+    The edge is authoritative: a conversation with ANY conversation_links row is a
+    sub-agent only if that edge is kind ``subagent``, and its parent is the edge's.
+    The ``<root>::agent::<id>`` spelling is read only for a row with NO edge: schema
+    v13 did not backfill edges, so rows ingested before it still carry only the
+    marker. The fallback's removal is LEGACY_AGENT_EDGE_REMOVAL in api/compat.py.
+    Every reader of sub-agent parentage derives it from this expression.
+    """
+    return f"""(CASE
+    WHEN EXISTS (SELECT 1 FROM conversation_links l WHERE l.conversation_id = {child}.id)
+        THEN (SELECT l.parent_external_id FROM conversation_links l
+              WHERE l.conversation_id = {child}.id AND l.kind = 'subagent')
+    WHEN instr({child}.external_id, '::agent::') > 0
+        THEN substr({child}.external_id, 1, instr({child}.external_id, '::agent::') - 1)
+END)"""
+
+
+def get_subagent_children(
+    conn: sqlite3.Connection,
+    parent_ids: Sequence[str],
+    *,
+    owner: str | None = None,
+) -> list[str]:
+    """Ids of the sub-agents directly below ``parent_ids``, oldest first.
+
+    The sub-agent counterpart of get_conversation_children: it resolves through
+    subagent_parent_sql, so a row with no edge is a child exactly when the
+    listing's root selection calls it one. ``owner`` scopes the children as in
+    get_conversation_children.
+    """
+    if not parent_ids:
+        return []
+    if owner and not has_conversation_owners_table(conn):
+        return []
+    where: list[str] = []
+    prefix: list[str] = []
+    if owner:
+        where.append(owner_predicate("c.id"))
+        prefix.append(owner)
+    where.append("p.id IN ({placeholders})")
+    # CROSS JOIN pins the child as the outer loop, so each child finds its parent
+    # through the (harness_id, external_id) index. With a plain JOIN the planner
+    # drives from the parent ids and scans every child per parent (~100x slower).
+    sql = (
+        "SELECT c.id AS conversation_id FROM conversations c"
+        " CROSS JOIN conversations p"
+        f"   ON p.harness_id = c.harness_id AND p.external_id = {subagent_parent_sql('c')}"
+        " WHERE " + " AND ".join(where) + " ORDER BY c.started_at, c.id"
+    )
+    rows = batched_in_query(conn, sql, parent_ids, prefix_params=tuple(prefix))
+    return [row["conversation_id"] for row in rows]
+
+
 def get_conversation_children(
     conn: sqlite3.Connection,
     parent_ids: Sequence[str],

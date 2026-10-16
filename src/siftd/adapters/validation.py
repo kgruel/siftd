@@ -33,8 +33,9 @@ SUPPORTED_VERSIONS = frozenset({LEGACY_VERSION, DECODING_VERSION})
 #: Compatibility alias: before version 2 this was *the* interface version, and
 #: drop-ins written then import it (``from siftd.adapters.validation import
 #: ADAPTER_INTERFACE_VERSION``) to declare theirs. It keeps its old value, the
-#: legacy interface, so those drop-ins still load as version 1. Retired together
-#: with version 1 (not before 1.0); new code names ``LEGACY_VERSION`` or ``DECODING_VERSION``.
+#: legacy interface, so those drop-ins still load as version 1. Retired with
+#: version 1 (``api/compat.py``, ``V1_INTERFACE_REMOVAL``); new code names
+#: ``LEGACY_VERSION`` or ``DECODING_VERSION``.
 ADAPTER_INTERFACE_VERSION = LEGACY_VERSION
 
 # Required module-level attributes for a valid adapter, in every version

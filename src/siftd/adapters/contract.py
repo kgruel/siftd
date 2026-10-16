@@ -31,10 +31,11 @@ An explicit ``peek_scan``, ``peek_exchanges`` or ``peek_tail`` on the module
 wins over the derived one: a format with no records to parse (aider's markdown
 tail) says so by defining its own.
 
-The derived pieces live on a :class:`DecodingAdapter` that wraps the module, so
-the registry hands every consumer an adapter with the whole interface and the
-module itself stays declarations plus decoding. A version-1 module is returned
-as it is.
+The derived pieces live on a wrapper around the module, so the registry hands
+every consumer an adapter with the interface and the module itself stays
+declarations plus decoding. A version-2 module gets a :class:`DecodingAdapter`.
+A version-1 module gets a :class:`LegacyAdapter`, which derives the peek scan and
+exchanges from its ``normalize_record`` and nothing else (see that class).
 """
 
 from __future__ import annotations
@@ -47,7 +48,7 @@ from typing import Any
 from siftd.adapters.assembly import Assembly, assemble
 from siftd.adapters.peek_projection import make_peek_hooks_from_decoder
 from siftd.adapters.records import Session
-from siftd.adapters.sdk import build_harness
+from siftd.adapters.sdk import build_harness, make_peek_hooks
 from siftd.adapters.validation import DECODING_VERSION
 from siftd.domain import Conversation, Harness
 from siftd.domain.peek import PeekScanResult
@@ -61,12 +62,13 @@ def decodes(adapter: Any) -> bool:
     return getattr(adapter, "ADAPTER_INTERFACE_VERSION", None) == DECODING_VERSION
 
 
-class DecodingAdapter:
-    """A version-2 adapter module plus everything the framework derives for it.
+class _Wrapped:
+    """A module plus what the framework derives for it.
 
     Attribute reads fall through to the module, so ``NAME``, ``discover``,
-    ``can_handle`` and the optional hooks are the module's own. Declarations are
-    read when used, not when wrapped, so a patched module is seen as patched.
+    ``can_handle`` and the optional hooks are the module's own. A peek hook the
+    module defines wins over the derived one. Derivations are read when used, not
+    when wrapped, so a patched module is seen as patched.
     """
 
     def __init__(self, module: ModuleType) -> None:
@@ -74,17 +76,32 @@ class DecodingAdapter:
         # The module's own description, not this class's: documentation generated
         # from the registry reads ``__doc__`` as the adapter's.
         self.__doc__ = module.__doc__
-        self._peek: tuple | None | bool = False  # False: not derived yet
+        self._hooks: dict[str, Any] | None = None
+        self._hooks_derived = False
 
     def __getattr__(self, name: str) -> Any:
         if name in _PEEK_HOOKS:
             if hasattr(self._module, name):
                 return getattr(self._module, name)
             hooks = self._derived_peek()
-            if hooks is None:
+            if hooks is None or name not in hooks:
                 raise AttributeError(name)
-            return hooks[_PEEK_HOOKS.index(name)]
+            return hooks[name]
         return getattr(self._module, name)
+
+    def _derived_peek(self) -> dict[str, Any] | None:
+        """The derived peek hooks by name, or None when the adapter has none."""
+        if not self._hooks_derived:
+            self._hooks = self._derive_peek()
+            self._hooks_derived = True
+        return self._hooks
+
+    def _derive_peek(self) -> dict[str, Any] | None:
+        raise NotImplementedError
+
+
+class DecodingAdapter(_Wrapped):
+    """A version-2 adapter module: the framework assembles what it decodes."""
 
     @property
     def HARNESS(self) -> Harness:
@@ -119,13 +136,8 @@ class DecodingAdapter:
         """The conversations of ``source``."""
         return self.assemble(source).conversations
 
-    def _derived_peek(self):
-        """The derived ``(scan, exchanges, tail)``, or None when the adapter opts out of peek."""
-        if self._peek is False:
-            self._peek = self._derive_peek()
-        return self._peek
-
-    def _derive_peek(self):
+    def _derive_peek(self) -> dict[str, Any] | None:
+        """``peek_scan``, ``peek_exchanges`` and ``peek_tail`` from the module's declarations."""
         m = self._module
         if not getattr(m, "SUPPORTS_PEEK", True):
             return None
@@ -142,26 +154,49 @@ class DecodingAdapter:
             last_of_many=getattr(m, "PEEK_LAST_OF_MANY", False),
         )
         enrich = getattr(m, "peek_enrich", None)
-        if enrich is None:
-            return scan, exchanges, tail
+        if enrich is not None:
+            derived_scan = scan
 
-        def enriched_scan(path: Path) -> PeekScanResult | None:
-            result = scan(path)
-            return None if result is None else enrich(path, result)
+            def enriched_scan(path: Path) -> PeekScanResult | None:
+                result = derived_scan(path)
+                return None if result is None else enrich(path, result)
 
-        return enriched_scan, exchanges, tail
+            scan = enriched_scan
+        return {"peek_scan": scan, "peek_exchanges": exchanges, "peek_tail": tail}
+
+
+class LegacyAdapter(_Wrapped):
+    """A version-1 module, wrapped so peek has one source of hooks.
+
+    A version-1 module builds its own conversations, so ``parse`` falls through
+    to it. Its peek scan and exchanges come from ``normalize_record`` through
+    :func:`~siftd.adapters.sdk.make_peek_hooks`. ``peek_tail`` is not derived: a
+    version-1 adapter with no tail hook has always shown the raw last lines.
+    """
+
+    def _derive_peek(self) -> dict[str, Any] | None:
+        m = self._module
+        normalize = getattr(m, "normalize_record", None)
+        if normalize is None or not getattr(m, "SUPPORTS_PEEK", True):
+            return None
+        scan, exchanges, _tail = make_peek_hooks(
+            normalize,
+            tool_aliases=getattr(m, "TOOL_ALIASES", None),
+            subagent_path_marker=getattr(m, "SUBAGENT_PATH_MARKER", None),
+        )
+        return {"peek_scan": scan, "peek_exchanges": exchanges}
 
 
 def adapt(module: Any) -> Any:
-    """``module`` as the adapter consumers use: wrapped if it is a decoding module, itself if not.
+    """``module`` as the adapter consumers use: wrapped, whichever version it is.
 
     Only a bare module is wrapped. Anything else is already an adapter: a wrapper
     this function made, or a proxy (the config path override) around one. So it
     is idempotent, and safe to apply at every boundary that accepts an adapter.
     """
-    if isinstance(module, ModuleType) and decodes(module):
-        return DecodingAdapter(module)
-    return module
+    if not isinstance(module, ModuleType):
+        return module
+    return DecodingAdapter(module) if decodes(module) else LegacyAdapter(module)
 
 
-__all__ = ["DecodingAdapter", "adapt", "decodes"]
+__all__ = ["DecodingAdapter", "LegacyAdapter", "adapt", "decodes"]

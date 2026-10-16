@@ -58,6 +58,27 @@ DEBUG_IDS_REMOVAL = "0.13.0"
 GEMINI_CLI_REMOVAL = "0.13.0"
 
 
+# --- version-1 adapter interface (#93) --------------------------------------
+# One lifetime for everything a version-1 adapter needs: the interface itself
+# (adapters/validation.py, LEGACY_VERSION), the record folds that give such an
+# adapter peek (sdk.peek_scan_from_records, sdk.peek_exchanges_from_records and
+# the derivation in adapters/contract.py, LegacyAdapter), and the SDK helpers
+# only a legacy parse() builds its tree with (sdk.load_jsonl, sdk.ToolCallLinker,
+# sdk.timestamp_bounds). They leave together with V1_INTERFACE_REMOVAL. The one
+# built-in still on version 1 is gemini_cli, which has its own entry above.
+V1_INTERFACE_REMOVAL = "1.0.0"
+
+
+# --- `<root>::agent::<id>` sub-agent parent (#93) -----------------------------
+# Schema v13 records a sub-agent's parent as a conversation_links edge, and does
+# not backfill edges for rows ingested before it. Those rows are still resolved by
+# the marker in their external_id (storage/links.py, subagent_parent_sql). The
+# fallback leaves with LEGACY_AGENT_EDGE_REMOVAL. Before it does, either a
+# migration writes the edge for every marker row, or the release says that rows
+# not re-parsed lose their sub-agent nesting (`siftd ingest --reparse` writes it).
+LEGACY_AGENT_EDGE_REMOVAL = "1.0.0"
+
+
 @dataclass(frozen=True)
 class Deprecation:
     """A deprecated adapter: the successor to name, and the version it leaves."""

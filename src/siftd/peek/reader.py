@@ -5,7 +5,6 @@ from __future__ import annotations
 import inspect
 import json
 import logging
-from collections.abc import Callable
 from pathlib import Path
 
 from siftd.adapters.registry import load_all_adapters
@@ -74,32 +73,8 @@ def read_session_detail(
     if info is None:
         return None
 
-    # Get exchanges via peek_exchanges (explicit or auto-derived)
+    # Get exchanges via the adapter's peek_exchanges (explicit or derived)
     peek_exchanges_fn = getattr(adapter, "peek_exchanges", None)
-
-    if peek_exchanges_fn is None and hasattr(adapter, "normalize_record"):
-        from siftd.adapters.sdk import (
-            NormalizedRecord,
-            iter_jsonl,
-            peek_exchanges_from_records,
-        )
-
-        _normalizer: Callable[[dict], NormalizedRecord | None] = adapter.normalize_record  # type: ignore[attr-defined]
-        _tool_aliases = getattr(adapter, "TOOL_ALIASES", None)
-
-        def peek_exchanges_fn(
-            p: Path,
-            n: int = 5,
-            *,
-            include_thinking: bool = False,
-        ) -> list:
-            return peek_exchanges_from_records(
-                iter_jsonl(p),
-                _normalizer,
-                n,
-                tool_aliases=_tool_aliases,
-                include_thinking=include_thinking,
-            )
 
     if peek_exchanges_fn is None:
         # Adapter doesn't support exchange detail
@@ -271,29 +246,8 @@ def find_session_file(session_id_prefix: str) -> Path | None:
 
 
 def _resolve_peek_scan(module: object):
-    """Resolve peek_scan for an adapter: explicit hook > auto-derived from normalizer."""
-    peek_scan = getattr(module, "peek_scan", None)
-    if peek_scan is not None:
-        return peek_scan
-
-    if hasattr(module, "normalize_record"):
-        from siftd.adapters.sdk import NormalizedRecord, iter_jsonl, peek_scan_from_records
-
-        _norm: Callable[[dict], NormalizedRecord | None] = module.normalize_record  # type: ignore[attr-defined]
-        subagent_marker = getattr(module, "SUBAGENT_PATH_MARKER", None)
-
-        def derived_peek_scan(path: Path):
-            return peek_scan_from_records(
-                iter_jsonl(path),
-                _norm,
-                default_session_id=path.stem,
-                subagent_path_marker=subagent_marker,
-                file_path=path,
-            )
-
-        return derived_peek_scan
-
-    return None
+    """The adapter's peek_scan: its own, or the one derived for it (contract.adapt), or None."""
+    return getattr(module, "peek_scan", None)
 
 
 def _find_adapter_for_file(path: Path) -> object | None:
@@ -303,8 +257,8 @@ def _find_adapter_for_file(path: Path) -> object | None:
     for plugin in plugins:
         module = plugin.module
 
-        # Check if adapter has peek hooks (explicit or via normalizer)
-        if not hasattr(module, "peek_scan") and not hasattr(module, "normalize_record"):
+        # Check if adapter has peek hooks (its own, or derived by contract.adapt)
+        if not hasattr(module, "peek_scan"):
             continue
 
         # Check if file is in adapter's locations

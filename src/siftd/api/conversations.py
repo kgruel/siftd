@@ -25,7 +25,7 @@ from siftd.storage.conversation_stats import (
 from siftd.storage.filters import WhereBuilder
 from siftd.storage.fts import fts5_first_event_in_conversation
 from siftd.storage.fts import sanitize_fts5_query as sanitize_fts5_query  # re-export for the api boundary
-from siftd.storage.links import get_conversation_children, get_conversation_links
+from siftd.storage.links import get_conversation_links, get_subagent_children, subagent_parent_sql
 from siftd.storage.queries import (
     fetch_conversation_by_id_or_prefix,
     fetch_conversation_model,
@@ -44,7 +44,7 @@ from siftd.storage.sql_helpers import (
     owner_predicate,
 )
 from siftd.storage.sqlite import open_database
-from siftd.storage.turns import fold_turns
+from siftd.storage.turns import PREAMBLE_RESPONSE_SQL, fold_turns
 
 _logger = logging.getLogger(__name__)
 
@@ -363,9 +363,9 @@ def list_conversations(
         group_subagents: Page by root session — ``n`` then counts only
             top-level sessions, and every sub-agent of a paged root is pulled
             in (owner-scoped) regardless of the limit, so the renderer can nest
-            them. Sub-agents are those with a ``subagent`` conversation_links
-            edge, or — for rows not yet re-parsed since schema v13 — the
-            ``::agent::`` marker in external_id. Off by default (flat listing).
+            them. Sub-agents are those ``storage.links.subagent_parent_sql``
+            names; one whose parent is not visible to ``owner`` is a top-level
+            entry. Off by default (flat listing).
 
     Returns:
         List of ConversationSummary objects.
@@ -435,16 +435,20 @@ def _list_conversations_impl(
     wb.tool_tag(tool_tag)
 
     if group_subagents:
-        # Page by ROOT session: a sub-agent whose parent is stored is excluded
-        # here, so the n-limit counts top-level sessions only. Their sub-agents
-        # are pulled in unconditionally below, so a parent and its children
-        # always travel together regardless of the page boundary. A sub-agent
-        # whose parent is NOT stored (never ingested, deleted, or outside a
-        # slice) has no row to nest under, so it stays a top-level entry.
+        # Page by ROOT session: a sub-agent is excluded here when its parent is
+        # visible to this owner, so the n-limit counts top-level sessions only.
+        # Its sub-agents are pulled in below, so a parent and its children travel
+        # together. A sub-agent whose parent is not visible (never ingested,
+        # deleted, outside a slice, or owned by someone else) has nothing on this
+        # page to nest under, so it is a top-level entry: an excluded child with
+        # no parent on the page would vanish from the listing.
+        parent_visible = owner_predicate("p.id") if owner else "1 = 1"
         wb.add(
             "NOT EXISTS (SELECT 1 FROM conversations p"
             " WHERE p.harness_id = c.harness_id"
-            f" AND p.external_id = {_SUBAGENT_PARENT_EXT})"
+            f" AND p.external_id = {subagent_parent_sql('c')}"
+            f" AND {parent_visible})",
+            *((owner,) if owner else ()),
         )
 
     where = wb.where_sql()
@@ -478,7 +482,7 @@ def _list_conversations_impl(
         seen = set(conv_ids)
         frontier = list(conv_ids)
         while frontier:
-            found = _fetch_subagent_ids(conn, frontier, owner)
+            found = get_subagent_children(conn, frontier, owner=owner)
             frontier = [cid for cid in found if cid not in seen]
             seen.update(frontier)
             conv_ids.extend(frontier)
@@ -589,27 +593,7 @@ def _list_conversations_impl(
 # prompt. It is the SQL form of the rule in siftd.storage.turns.fold_turns (the
 # only thing that makes a turn without a prompt), kept beside the listing that
 # adds it to prompt_count.
-_HAS_PREAMBLE_SQL = (
-    "EXISTS (SELECT 1 FROM events WHERE kind = 'response' AND parent_id IS NULL"
-    " AND conversation_id = c.id)"
-)
-
-# SQL for "the external_id of the session this conversation c is a sub-agent
-# of", NULL for a top-level one. The edge is authoritative: a conversation with
-# ANY conversation_links row is a sub-agent only if that edge is kind
-# 'subagent', and its parent is the edge's. The "<root>::agent::<id>" spelling
-# of external_id is consulted only for a row with NO edge (ingested before
-# schema v13, not re-parsed) and is dropped once nothing predates the edge.
-# Root selection, child expansion and the summary projection all derive the
-# parent from this one rule, so they cannot disagree.
-_SUBAGENT_PARENT_EXT = """(CASE
-    WHEN EXISTS (SELECT 1 FROM conversation_links l WHERE l.conversation_id = c.id)
-        THEN (SELECT l.parent_external_id FROM conversation_links l
-              WHERE l.conversation_id = c.id AND l.kind = 'subagent')
-    WHEN instr(c.external_id, '::agent::') > 0
-        THEN substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)
-END)"""
-
+_HAS_PREAMBLE_SQL = f"EXISTS (SELECT 1 FROM events WHERE {PREAMBLE_RESPONSE_SQL} AND conversation_id = c.id)"
 
 def _fetch_subagent_parents(
     conn, conversation_ids: list[str],
@@ -617,55 +601,18 @@ def _fetch_subagent_parents(
     """Map conversation_id -> (parent external_id, stored parent's id) for sub-agents.
 
     Top-level conversations are absent. The parent id is resolved within the
-    child's own harness and is None when the parent is not stored. Derived from
-    ``_SUBAGENT_PARENT_EXT``, the same rule that selects roots and children.
+    child's own harness and is None when the parent is not stored.
     """
     rows = batched_in_query(
         conn,
-        f"SELECT c.id, {_SUBAGENT_PARENT_EXT} AS parent_ext,"
+        f"SELECT c.id, {subagent_parent_sql('c')} AS parent_ext,"
         " (SELECT p.id FROM conversations p"
         "   WHERE p.harness_id = c.harness_id"
-        f"   AND p.external_id = {_SUBAGENT_PARENT_EXT}) AS parent_id"
+        f"   AND p.external_id = {subagent_parent_sql('c')}) AS parent_id"
         " FROM conversations c WHERE c.id IN ({placeholders})",
         conversation_ids,
     )
     return {r["id"]: (r["parent_ext"], r["parent_id"]) for r in rows if r["parent_ext"]}
-
-
-def _fetch_subagent_ids(conn, parent_ids: list[str], owner: str | None) -> list[str]:
-    """IDs of the sub-agent conversations directly below ``parent_ids``.
-
-    The edge is the source of truth: children whose ``subagent`` link resolves to
-    a parent. A row with no edge at all (ingested before schema v13, not
-    re-parsed) is matched by the ``<root>::agent::<agentId>`` spelling of its
-    external_id, within the parent's harness; a row that has an edge, of any
-    kind, is never matched that way. Both are owner-scoped exactly like the main
-    query: a visible parent must not grant access to a child owned by someone
-    else (IDOR), and an absent owners table with an owner filter yields nothing,
-    matching the caller's own short-circuit.
-    """
-    if not parent_ids:
-        return []
-    if owner and not has_conversation_owners_table(conn):
-        return []
-    ids = [c.conversation_id for c in get_conversation_children(conn, parent_ids, kind="subagent", owner=owner)]
-    cwb = WhereBuilder()
-    cwb.owner(owner)
-    placeholders = ",".join("?" * len(parent_ids))
-    cwb.add(
-        "NOT EXISTS (SELECT 1 FROM conversation_links l WHERE l.conversation_id = c.id)"
-        " AND c.external_id LIKE '%::agent::%'"
-        f" AND p.id IN ({placeholders})",
-        *parent_ids,
-    )
-    sql = (
-        "SELECT c.id FROM conversations c"
-        " JOIN conversations p ON p.harness_id = c.harness_id"
-        "  AND p.external_id = substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)"
-        f" {cwb.joins_sql()} {cwb.where_sql()}"
-    )
-    ids.extend(row["id"] for row in conn.execute(sql, cwb.params).fetchall())
-    return list(dict.fromkeys(ids))
 
 
 def _fetch_agent_types_for_conversations(

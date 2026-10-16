@@ -218,7 +218,7 @@ started_at = "2025-01-15T14:32:01.123456+00:00"
 started_at = "2025-01-15T14:32:01"
 ```
 
-Use the SDK helper:
+A legacy `parse()` can use the SDK helper:
 
 ```python
 from siftd.adapters.sdk import timestamp_bounds
@@ -363,10 +363,11 @@ This allows partial peek support across a mixed adapter ecosystem.
 
 ## SDK Helpers
 
-Import from `siftd.adapters.sdk`. `discover_files` serves every adapter. The rest
-(`build_harness`, `timestamp_bounds`, `load_jsonl`, `ToolCallLinker`) are what a
-legacy `parse()` builds its own tree with; a decoding adapter does not need them,
-because siftd builds the harness and the assembler places records, pairs tool
+Import from `siftd.adapters.sdk`. `discover_files` and `build_harness` serve every
+adapter. The rest (`timestamp_bounds`, `load_jsonl`, `ToolCallLinker`) are what a
+legacy `parse()` builds its own tree with, and leave with version 1
+(`V1_INTERFACE_REMOVAL` in `siftd/api/compat.py`). A decoding adapter does not need
+them, because siftd builds the harness and the assembler places records, pairs tool
 results and bounds the timestamps.
 
 ### `discover_files(locations, default_locations, glob_patterns)`
@@ -436,7 +437,8 @@ def parse(source):
     ...
 ```
 
-A version-1 adapter writes its own peek hooks (or none), from the record folds in
+A version-1 adapter's peek comes from its `normalize_record` (siftd derives `peek_scan` and
+`peek_exchanges` from it), or from hooks it writes itself with the record folds in
 `siftd.adapters.sdk`:
 
 ```python

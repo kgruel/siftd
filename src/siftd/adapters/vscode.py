@@ -426,6 +426,7 @@ class VSCodeDecoder:
 
         content: list[ContentBlock] = []
         tool_parts: list[dict] = []
+        marked: set[str] = set()
         for part in _parts(request):
             if not isinstance(part, dict):
                 out.append(Unknown(reason="part:not-an-object"))
@@ -435,6 +436,16 @@ class VSCodeDecoder:
                 content.append(ContentBlock(block_type="text", content={"text": part["value"]}))
             elif kind == "toolInvocationSerialized":
                 tool_parts.append(part)
+                # A call made by this request is marked where it sits in the answer,
+                # as a tool_use block (the shape codex_cli writes), so the answer's
+                # content keeps the position. Its ToolCallRec comes from _tool_records.
+                call_id = _invocation_id(part)
+                if call_id is not None and call_id not in self._calls and call_id not in marked:
+                    marked.add(call_id)
+                    final = self._final.get(call_id, part)
+                    content.append(ContentBlock(block_type="tool_use", content={
+                        "id": call_id, "name": _tool_name(final), "input": _tool_input(final),
+                    }))
             elif kind == "thinking":
                 value = part.get("value")
                 if isinstance(value, str) and value:

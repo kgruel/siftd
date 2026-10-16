@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 205 | 3614 |
-| `tests/adapters/` | 22 | 477 |
-| `tests/architecture/` | 15 | 90 |
+| `tests/` | 206 | 3620 |
+| `tests/adapters/` | 22 | 482 |
+| `tests/architecture/` | 15 | 91 |
 | `tests/cli/` | 31 | 690 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -162,7 +162,7 @@ docstring so its row is meaningful.
 | [test_compat_ledger.py](test_compat_ledger.py) | 3 | The compat ledger's removal versions are enforced by the release that reaches them. |
 | [test_config.py](test_config.py) | 66 | Tests for config module. |
 | [test_content_filters.py](test_content_filters.py) | 38 | Tests for binary content filtering. |
-| [test_conversation_links.py](test_conversation_links.py) | 33 | conversation_links: lineage as a first-class edge, resolved at read time. |
+| [test_conversation_links.py](test_conversation_links.py) | 35 | conversation_links: lineage as a first-class edge, resolved at read time. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
 | [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
 | [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
@@ -172,6 +172,7 @@ docstring so its row is meaningful.
 | [test_doctor.py](test_doctor.py) | 125 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |
 | [test_doctor_view.py](test_doctor_view.py) | 12 | Tests for the painted doctor progress view (siftd/doctor/view.py). |
+| [test_domain_conversation.py](test_domain_conversation.py) | 3 | ``Conversation`` keeps the positional constructor v1 adapters were written against. |
 | [test_embeddings.py](test_embeddings.py) | 20 | Tests for the embeddings subsystem. |
 | [test_embeddings_availability.py](test_embeddings_availability.py) | 14 | Embedding availability — status-driven (config/installed), not reachability. |
 | [test_embeddings_base_edges.py](test_embeddings_base_edges.py) | 21 | Deterministic, config-driven backend resolution (base lane — no fastembed). |
@@ -254,7 +255,7 @@ docstring so its row is meaningful.
 | [test_push_windowing_floor.py](test_push_windowing_floor.py) | 3 | Regression: a delta/resume push must window with a since-floor. |
 | [test_queries.py](test_queries.py) | 30 | Tests for storage/queries.py correctness and efficiency. |
 | [test_query_files.py](test_query_files.py) | 25 | Tests for user-defined SQL query files with dual variable syntax. |
-| [test_reader.py](test_reader.py) | 33 | Tests for siftd.peek.reader — session file reading utilities. |
+| [test_reader.py](test_reader.py) | 34 | Tests for siftd.peek.reader — session file reading utilities. |
 | [test_reader_edges.py](test_reader_edges.py) | 3 | — |
 | [test_readonly.py](test_readonly.py) | 20 | Tests for read-only database mode. |
 | [test_receive.py](test_receive.py) | 18 | Tests for siftd db receive — create-or-merge from a source database. |
@@ -340,7 +341,7 @@ docstring so its row is meaningful.
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
-| [adapters/test_contract.py](adapters/test_contract.py) | 38 | The adapter contract: versions, optional hooks, derivation, drop-ins, template. |
+| [adapters/test_contract.py](adapters/test_contract.py) | 42 | The adapter contract: versions, optional hooks, derivation, drop-ins, template. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
@@ -354,7 +355,7 @@ docstring so its row is meaningful.
 | [adapters/test_registry_edges.py](adapters/test_registry_edges.py) | 5 | — |
 | [adapters/test_sdk_edges.py](adapters/test_sdk_edges.py) | 7 | — |
 | [adapters/test_validation.py](adapters/test_validation.py) | 15 | Tests for adapter signature validation (H16). |
-| [adapters/test_vscode.py](adapters/test_vscode.py) | 29 | Tests for VSCode adapter. |
+| [adapters/test_vscode.py](adapters/test_vscode.py) | 30 | Tests for VSCode adapter. |
 
 ### `tests/architecture/`
 
@@ -374,7 +375,7 @@ docstring so its row is meaningful.
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
-| [architecture/test_turn_fold.py](architecture/test_turn_fold.py) | 4 | One fold from events to turns; the places that ask "which events are prompts" are enumerated. |
+| [architecture/test_turn_fold.py](architecture/test_turn_fold.py) | 5 | One fold from events to turns; the places that ask "which events are prompts" are enumerated. |
 
 ### `tests/cli/`
 
