@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from siftd.api import open_database
 from siftd.cli._common import embedding_awaiting_message, resolve_db
+from siftd.errors import UserInputError
 from siftd.output import fmt_count, fmt_model, fmt_workspace, status
 from siftd.paths import ensure_dirs
 
@@ -359,9 +360,46 @@ class _IngestJsonRenderer:
         print(json.dumps(payload))
 
 
+def _report_reparse(stats, *, renderer) -> None:
+    """Report what ``--reparse`` did: totals, and each conversation it declined.
+
+    Nothing here is hidden by ``--quiet``. A reparse is an explicit maintenance
+    run, and its totals are the only account of what it changed; a declined
+    conversation is a tag a replacement would have destroyed, which a quiet run
+    must not hide either. Units: sources re-parsed, conversations replaced,
+    conversations skipped.
+    """
+    skipped = stats.skipped_for_tags
+    if renderer is not None:
+        renderer._emit({
+            "type": "reparse",
+            "reparsed": stats.reparsed,
+            "replaced": stats.conversations_replaced,
+            "skipped_for_tags": [
+                {"path": s.path, "conversation_id": s.conversation_id, "lost": s.lost}
+                for s in skipped
+            ],
+        })
+        return
+    status.info(
+        f"reparse: {stats.reparsed} source(s) re-parsed, "
+        f"{stats.conversations_replaced} conversation(s) replaced, "
+        f"{len(skipped)} skipped for tags"
+    )
+    for s in skipped:
+        status.warning(
+            f"skipped for tags: conversation {s.conversation_id} would lose "
+            f"{s.lost} user-applied tag(s) on replacement ({s.path}); "
+            "not replaced. Re-run with --reparse --force to replace it anyway."
+        )
+
+
 def cmd_ingest(args) -> int:
     """Run ingestion from all adapters."""
     from siftd.api import AdapterSelectionError, run_ingest, run_rebuild_fts
+
+    if getattr(args, "force", False) and not getattr(args, "reparse", False):
+        raise UserInputError("--force applies only with --reparse")
 
     ensure_dirs()
 
@@ -447,6 +485,8 @@ def cmd_ingest(args) -> int:
                 scan_paths=args.path,
                 on_event=renderer.handle_event,
                 on_notice=_on_egress_notice,
+                reparse=args.reparse,
+                force=args.force,
             )
     except AdapterSelectionError as exc:
         message = str(exc)
@@ -465,14 +505,17 @@ def cmd_ingest(args) -> int:
         # asked for specific work did none of it. Auto-quiet (any non-TTY, which
         # is every scripted `siftd ingest --path … && siftd search …`) must not
         # swallow that; only an explicit --quiet does.
-        scoped = bool(args.path or args.adapter)
+        scoped = bool(args.path or args.adapter or args.reparse)
         if json_mode:
             renderer._emit({"type": "skipped", "reason": "locked", "message": message})
         elif not quiet_explicit and (scoped or not auto_quiet):
-            status.info(
-                message
-                + (" The requested paths/adapters were not ingested." if scoped else "")
-            )
+            if args.reparse:
+                suffix = " The requested reparse was not run."
+            elif scoped:
+                suffix = " The requested paths/adapters were not ingested."
+            else:
+                suffix = ""
+            status.info(message + suffix)
         return 0
 
     stats = result.stats
@@ -482,6 +525,8 @@ def cmd_ingest(args) -> int:
         renderer.handle_summary(stats)
     else:
         renderer.print_summary(stats)
+    if args.reparse:
+        _report_reparse(stats, renderer=renderer if json_mode else None)
 
     # Adapter health: zero-discovery, non-core file errors, drop-in import failures.
     from siftd.api.adapters import DEFAULT_SUPPORT_TIER
@@ -1688,7 +1733,9 @@ def build_data_parser(subparsers) -> None:
   siftd ingest -v                   # verbose: per-adapter skip breakdowns
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
-  siftd ingest --rebuild-fts        # rebuild FTS index from scratch""",
+  siftd ingest --rebuild-fts        # rebuild FTS index from scratch
+  siftd ingest --reparse -a gemini_cli  # re-parse unchanged files under the current parser
+  siftd ingest --reparse --force    # ...and replace conversations that would lose user tags""",
     )
     _verbosity = p_ingest.add_mutually_exclusive_group()
     _verbosity.add_argument(
@@ -1708,6 +1755,18 @@ def build_data_parser(subparsers) -> None:
     p_ingest.add_argument("-a", "--adapter", action="append", metavar="NAME", help="Only run specific adapter(s) (can be repeated)")
     p_ingest.add_argument("--json", action="store_true", help="Output newline-delimited JSON events")
     p_ingest.add_argument("--rebuild-fts", action="store_true", help="Rebuild FTS index from existing data (skips ingestion)")
+    p_ingest.add_argument(
+        "--reparse",
+        action="store_true",
+        help="Re-parse already-ingested sources even when unchanged, so an adapter fix reaches stored "
+        "conversations. Tags and ownership carry over; a conversation that would lose user-applied "
+        "tags is skipped unless --force is given (use with -a to limit to one adapter)",
+    )
+    p_ingest.add_argument(
+        "--force",
+        action="store_true",
+        help="With --reparse, replace conversations even when that would lose user-applied tags",
+    )
     p_ingest.set_defaults(func=cmd_ingest)
 
     # backfill

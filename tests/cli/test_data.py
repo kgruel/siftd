@@ -1664,7 +1664,7 @@ class TestDataDirectBranches:
         monkeypatch.setattr("siftd.api.ingest.wrap_adapter_paths", lambda m, p: m)
         monkeypatch.setattr(
             "siftd.api.ingest.ingest_all",
-            lambda conn, adapters, on_event=None, filter_binary=None: FakeStats(),
+            lambda conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False: FakeStats(),
         )
         monkeypatch.setattr("siftd.api.stats.get_stats", lambda **k: {})
         monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("x")))

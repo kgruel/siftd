@@ -1772,7 +1772,7 @@ def mark_egress_notified(embed_db_path: pathlib.Path | None = ...) -> None
 Run ingestion from discovered adapters.
 
 ```python
-def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ..., on_notice: collections.abc.Callable[[str], None] | None = ...) -> IngestRunResult
+def run_ingest(*, db_path: Path, adapter_names: list[str] | None = ..., scan_paths: list[str] | None = ..., filter_binary: bool | None = ..., on_event: collections.abc.Callable[[siftd.ingestion.orchestration.IngestEvent], None] | None = ..., on_notice: collections.abc.Callable[[str], None] | None = ..., reparse: bool = ..., force: bool = ...) -> IngestRunResult
 ```
 
 ### run_rebuild_fts

@@ -42,7 +42,7 @@ def test_run_ingest_returns_result_and_writes_stats_cache(tmp_path, monkeypatch)
     monkeypatch.setattr(
         ingest_api,
         "ingest_all",
-        lambda _conn, adapters, on_event=None, filter_binary=None: (
+        lambda _conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False: (
             stats if adapters == ["mod:claude"] else None
         ),
     )
@@ -89,7 +89,7 @@ def test_run_ingest_with_scan_paths_wraps_adapters(tmp_path, monkeypatch):
 
     seen = {}
 
-    def _fake_ingest(_conn, adapters, on_event=None, filter_binary=None):
+    def _fake_ingest(_conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False):
         seen["adapters"] = adapters
         return stats
 
@@ -140,13 +140,11 @@ def test_run_ingest_skips_disabled_adapter_and_reports_it(tmp_path, monkeypatch)
     monkeypatch.setattr(
         ingest_api,
         "load_all_adapters",
-        _fake_load_with_disabled(
-            ["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]
-        ),
+        _fake_load_with_disabled(["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]),
     )
     seen = {}
 
-    def _fake_ingest(_conn, adapters, on_event=None, filter_binary=None):
+    def _fake_ingest(_conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False):
         seen["adapters"] = adapters
         return stats
 
@@ -169,9 +167,7 @@ def test_run_ingest_explicit_disabled_adapter_raises_with_hint(tmp_path, monkeyp
     monkeypatch.setattr(
         ingest_api,
         "load_all_adapters",
-        _fake_load_with_disabled(
-            ["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]
-        ),
+        _fake_load_with_disabled(["aider"], [SimpleNamespace(name="claude_code", module="mod:claude")]),
     )
 
     with pytest.raises(ingest_api.AdapterSelectionError) as exc:
@@ -220,7 +216,7 @@ class TestIngestLock:
         monkeypatch.setattr(
             ingest_api,
             "ingest_all",
-            lambda _conn, adapters, on_event=None, filter_binary=None: stats,
+            lambda _conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False: stats,
         )
         return conn
 
@@ -287,7 +283,7 @@ class TestIngestLock:
         self._wire(monkeypatch, stats)
         seen = {}
 
-        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None):
+        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False):
             with ingest_api._ingest_lock(db) as second:
                 seen["during"] = second
             return stats
@@ -350,14 +346,12 @@ class TestIngestLock:
         self._wire(monkeypatch, stats)
         seen = {}
 
-        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None):
+        def _ingest_all(_conn, adapters, on_event=None, filter_binary=None, reparse=False, force=False):
             seen["nested"] = ingest_api.run_ingest(db_path=db)
             return stats
 
         monkeypatch.setattr(ingest_api, "ingest_all", _ingest_all)
-        monkeypatch.setattr(
-            ingest_api, "_maybe_auto_index", lambda *_a, **_kw: None
-        )
+        monkeypatch.setattr(ingest_api, "_maybe_auto_index", lambda *_a, **_kw: None)
 
         result = ingest_api.run_ingest(db_path=db)
 

@@ -219,7 +219,7 @@ def _wire_run_ingest(monkeypatch, stats):
     )
     monkeypatch.setattr(
         ingest_api, "ingest_all",
-        lambda _c, adapters, on_event=None, filter_binary=None: stats,
+        lambda _c, adapters, on_event=None, filter_binary=None, reparse=False, force=False: stats,
     )
     monkeypatch.setattr("siftd.api.stats.get_stats", lambda db_path: {})
     monkeypatch.setattr("siftd.api.stats.write_stats_cache", lambda payload, **_kw: None)

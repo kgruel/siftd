@@ -45,6 +45,7 @@ from siftd.storage.replacement import (
     release_carryover,
     restore_and_report,
     snapshot_conversation,
+    unrestorable_user_tags,
 )
 from siftd.storage.sessions import (
     drain_pending_tags,
@@ -80,8 +81,31 @@ logger = logging.getLogger(__name__)
 # counts the file as a skipped duplicate.
 _SETTLED_DUPLICATE = object()
 
+# Returned by _ingest_file when ``--reparse`` declined to adopt a stored row
+# because that would lose a user-applied tag. Nothing was written; the caller
+# counts the file as skipped, and the decline is already recorded on the stats.
+_DECLINED_FOR_TAGS = object()
+
+class _Unparsed:
+    """Marks a source whose parse has not happened yet.
+
+    A class rather than ``object()`` so ``isinstance`` narrows the type: a parse
+    can legitimately return None, and the narrowed type has to say so.
+    """
+
+
+_UNPARSED = _Unparsed()
+
 if TYPE_CHECKING:
     from siftd.ingestion import AdapterModule
+
+
+@dataclass(frozen=True)
+class TagSkip:
+    """A conversation a reparse declined to replace because it would lose user tags."""
+    path: str
+    conversation_id: str
+    lost: int
 
 
 @dataclass
@@ -97,6 +121,15 @@ class IngestStats:
     responses: int = 0
     tool_calls: int = 0
     by_harness: dict = field(default_factory=dict)
+    # --reparse only: sources re-parsed although their stat or hash was unchanged.
+    reparsed: int = 0
+    # Conversations deleted and stored again in their place (any run). Counted
+    # per conversation, because a container can replace one session and ingest
+    # another, which no per-file outcome counter can express.
+    conversations_replaced: int = 0
+    # --reparse only: conversations left as they were because replacing them
+    # would lose user-applied tags (named by id; --force replaces them anyway).
+    skipped_for_tags: list[TagSkip] = field(default_factory=list)
 
 
 @dataclass
@@ -253,6 +286,21 @@ def _revision_moved(conn, conversation, stored_id: str) -> bool:
     return source is not None and source == stored_source
 
 
+def _from_another_source(conn, conversation, stored_id: str) -> bool:
+    """Whether both copies name the source they were read from, and the sources differ.
+
+    Only a conversation that states a revision is stamped with its source
+    (:func:`_with_content_source`), and it is exactly such a source whose content
+    can change while its end time does not. Elsewhere there is no source to
+    compare, and False keeps the existing rule.
+    """
+    source = conversation.attributes.get(CONTENT_SOURCE_ATTRIBUTE)
+    if source is None:
+        return False
+    stored_source = get_attribute(conn, "conversation", stored_id, CONTENT_SOURCE_ATTRIBUTE)
+    return stored_source is not None and stored_source != source
+
+
 def _session_should_replace(
     new_ended: str | None,
     existing_ended: str | None,
@@ -277,6 +325,44 @@ def _session_should_replace(
     if revision_moved or new_ended is None:
         return True
     return _compare_timestamps(new_ended, existing_ended)
+
+
+def _reparse_should_replace(
+    new_ended: str | None,
+    existing_ended: str | None,
+    *,
+    revision_moved: bool = False,
+    other_source: bool = False,
+) -> bool:
+    """Whether a reparse replaces a session already stored under the same key.
+
+    The combined rule, in one place. Under ``--reparse`` a session replaces when
+    any of these holds:
+
+    - its content revision moved within the same source path (``revision_moved``,
+      see :func:`_revision_moved`), whatever its end time says;
+    - either ``ended_at`` is missing, so there is no order to apply;
+    - the incoming ``ended_at`` is newer than the stored one;
+    - the two are equal and the copy was not read from another source
+      (``other_source``, see :func:`_from_another_source`).
+
+    ``--reparse`` re-parses sources that did not move, so an equal ``ended_at``
+    from the same source must replace: it is the same session under the current
+    parser, which is the point. A copy from another source (a backup beside the
+    live database) must not: a source with revisions can change its content
+    without moving its end time, so an equal end time says nothing about which
+    copy is current, and replacing would make the last source processed win.
+    Each replacement compares against what is stored at that moment, so an older
+    copy never displaces a newer one, whatever order the sources arrive in. Two
+    cases stay order-dependent: equal end times across sources that name no
+    source, and a timestamp missing on either side, where the re-parsed copy
+    wins, as in :func:`_session_should_replace`.
+    """
+    if revision_moved or new_ended is None or existing_ended is None:
+        return True
+    if other_source:
+        return _compare_timestamps(new_ended, existing_ended)
+    return not _compare_timestamps(existing_ended, new_ended)
 
 
 def _instant(timestamp: str | None) -> object | None:
@@ -467,24 +553,42 @@ def _claimant_conversations(
             yield None
 
 
+def _split_moves_assignments(
+    conn, adapter, conversation_id: str, file_path: str, conversation
+) -> bool:
+    """Whether a row another path claims gives its assignments up to ``conversation``.
+
+    They move only when the row's transcript is this conversation's and no
+    claimant's: a claimant that also holds the row's transcript makes the row
+    ambiguous (a parent and its child share a prefix), and an ambiguous row keeps
+    its assignments. Ownership is decided by content, never by who holds the
+    claim. One predicate for the move and for the tag gate that asks about it,
+    so the gate cannot clear a split the door then makes.
+    """
+    if not _holds_transcript_of(conn, conversation_id, conversation):
+        return False
+    for other in _claimant_conversations(conn, adapter, conversation_id, file_path):
+        # An unreadable claimant may hold the row too: keep the assignments.
+        if other is None or _holds_transcript_of(conn, conversation_id, other):
+            return False
+    return True
+
+
 def _split_carryover(
     conn, adapter, conversation_id: str, file_path: str, conversation
 ) -> ConversationCarryover | None:
     """The assignments a row another path claims gives up to ``conversation``, when they are its transcript's.
 
     A refused replacement leaves the row where it is, for its claimant, so its tags
-    stay on the row unless they move. They move only when the row's transcript is
-    this conversation's and no claimant's: a claimant that also holds the row's
-    transcript makes the row ambiguous (a parent and its child share a prefix), and
-    an ambiguous row keeps its assignments. Ownership is decided by content, never
-    by who holds the claim. Returns None when nothing moves.
+    stay on the row unless they move (see :func:`_split_moves_assignments` for when
+    they do). Returns None when nothing moves.
+
+    This removes assignments from a row that stays, so it is a replacement door
+    for the tag gate: callers ask :func:`_declined_for_tags` first.
     """
-    if not _holds_transcript_of(conn, conversation_id, conversation):
+    if not _split_moves_assignments(conn, adapter, conversation_id, file_path, conversation):
         return None
-    for other in _claimant_conversations(conn, adapter, conversation_id, file_path):
-        # An unreadable claimant may hold the row too: keep the assignments.
-        if other is None or _holds_transcript_of(conn, conversation_id, other):
-            return None
+    _hold_write_lock(conn)
     return release_carryover(conn, conversation_id, snapshot_conversation(conn, conversation_id))
 
 
@@ -634,6 +738,8 @@ def ingest_all(
     on_file: Callable[[Source, str], None] | None = None,
     on_event: Callable[[IngestEvent], None] | None = None,
     filter_binary: bool | None = None,
+    reparse: bool = False,
+    force: bool = False,
 ) -> IngestStats:
     """Discover and ingest all new files from all adapters.
 
@@ -649,6 +755,13 @@ def ingest_all(
         on_event: Optional callback for structured progress events
         filter_binary: If True, filter binary content from tool results.
             If None (default), reads from config (ingestion.filter_binary).
+        reparse: Re-parse every source already ingested, even when its stat and
+            hash are unchanged, so a parser fix reaches stored rows. Each
+            conversation goes through the ordinary replacement path, which
+            carries its tags and ownership (see ``storage/replacement.py``).
+        force: With ``reparse``, replace a conversation even when replacing it
+            would lose user-applied tags. Without it those are skipped and
+            reported in ``stats.skipped_for_tags``.
 
     Returns:
         IngestStats with counts
@@ -755,30 +868,50 @@ def ingest_all(
                     location = source.as_path
                     st = location.stat()
 
-                    # Fast path: stat-only skip (no file I/O for hashing)
-                    if _stat_unchanged(existing_info, st):
+                    # Fast path: stat-only skip (no file I/O for hashing).
+                    # --reparse skips neither check: the point is to re-parse
+                    # a source whose bytes did not move.
+                    if not reparse and _stat_unchanged(existing_info, st):
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
                     # Slow path: mtime or size changed (or no stored stat), hash the file
                     current_hash = compute_file_hash(location)
 
-                    if _hash_unchanged(existing_info, current_hash):
+                    if not reparse and _hash_unchanged(existing_info, current_hash):
                         # Content unchanged, mtime drifted — update stored stat
                         update_file_stat(conn, file_path, st.st_mtime, st.st_size)
                         conn.commit()
                         _count_file_skipped(source, "skipped", stats, on_file, emit_event)
                         continue
 
-                    # Hash changed - re-ingest
+                    # Hash changed (or --reparse) - re-ingest
                     # Delete old conversation/record
                     carryover: ConversationCarryover | None = None
+                    parsed: Conversation | None | _Unparsed = _UNPARSED
+                    if reparse:
+                        stats.reparsed += 1
+                        # Parse before any delete, so a replacement the tag gate
+                        # declines touches nothing. The parse is handed on to
+                        # _reingest_file, which would otherwise parse it again.
+                        parsed = _parse_source_conversation(source, adapter, file_path)
+                        target = _replacement_target(
+                            conn, existing_info["conversation_id"], parsed
+                        )
+                        if target is not None and _declined_for_tags(
+                            conn, adapter, target.conversation_id, parsed,
+                            file_path=file_path, reparse=reparse, force=force, stats=stats,
+                            splits_when_claimed=target.splits_when_claimed,
+                        ):
+                            _count_file_skipped(
+                                source, "skipped (tags)", stats, on_file, emit_event
+                            )
+                            continue
                     if existing_info["conversation_id"]:
                         carryover = _take_conversation_for_replacement(
                             conn, existing_info["conversation_id"], file_path
                         )
-                        parsed = None
-                        if carryover is None:
+                        if carryover is None and isinstance(parsed, _Unparsed):
                             parsed = _parse_source_conversation(source, adapter, file_path)
                         if carryover is None and (
                             parsed is None
@@ -827,6 +960,7 @@ def ingest_all(
                         _workspace_cache=_workspace_cache,
                         carryover=carryover,
                         resolve_orphan=not existing_info["conversation_id"],
+                        conversation=parsed,
                     )
                     if conv is _SETTLED_DUPLICATE:
                         _count_file_skipped(
@@ -839,7 +973,15 @@ def ingest_all(
                     continue
 
                 # New file - ingest normally
-                conv = _ingest_file(conn, source, adapter, file_path, stats, filter_binary, _workspace_cache=_workspace_cache)
+                conv = _ingest_file(
+                    conn, source, adapter, file_path, stats, filter_binary,
+                    _workspace_cache=_workspace_cache, reparse=reparse, force=force,
+                )
+                if conv is _DECLINED_FOR_TAGS:
+                    _count_file_skipped(
+                        source, "skipped (tags)", stats, on_file, emit_event
+                    )
+                    continue
                 if conv is _SETTLED_DUPLICATE:
                     _count_file_skipped(
                         source, "skipped (duplicate)", stats, on_file, emit_event
@@ -857,16 +999,21 @@ def ingest_all(
                 if existing_file_info:
                     st = _change_stat(change_files)
 
-                    if _stat_unchanged(existing_file_info, st):
-                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
-                        continue
+                    # --reparse skips the stat and hash fast paths, as in the
+                    # file branch: every session the source holds is re-parsed.
+                    if reparse:
+                        stats.reparsed += 1
+                    else:
+                        if _stat_unchanged(existing_file_info, st):
+                            _count_file_skipped(source, "skipped", stats, on_file, emit_event)
+                            continue
 
-                    current_hash = _change_hash(change_files)
-                    if _hash_unchanged(existing_file_info, current_hash):
-                        update_file_stat(conn, file_path, st.st_mtime, st.st_size)
-                        conn.commit()
-                        _count_file_skipped(source, "skipped", stats, on_file, emit_event)
-                        continue
+                        current_hash = _change_hash(change_files)
+                        if _hash_unchanged(existing_file_info, current_hash):
+                            update_file_stat(conn, file_path, st.st_mtime, st.st_size)
+                            conn.commit()
+                            _count_file_skipped(source, "skipped", stats, on_file, emit_event)
+                            continue
 
                 # A session source may yield MANY conversations (one per
                 # session in a DB, or per header in an aider history). Store
@@ -897,7 +1044,12 @@ def ingest_all(
                 file_harness_id = None
                 file_ingested = False
                 file_replaced = False
+                file_skipped_tags = False
                 last_conversation = None
+                # Totals for what this container stored, published once it commits:
+                # the container is one transaction, so a failure on a later session
+                # rolls back every earlier one and their counts must go with them.
+                stored: list[tuple[Conversation, bool]] = []
 
                 for conversation in conversations:
                     harness_id = harness_id_for_conversation(conn, conversation)
@@ -912,6 +1064,15 @@ def ingest_all(
                     superseded = None if existing else _superseded_conversation(conn, harness_id, conversation)
                     if superseded:
                         legacy_row, legacy_key = superseded
+                        # The gate sees the row the adoption takes: the one
+                        # _superseded_conversation found, transcript-checked.
+                        if _declined_for_tags(
+                            conn, adapter, legacy_row["id"], conversation,
+                            file_path=file_path, reparse=reparse, force=force, stats=stats,
+                            splits_when_claimed=False,
+                        ):
+                            file_skipped_tags = True
+                            continue
                         carryover = _take_conversation_for_replacement(
                             conn, legacy_row["id"], file_path
                         )
@@ -927,19 +1088,37 @@ def ingest_all(
                             conn, conv_id, carryover, conversation.external_id
                         )
                         _apply_pending_tags(conn, adapter, conversation, conv_id)
-                        _update_stats_for_conversation(stats, harness_name, conversation)
-                        stats.by_harness[harness_name]["replaced"] += 1
+                        stored.append((conversation, True))
                         file_replaced = True
                         last_conversation = conversation
                     elif existing:
                         # Only a moved session triggers replacement; an
                         # equal/older one is left untouched (preserving its
-                        # tags, ownership, and manual state).
-                        if _session_should_replace(
-                            conversation.ended_at,
-                            existing["ended_at"],
-                            revision_moved=_revision_moved(conn, conversation, existing["id"]),
-                        ):
+                        # tags, ownership, and manual state). --reparse
+                        # re-parses every session, moved or not, but keeps
+                        # latest-wins: it never replaces with an older copy.
+                        # Either way a moved content revision (same source
+                        # path) replaces whatever the end times say; see
+                        # _reparse_should_replace for the combined rule.
+                        revision_moved = _revision_moved(conn, conversation, existing["id"])
+                        should_replace = (
+                            _reparse_should_replace(
+                                conversation.ended_at, existing["ended_at"], revision_moved=revision_moved,
+                                other_source=_from_another_source(conn, conversation, existing["id"]),
+                            )
+                            if reparse
+                            else _session_should_replace(
+                                conversation.ended_at, existing["ended_at"], revision_moved=revision_moved
+                            )
+                        )
+                        if should_replace:
+                            if _declined_for_tags(
+                                conn, adapter, existing["id"], conversation,
+                                file_path=file_path, reparse=reparse, force=force, stats=stats,
+                                splits_when_claimed=False,
+                            ):
+                                file_skipped_tags = True
+                                continue
                             # Same delete-then-insert shape as the file branch,
                             # so it loses tags the same way and takes the same
                             # claim. A session marker is conversation_id=NULL by
@@ -960,14 +1139,13 @@ def ingest_all(
                                 conn, conv_id, carryover, conversation.external_id
                             )
                             _apply_pending_tags(conn, adapter, conversation, conv_id)
-                            _update_stats_for_conversation(stats, harness_name, conversation)
-                            stats.by_harness[harness_name]["replaced"] += 1
+                            stored.append((conversation, True))
                             file_replaced = True
                             last_conversation = conversation
                     else:
                         conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
                         _apply_pending_tags(conn, adapter, conversation, conv_id)
-                        _update_stats_for_conversation(stats, harness_name, conversation)
+                        stored.append((conversation, False))
                         file_ingested = True
                         last_conversation = conversation
 
@@ -979,6 +1157,11 @@ def ingest_all(
                     file_mtime=st.st_mtime, file_size=st.st_size,
                 )
                 conn.commit()
+                for stored_conversation, was_replacement in stored:
+                    _update_stats_for_conversation(stats, harness_name, stored_conversation)
+                    if was_replacement:
+                        stats.by_harness[harness_name]["replaced"] += 1
+                        stats.conversations_replaced += 1
 
                 # File-level outcome: ingested if any new session arrived, else
                 # replaced if any session was updated, else nothing changed.
@@ -988,6 +1171,11 @@ def ingest_all(
                 elif file_replaced:
                     stats.files_replaced += 1
                     file_status = "replaced"
+                elif file_skipped_tags:
+                    _count_file_skipped(
+                        source, "skipped (tags)", stats, on_file, emit_event
+                    )
+                    continue
                 else:
                     _count_file_skipped(
                         source, "skipped (older)", stats, on_file, emit_event
@@ -1302,6 +1490,160 @@ def _count_file_skipped(
         emit_event(label, None)
 
 
+def _replacement_event_keys(conversation) -> frozenset[tuple[str, str]]:
+    """``(event kind, external_id)`` of every event a parse will store.
+
+    The same events :func:`store_conversation` writes, keyed the way
+    :func:`~siftd.storage.replacement.unrestorable_user_tags` matches them. An
+    event with no external_id is not a key: nothing can carry onto it.
+    """
+    if conversation is None:
+        return frozenset()
+    responses = list(conversation.preamble) + [
+        response for prompt in conversation.prompts for response in prompt.responses
+    ]
+    pairs = [("prompt", prompt.external_id) for prompt in conversation.prompts]
+    pairs += [("response", response.external_id) for response in responses]
+    pairs += [
+        ("tool_call", tool_call.external_id)
+        for response in responses
+        for tool_call in response.tool_calls
+    ]
+    return frozenset((kind, ext) for kind, ext in pairs if ext is not None)
+
+
+class _Target(NamedTuple):
+    """The stored conversation a replacement would delete."""
+
+    conversation_id: str
+    superseded_key: str | None = None
+    """The superseded key the row was adopted under; None when found by pointer or own external_id."""
+    splits_when_claimed: bool = True
+    """Whether a refused claim on this row can still release its assignments (see :func:`_split_carryover`).
+
+    False for an orphan found by external_id: a refusal there means the file is a
+    second copy, which the duplicate handler links, so nothing is removed.
+    """
+
+
+def _replacement_target(
+    conn: sqlite3.Connection,
+    conversation_id: str | None,
+    conversation,
+) -> _Target | None:
+    """The stored conversation a replacement of this source would delete, or None.
+
+    A bookkeeping pointer names it directly. A NULL pointer (a legacy session
+    marker, or a row an older release discarded) names nothing, so the parse's
+    own key does: an orphan under the parse's external_id, else the row stored
+    under a key the parse supersedes (adopted only when it holds the parse's
+    transcript, see :func:`_superseded_conversation`). This is the resolution :func:`_reingest_file`
+    performs for a pointer-less source, so the tag gate and the replacement
+    always agree on which row is at stake.
+    """
+    if conversation_id:
+        return _Target(conversation_id)
+    if conversation is None:
+        return None
+    harness_id = harness_id_for_conversation(conn, conversation)
+    orphan = find_conversation_by_external_id(conn, harness_id, conversation.external_id)
+    if orphan:
+        return _Target(orphan["id"], splits_when_claimed=False)
+    superseded = _superseded_conversation(conn, harness_id, conversation)
+    if superseded:
+        row, key = superseded
+        return _Target(row["id"], superseded_key=key)
+    return None
+
+
+def _door_tag_loss(
+    conn: sqlite3.Connection,
+    adapter: AdapterModule,
+    conversation_id: str,
+    conversation,
+    *,
+    file_path: str,
+    splits_when_claimed: bool,
+) -> int:
+    """User-applied assignments a door would remove from ``conversation_id`` and could not restore.
+
+    Asked about what the door *actually does* to this row, which depends on who
+    holds it. An unclaimed row is deleted, so every assignment on it is at stake
+    (``conversation`` is the fresh parse; None means it parses to nothing, so
+    conversation-level tags are lost too). A row another path claims cannot be
+    deleted: the door settles the file as a duplicate (nothing removed), leaves it
+    (nothing removed), or splits the row, releasing the event assignments
+    ``conversation`` owns so they can be re-attached to the conversation stored
+    beside it. Only that last case removes anything, and only what the new parse
+    cannot re-attach is lost.
+    """
+    keys = _replacement_event_keys(conversation)
+    if not _conversation_claimed_elsewhere(conn, conversation_id, file_path):
+        return unrestorable_user_tags(
+            conn, conversation_id, keys, replacement_exists=conversation is not None
+        )
+    if conversation is None or not splits_when_claimed:
+        return 0
+    if _refused_claim_is_a_copy(conn, adapter, conversation_id, file_path, conversation):
+        return 0
+    if not _split_moves_assignments(conn, adapter, conversation_id, file_path, conversation):
+        return 0
+    return unrestorable_user_tags(conn, conversation_id, keys, row_is_kept=True)
+
+
+def _declined_for_tags(
+    conn: sqlite3.Connection,
+    adapter: AdapterModule,
+    conversation_id: str,
+    conversation,
+    *,
+    file_path: str,
+    reparse: bool,
+    force: bool,
+    stats: IngestStats,
+    splits_when_claimed: bool = True,
+) -> bool:
+    """The one tag-safety decision for ``--reparse``: True when the door must leave ``conversation_id`` as it is.
+
+    Every door that can remove assignments (a replacement, an adoption of a
+    superseded row, a split of a claimed row) asks this before it touches
+    anything, about the row it is about to act on, so the rule and the record of
+    a decline cannot drift between the file, new-file, legacy-marker, orphan and
+    session paths. What it asks about is :func:`_door_tag_loss`: the assignments
+    that door would actually remove, not those the row merely holds.
+    ``tests/architecture/test_replacement_carry.py`` holds the doors to this.
+    """
+    if not reparse or force:
+        return False
+    _hold_write_lock(conn)
+    lost = _door_tag_loss(
+        conn, adapter, conversation_id, conversation,
+        file_path=file_path, splits_when_claimed=splits_when_claimed,
+    )
+    if not lost:
+        return False
+    stats.skipped_for_tags.append(
+        TagSkip(path=file_path, conversation_id=conversation_id, lost=lost)
+    )
+    return True
+
+
+def _hold_write_lock(conn: sqlite3.Connection) -> None:
+    """Take the database write lock now, if this connection does not hold it yet.
+
+    A tag decision and the replacement it allows must read and write one state.
+    The ingest lock excludes other ingests, not ``siftd tag``, and the sqlite3
+    module opens its transaction only at the first write. So without this, a tag
+    committed by another connection between reading the row's assignments and
+    deleting the row is deleted with it, unseen by the gate and the carryover.
+    ``in_transaction`` is True only once this connection has written (nothing in
+    ingest issues a deferred BEGIN), and a write already holds the lock. The lock
+    is held until the source's commit or rollback.
+    """
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
+
+
 def _take_conversation_for_replacement(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -1331,6 +1673,7 @@ def _take_conversation_for_replacement(
     """
     if _conversation_claimed_elsewhere(conn, conversation_id, file_path):
         return None
+    _hold_write_lock(conn)
     snapshot = snapshot_conversation(conn, conversation_id)
     delete_conversation(conn, conversation_id)
     return snapshot
@@ -1368,8 +1711,17 @@ def _ingest_file(
     filter_binary: bool,
     *,
     _workspace_cache: dict | None = None,
+    reparse: bool = False,
+    force: bool = False,
 ) -> object | None:
-    """Ingest a single file (file-based dedup strategy)."""
+    """Ingest a single file (file-based dedup strategy).
+
+    A file with no bookkeeping row is new to ingest, but the conversation it
+    supersedes may not be: adopting that row deletes it, which is a replacement
+    door like any other, so ``--reparse`` gates it on tags (``reparse``/``force``,
+    as in :func:`ingest_all`) and returns :data:`_DECLINED_FOR_TAGS` having
+    written nothing.
+    """
     harness_name = adapter.NAME
     location = source.as_path
     st = location.stat()
@@ -1395,9 +1747,15 @@ def _ingest_file(
     # this conversation's identity (see _refused_claim_is_a_copy).
     harness_id = harness_id_for_conversation(conn, conversation)
     carryover: ConversationCarryover | None = None
+    adopted = False
     superseded = _superseded_conversation(conn, harness_id, conversation)
     if superseded:
         legacy_row, legacy_key = superseded
+        if _declined_for_tags(
+            conn, adapter, legacy_row["id"], conversation,
+            file_path=file_path, reparse=reparse, force=force, stats=stats,
+        ):
+            return _DECLINED_FOR_TAGS
         carryover = _take_conversation_for_replacement(conn, legacy_row["id"], file_path)
         if carryover is None:
             if _refused_claim_is_a_copy(conn, adapter, legacy_row["id"], file_path, conversation):
@@ -1411,17 +1769,22 @@ def _ingest_file(
             # a refused row names a different file, so its queue is not this conversation's.
             carryover = _split_carryover(conn, adapter, legacy_row["id"], file_path, conversation)
         else:
+            adopted = True
             rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
     _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
-    _update_stats_for_conversation(stats, harness_name, conversation)
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=st.st_mtime, file_size=st.st_size)
 
     # Apply pending tags from live session
     _apply_pending_tags(conn, adapter, conversation, conv_id)
 
     conn.commit()
+    # Counted after the commit: a failure above rolls the adoption back, and a
+    # total that outlived the rollback would report a replacement that did not happen.
+    _update_stats_for_conversation(stats, harness_name, conversation)
+    if adopted:
+        stats.conversations_replaced += 1
     stats.files_ingested += 1
     return conversation
 
@@ -1439,6 +1802,7 @@ def _reingest_file(
     _workspace_cache: dict | None = None,
     carryover: ConversationCarryover | None = None,
     resolve_orphan: bool = False,
+    conversation: Conversation | None | _Unparsed = _UNPARSED,
 ) -> object | None:
     """Re-ingest a file that has changed (file-based dedup strategy).
 
@@ -1461,10 +1825,15 @@ def _reingest_file(
     (post-delete) match zero rows. See
     :class:`~siftd.storage.replacement.ConversationCarryover` for what is carried
     and what is not.
+
+    ``conversation`` is the caller's parse of this source when it already made
+    one (a reparse parses before deciding to replace, so it can refuse without
+    touching the database); otherwise the source is parsed here.
     """
     harness_name = adapter.NAME
 
-    conversation = _parse_source_conversation(source, adapter, file_path)
+    if isinstance(conversation, _Unparsed):
+        conversation = _parse_source_conversation(source, adapter, file_path)
 
     if conversation is None:
         # The transcript parsed to nothing — there is no replacement row to
@@ -1490,47 +1859,43 @@ def _reingest_file(
 
     if resolve_orphan:
         # The bookkeeping claimed no conversation. If one exists under this
-        # (harness, external_id) it is an orphan the bookkeeping lost track of,
-        # and storing over it would raise UNIQUE — the state that froze these
-        # files permanently (kgruel/siftd#29). Replace it exactly like the
+        # parse's key it is an orphan (or a legacy row) the bookkeeping lost
+        # track of, and storing over it would raise UNIQUE — the state that froze
+        # these files permanently (kgruel/siftd#29). Replace it exactly like the
         # normal path does, snapshot first: the orphan is where the tags live,
         # so deleting it unsnapshotted would destroy every affected
         # conversation's tags on the first ingest after upgrade.
-        harness_id = harness_id_for_conversation(conn, conversation)
-        orphan = find_conversation_by_external_id(conn, harness_id, conversation.external_id)
-        if orphan:
-            # A refusal means it is not an orphan at all: another path's
-            # bookkeeping row points at it, so this file is a second copy of a
-            # tracked transcript. Leaving it lets store_conversation collide,
-            # and the duplicate-conversation handler in ingest_all links this
-            # path at the existing conversation, which is lossless.
+        target = _replacement_target(conn, None, conversation)
+        if target is not None:
             carryover = _take_conversation_for_replacement(
-                conn, orphan["id"], file_path
+                conn, target.conversation_id, file_path
             )
-        else:
-            # A legacy row under a superseded key is this file's conversation. A
-            # refusal cannot be left to a collision: the new key does not collide
-            # with the legacy one, so the store would write a second copy. So a
-            # refused claim settles as a copy when its holder is this conversation
-            # (see _refused_claim_is_a_copy), and otherwise the file is stored.
-            superseded = _superseded_conversation(conn, harness_id, conversation)
-            if superseded:
-                legacy_row, legacy_key = superseded
-                carryover = _take_conversation_for_replacement(
-                    conn, legacy_row["id"], file_path
-                )
+            if target.superseded_key is not None:
+                # A refusal cannot be left to a collision here: the new key does
+                # not collide with the legacy row, so the store would write a
+                # second copy. A refused claim settles as a copy when its holder
+                # is this conversation (see _refused_claim_is_a_copy), and
+                # otherwise the file is stored under its own key.
                 if carryover is None:
-                    if _refused_claim_is_a_copy(conn, adapter, legacy_row["id"], file_path, conversation):
+                    if _refused_claim_is_a_copy(conn, adapter, target.conversation_id, file_path, conversation):
                         _settle_duplicate_path(
-                            conn, file_path, legacy_row["id"], file_hash, file_stat,
+                            conn, file_path, target.conversation_id, file_hash, file_stat,
                             external_id=conversation.external_id,
                         )
                         return _SETTLED_DUPLICATE
-                    # The legacy row belongs to another conversation: store this one under its own key,
-                    # and take the assignments its transcript owns.
-                    carryover = _split_carryover(conn, adapter, legacy_row["id"], file_path, conversation)
+                    # The legacy row belongs to another conversation: take only
+                    # the assignments its transcript owns. The key's queued tags
+                    # stay queued: a refused row names a different file.
+                    carryover = _split_carryover(
+                        conn, adapter, target.conversation_id, file_path, conversation
+                    )
                 else:
-                    rekey_pending_tags(conn, (legacy_key,), conversation.external_id)
+                    rekey_pending_tags(conn, (target.superseded_key,), conversation.external_id)
+            # For an orphan, a refusal means it is not an orphan at all: another
+            # path's bookkeeping row points at it, so this file is a second copy
+            # of a tracked transcript. Leaving it lets store_conversation collide,
+            # and the duplicate-conversation handler in ingest_all links this
+            # path at the existing conversation, which is lossless.
 
     conv_id = store_conversation(conn, conversation, filter_binary=filter_binary, _workspace_cache=_workspace_cache)
 
@@ -1538,13 +1903,17 @@ def _reingest_file(
     # preserving applied_at.
     _restore_carryover_after_replacement(conn, conv_id, carryover, conversation.external_id)
 
-    _update_stats_for_conversation(stats, harness_name, conversation)
+    replaced = carryover is not None
     record_ingested_file(conn, file_path, file_hash, conv_id, file_mtime=file_stat.st_mtime, file_size=file_stat.st_size)
 
     # Apply pending tags from live session
     _apply_pending_tags(conn, adapter, conversation, conv_id)
 
     conn.commit()
+    # Counted after the commit, so a rolled-back replacement is not reported.
+    _update_stats_for_conversation(stats, harness_name, conversation)
+    if replaced:
+        stats.conversations_replaced += 1
     stats.files_replaced += 1
     stats.by_harness[harness_name]["replaced"] += 1
     return conversation

@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 204 | 3609 |
+| `tests/` | 204 | 3610 |
 | `tests/adapters/` | 21 | 430 |
-| `tests/architecture/` | 15 | 88 |
-| `tests/cli/` | 29 | 641 |
+| `tests/architecture/` | 15 | 89 |
+| `tests/cli/` | 30 | 671 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -228,7 +228,7 @@ docstring so its row is meaningful.
 | [test_narrative.py](test_narrative.py) | 13 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
 | [test_normalizers.py](test_normalizers.py) | 2 | Cross-format normalizer validation tests. |
 | [test_op_route_parity.py](test_op_route_parity.py) | 7 | Contract tests: CLI Operation params must be accepted by their serve route. |
-| [test_opencode_ingest.py](test_opencode_ingest.py) | 12 | OpenCode change detection through real ingest: what a re-run must notice. |
+| [test_opencode_ingest.py](test_opencode_ingest.py) | 13 | OpenCode change detection through real ingest: what a re-run must notice. |
 | [test_output_common.py](test_output_common.py) | 32 | Tests for siftd.output.common — pure formatting helpers. |
 | [test_output_format_registry.py](test_output_format_registry.py) | 1 | — |
 | [test_output_formats.py](test_output_formats.py) | 132 | Tests for output format rendering: lists, search, detail, narrative. |
@@ -368,7 +368,7 @@ docstring so its row is meaningful.
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
-| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 9 | A conversation replacement is answerable to one list of what it must carry. |
+| [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 10 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
@@ -389,6 +389,7 @@ docstring so its row is meaningful.
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 30 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

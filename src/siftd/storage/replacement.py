@@ -53,6 +53,16 @@ one in `storage/sqlite.py` names five pre-v4 tables and omits two live ones),
 and counts the sites above by their calls to the two functions here — not by
 ingest's wrapper, which merge does not use and which is therefore how a second
 door stayed invisible until #77.
+
+The reverse question is answered by :func:`unrestorable_user_tags`: before a
+replacement is made, it counts the user-applied assignments the carry above
+would not re-attach, so a caller that must not lose them (``siftd ingest
+--reparse``) can decline the replacement instead of finding the loss after the
+delete. It reads the same rules as :func:`restore_conversation`, and shares its
+legacy-suffix match, so the count and the restore cannot disagree. Asked with
+``row_is_kept``, it counts what :func:`release_carryover` would remove instead,
+which is less than a delete takes: the third site above removes assignments
+without deleting the row, and a gate that only asked about deletes let it.
 """
 
 from __future__ import annotations
@@ -65,7 +75,7 @@ from dataclasses import dataclass, field
 
 from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import has_conversation_owners_table
-from siftd.storage.tags import apply_tag, get_tag_assignments
+from siftd.storage.tags import apply_tag, get_tag_assignments, is_shell_tag_rederived
 
 logger = logging.getLogger(__name__)
 
@@ -366,3 +376,112 @@ def restore_and_report(
             f"by {operation} — block-level re-pointing is not implemented yet"
         )
     return unmatched
+
+
+def _replacement_carries(
+    event_kind: str,
+    external_id: str,
+    replacement_keys: frozenset[tuple[str, str]],
+) -> bool:
+    """Whether a replacement's events include the one an assignment points at.
+
+    Mirrors :func:`_find_event`, which :func:`restore_conversation` uses, so the
+    count and the restore agree: exact match first, and a legacy duplicate
+    suffix on a tool call falls back to its bare id.
+    """
+    if (event_kind, external_id) in replacement_keys:
+        return True
+    if event_kind == "tool_call":
+        match = _LEGACY_DUPLICATE_SUFFIX.match(external_id)
+        return match is not None and ("tool_call", match["base"]) in replacement_keys
+    return False
+
+
+def unrestorable_user_tags(
+    conn: sqlite3.Connection,
+    conversation_id: str,
+    replacement_keys: frozenset[tuple[str, str]],
+    *,
+    replacement_exists: bool = True,
+    row_is_kept: bool = False,
+) -> int:
+    """Count the user-applied tag assignments a replacement would not carry.
+
+    ``replacement_keys`` is the ``(event kind, external_id)`` set the re-parse
+    will store for this conversation. This answers "would a delete-then-insert
+    lose anything a person applied?" before the delete, so a caller can decline
+    a replacement instead of finding the loss afterwards.
+
+    ``replacement_exists=False`` says the re-parse stores no conversation at all
+    (it parses to nothing), so there is nothing to carry anything onto.
+
+    ``row_is_kept=True`` asks the question of :func:`release_carryover` instead
+    of a delete: the row stays, and only the assignments the snapshot selects are
+    taken off it (event assignments with an ``external_id``). Synthetic-event and
+    block assignments are not removed, so they are not lost, and a replacement
+    always exists to take the rest.
+
+    What counts, and why:
+
+    - **Conversation-level tags count only when there is no replacement.**
+      :func:`restore_conversation` re-attaches them to a replacement
+      unconditionally; with no replacement they go with the deleted row.
+    - **Event-level tags count unless the replacement carries the event.** An
+      event with no ``external_id`` can never be matched, so every tag on it
+      counts. Otherwise it counts when the replacement has no event of that
+      ``(kind, external_id)``.
+    - **Block-level tags always count.** Re-pointing them is not implemented
+      (see :class:`ConversationCarryover`), so a replacement loses every one.
+    - **Re-derived tool-call tags never count.** A ``shell:<category>`` tag that
+      :func:`~siftd.storage.tags.is_shell_tag_rederived` says the re-parse
+      reproduces is the parser's output, not a person's, so losing it loses
+      nothing. Note that the tag *name* alone does not separate the two.
+    """
+    lost = 0
+
+    if not replacement_exists:
+        lost += conn.execute(
+            "SELECT COUNT(*) FROM tag_assignments "
+            "WHERE target_kind = 'conversation' AND target_id = ?",
+            (conversation_id,),
+        ).fetchone()[0]
+
+    # CROSS JOIN for the same planner reason as snapshot_conversation: the
+    # events-first plan, not the tag-index-first one, is the fast one.
+    event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
+    for row in conn.execute(
+        f"""
+        SELECT e.kind, e.external_id, t.name AS tag_name,
+               tl.name AS tool_name, etc.input AS tool_input
+        FROM events e
+        CROSS JOIN tag_assignments ta ON ta.target_id = e.id
+        JOIN tags t ON t.id = ta.tag_id
+        LEFT JOIN event_tool_call etc ON etc.event_id = e.id
+        LEFT JOIN tools tl ON tl.id = etc.tool_id
+        WHERE ta.target_kind IN ({event_kinds}) AND e.conversation_id = ?
+        """,
+        (*sorted(EVENT_TAG_KINDS), conversation_id),
+    ).fetchall():
+        if is_shell_tag_rederived(row["tag_name"], row["tool_name"], row["tool_input"]):
+            continue
+        if row["external_id"] is None:
+            # Never re-pointable. A delete loses it; a release leaves it on the row.
+            if not row_is_kept:
+                lost += 1
+        elif not _replacement_carries(row["kind"], row["external_id"], replacement_keys):
+            lost += 1
+
+    if not row_is_kept and conn.execute(
+        "SELECT 1 FROM tag_assignments WHERE target_kind = 'block' LIMIT 1"
+    ).fetchone():
+        lost += conn.execute(
+            """
+            SELECT COUNT(*) FROM tag_assignments ta
+            JOIN event_content ec ON ec.id = ta.target_id
+            JOIN events e ON e.id = ec.event_id
+            WHERE ta.target_kind = 'block' AND e.conversation_id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()[0]
+
+    return lost

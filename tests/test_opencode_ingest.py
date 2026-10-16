@@ -296,6 +296,26 @@ def test_an_older_backup_copy_does_not_replace_the_newer_copy_stored_first(tmp_p
     conn.close()
 
 
+def test_reparse_does_not_let_a_backup_with_an_equal_end_replace_the_live_copy(tmp_path):
+    """--reparse refreshes a copy only from the source it was read from.
+
+    Both copies end at the same instant, and only the live one holds the reply. An
+    equal end time used to replace under --reparse, so the backup, processed last,
+    deleted the reply. Run in both discovery orders: the order must not decide it.
+    """
+    live, backup = _two_copies_of_one_session(tmp_path, reply_moves_session_row=False)
+    for order in ((live, backup), (backup, live)):
+        conn = create_database(tmp_path / f"siftd-{order[0].parent.name}.db")
+        ingest_all(conn, [_adapter_over(live)])
+        assert _events(conn, "opencode::ses_a") == {"prompt": 1, "response": 1}
+
+        stats = ingest_all(conn, [_adapter_over(*order)], reparse=True)
+        assert stats.files_errored == 0
+        assert stats.by_harness["opencode"]["replaced"] == 1  # the live source refreshes itself
+        assert _events(conn, "opencode::ses_a") == {"prompt": 1, "response": 1}
+        conn.close()
+
+
 def test_a_newer_copy_replaces_an_older_backup_stored_first(tmp_path):
     """Latest-wins across sources still holds: the newer copy replaces the older one stored before it."""
     live, backup = _two_copies_of_one_session(tmp_path, reply_moves_session_row=True)

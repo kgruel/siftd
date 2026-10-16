@@ -109,21 +109,68 @@ prints the same line whenever `gemini_cli` contributes sources.
 
 Releases before the chat-file key stored one Gemini conversation per `sessionId`,
 so every chat file that shared a session except one was never stored. A plain
-`siftd ingest` does not recover them: it skips a file whose hash is unchanged, and
-no existing ingest option forces a re-parse. To recover them, back up the database,
-clear the `gemini_cli` bookkeeping, and ingest again:
+`siftd ingest` does not recover them: it skips a file whose stat and hash are
+unchanged. Re-parse them:
 
 ```sh
-DB=~/.local/share/siftd/siftd.db   # your database file (default shown)
-cp "$DB" "$DB.bak"
-sqlite3 "$DB" "DELETE FROM ingested_files WHERE harness_id IN (SELECT id FROM harnesses WHERE name='gemini_cli');"
-siftd --db "$DB" ingest --adapter gemini_cli
+siftd ingest --reparse -a gemini_cli
 ```
 
 The legacy conversation for each chat file is replaced by its chat-file
-conversation, and the tags on it carry over. Running the commands again is safe.
+conversation, and the tags on it carry over. Running the command again is safe.
 This adapter reads only the `.json` chat files; the newer Gemini `.jsonl` logs are
 not discovered.
+
+### Re-parsing stored sources
+
+A fix to an adapter reaches only the sources that change: ingest skips a source
+whose stat and content hash match what was stored. To apply a parser fix to
+conversations already in the database, re-parse them:
+
+```sh
+siftd ingest --reparse                 # every adapter
+siftd ingest --reparse -a codex_cli    # one adapter (-a can repeat)
+```
+
+`--reparse` parses every stored source again, changed or not. Each conversation
+goes through the same replacement as a changed file: it is deleted and stored
+again under a new ID, and what a person attached to it moves across with it.
+Conversation tags and ownership carry over whenever the new parse produces a
+conversation. An event tag moves when the new parse produces an event with the
+same kind and external ID.
+
+A container that holds several copies of one session (a backup next to the live
+file, say) keeps latest-wins: a reparse never replaces a stored session with an
+older copy of it, whichever copy is processed first.
+
+A replacement that would lose a user-applied tag is **skipped**, and the skip is
+reported by conversation ID; the conversation stays as it was. Before deciding,
+ingest counts what the replacement would not carry. The rule applies to every
+replacement a reparse makes, including a legacy session marker, an orphaned
+conversation whose bookkeeping pointer was lost, and a new file that adopts a
+conversation stored under an older key. It also applies when a conversation that
+another path shares gives up the tags its transcript owns to a new conversation:
+those tags are counted the same way, and declining leaves them where they are.
+
+- A conversation tag is never lost while the new parse produces a conversation.
+  A parse that produces no conversation stores nothing to carry it onto, so its
+  conversation tags count as lost.
+- An event tag is lost when its event has no external ID, or the new parse no
+  longer produces an event with that ID. Prompts and responses from Aider, Codex,
+  Antigravity, pi and Copilot have no external ID today, so a tag on one cannot carry.
+- A block tag is always lost: re-pointing block tags is not implemented yet.
+- A tag the parser derives is not counted. `shell:<category>` on a `shell.execute`
+  call is applied at ingest from the command, so the re-parse reproduces it. The
+  name alone does not identify a derived tag, since a person can apply one by hand,
+  so ingest re-runs the categorizer on the call: a `shell:` tag the command would
+  not produce counts as user data.
+
+`--force` replaces the skipped conversations anyway, and the tags counted above
+are lost. The totals at the end of the run report how many sources were re-parsed,
+how many conversations were replaced, and how many conversations were skipped for
+tags. They print even under `--quiet`.
+
+`--force` requires `--reparse`.
 
 ### Disabling an adapter
 
@@ -183,7 +230,7 @@ When you run `siftd ingest`:
 
 1. All adapters are loaded (built-in + drop-in)
 2. Each adapter's `discover()` finds candidate files
-3. Files are checked against `ingested_files` table (skip if already processed and unchanged)
+3. Files are checked against `ingested_files` table (skip if already processed and unchanged; `siftd ingest --reparse` re-parses them anyway, see [Re-parsing stored sources](#re-parsing-stored-sources))
 4. For new/changed files, `can_handle()` confirms the adapter can parse it
 5. `parse()` produces `Conversation` objects
 6. Storage layer writes to SQLite, normalizes tool names, builds FTS index

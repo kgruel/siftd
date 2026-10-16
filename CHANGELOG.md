@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd ingest --reparse` applies adapter fixes to conversations already
+  stored.** It re-parses every source, unchanged or not, and declines any
+  replacement that would lose a tag you applied unless `--force` is given.
 - **`./dev probe` reports what each adapter drops.** A read-only comparison of
   every adapter's raw files with its parsed output, for development.
 
