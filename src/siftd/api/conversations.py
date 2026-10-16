@@ -561,7 +561,7 @@ def _list_conversations_impl(
     tags_by_conv = fetch_tags_for_conversations(conn, conv_ids)
     owner_by_conv = _fetch_owners_for_conversations(conn, conv_ids)
     agent_type_by_conv = _fetch_agent_types_for_conversations(conn, conv_ids)
-    parents_by_conv = _fetch_subagent_parents(conn, conv_ids)
+    parents_by_conv = _fetch_subagent_parents(conn, conv_ids, owner=owner)
 
     summaries: list[ConversationSummary] = []
     for row in rows:
@@ -596,21 +596,24 @@ def _list_conversations_impl(
 _HAS_PREAMBLE_SQL = f"EXISTS (SELECT 1 FROM events WHERE {PREAMBLE_RESPONSE_SQL} AND conversation_id = c.id)"
 
 def _fetch_subagent_parents(
-    conn, conversation_ids: list[str],
+    conn, conversation_ids: list[str], *, owner: str | None = None,
 ) -> dict[str, tuple[str | None, str | None]]:
     """Map conversation_id -> (parent external_id, stored parent's id) for sub-agents.
 
     Top-level conversations are absent. The parent id is resolved within the
-    child's own harness and is None when the parent is not stored.
+    child's own harness and is None when the parent is not stored, or not
+    visible to ``owner``: another user's conversation id is never listed.
     """
+    parent_visible = f" AND {owner_predicate('p.id')}" if owner else ""
     rows = batched_in_query(
         conn,
         f"SELECT c.id, {subagent_parent_sql('c')} AS parent_ext,"
         " (SELECT p.id FROM conversations p"
         "   WHERE p.harness_id = c.harness_id"
-        f"   AND p.external_id = {subagent_parent_sql('c')}) AS parent_id"
+        f"   AND p.external_id = {subagent_parent_sql('c')}{parent_visible}) AS parent_id"
         " FROM conversations c WHERE c.id IN ({placeholders})",
         conversation_ids,
+        prefix_params=(owner,) if owner else (),
     )
     return {r["id"]: (r["parent_ext"], r["parent_id"]) for r in rows if r["parent_ext"]}
 

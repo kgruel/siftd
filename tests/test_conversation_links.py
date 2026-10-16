@@ -545,6 +545,8 @@ class TestSessionsViewOwnerVisibility:
         for grouped in (False, True):
             rows = list_conversations(fidelity=Fidelity(), db_path=db, n=5, group_subagents=grouped, owner="alice")
             assert [r.external_id for r in rows] == ["claude_code::alice-child"], grouped
+            # The parent's name is the child's own data; Bob's conversation id is not.
+            assert (rows[0].parent_external_id, rows[0].parent_id) == ("claude_code::bob-parent", None), grouped
 
     def test_an_inaccessible_child_under_a_visible_parent_is_not_listed(self, tmp_path):
         db = _populated(

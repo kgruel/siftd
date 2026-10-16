@@ -2390,7 +2390,8 @@ def _migrate_v13_event_sequence_and_links(conn: sqlite3.Connection) -> None:
 
     ``conversation_links`` holds a conversation's parents, at most one per
     relation (where it ran; what it continues), by the parent's ``external_id``
-    (see schema.sql for why not a conversation id).
+    (see schema.sql for why not a conversation id). A legacy sub-agent row gets
+    its edge from the parent its external_id names.
 
     Idempotent: guards each step, since a fresh database already has all three.
     Caller owns the transaction.
@@ -2415,6 +2416,15 @@ def _migrate_v13_event_sequence_and_links(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_conversation_links_parent"
         " ON conversation_links(parent_external_id)"
     )
+    # A sub-agent stored before the edge existed names its parent only in its
+    # ``<root>::agent::<id>`` external_id; give it the edge it would be stored with now.
+    conn.execute("""
+        INSERT OR IGNORE INTO conversation_links (conversation_id, kind, parent_external_id)
+        SELECT c.id, 'subagent', substr(c.external_id, 1, instr(c.external_id, '::agent::') - 1)
+        FROM conversations c
+        WHERE instr(c.external_id, '::agent::') > 0
+          AND NOT EXISTS (SELECT 1 FROM conversation_links l WHERE l.conversation_id = c.id)
+    """)
 
 
 MIGRATIONS[13] = _migrate_v13_event_sequence_and_links

@@ -421,6 +421,23 @@ class TestLegacyDatabase:
         finally:
             conn.close()
 
+    def test_migration_gives_a_legacy_subagent_the_edge_its_external_id_names(self, tmp_path):
+        path = self._v12_database(tmp_path)
+        raw = sqlite3.connect(path)
+        raw.execute(
+            "INSERT INTO conversations (id, external_id, harness_id, started_at)"
+            " VALUES ('c2', 'legacy-1::agent::a7', 'h1', '2024-01-01T00:01:00Z')"
+        )
+        raw.commit()
+        raw.close()
+
+        conn = open_database(path)
+        try:
+            links = conn.execute("SELECT conversation_id, kind, parent_external_id FROM conversation_links").fetchall()
+            assert [tuple(r) for r in links] == [("c2", "subagent", "legacy-1")]
+        finally:
+            conn.close()
+
     def test_migrating_twice_is_a_no_op(self, tmp_path):
         path = self._v12_database(tmp_path)
         open_database(path).close()

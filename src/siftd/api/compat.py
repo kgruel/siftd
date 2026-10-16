@@ -70,12 +70,10 @@ V1_INTERFACE_REMOVAL = "1.0.0"
 
 
 # --- `<root>::agent::<id>` sub-agent parent (#93) -----------------------------
-# Schema v13 records a sub-agent's parent as a conversation_links edge, and does
-# not backfill edges for rows ingested before it. Those rows are still resolved by
-# the marker in their external_id (storage/links.py, subagent_parent_sql). The
-# fallback leaves with LEGACY_AGENT_EDGE_REMOVAL. Before it does, either a
-# migration writes the edge for every marker row, or the release says that rows
-# not re-parsed lose their sub-agent nesting (`siftd ingest --reparse` writes it).
+# Schema v13 records a sub-agent's parent as a conversation_links edge, and its
+# migration writes that edge for every row that named its parent only in the
+# marker. The marker fallback (storage/links.py, subagent_parent_sql) is then
+# redundant for any migrated database, and leaves with LEGACY_AGENT_EDGE_REMOVAL.
 LEGACY_AGENT_EDGE_REMOVAL = "1.0.0"
 
 

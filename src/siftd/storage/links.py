@@ -97,9 +97,9 @@ def subagent_parent_sql(child: str = "c") -> str:
 
     The edge is authoritative: a conversation with ANY conversation_links row is a
     sub-agent only if that edge is kind ``subagent``, and its parent is the edge's.
-    The ``<root>::agent::<id>`` spelling is read only for a row with NO edge: schema
-    v13 did not backfill edges, so rows ingested before it still carry only the
-    marker. The fallback's removal is LEGACY_AGENT_EDGE_REMOVAL in api/compat.py.
+    The ``<root>::agent::<id>`` spelling is read only for a row with NO edge. The
+    v13 migration writes the edge for every such row, so the fallback serves only
+    rows written without one; it leaves with LEGACY_AGENT_EDGE_REMOVAL in api/compat.py.
     Every reader of sub-agent parentage derives it from this expression.
     """
     return f"""(CASE

@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 206 | 3628 |
+| `tests/` | 206 | 3629 |
 | `tests/adapters/` | 22 | 482 |
 | `tests/architecture/` | 15 | 91 |
 | `tests/cli/` | 31 | 691 |
@@ -181,7 +181,7 @@ docstring so its row is meaningful.
 | [test_embeddings_presets.py](test_embeddings_presets.py) | 9 | Embedding preset reference data — loading, per-provider fields, validation. |
 | [test_embeddings_remote_edges.py](test_embeddings_remote_edges.py) | 19 | RemoteBackend edge cases — fake httpx transport, no network (base lane). |
 | [test_embeddings_storage.py](test_embeddings_storage.py) | 15 | Tests for embeddings storage. |
-| [test_event_sequence.py](test_event_sequence.py) | 22 | events.sequence: the recorded order of a conversation, and every reader that follows it. |
+| [test_event_sequence.py](test_event_sequence.py) | 23 | events.sequence: the recorded order of a conversation, and every reader that follows it. |
 | [test_event_tool_call_triggers.py](test_event_tool_call_triggers.py) | 8 | Tests for tr_event_tool_call_* blob reference-count triggers. |
 | [test_events_roundtrip.py](test_events_roundtrip.py) | 13 | Roundtrip tests for the polymorphic events writers and readers (schema v4). |
 | [test_exclude_active.py](test_exclude_active.py) | 6 | Tests for active session exclusion from search results. |
