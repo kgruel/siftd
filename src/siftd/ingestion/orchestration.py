@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple, Protocol
 from siftd.adapters.assembly import Ledger
 from siftd.adapters.contract import adapt, decodes
 from siftd.adapters.records import CONTENT_REVISION_ATTRIBUTE, CONTENT_SOURCE_ATTRIBUTE, Disposition
-from siftd.adapters.sdk import AdapterParseError, same_file, spells
+from siftd.adapters.sdk import AdapterParseError, spells
 from siftd.dateparse import to_utc
 from siftd.domain import Conversation, Source
 from siftd.storage.attributes import get_attribute
@@ -71,6 +71,7 @@ from siftd.storage.sqlite import (
     harness_id_for_conversation,
     ingested_paths_for_conversation,
     ingested_paths_for_harness,
+    merge_ingested_file_spellings,
     link_ingested_file,
     message_rows,
     record_empty_file,
@@ -879,6 +880,7 @@ def ingest_all(
         ledger_before = {key: stats.by_harness[harness_name][key] for key in LEDGER_COUNTS}
         try:
             if dedup_strategy == "file":
+                _adopt_other_spellings(conn, run, harness_name, file_path)
                 existing_info = get_ingested_file_info(conn, file_path)
                 location = source.as_path
                 st = location.stat()
@@ -1207,6 +1209,35 @@ class _Run:
     reparse: bool
     force: bool
     workspace_cache: dict[str, str] = field(default_factory=dict)
+    # harness -> resolved path -> the recorded absolute paths that resolve to it
+    spellings: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+
+
+def _adopt_other_spellings(conn, run: _Run, harness_name: str, file_path: str) -> None:
+    """Make this path the one bookkeeping row of its file, taking over rows recorded under other paths to it.
+
+    A log directory reached through a symlink (``~/.claude`` linked to
+    ``~/.config/claude``) recorded each file under both paths. Discovery now
+    yields one, and a row under the other would name this file as a second
+    claimant of its own conversation, so it could never be replaced. Only
+    absolute spellings are compared: a relative one resolves against whatever
+    directory ingest runs in, and a session source's spellings are what aider
+    adopts its legacy rows by (:func:`~siftd.adapters.sdk.spells`).
+    """
+    if not os.path.isabs(file_path):
+        return
+    if harness_name not in run.spellings:
+        by_file: dict[str, list[str]] = {}
+        for path in ingested_paths_for_harness(conn, harness_name):
+            if os.path.isabs(path):
+                by_file.setdefault(os.path.realpath(path), []).append(path)
+        run.spellings[harness_name] = by_file
+    recorded = run.spellings[harness_name].setdefault(os.path.realpath(file_path), [])
+    others = [path for path in recorded if path != file_path]
+    if others:
+        merge_ingested_file_spellings(conn, file_path, others)
+        conn.commit()
+    recorded[:] = [file_path]
 
 
 class _Target(NamedTuple):
@@ -1282,7 +1313,7 @@ class _Plan:
     superseded_key: str | None = None
     """REPLACE of a row found under a superseded key: that key's queued tags move to the conversation."""
     released: tuple[str, ...] = ()
-    """REPLACE: other paths to this source (for a session source, other spellings) whose pointer is cleared first."""
+    """REPLACE in a session source: other spellings of this source whose leftover pointer is cleared first."""
     moves: bool = False
     """SPLIT: the target's transcript is this conversation's alone, so its assignments move."""
 
@@ -1294,13 +1325,12 @@ def _plan(conn, adapter, conversation, target: _Target | None, *, file_path: str
     DELETE CASCADE``, so their bookkeeping would go with it). This source then
     settles as a copy of it, or stores beside it (taking the assignments its
     transcript owns); a row under the conversation's own key is always settled
-    against, since storing beside it would collide. The exception is another
-    path to this same file (a symlinked log directory), which is this source,
-    not another: its pointer is released rather than honoured, or the row could
-    never be replaced. A session source also releases its other spellings
-    (:func:`~siftd.adapters.sdk.spells`): its bookkeeping never points at a
-    conversation, so such a pointer is a file-strategy leftover (pre-#36 aider),
-    and honouring it would freeze the session under a key no parse produces again.
+    against, since storing beside it would collide. The one exception is a
+    session source's own spellings: its bookkeeping never points at a
+    conversation, so a pointer from another spelling of this file
+    (:func:`~siftd.adapters.sdk.spells`) is a file-strategy leftover (pre-#36
+    aider), released rather than honoured, or the session would stay frozen
+    under a key no parse produces again.
 
     A file's own key can hold a row its bookkeeping does not name (a new file
     after the bookkeeping was cleared, a legacy collision). That row is linked,
@@ -1316,9 +1346,7 @@ def _plan(conn, adapter, conversation, target: _Target | None, *, file_path: str
         plan = _Plan(_Action.REFUSE, target.row)
     else:
         claimants = ingested_paths_for_conversation(conn, target.row, excluding=file_path)
-        released = tuple(
-            path for path in claimants if (spells(path, file_path) if session else same_file(path, file_path))
-        )
+        released = tuple(path for path in claimants if session and spells(path, file_path))
         others = [path for path in claimants if path not in released]
         if others:
             parsed = _claimant_conversations(adapter, others)

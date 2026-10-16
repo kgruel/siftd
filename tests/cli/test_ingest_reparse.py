@@ -24,6 +24,7 @@ from siftd.adapters.assembly import Assembler
 from siftd.adapters.records import PromptRec, ResponseRec, Session, ToolCallRec
 from siftd.cli import main
 from siftd.domain import Harness, ToolCall
+from siftd.ids import ulid
 from siftd.storage.sqlite import ensure_conversation_owners_table, open_database
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
@@ -433,21 +434,44 @@ class TestReparseRecoversLegacyGeminiRows:
 
 
 class TestReparseOneFileUnderTwoPaths:
-    def test_a_conversation_both_spellings_point_at_is_replaced(self, tmp_path, run_cli):
-        """A log directory reached through a symlink recorded each file under two paths.
+    """A log directory reached through a symlink recorded each file under two paths.
 
-        The other spelling is this source, not a copy held elsewhere: honouring it
-        settled every such conversation, so --reparse never applied a parser fix to it.
-        """
+    Discovery now yields one path per file, and the rows recorded under the other
+    become this path's row: honouring them as a second claimant settled every such
+    conversation, so --reparse never applied a parser fix to it.
+    """
+
+    @staticmethod
+    def _recorded_as(db, source, spellings):
+        """Leave the bookkeeping as an older release did: the row under each of ``spellings``."""
+        conn = open_database(db)
+        row = dict(conn.execute("SELECT * FROM ingested_files WHERE path = ?", (str(source),)).fetchone())
+        conn.execute("DELETE FROM ingested_files WHERE path = ?", (str(source),))
+        for spelling in spellings:
+            columns = ", ".join(row)
+            conn.execute(
+                f"INSERT INTO ingested_files ({columns}) VALUES ({', '.join('?' * len(row))})",
+                [str(spelling) if k == "path" else (ulid() if k == "id" else v) for k, v in row.items()],
+            )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _rows(db):
+        conn = open_database(db)
+        rows = [tuple(r) for r in conn.execute("SELECT path, conversation_id FROM ingested_files")]
+        conn.close()
+        return rows
+
+    @pytest.mark.parametrize("recorded", ["both", "only-the-other"])
+    def test_the_conversation_is_replaced_and_one_row_remains(self, tmp_path, run_cli, recorded):
         (tmp_path / "real").mkdir()
         (tmp_path / "link").symlink_to(tmp_path / "real")
         source = _write_source(tmp_path / "real" / "s.jsonl")
-        run_cli([_adapter([source, tmp_path / "link" / "s.jsonl"])])  # how discovery listed it before
+        alias = tmp_path / "link" / "s.jsonl"
+        run_cli([_adapter(source)])
         cid = _conversation_id(run_cli.db, "conv-1")
-        conn = open_database(run_cli.db)
-        pointers = conn.execute("SELECT COUNT(*) FROM ingested_files WHERE conversation_id = ?", (cid,)).fetchone()[0]
-        conn.close()
-        assert pointers == 2, "precondition: both spellings point at the conversation"
+        self._recorded_as(run_cli.db, source, [source, alias] if recorded == "both" else [alias])
         _tag(run_cli.db, "conversation", cid, "kept")
 
         rc, events = run_cli([_adapter(source)], "--reparse")
@@ -458,6 +482,7 @@ class TestReparseOneFileUnderTwoPaths:
         new = _conversation_id(run_cli.db, "conv-1")
         assert new != cid
         assert "kept" in _conversation_tags(run_cli.db, new)
+        assert self._rows(run_cli.db) == [(str(source), new)], "the alias row would claim the file again"
 
 
 class TestReparseFlags:

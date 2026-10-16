@@ -92,14 +92,6 @@ def discover_files(
                 yield Source(kind="file", location=match)
 
 
-def same_file(a: str, b: str) -> bool:
-    """Whether two paths name one existing file (a symlink and its target, two spellings)."""
-    try:
-        return os.path.samefile(a, b)
-    except OSError:
-        return False
-
-
 def spells(spelling: str, path: str) -> bool:
     """Whether a recorded path spelling can name the file at ``path``.
 

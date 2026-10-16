@@ -3616,6 +3616,24 @@ def ingested_paths_for_harness(conn: sqlite3.Connection, harness_name: str) -> l
     ]
 
 
+def merge_ingested_file_spellings(conn: sqlite3.Connection, path: str, others: Sequence[str]) -> None:
+    """Fold the bookkeeping rows of ``others``, other paths to the file at ``path``, into one row under ``path``.
+
+    A row already under ``path`` is kept; otherwise the first of ``others``
+    that names a conversation (else the first) is renamed to it, so its hash
+    and pointer carry over. The rest are deleted.
+    """
+    if conn.execute("SELECT 1 FROM ingested_files WHERE path = ?", (path,)).fetchone() is None:
+        rows = conn.execute(
+            f"SELECT path FROM ingested_files WHERE path IN ({','.join('?' * len(others))})"
+            " ORDER BY conversation_id IS NULL",
+            list(others),
+        ).fetchall()
+        if rows:
+            conn.execute("UPDATE ingested_files SET path = ? WHERE path = ?", (path, rows[0][0]))
+    conn.executemany("DELETE FROM ingested_files WHERE path = ?", [(other,) for other in others])
+
+
 def release_conversation_pointers(
     conn: sqlite3.Connection, conversation_id: str, paths: Iterable[str]
 ) -> None:
