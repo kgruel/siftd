@@ -44,9 +44,11 @@
             ],
             "external_id": "response_c7db468c-2969-4423-8102-67bdcae64f01",
             "model": "copilot/oswe-vscode-prime",
+            "sequence": 1,
             "timestamp": "2026-02-18T00:57:04.115000+00:00"
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-18T00:57:04.115000+00:00"
       },
       {
@@ -868,6 +870,7 @@
             ],
             "external_id": "response_b46e73f9-f1c0-4e3a-9db4-8b687f824740",
             "model": "copilot/oswe-vscode-prime",
+            "sequence": 3,
             "timestamp": "2026-02-18T01:00:05.786000+00:00",
             "tool_calls": [
               {
@@ -876,6 +879,7 @@
                   "description": "Reading [](file:///Users/user/project/src/siftd/adapters/vscode.py)"
                 },
                 "result": {},
+                "sequence": 4,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
@@ -919,6 +923,7 @@
                     }
                   ]
                 },
+                "sequence": 5,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
@@ -929,6 +934,7 @@
                   "description": "Reading [](file:///Users/user/project/tests/test_adapters.py)"
                 },
                 "result": {},
+                "sequence": 6,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
@@ -972,6 +978,7 @@
                     }
                   ]
                 },
+                "sequence": 7,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
@@ -1015,6 +1022,7 @@
                     }
                   ]
                 },
+                "sequence": 8,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_findTextInFiles"
@@ -1025,6 +1033,7 @@
                   "description": "Reading [](file:///Users/user/project/src/siftd/adapters/sdk.py#1-1), lines 1 to 220"
                 },
                 "result": {},
+                "sequence": 9,
                 "status": "success",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "copilot_readFile"
@@ -1048,6 +1057,7 @@
                     ]
                   }
                 },
+                "sequence": 10,
                 "status": "error",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "configure_python_environment"
@@ -1071,6 +1081,7 @@
                     ]
                   }
                 },
+                "sequence": 11,
                 "status": "error",
                 "timestamp": "2026-02-18T01:00:05.786000+00:00",
                 "tool_name": "run_in_terminal"
@@ -1078,6 +1089,7 @@
             ]
           }
         ],
+        "sequence": 2,
         "timestamp": "2026-02-18T01:00:05.786000+00:00"
       }
     ],

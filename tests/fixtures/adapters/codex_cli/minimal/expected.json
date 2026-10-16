@@ -29,6 +29,7 @@
               }
             ],
             "model": "gpt-4o",
+            "sequence": 1,
             "timestamp": "2024-01-15T10:00:02Z"
           },
           {
@@ -50,9 +51,13 @@
               }
             ],
             "model": "gpt-4o",
+            "sequence": 2,
             "timestamp": "2024-01-15T10:00:03Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2024-01-15T10:00:04+00:00"
+                },
                 "external_id": "call-001",
                 "input": {
                   "command": "ls -la"
@@ -60,8 +65,9 @@
                 "result": {
                   "output": "total 8\ndrwxr-xr-x  3 user  staff  96 Jan 15 10:00 .\n-rw-r--r--  1 user  staff  42 Jan 15 10:00 README.md"
                 },
+                "sequence": 3,
                 "status": "success",
-                "timestamp": "2024-01-15T10:00:04Z",
+                "timestamp": "2024-01-15T10:00:03Z",
                 "tool_name": "shell_command"
               }
             ],
@@ -71,6 +77,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2024-01-15T10:00:01Z"
       }
     ],

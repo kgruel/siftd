@@ -41,6 +41,7 @@
             ],
             "model": "gpt-6-astra",
             "provider": "openai",
+            "sequence": 1,
             "timestamp": "2026-10-09T05:05:16.665Z",
             "usage": {
               "input_tokens": 221094,
@@ -48,6 +49,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-10-09T04:09:36.517Z"
       },
       {
@@ -116,6 +118,7 @@
             ],
             "model": "claude-fable-5-1",
             "provider": "anthropic",
+            "sequence": 3,
             "timestamp": "2026-10-09T16:20:07.371Z",
             "tool_calls": [
               {
@@ -124,6 +127,7 @@
                   "command": "value",
                   "timeout": 15
                 },
+                "sequence": 4,
                 "timestamp": "2026-10-09T16:20:07.371Z",
                 "tool_name": "bash"
               },
@@ -133,6 +137,7 @@
                   "command": "value",
                   "timeout": 15
                 },
+                "sequence": 5,
                 "timestamp": "2026-10-09T16:20:07.371Z",
                 "tool_name": "bash"
               },
@@ -143,6 +148,7 @@
                   "offset": 1420,
                   "path": "value"
                 },
+                "sequence": 6,
                 "timestamp": "2026-10-09T16:20:07.371Z",
                 "tool_name": "read"
               }
@@ -153,6 +159,7 @@
             }
           }
         ],
+        "sequence": 2,
         "timestamp": "2026-10-09T16:14:47.686Z"
       }
     ],

@@ -36,11 +36,13 @@
                 }
               }
             ],
+            "sequence": 1,
             "timestamp": "2026-09-18T18:01:46Z",
             "tool_calls": [
               {
                 "attributes": {
-                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-947"
+                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-947",
+                  "completed_at": "2026-09-18T18:02:03+00:00"
                 },
                 "external_id": "946:0",
                 "input": {
@@ -53,8 +55,9 @@
                 "result": {
                   "output": "The command exited with code 0.\n\t\t\t\tOutput:\n\t\t\t\tRedacted output."
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-09-18T18:02:03Z",
+                "timestamp": "2026-09-18T18:01:46Z",
                 "tool_name": "run_command"
               }
             ]
@@ -75,11 +78,13 @@
                 }
               }
             ],
+            "sequence": 3,
             "timestamp": "2026-09-18T18:02:01Z",
             "tool_calls": [
               {
                 "attributes": {
-                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-949"
+                  "background_task_id": "970b4ec9-c38e-4fb3-8663-293bc444608c/task-949",
+                  "completed_at": "2026-09-18T18:02:03+00:00"
                 },
                 "external_id": "948:0",
                 "input": {
@@ -91,7 +96,8 @@
                 "result": {
                   "output": "Created At: redacted\nTool is running as a background task with task id: 970b4ec9-c38e-4fb3-8663-293bc444608c/task-949\nTask Description: redacted\nTask logs are available at: file:///Users/user/.gemini/antigravity-cli/brain/970b4ec9-c38e-4fb3-8663-293bc444608c/.system_generated/tasks/task-949.log\nYOU MUST TAKE ONE OF THE FOLLOWING TWO ACTIONS: redacted."
                 },
-                "timestamp": "2026-09-18T18:02:03Z",
+                "sequence": 4,
+                "timestamp": "2026-09-18T18:02:01Z",
                 "tool_name": "schedule"
               }
             ]
@@ -113,9 +119,13 @@
                 }
               }
             ],
+            "sequence": 5,
             "timestamp": "2026-09-18T18:02:03Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-09-18T18:02:05+00:00"
+                },
                 "external_id": "951:0",
                 "input": {
                   "CommandLine": "redacted",
@@ -127,13 +137,15 @@
                 "result": {
                   "output": "Created At: 2026-09-18T13:02:05-05:00\nCompleted At: 2026-09-18T13:02:07-05:00\n\nRedacted output."
                 },
+                "sequence": 6,
                 "status": "success",
-                "timestamp": "2026-09-18T18:02:05Z",
+                "timestamp": "2026-09-18T18:02:03Z",
                 "tool_name": "run_command"
               }
             ]
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-09-18T18:01:46Z"
       }
     ],

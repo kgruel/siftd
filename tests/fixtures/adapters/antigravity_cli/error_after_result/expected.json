@@ -38,9 +38,13 @@
                 }
               }
             ],
+            "sequence": 1,
             "timestamp": "2026-10-04T11:54:59Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T11:55:01+00:00"
+                },
                 "external_id": "1:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514671627999379610.png",
@@ -50,8 +54,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T06:55:01-05:00\nCompleted At: 2026-10-04T06:55:01-05:00\n\nRedacted output."
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-10-04T11:55:01Z",
+                "timestamp": "2026-10-04T11:54:59Z",
                 "tool_name": "view_file"
               }
             ],
@@ -78,9 +83,13 @@
                 }
               }
             ],
+            "sequence": 3,
             "timestamp": "2026-10-04T12:10:17Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T12:10:20+00:00"
+                },
                 "external_id": "4:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514671926834892840.png",
@@ -90,8 +99,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T07:10:20-05:00\nCompleted At: 2026-10-04T07:10:20-05:00\n\nRedacted output."
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-10-04T12:10:20Z",
+                "timestamp": "2026-10-04T12:10:17Z",
                 "tool_name": "view_file"
               }
             ],
@@ -118,9 +128,13 @@
                 }
               }
             ],
+            "sequence": 5,
             "timestamp": "2026-10-04T12:10:20Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T12:10:22+00:00"
+                },
                 "external_id": "6:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514672090194907136.png",
@@ -130,8 +144,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T07:10:22-05:00\nCompleted At: 2026-10-04T07:10:22-05:00\n\nRedacted output."
                 },
+                "sequence": 6,
                 "status": "success",
-                "timestamp": "2026-10-04T12:10:22Z",
+                "timestamp": "2026-10-04T12:10:20Z",
                 "tool_name": "view_file"
               }
             ],
@@ -158,9 +173,13 @@
                 }
               }
             ],
+            "sequence": 7,
             "timestamp": "2026-10-04T12:10:22Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T12:10:25+00:00"
+                },
                 "external_id": "8:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514672585097482361.png",
@@ -170,8 +189,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T07:10:25-05:00\nCompleted At: 2026-10-04T07:10:25-05:00\n\nRedacted output."
                 },
+                "sequence": 8,
                 "status": "success",
-                "timestamp": "2026-10-04T12:10:25Z",
+                "timestamp": "2026-10-04T12:10:22Z",
                 "tool_name": "view_file"
               }
             ],
@@ -198,9 +218,13 @@
                 }
               }
             ],
+            "sequence": 9,
             "timestamp": "2026-10-04T12:10:25Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T12:10:27+00:00"
+                },
                 "external_id": "10:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514672864492523591.jpeg",
@@ -210,8 +234,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T07:10:27-05:00\nCompleted At: 2026-10-04T07:10:27-05:00\n\nRedacted output."
                 },
+                "sequence": 10,
                 "status": "success",
-                "timestamp": "2026-10-04T12:10:27Z",
+                "timestamp": "2026-10-04T12:10:25Z",
                 "tool_name": "view_file"
               }
             ],
@@ -238,9 +263,13 @@
                 }
               }
             ],
+            "sequence": 11,
             "timestamp": "2026-10-04T12:10:27Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-04T12:10:32+00:00"
+                },
                 "external_id": "12:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/1514673511354994688.png",
@@ -250,8 +279,9 @@
                 "result": {
                   "output": "Created At: 2026-10-04T07:10:32-05:00\nCompleted At: 2026-10-04T07:10:32-05:00\n\nRedacted output."
                 },
+                "sequence": 12,
                 "status": "success",
-                "timestamp": "2026-10-04T12:10:32Z",
+                "timestamp": "2026-10-04T12:10:27Z",
                 "tool_name": "view_file"
               }
             ],
@@ -261,6 +291,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-10-04T11:54:59Z"
       }
     ],

@@ -16,7 +16,9 @@ which the framework turns into ``Unknown``), and an intentional skip is
 
 Keys. ``key`` on a prompt or response is the source's own message identity
 (Claude Code's ``message.id``): records sharing a key within a conversation are
-one event, so the second and later ones MERGE into the first. ``parent_key`` /
+one event, so the second and later ones MERGE into the first. A response key
+last seen before the latest prompt opens a new event (see the assembler's Merge
+rule). ``parent_key`` /
 ``target_key`` point a tool call, usage delta or patch at the response with that
 key; without one they attach to the most recent response.
 

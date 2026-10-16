@@ -8,6 +8,7 @@ any record stream, every record gets exactly one disposition.
 from __future__ import annotations
 
 import itertools
+import json
 
 import pytest
 
@@ -79,7 +80,8 @@ def test_prompt_response_call_result_build_one_exchange():
     (call,) = response.tool_calls
     assert (prompt.external_id, response.external_id, response.model) == ("p1", "r1", "m")
     assert (call.tool_name, call.external_id, call.result, call.status) == ("Bash", "c1", {"output": "a"}, "success")
-    assert call.timestamp == "2026-01-01T00:00:03Z"  # completion; the call was made at its response's time
+    assert call.timestamp == "2026-01-01T00:00:02Z"  # when it was made
+    assert call.attributes["completed_at"] == "2026-01-01T00:00:03+00:00"  # when its result arrived, as UTC
     assert conv.started_at == "2026-01-01T00:00:00Z"
     assert conv.ended_at == "2026-01-01T00:00:03Z"  # the last thing that happened: the tool finishing
     assert d(out, Disposition.EVENT) == 3 and d(out, Disposition.PATCH) == 1
@@ -576,6 +578,166 @@ def test_read_jsonl_counts_a_line_truncated_mid_character(tmp_path):
     path.write_bytes(b'{"t": "p"}\n{"t": "caf\xc3')
     units = list(read_jsonl(Source(kind="file", location=path)))
     assert units[0] == {"t": "p"} and type(units[1]).__name__ == "Malformed"
+
+
+# --- recorded order, turn-scoped merge, call identity, completion time ---------------
+
+
+def in_arrival_order(conv):
+    """``(kind, name)`` of every event, sorted by the sequence the assembler gave it."""
+    events = [("prompt", p.external_id or "", p.sequence) for p in conv.prompts]
+    responses = [*conv.preamble, *(r for p in conv.prompts for r in p.responses)]
+    events += [("response", r.external_id or "", r.sequence) for r in responses]
+    events += [("call", c.external_id or "", c.sequence) for r in responses for c in r.tool_calls]
+    assert all(seq is not None for *_, seq in events)
+    return [(kind, name) for kind, name, _ in sorted(events, key=lambda e: e[2])]
+
+
+def test_events_are_numbered_in_arrival_order_whatever_their_parent_links():
+    # R1 -> call1, R2 -> call2, then another chunk of R1 declaring call3: the
+    # tree walks call1, call3, call2, but call3 arrived last.
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z", external_id="p"),
+        ResponseRec(at=None, key="r1", external_id="r1"),
+        ToolCallRec(at=None, name="A", input={}, call_id="call1", parent_key="r1"),
+        ResponseRec(at=None, key="r2", external_id="r2"),
+        ToolCallRec(at=None, name="A", input={}, call_id="call2", parent_key="r2"),
+        ResponseRec(at=None, key="r1", external_id="r1-later"),
+        ToolCallRec(at=None, name="A", input={}, call_id="call3", parent_key="r1"),
+    )
+    conv = only(out)
+    assert in_arrival_order(conv) == [
+        ("prompt", "p"), ("response", "r1"), ("call", "call1"),
+        ("response", "r2"), ("call", "call2"), ("call", "call3"),
+    ]
+    assert sorted(e.sequence for e in [conv.prompts[0], *conv.prompts[0].responses]) == [0, 1, 3]
+    # A merged chunk is not an event and takes no number.
+    assert conv.prompts[0].responses[0].tool_calls[1].sequence == 5
+
+
+def test_a_synthesized_container_and_a_preamble_response_precede_what_they_hold():
+    conv = only(run(S, ResponseRec(at="2026-01-01T00:00:00Z", external_id="pre"), PromptRec(at=None, external_id="p"),
+                    ToolCallRec(at=None, name="A", input={}, call_id="c")))
+    assert [kind for kind, _ in in_arrival_order(conv)] == ["response", "prompt", "response", "call"]
+
+
+def test_a_key_last_seen_in_an_earlier_turn_opens_a_new_event_and_the_message_is_counted_once():
+    # Claude Code continues one message across a harness-injected record (a
+    # Skill's expansion), which the decoder reads as a prompt.
+    usage = Usage(input_tokens=10, output_tokens=40)
+    details = {"cache_read_input_tokens": 5}
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z", external_id="p1"),
+        ResponseRec(at=None, key="m", external_id="u1", usage=usage, usage_details=details),
+        ToolCallRec(at=None, name="Skill", input={}, call_id="c1", parent_key="m"),
+        ToolResultRec(at=None, call_id="c1", result={}),
+        PromptRec(at=None, external_id="injected"),
+        ResponseRec(at=None, key="m", external_id="u2", usage=usage, usage_details=details),
+        ToolCallRec(at=None, name="Bash", input={}, call_id="c2", parent_key="m"),
+    )
+    first, second = (p.responses[0] for p in only(out).prompts)
+    assert [c.tool_name for c in first.tool_calls] == ["Skill"] and [c.tool_name for c in second.tool_calls] == ["Bash"]
+    assert first.usage == usage and first.attributes["cache_read_input_tokens"] == "5"
+    assert second.usage is None and "cache_read_input_tokens" not in second.attributes
+    assert d(out, Disposition.EVENT) == 6 and d(out, Disposition.MERGE) == 0
+
+
+def test_a_continuation_restates_the_snapshot_where_it_lives_and_later_chunks_merge_into_it():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ResponseRec(at=None, key="m", usage=Usage(input_tokens=1, output_tokens=2)),
+        PromptRec(at=None),
+        ResponseRec(at=None, key="m", external_id="b", usage=Usage(input_tokens=1, output_tokens=9)),
+        ResponseRec(at=None, key="m", external_id="c", content=text("tail"), usage=Usage(input_tokens=1, output_tokens=30)),
+        UsageRec(at=None, usage=Usage(input_tokens=100), target_key="m"),
+    )
+    first, second = (p.responses[0] for p in only(out).prompts)
+    assert first.usage == Usage(input_tokens=1, output_tokens=30)
+    assert second.usage == Usage(input_tokens=100) and [b.content["text"] for b in second.content] == ["tail"]
+    assert d(out, Disposition.MERGE) == 1
+
+
+def test_an_unkeyed_increment_after_a_prompt_waits_for_that_turns_response():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ResponseRec(at=None),
+        PromptRec(at=None),
+        UsageRec(at=None, usage=Usage(input_tokens=7, output_tokens=1)),
+        PatchRec(at=None, attributes={"x": "1"}),
+        ResponseRec(at=None),
+    )
+    (a,), (b,) = (p.responses for p in only(out).prompts)
+    assert a.usage is None and a.attributes == {}
+    assert b.usage == Usage(input_tokens=7, output_tokens=1) and b.attributes == {"x": "1"}
+    assert d(out, Disposition.PATCH) == 2 and d(out, Disposition.ORPHAN) == 0
+
+
+def test_an_unkeyed_increment_with_no_response_after_the_last_prompt_is_a_named_orphan():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ResponseRec(at=None),
+        PromptRec(at=None),
+        UsageRec(at=None, usage=Usage(input_tokens=7)),
+    )
+    assert out.ledger.reasons[(Disposition.ORPHAN, "nothing to attach to")] == 1
+
+
+def test_calls_sharing_a_call_id_are_distinct_events_with_stable_identities():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ToolCallRec(at=None, name="A", input={}, call_id="dup"),
+        ToolCallRec(at=None, name="B", input={}, call_id="dup"),
+        ToolCallRec(at=None, name="C", input={}, call_id="dup"),
+        ToolCallRec(at=None, name="D", input={}, call_id="dup:2"),
+        ToolResultRec(at=None, call_id="dup", result={"n": 1}),
+        ToolResultRec(at=None, call_id="dup", result={"n": 2}),
+    )
+    calls = only(out).prompts[0].responses[0].tool_calls
+    assert [c.external_id for c in calls] == ["dup", "dup:2", "dup:3", "dup:2:2"]
+    assert [c.result for c in calls[:2]] == [{"n": 1}, {"n": 2}]
+    assert [c.attributes.get("call_occurrence") for c in calls] == [None, "2", "3", "2"], (
+        "a suffixed identity states its rank, which tells it from a legacy alias"
+    )
+
+
+def test_a_call_keeps_the_time_it_was_made_and_records_when_its_result_arrived():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ToolCallRec(at="2026-01-01T00:00:01Z", name="A", input={}, call_id="a"),
+        ToolCallRec(at="2026-01-01T00:00:01Z", name="B", input={}, call_id="b"),
+        ToolCallRec(at="2026-01-01T00:00:01Z", name="C", input={}, call_id="c"),
+        ToolResultRec(at="2026-01-01T02:00:05+02:00", call_id="a", result={}, status="pending", final=False),
+        ToolResultRec(at="2026-01-01T00:00:09.500Z", call_id="a", result={}),
+        ToolResultRec(at=None, call_id="b", result={}),
+        ToolResultRec(at="9999-12-31T23:59:59-01:00", call_id="c", result={}),  # beyond what UTC can hold
+    )
+    a, b, c = only(out).prompts[0].responses[0].tool_calls
+    assert a.timestamp == "2026-01-01T00:00:01Z" and a.attributes["completed_at"] == "2026-01-01T00:00:09.500000+00:00"
+    assert "completed_at" not in b.attributes and b.timestamp == "2026-01-01T00:00:01Z"
+    assert c.attributes["completed_at"] == "9999-12-31T23:59:59-01:00"  # kept as the log wrote it
+
+
+def test_a_merged_response_lists_the_chunk_ids_it_absorbed():
+    out = run(
+        S,
+        PromptRec(at="2026-01-01T00:00:00Z"),
+        ResponseRec(at=None, key="m", external_id="c1"),
+        ResponseRec(at=None, key="m", external_id="c2"),
+        ResponseRec(at=None, key="m", external_id=None),
+        ResponseRec(at=None, key="m", external_id="c2"),
+        ResponseRec(at=None, key="m", external_id="c3"),
+        ResponseRec(at=None, key="solo", external_id="s"),
+    )
+    merged, solo = only(out).prompts[0].responses
+    assert merged.external_id == "c1" and json.loads(merged.attributes["merged_external_ids"]) == ["c2", "c3"]
+    assert "merged_external_ids" not in solo.attributes
 
 
 # --- decoding is total -----------------------------------------------------------

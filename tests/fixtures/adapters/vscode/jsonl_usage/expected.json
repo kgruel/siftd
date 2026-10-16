@@ -38,6 +38,7 @@
             ],
             "external_id": "response_f34bb620-eef8-493a-a944-a3acb8d14df1",
             "model": "copilot/oswe-vscode-prime",
+            "sequence": 1,
             "timestamp": "2026-02-18T00:58:20.760000+00:00",
             "usage": {
               "input_tokens": 12302,
@@ -45,6 +46,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-18T00:58:20.760000+00:00"
       }
     ],

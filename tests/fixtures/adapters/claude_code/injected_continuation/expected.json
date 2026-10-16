@@ -1,0 +1,214 @@
+[
+  {
+    "branch": "main",
+    "ended_at": "2026-09-16T19:28:59.783Z",
+    "external_id": "claude_code::1c50b443-2705-4d99-b586-65216c560661",
+    "harness": {
+      "display_name": "Claude Code",
+      "log_format": "jsonl",
+      "name": "claude_code",
+      "source": "anthropic"
+    },
+    "prompts": [
+      {
+        "content": [
+          {
+            "block_type": "text",
+            "content": {
+              "text": "Redacted user request.",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::7628f6eb-234a-4f8a-ac30-6d7ae15cfa06",
+        "responses": [
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "27362",
+              "cache_creation_input_tokens": "27362",
+              "cache_read_input_tokens": "20883",
+              "merged_external_ids": "[\"claude_code::239b1d1f-1a95-4557-b8f3-cd2730bbe132\"]"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "Considering the next step.",
+                  "type": "thinking"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_016k9QsopEmhnA4kNXQk75fK",
+                  "input": {
+                    "skill": "painted-cli"
+                  },
+                  "name": "Skill",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::1e906ad3-352c-46bf-8113-c3699ff98309",
+            "model": "claude-opus-5",
+            "sequence": 1,
+            "timestamp": "2026-09-16T19:28:55.915Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-16T19:28:55.929000+00:00"
+                },
+                "external_id": "toolu_016k9QsopEmhnA4kNXQk75fK",
+                "input": {
+                  "skill": "painted-cli"
+                },
+                "result": {
+                  "content": "Launching skill: painted-cli"
+                },
+                "sequence": 2,
+                "status": "success",
+                "timestamp": "2026-09-16T19:28:55.917Z",
+                "tool_name": "Skill"
+              }
+            ],
+            "usage": {
+              "input_tokens": 2,
+              "output_tokens": 272
+            }
+          }
+        ],
+        "sequence": 0,
+        "timestamp": "2026-09-16T19:28:53.412Z"
+      },
+      {
+        "content": [
+          {
+            "block_type": "meta_text",
+            "content": {
+              "meta_source": "isMeta",
+              "meta_text": "Redacted injected context.",
+              "type": "text"
+            }
+          }
+        ],
+        "external_id": "claude_code::9cdcad7a-7e3c-4cca-a924-0d698472e047",
+        "responses": [
+          {
+            "content": [
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01MnQcYA74bv2qvUN4qDoqp2",
+                  "input": {
+                    "command": "example command",
+                    "description": "Example step"
+                  },
+                  "name": "Bash",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::375a629c-190d-4959-a0bd-9b32618c26ff",
+            "model": "claude-opus-5",
+            "sequence": 4,
+            "timestamp": "2026-09-16T19:28:57.032Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-16T19:28:57.149000+00:00",
+                  "stderr": "Neutral tool output.",
+                  "stdout": "Neutral tool output."
+                },
+                "external_id": "toolu_01MnQcYA74bv2qvUN4qDoqp2",
+                "input": {
+                  "command": "example command",
+                  "description": "Example step"
+                },
+                "result": {
+                  "content": "Neutral tool output."
+                },
+                "sequence": 5,
+                "status": "success",
+                "timestamp": "2026-09-16T19:28:57.032Z",
+                "tool_name": "Bash"
+              }
+            ]
+          },
+          {
+            "attributes": {
+              "cache_creation_ephemeral_1h_input_tokens": "6032",
+              "cache_creation_input_tokens": "6032",
+              "cache_read_input_tokens": "48245",
+              "merged_external_ids": "[\"claude_code::55ea54bb-8807-4e33-aba9-4e2f126f0f2b\"]"
+            },
+            "content": [
+              {
+                "block_type": "thinking",
+                "content": {
+                  "signature": "sig",
+                  "thinking": "Considering the next step.",
+                  "type": "thinking"
+                }
+              },
+              {
+                "block_type": "tool_use",
+                "content": {
+                  "caller": {
+                    "type": "direct"
+                  },
+                  "id": "toolu_01Cn8upomD6smVWAtcDSGbWw",
+                  "input": {
+                    "command": "example command",
+                    "description": "Example step"
+                  },
+                  "name": "Bash",
+                  "type": "tool_use"
+                }
+              }
+            ],
+            "external_id": "claude_code::4ed544ee-524f-4893-b518-69d7c74ec2c1",
+            "model": "claude-opus-5",
+            "sequence": 6,
+            "timestamp": "2026-09-16T19:28:59.695Z",
+            "tool_calls": [
+              {
+                "attributes": {
+                  "completed_at": "2026-09-16T19:28:59.783000+00:00",
+                  "stderr": "Neutral tool output.",
+                  "stdout": "Neutral tool output."
+                },
+                "external_id": "toolu_01Cn8upomD6smVWAtcDSGbWw",
+                "input": {
+                  "command": "example command",
+                  "description": "Example step"
+                },
+                "result": {
+                  "content": "Neutral tool output."
+                },
+                "sequence": 7,
+                "status": "success",
+                "timestamp": "2026-09-16T19:28:59.703Z",
+                "tool_name": "Bash"
+              }
+            ],
+            "usage": {
+              "input_tokens": 2,
+              "output_tokens": 247
+            }
+          }
+        ],
+        "sequence": 3,
+        "timestamp": "2026-09-16T19:28:55.928Z"
+      }
+    ],
+    "started_at": "2026-09-16T19:28:53.412Z",
+    "workspace_path": "/Users/user/project"
+  }
+]

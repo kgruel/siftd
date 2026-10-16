@@ -32,7 +32,8 @@
             "attributes": {
               "cache_creation_ephemeral_5m_input_tokens": "3301",
               "cache_creation_input_tokens": "3301",
-              "cache_read_input_tokens": "41215"
+              "cache_read_input_tokens": "41215",
+              "merged_external_ids": "[\"claude_code::dbb817f9-0672-4f20-a4c6-338430785572\", \"claude_code::9897535e-169e-48f1-bbb0-11fe8b85bdc8\"]"
             },
             "content": [
               {
@@ -74,9 +75,13 @@
             ],
             "external_id": "claude_code::5a9873bd-7132-49ba-b091-230bdbc8c44d",
             "model": "claude-sonnet-5",
+            "sequence": 1,
             "timestamp": "2026-08-31T02:19:47.237Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-08-31T02:19:54.216000+00:00"
+                },
                 "external_id": "toolu_01XinzWL3zS7rbFYoMcDkCg3",
                 "input": {
                   "query": "example query"
@@ -84,11 +89,15 @@
                 "result": {
                   "content": "Neutral tool output."
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-08-31T02:19:54.216Z",
+                "timestamp": "2026-08-31T02:19:47.246Z",
                 "tool_name": "WebSearch"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-08-31T02:19:54.922000+00:00"
+                },
                 "external_id": "toolu_01Xuk4ZuoEsjq6uyhwkD8SUi",
                 "input": {
                   "query": "example query"
@@ -96,8 +105,9 @@
                 "result": {
                   "content": "Neutral tool output."
                 },
+                "sequence": 3,
                 "status": "success",
-                "timestamp": "2026-08-31T02:19:54.922Z",
+                "timestamp": "2026-08-31T02:19:47.277Z",
                 "tool_name": "WebSearch"
               }
             ],
@@ -107,6 +117,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-08-31T02:19:37.097Z"
       }
     ],

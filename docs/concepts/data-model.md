@@ -42,7 +42,7 @@ A conversation may continue exactly one other: a sub-agent spawned by a session,
 
 ### Order within a conversation
 
-Events are ordered by the position they were recorded in (`events.sequence`, assigned when the conversation is stored), not by timestamp: timestamps tie, and some tools stamp every event of a session with the same instant. Conversations stored before schema v13 have no recorded position and are ordered by `(timestamp, id)` as they always were; re-parsing the source gives them one.
+Events are ordered by the position they were recorded in (`events.sequence`, the order they arrived in when the source was parsed), not by timestamp: timestamps tie, and some tools stamp every event of a session with the same instant. Conversations stored before schema v13 have no recorded position and are ordered by `(timestamp, id)` as they always were; re-parsing the source gives them one.
 
 ### Turns
 
@@ -80,9 +80,11 @@ A tool call is an action the model took: reading a file, running a shell command
 | Field | What it means |
 |-------|---------------|
 | `tool_name` | Canonical name (file.read, shell.execute, file.edit) |
+| `timestamp` | When the call was made |
 | `input` | Arguments passed to the tool (file path, command, etc.) |
 | `result` | What the tool returned |
 | `status` | success, error, or pending |
+| `completed_at` | Attribute: when the result arrived, in UTC |
 
 Tool calls are where the real work happens. A typical coding session might have hundreds of tool calls — every `cat`, `grep`, file edit, and test run.
 

@@ -43,6 +43,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-07-15T17:54:48.070Z"
       },
       {
@@ -65,6 +66,7 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 2,
             "timestamp": "2026-07-15T17:54:50.952Z"
           },
           {
@@ -84,9 +86,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 3,
             "timestamp": "2026-07-15T17:54:52.727Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:54:52.808000+00:00"
+                },
                 "external_id": "call_ETI3gZHFDIOicSWk5k6uF3x2",
                 "input": {
                   "raw": "redacted text"
@@ -103,8 +109,9 @@
                     }
                   ]
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-07-15T17:54:52.808Z",
+                "timestamp": "2026-07-15T17:54:52.727Z",
                 "tool_name": "exec"
               }
             ],
@@ -130,9 +137,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 5,
             "timestamp": "2026-07-15T17:54:56.927Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:54:56.993000+00:00"
+                },
                 "external_id": "call_789xUCEvyREhmZNWTAY70T03",
                 "input": {
                   "raw": "redacted text"
@@ -149,8 +160,9 @@
                     }
                   ]
                 },
+                "sequence": 6,
                 "status": "success",
-                "timestamp": "2026-07-15T17:54:56.993Z",
+                "timestamp": "2026-07-15T17:54:56.927Z",
                 "tool_name": "exec"
               }
             ],
@@ -176,9 +188,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 7,
             "timestamp": "2026-07-15T17:55:01.764Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:55:01.819000+00:00"
+                },
                 "external_id": "call_UGOAIwiUb3tBPBbCwy2ZDRDG",
                 "input": {
                   "raw": "redacted text"
@@ -195,8 +211,9 @@
                     }
                   ]
                 },
+                "sequence": 8,
                 "status": "success",
-                "timestamp": "2026-07-15T17:55:01.819Z",
+                "timestamp": "2026-07-15T17:55:01.764Z",
                 "tool_name": "exec"
               }
             ],
@@ -222,9 +239,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 9,
             "timestamp": "2026-07-15T17:55:11.423Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:55:11.486000+00:00"
+                },
                 "external_id": "call_ZMiWUkaowf3v526Dr3RPkgWy",
                 "input": {
                   "raw": "redacted text"
@@ -241,8 +262,9 @@
                     }
                   ]
                 },
+                "sequence": 10,
                 "status": "success",
-                "timestamp": "2026-07-15T17:55:11.486Z",
+                "timestamp": "2026-07-15T17:55:11.423Z",
                 "tool_name": "exec"
               }
             ],
@@ -268,9 +290,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 11,
             "timestamp": "2026-07-15T17:55:23.808Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:55:33.818000+00:00"
+                },
                 "external_id": "call_IVwTRqJEbBUURlaLeIBM3V1n",
                 "input": {
                   "raw": "redacted text"
@@ -278,8 +304,9 @@
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 12,
                 "status": "success",
-                "timestamp": "2026-07-15T17:55:33.818Z",
+                "timestamp": "2026-07-15T17:55:23.808Z",
                 "tool_name": "exec"
               }
             ],
@@ -309,9 +336,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 13,
             "timestamp": "2026-07-15T17:55:35.891Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:55:53.990000+00:00"
+                },
                 "external_id": "call_urNGBDBILUHDZLVQYbBEaMcj",
                 "input": {
                   "cell_id": "redacted text",
@@ -330,8 +361,9 @@
                     }
                   ]
                 },
+                "sequence": 14,
                 "status": "success",
-                "timestamp": "2026-07-15T17:55:53.990Z",
+                "timestamp": "2026-07-15T17:55:35.891Z",
                 "tool_name": "wait"
               }
             ],
@@ -357,9 +389,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 15,
             "timestamp": "2026-07-15T17:56:22.972Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:56:23.166000+00:00"
+                },
                 "external_id": "call_lBg4zJkeC5JvKL0Err1EpQ0m",
                 "input": {
                   "raw": "redacted text"
@@ -376,8 +412,9 @@
                     }
                   ]
                 },
+                "sequence": 16,
                 "status": "success",
-                "timestamp": "2026-07-15T17:56:23.166Z",
+                "timestamp": "2026-07-15T17:56:22.972Z",
                 "tool_name": "exec"
               }
             ],
@@ -403,9 +440,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 17,
             "timestamp": "2026-07-15T17:56:41.774Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:56:41.851000+00:00"
+                },
                 "external_id": "call_QoGGlhHAmF2THNpKEJnUyQ6N",
                 "input": {
                   "raw": "redacted text"
@@ -422,8 +463,9 @@
                     }
                   ]
                 },
+                "sequence": 18,
                 "status": "success",
-                "timestamp": "2026-07-15T17:56:41.851Z",
+                "timestamp": "2026-07-15T17:56:41.774Z",
                 "tool_name": "exec"
               }
             ],
@@ -452,9 +494,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 19,
             "timestamp": "2026-07-15T17:56:52.967Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:56:52.974000+00:00"
+                },
                 "external_id": "call_QhjkCuHA4SYvAbyMWf5i1dIA",
                 "input": {
                   "message": "redacted text",
@@ -463,8 +509,9 @@
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 20,
                 "status": "success",
-                "timestamp": "2026-07-15T17:56:52.974Z",
+                "timestamp": "2026-07-15T17:56:52.967Z",
                 "tool_name": "send_message"
               }
             ],
@@ -490,9 +537,13 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 21,
             "timestamp": "2026-07-15T17:56:56.980Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-15T17:56:57.095000+00:00"
+                },
                 "external_id": "call_1cqoiV6cTzj2bC92zTGRI0hL",
                 "input": {
                   "raw": "redacted text"
@@ -509,8 +560,9 @@
                     }
                   ]
                 },
+                "sequence": 22,
                 "status": "success",
-                "timestamp": "2026-07-15T17:56:57.095Z",
+                "timestamp": "2026-07-15T17:56:56.980Z",
                 "tool_name": "exec"
               }
             ],
@@ -536,6 +588,7 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 23,
             "timestamp": "2026-07-15T17:57:11.229Z",
             "usage": {
               "input_tokens": 45920,
@@ -543,6 +596,7 @@
             }
           }
         ],
+        "sequence": 1,
         "timestamp": "2026-07-15T17:54:48.070Z"
       }
     ],

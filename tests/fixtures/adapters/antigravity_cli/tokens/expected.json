@@ -37,9 +37,13 @@
                 }
               }
             ],
+            "sequence": 1,
             "timestamp": "2026-10-03T18:27:26Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-03T18:27:27+00:00"
+                },
                 "external_id": "1:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/images/image-1.png",
@@ -49,8 +53,9 @@
                 "result": {
                   "output": "Created At: 2026-10-03T18:27:27Z\nCompleted At: 2026-10-03T18:27:27Z\n"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-10-03T18:27:27Z",
+                "timestamp": "2026-10-03T18:27:26Z",
                 "tool_name": "view_file"
               }
             ],
@@ -77,9 +82,13 @@
                 }
               }
             ],
+            "sequence": 3,
             "timestamp": "2026-10-03T18:27:28Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-10-03T18:27:30+00:00"
+                },
                 "external_id": "3:0",
                 "input": {
                   "AbsolutePath": "/Users/user/project/images/image-2.png",
@@ -89,8 +98,9 @@
                 "result": {
                   "output": "Created At: 2026-10-03T18:27:30Z\nCompleted At: 2026-10-03T18:27:30Z\n"
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-10-03T18:27:30Z",
+                "timestamp": "2026-10-03T18:27:28Z",
                 "tool_name": "view_file"
               }
             ],
@@ -125,10 +135,12 @@
                 }
               }
             ],
+            "sequence": 5,
             "timestamp": "2026-10-03T18:27:30Z",
             "tool_calls": [
               {
                 "attributes": {
+                  "completed_at": "2026-10-03T18:27:33+00:00",
                   "error": "permission check failed for unsandboxed command"
                 },
                 "external_id": "5:0",
@@ -142,8 +154,9 @@
                 "result": {
                   "output": "Created At: 2026-10-03T18:27:33Z\nCompleted At: 2026-10-03T18:27:33Z\n"
                 },
+                "sequence": 6,
                 "status": "error",
-                "timestamp": "2026-10-03T18:27:33Z",
+                "timestamp": "2026-10-03T18:27:30Z",
                 "tool_name": "run_command"
               }
             ],
@@ -164,6 +177,7 @@
                 }
               }
             ],
+            "sequence": 7,
             "timestamp": "2026-10-03T18:27:33Z",
             "usage": {
               "input_tokens": 22798,
@@ -171,6 +185,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-10-03T18:27:26Z"
       }
     ],

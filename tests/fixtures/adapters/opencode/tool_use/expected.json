@@ -47,9 +47,13 @@
             ],
             "external_id": "opencode::m2",
             "model": "claude-3-opus-20240229",
+            "sequence": 1,
             "timestamp": "2024-03-10T14:00:20+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2024-03-10T14:00:28+00:00"
+                },
                 "external_id": "c1",
                 "input": {
                   "command": "pytest"
@@ -57,8 +61,9 @@
                 "result": {
                   "output": "5 passed, 0 failed"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2024-03-10T14:00:28+00:00",
+                "timestamp": "2024-03-10T14:00:25+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -68,6 +73,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2024-03-10T14:00:10+00:00"
       }
     ],

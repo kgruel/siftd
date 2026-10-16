@@ -60,9 +60,13 @@
             ],
             "external_id": "opencode::msg_c6e716a52002c3elFteAmVwiHj",
             "model": "big-pickle",
+            "sequence": 1,
             "timestamp": "2026-02-18T01:50:52.498000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:56.808000+00:00"
+                },
                 "external_id": "call_function_6xvdt88rfynw_1",
                 "input": {
                   "command": "sample",
@@ -71,11 +75,15 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:56.808000+00:00",
+                "timestamp": "2026-02-18T01:50:56.114000+00:00",
                 "tool_name": "bash"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:56.841000+00:00"
+                },
                 "external_id": "call_function_6xvdt88rfynw_2",
                 "input": {
                   "command": "sample",
@@ -84,8 +92,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 3,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:56.841000+00:00",
+                "timestamp": "2026-02-18T01:50:56.779000+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -118,9 +127,13 @@
             ],
             "external_id": "opencode::msg_c6e717b97002JKVRNIYAmiPYmd",
             "model": "big-pickle",
+            "sequence": 4,
             "timestamp": "2026-02-18T01:50:56.919000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:00.724000+00:00"
+                },
                 "external_id": "call_function_6p2k3vww9p17_1",
                 "input": {
                   "command": "sample",
@@ -129,8 +142,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 5,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:00.724000+00:00",
+                "timestamp": "2026-02-18T01:51:00.661000+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -163,9 +177,13 @@
             ],
             "external_id": "opencode::msg_c6e718ac8002gQY3uBnQzMIUGG",
             "model": "big-pickle",
+            "sequence": 6,
             "timestamp": "2026-02-18T01:51:00.808000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:03.980000+00:00"
+                },
                 "external_id": "call_function_ljv059ni2hva_1",
                 "input": {
                   "command": "sample",
@@ -174,8 +192,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 7,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:03.980000+00:00",
+                "timestamp": "2026-02-18T01:51:03.549000+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -208,9 +227,13 @@
             ],
             "external_id": "opencode::msg_c6e719771002niBISt4PZyoTQl",
             "model": "big-pickle",
+            "sequence": 8,
             "timestamp": "2026-02-18T01:51:04.049000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:07.103000+00:00"
+                },
                 "external_id": "call_function_ovkoejwjz4yl_1",
                 "input": {
                   "filePath": "sample"
@@ -218,8 +241,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 9,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:07.103000+00:00",
+                "timestamp": "2026-02-18T01:51:07.085000+00:00",
                 "tool_name": "read"
               }
             ],
@@ -251,6 +275,7 @@
             ],
             "external_id": "opencode::msg_c6e71a3b8002PfauUPkrfONlzl",
             "model": "big-pickle",
+            "sequence": 10,
             "timestamp": "2026-02-18T01:51:07.192000+00:00",
             "usage": {
               "input_tokens": 3418,
@@ -258,6 +283,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-18T01:50:52.488000+00:00"
       }
     ],

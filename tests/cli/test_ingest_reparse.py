@@ -20,8 +20,10 @@ from types import SimpleNamespace
 import pytest
 from conftest import make_conversation, make_test_adapter
 
+from siftd.adapters.assembly import Assembler
+from siftd.adapters.records import PromptRec, ResponseRec, Session, ToolCallRec
 from siftd.cli import main
-from siftd.domain import ToolCall
+from siftd.domain import Harness, ToolCall
 from siftd.storage.sqlite import ensure_conversation_owners_table, open_database
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
@@ -1016,3 +1018,135 @@ class TestTagDecisionsHoldTheWriteLock:
 
         assert rc == 0
         assert writable == [False], "another connection could tag the row between the snapshot and the delete"
+
+
+# ---------------------------------------------------------------------------
+# A tag on a later chunk of a streamed message
+# ---------------------------------------------------------------------------
+
+
+def _chunk_adapter(source, *, dedup, shape):
+    """One conversation holding a message streamed as chunks ``c1`` and ``c2``.
+
+    ``shape["merged"]`` False stores each chunk as its own response, as a parser
+    did before one message became one event; True assembles them into one.
+    """
+
+    def parse(_source):
+        records = [
+            Session(external_id="conv-1", started_at="2024-01-15T10:00:00Z", ended_at="2024-01-15T11:00:00Z"),
+            PromptRec(at="2024-01-15T10:00:00Z", external_id="p1"),
+            ResponseRec(at="2024-01-15T10:00:01Z", external_id="c1", key="m" if shape["merged"] else "m1"),
+            ResponseRec(at="2024-01-15T10:00:02Z", external_id="c2", key="m" if shape["merged"] else "m2"),
+        ]
+        assembler = Assembler(Harness(name=HARNESS, source="test", log_format="jsonl"))
+        for record in records:
+            assembler.feed(record)
+        yield from assembler.finish().conversations
+
+    return make_test_adapter(source, name=HARNESS, dedup=dedup, harness_log_format="jsonl", parse_fn=parse)
+
+
+class TestReparseCarriesATagOnAMergedChunk:
+    @pytest.mark.parametrize("dedup", DEDUP)
+    def test_the_tag_lands_on_the_merged_response(self, tmp_path, run_cli, dedup):
+        source = _write_source(tmp_path / "s.jsonl")
+        shape = {"merged": False}
+        adapter = _chunk_adapter(source, dedup=dedup, shape=shape)
+        run_cli([adapter])
+        cid = _conversation_id(run_cli.db, "conv-1")
+        _tag(run_cli.db, "response", _event_id(run_cli.db, cid, "response", "c2"), "later-chunk")
+
+        shape["merged"] = True
+        rc, events = run_cli([adapter], "--reparse")
+
+        assert rc == 0
+        summary = _reparse_event(events)
+        assert summary["skipped_for_tags"] == [], "the gate declined a tag the replacement can carry"
+        assert summary["replaced"] == 1
+        new = _conversation_id(run_cli.db, "conv-1")
+        assert new != cid
+        assert [name for name, _ in _event_tags(run_cli.db, new, "response", "c1")] == ["later-chunk"]
+        assert _event_tags(run_cli.db, new, "response", "c2") == []
+
+
+# ---------------------------------------------------------------------------
+# Two calls that share a call_id are two events, each with its own tag
+# ---------------------------------------------------------------------------
+
+
+def _shared_call_id_adapter(source, *, dedup, shape):
+    """One conversation whose calls all carry ``call_id="dup"``; ``shape["calls"]`` says how many."""
+
+    def parse(_source):
+        records = [
+            Session(external_id="conv-1", started_at="2024-01-15T10:00:00Z", ended_at="2024-01-15T11:00:00Z"),
+            PromptRec(at="2024-01-15T10:00:00Z", external_id="p1"),
+            ResponseRec(at="2024-01-15T10:00:01Z", external_id="r1"),
+        ]
+        records += [
+            ToolCallRec(at=f"2024-01-15T10:00:0{n + 2}Z", name="Read", input={"n": n}, call_id="dup")
+            for n in range(shape["calls"])
+        ]
+        assembler = Assembler(Harness(name=HARNESS, source="test", log_format="jsonl"))
+        for record in records:
+            assembler.feed(record)
+        yield from assembler.finish().conversations
+
+    return make_test_adapter(source, name=HARNESS, dedup=dedup, harness_log_format="jsonl", parse_fn=parse)
+
+
+class TestReparseKeepsDistinctCallsApart:
+    """``dup:2`` names a second call, not a legacy alias of ``dup``, so a tag on it never moves to the first."""
+
+    @pytest.mark.parametrize("dedup", DEDUP)
+    def test_removing_the_tagged_second_call_is_declined(self, tmp_path, run_cli, dedup):
+        source = _write_source(tmp_path / "s.jsonl")
+        shape = {"calls": 2}
+        adapter = _shared_call_id_adapter(source, dedup=dedup, shape=shape)
+        run_cli([adapter])
+        cid = _conversation_id(run_cli.db, "conv-1")
+        _tag(run_cli.db, "tool_call", _event_id(run_cli.db, cid, "tool_call", "dup:2"), "second")
+
+        shape["calls"] = 1
+        rc, events = run_cli([adapter], "--reparse")
+
+        assert rc == 0
+        summary = _reparse_event(events)
+        assert [e["lost"] for e in summary["skipped_for_tags"]] == [1], "the gate reported nothing to lose"
+        assert _conversation_id(run_cli.db, "conv-1") == cid, "a declined door stores nothing"
+        assert _event_tags(run_cli.db, cid, "tool_call", "dup") == []
+
+    @pytest.mark.parametrize("dedup", DEDUP)
+    def test_force_drops_the_tag_rather_than_moving_it(self, tmp_path, run_cli, dedup):
+        source = _write_source(tmp_path / "s.jsonl")
+        shape = {"calls": 2}
+        adapter = _shared_call_id_adapter(source, dedup=dedup, shape=shape)
+        run_cli([adapter])
+        cid = _conversation_id(run_cli.db, "conv-1")
+        _tag(run_cli.db, "tool_call", _event_id(run_cli.db, cid, "tool_call", "dup:2"), "second")
+
+        shape["calls"] = 1
+        rc, _events = run_cli([adapter], "--reparse", "--force")
+
+        assert rc == 0
+        new = _conversation_id(run_cli.db, "conv-1")
+        assert new != cid
+        assert _event_tags(run_cli.db, new, "tool_call", "dup") == []
+
+    @pytest.mark.parametrize("dedup", DEDUP)
+    def test_a_kept_second_call_carries_its_tag(self, tmp_path, run_cli, dedup):
+        source = _write_source(tmp_path / "s.jsonl")
+        shape = {"calls": 2}
+        adapter = _shared_call_id_adapter(source, dedup=dedup, shape=shape)
+        run_cli([adapter])
+        cid = _conversation_id(run_cli.db, "conv-1")
+        _tag(run_cli.db, "tool_call", _event_id(run_cli.db, cid, "tool_call", "dup:2"), "second")
+
+        rc, events = run_cli([adapter], "--reparse")
+
+        assert rc == 0
+        assert _reparse_event(events)["skipped_for_tags"] == []
+        new = _conversation_id(run_cli.db, "conv-1")
+        assert [name for name, _ in _event_tags(run_cli.db, new, "tool_call", "dup:2")] == ["second"]
+        assert _event_tags(run_cli.db, new, "tool_call", "dup") == []

@@ -50,9 +50,13 @@
             ],
             "external_id": "claude_code::msg-002",
             "model": "claude-3-opus-20240229",
+            "sequence": 1,
             "timestamp": "2024-01-15T10:00:01Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2024-01-15T10:00:02+00:00"
+                },
                 "external_id": "tool-001",
                 "input": {
                   "command": "pytest tests/"
@@ -60,8 +64,9 @@
                 "result": {
                   "content": "5 passed in 0.42s"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2024-01-15T10:00:02Z",
+                "timestamp": "2024-01-15T10:00:01Z",
                 "tool_name": "Bash"
               }
             ],
@@ -82,6 +87,7 @@
             ],
             "external_id": "claude_code::msg-004",
             "model": "claude-3-opus-20240229",
+            "sequence": 3,
             "timestamp": "2024-01-15T10:00:03Z",
             "usage": {
               "input_tokens": 120,
@@ -89,6 +95,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2024-01-15T10:00:00Z"
       }
     ],

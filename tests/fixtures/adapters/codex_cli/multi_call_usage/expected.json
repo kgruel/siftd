@@ -18,6 +18,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-02T03:18:46.263Z"
       },
       {
@@ -29,6 +30,7 @@
             }
           }
         ],
+        "sequence": 1,
         "timestamp": "2026-02-02T03:18:46.263Z"
       },
       {
@@ -51,6 +53,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 3,
             "timestamp": "2026-02-02T03:18:48.805Z"
           },
           {
@@ -70,16 +73,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 4,
             "timestamp": "2026-02-02T03:18:49.011Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:49.288000+00:00"
+                },
                 "external_id": "call_0L5DWCZabZW3EaC6yJcrnXKM",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 5,
                 "status": "success",
-                "timestamp": "2026-02-02T03:18:49.288Z",
+                "timestamp": "2026-02-02T03:18:49.011Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -98,6 +106,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 6,
             "timestamp": "2026-02-02T03:18:53.857Z"
           },
           {
@@ -117,16 +126,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 7,
             "timestamp": "2026-02-02T03:18:53.936Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:54.215000+00:00"
+                },
                 "external_id": "call_VsOiwMX6loAEyjF7Eh1E7fn7",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 8,
                 "status": "success",
-                "timestamp": "2026-02-02T03:18:54.215Z",
+                "timestamp": "2026-02-02T03:18:53.936Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -152,16 +166,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 9,
             "timestamp": "2026-02-02T03:18:56.442Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:56.712000+00:00"
+                },
                 "external_id": "call_UZOlRJreNrAMrTLl5YuFA0v5",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 10,
                 "status": "success",
-                "timestamp": "2026-02-02T03:18:56.712Z",
+                "timestamp": "2026-02-02T03:18:56.442Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -180,6 +199,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 11,
             "timestamp": "2026-02-02T03:18:59.343Z"
           },
           {
@@ -199,16 +219,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 12,
             "timestamp": "2026-02-02T03:18:59.490Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:18:59.741000+00:00"
+                },
                 "external_id": "call_6PfuVyL2S7BFuWFP4004ZtOY",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 13,
                 "status": "success",
-                "timestamp": "2026-02-02T03:18:59.741Z",
+                "timestamp": "2026-02-02T03:18:59.490Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -227,6 +252,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 14,
             "timestamp": "2026-02-02T03:19:01.309Z"
           },
           {
@@ -246,16 +272,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 15,
             "timestamp": "2026-02-02T03:19:01.392Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:01.698000+00:00"
+                },
                 "external_id": "call_do5y7RZK0OYtfMp77togGaPl",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 16,
                 "status": "success",
-                "timestamp": "2026-02-02T03:19:01.698Z",
+                "timestamp": "2026-02-02T03:19:01.392Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -280,6 +311,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 17,
             "timestamp": "2026-02-02T03:19:27.360Z"
           },
           {
@@ -299,16 +331,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 18,
             "timestamp": "2026-02-02T03:19:27.505Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:27.910000+00:00"
+                },
                 "external_id": "call_nJgJmsJIYuibRwLjqvoDVVT9",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 19,
                 "status": "success",
-                "timestamp": "2026-02-02T03:19:27.910Z",
+                "timestamp": "2026-02-02T03:19:27.505Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -327,6 +364,7 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 20,
             "timestamp": "2026-02-02T03:19:30.239Z"
           },
           {
@@ -346,16 +384,21 @@
               }
             ],
             "model": "gpt-5.2-codex",
+            "sequence": 21,
             "timestamp": "2026-02-02T03:19:30.475Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-02T03:19:30.767000+00:00"
+                },
                 "external_id": "call_07CG5JWmjup6OtC0ZU2XMp35",
                 "input": {},
                 "result": {
                   "output": "ok"
                 },
+                "sequence": 22,
                 "status": "success",
-                "timestamp": "2026-02-02T03:19:30.767Z",
+                "timestamp": "2026-02-02T03:19:30.475Z",
                 "tool_name": "exec_command"
               }
             ],
@@ -365,6 +408,7 @@
             }
           }
         ],
+        "sequence": 2,
         "timestamp": "2026-02-02T03:18:46.269Z"
       }
     ],

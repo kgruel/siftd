@@ -27,15 +27,23 @@ Placement rules, which are the decisions the adapters each used to make alone:
   empty response to hold it; the ledger counts each one as ``synthesized``.
 - **Merge.** A prompt or response whose ``key`` was already seen in this
   conversation merges into that event (content appended, usage snapshot
-  replaced, first id and timestamp kept).
+  replaced, first id and timestamp kept; a response lists the ids it absorbed
+  in ``merged_external_ids``). A response key last seen in an earlier turn
+  opens a new event instead, because a prompt ends the turn: Claude Code
+  continues one message across a harness-injected record, which is a prompt.
+  The message's snapshot stays on the event that opened it, so one message is
+  counted once.
 - **Pairing.** A tool result patches the earliest open call with its
   ``call_id``, wherever that call is; a result that arrives first waits for
   its call. A non-final result updates the call and leaves it open. A result
-  still waiting at the end is an ``ORPHAN``. A completed call's timestamp is
-  the result's; the call was made at its response's time.
+  still waiting at the end is an ``ORPHAN``. A call keeps the time it was
+  made; the result's time is its ``completed_at`` attribute. Calls sharing a
+  ``call_id`` are distinct events: the second and later take ``<id>:<rank>``
+  as their ``external_id`` (the form the v4 migration gave duplicates) and
+  state their rank as ``call_occurrence``, which tells them from a legacy alias.
 - **Usage.** Snapshots (on a response) replace; increments (``UsageRec``) sum.
-  An unkeyed increment or patch that arrives before any response waits for
-  the next one.
+  An unkeyed increment or patch waits for the next response when none has
+  arrived since the latest prompt.
 - **Explicit keys are never redirected.** A tool call, increment or patch
   naming a key not yet seen waits for that response; if it never appears the
   record is an ``ORPHAN``, not attached to some other response.
@@ -63,6 +71,10 @@ Placement rules, which are the decisions the adapters each used to make alone:
   when it arrives, even if its parent response appears later; waiting
   records apply in the order they arrived. Model and provider inherited
   from ``Meta`` context yield to a later chunk that states them.
+- **Recorded order.** Every event is numbered, from 0, in the order it first
+  arrived (``sequence``); storage persists that number. Parent links decide
+  which events belong together, never the order between them: interleaved
+  responses keep the order their calls were made in.
 """
 
 from __future__ import annotations
@@ -89,8 +101,9 @@ from siftd.adapters.records import (
     Unknown,
     UsageRec,
 )
+from siftd.dateparse import to_utc
 from siftd.domain import Conversation, Harness, Lineage, Prompt, Response, ToolCall, Usage
-from siftd.domain.models import CONTAINMENT_KINDS
+from siftd.domain.models import CALL_OCCURRENCE_ATTRIBUTE, CONTAINMENT_KINDS, MERGED_EXTERNAL_IDS_ATTRIBUTE
 from siftd.domain.source import Source
 from siftd.errors import SiftdError
 
@@ -212,6 +225,7 @@ class _Build:
         self.workspace_path: str | None = None
         self.branch: str | None = None
         self.attributes: dict[str, str] = {}
+        # Ids the conversation was stored under before a re-key, first stated first.
         self.superseded: list[str] = []
         # Context for later responses (a later Meta replaces it).
         self.model: str | None = None
@@ -220,7 +234,13 @@ class _Build:
         self.prompts: list[Prompt] = []
         self.preamble: list[Response] = []
         self.prompts_by_key: dict[str, Prompt] = {}
+        # key -> the latest event for it, and the turn (prompt count) it opened in
         self.responses_by_key: dict[str, Response] = {}
+        self.key_turn: dict[str, int] = {}
+        # key -> the first event for it, which holds the message's usage snapshot
+        self.snapshot_owner: dict[str, Response] = {}
+        # id(response) -> external ids of the chunks merged into it
+        self.merged_ids: dict[int, list[str]] = {}
         self.latest_response: Response | None = None
         # Has a response arrived since the latest prompt? Decides whether a
         # tool call needs a container.
@@ -230,6 +250,9 @@ class _Build:
         # a later chunk that states one explicitly replaces it.
         self.inherited: dict[int, set[str]] = {}
         self.seq = 0
+        self.ordinal = 0
+        # Every external_id handed to a tool call, so a repeated call_id stays unique.
+        self.call_ids: set[str] = set()
 
         # call_id -> calls still waiting for their final result, earliest first
         self.unresulted: dict[str, list[ToolCall]] = {}
@@ -247,8 +270,6 @@ class _Build:
         self.results_on_unplaced: dict[int, list[ToolResultRec]] = {}
         self.placed: set[int] = set()
         self.lineage: list[Lineage] = []
-        # Ids the conversation was stored under before a re-key, first stated first.
-        self.superseded: list[str] = []
 
         # Every record's timestamp in arrival order, with the event it created
         # (or None for records that only lend their time: merged chunks,
@@ -262,6 +283,20 @@ class _Build:
     def next_seq(self) -> int:
         self.seq += 1
         return self.seq
+
+    def next_ordinal(self) -> int:
+        """The position of the next event in arrival order."""
+        self.ordinal += 1
+        return self.ordinal - 1
+
+    def call_identity(self, call_id: str) -> tuple[str, int]:
+        """The event identity of a call and its rank: the ``call_id``, suffixed from the second occurrence on."""
+        rank, identity = 1, call_id
+        while identity in self.call_ids:
+            rank += 1
+            identity = f"{call_id}:{rank}"
+        self.call_ids.add(identity)
+        return identity, rank
 
     def anchor(self, at: str | None) -> None:
         if at is not None:
@@ -403,7 +438,12 @@ class Assembler:
             build.anchor(rec.at)
             self.ledger.record(rec, Disposition.MERGE)
             return
-        prompt = Prompt(timestamp=rec.at or "", content=list(rec.content), external_id=rec.external_id)
+        prompt = Prompt(
+            timestamp=rec.at or "",
+            content=list(rec.content),
+            external_id=rec.external_id,
+            sequence=build.next_ordinal(),
+        )
         build.prompts.append(prompt)
         build.timeline.append((prompt, rec.at))
         if rec.key:
@@ -422,6 +462,8 @@ class Assembler:
         waiting, build.waiting = build.waiting, []
         if key is not None:
             build.responses_by_key[key] = response
+            build.key_turn[key] = len(build.prompts)
+            build.snapshot_owner.setdefault(key, response)
             waiting += build.waiting_for_key.pop(key, [])
         for pending in sorted(waiting, key=lambda p: p.seq):
             pending.apply(response)
@@ -432,9 +474,15 @@ class Assembler:
 
     def _on_response(self, rec: ResponseRec) -> None:
         build = self._current()
-        existing = build.responses_by_key.get(rec.key) if rec.key else None
-        if existing is not None:
+        key = rec.key or None
+        existing = build.responses_by_key.get(key) if key else None
+        if key and existing is not None and build.key_turn[key] == len(build.prompts):
             existing.content.extend(rec.content)
+            if rec.external_id not in (None, existing.external_id):
+                merged = build.merged_ids.setdefault(id(existing), [])
+                if rec.external_id not in merged:
+                    merged.append(rec.external_id)
+                existing.attributes[MERGED_EXTERNAL_IDS_ATTRIBUTE] = json.dumps(merged)
             inherited = build.inherited.get(id(existing), set())
             if rec.model is not None and (existing.model is None or "model" in inherited):
                 existing.model = rec.model
@@ -443,10 +491,7 @@ class Assembler:
                 existing.provider = rec.provider
                 inherited.discard("provider")
             existing.attributes.update(rec.attributes)
-            if rec.usage is not None or rec.usage_details:
-                parts = build.usage.setdefault(id(existing), _Usage())
-                parts.snapshot, parts.snapshot_details = rec.usage, dict(rec.usage_details)
-                parts.write(existing)
+            self._set_snapshot(build, build.snapshot_owner[key], rec)
             build.anchor(rec.at)
             self.ledger.record(rec, Disposition.MERGE)
             return
@@ -457,6 +502,7 @@ class Assembler:
             provider=rec.provider or build.provider,
             external_id=rec.external_id,
             attributes=dict(rec.attributes),
+            sequence=build.next_ordinal(),
         )
         inherited = {
             f
@@ -465,14 +511,20 @@ class Assembler:
         }
         if inherited:
             build.inherited[id(response)] = inherited
-        if rec.usage is not None or rec.usage_details:
-            parts = build.usage.setdefault(id(response), _Usage())
-            parts.snapshot, parts.snapshot_details = rec.usage, dict(rec.usage_details)
-            parts.write(response)
+        # A continuation of an earlier turn's message states that message's
+        # total again: it replaces the snapshot where it already lives.
+        self._set_snapshot(build, build.snapshot_owner.get(key, response) if key else response, rec)
         # Recorded before attaching, so the records waiting on it patch an
         # EVENT that is already counted.
         self.ledger.record(rec, Disposition.EVENT)
-        self._attach_response(build, response, rec.at, rec.key)
+        self._attach_response(build, response, rec.at, key)
+
+    @staticmethod
+    def _set_snapshot(build: _Build, holder: Response, rec: ResponseRec) -> None:
+        if rec.usage is not None or rec.usage_details:
+            parts = build.usage.setdefault(id(holder), _Usage())
+            parts.snapshot, parts.snapshot_details = rec.usage, dict(rec.usage_details)
+            parts.write(holder)
 
     def _on_tool_call(self, rec: ToolCallRec) -> None:
         build = self._current()
@@ -481,10 +533,13 @@ class Assembler:
         call = ToolCall(
             tool_name=rec.name,
             input=rec.input,
-            external_id=rec.call_id,
             timestamp=rec.at,
             attributes=dict(rec.attributes),
         )
+        if rec.call_id is not None:
+            call.external_id, rank = build.call_identity(rec.call_id)
+            if rank > 1:
+                call.attributes[CALL_OCCURRENCE_ATTRIBUTE] = str(rank)
         build.timeline.append((call, rec.at))
         if rec.call_id is not None:
             # Results that arrived first, in order, up to and including the final one.
@@ -504,14 +559,18 @@ class Assembler:
             parent = build.responses_by_key.get(rec.parent_key)
             if parent is None:
                 # Named a response not seen yet: wait for it, never guess.
+                call.sequence = build.next_ordinal()
                 build.calls_for_key.setdefault(rec.parent_key, []).append((rec, call))
                 return
         elif build.response_since_prompt and build.latest_response is not None:
             parent = build.latest_response
         else:
-            parent = Response(timestamp=rec.at or "", model=build.model, provider=build.provider)
+            parent = Response(
+                timestamp=rec.at or "", model=build.model, provider=build.provider, sequence=build.next_ordinal()
+            )
             self.ledger.synthesized += 1
             self._attach_response(build, parent, rec.at, None)
+        call.sequence = build.next_ordinal()
         self._place_call(rec, call, parent)
 
     def _place_call(self, rec: ToolCallRec, call: ToolCall, parent: Response) -> None:
@@ -566,7 +625,9 @@ class Assembler:
                 build.waiting_for_key.setdefault(key, []).append(_Pending(build.next_seq(), rec, apply))
                 return
         else:
-            target = build.latest_response
+            # An increment with no response since the latest prompt belongs to
+            # the response that follows it, not to the previous turn's.
+            target = build.latest_response if build.response_since_prompt else None
             if target is None:
                 build.waiting.append(_Pending(build.next_seq(), rec, apply))
                 return
@@ -608,10 +669,13 @@ def _apply_result(call: ToolCall, rec: ToolResultRec) -> None:
     call.result = rec.result
     call.status = rec.status
     call.attributes.update(rec.attributes)
-    # A completed call is stamped with its completion time; when it was made
-    # is its response's time. Both instants survive, so tool duration does too.
+    # The call keeps the time it was made; the result's time rides along, so
+    # tool duration survives. An unparseable time stays as the log wrote it.
     if rec.at is not None:
-        call.timestamp = rec.at
+        try:
+            call.attributes["completed_at"] = to_utc(rec.at).isoformat()
+        except (ValueError, OverflowError):
+            call.attributes["completed_at"] = rec.at
 
 
 def _add_usage(a: Usage | None, b: Usage) -> Usage:

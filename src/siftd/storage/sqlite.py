@@ -17,7 +17,7 @@ import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from pathlib import Path
 
-from siftd.domain import Conversation, Response
+from siftd.domain import Conversation, Prompt, Response, ToolCall
 from siftd.errors import DriftError
 from siftd.ids import ulid as _ulid
 from siftd.model_names import parse_model_name
@@ -3115,9 +3115,11 @@ def store_conversation(
     for link in conversation.lineage:
         insert_conversation_link(conn, conversation_id, link)
 
-    # Every event takes the next position in tree-walk order, so the conversation
+    # Every event is stored with its recorded position, so the conversation
     # carries the order it was parsed in rather than leaving readers to recover
     # it from timestamps (which tie, and which some adapters stamp identically).
+    # The assembler numbers events in arrival order. A conversation that
+    # arrives without numbers (a version-1 adapter) takes tree-walk order.
     position = itertools.count()
 
     # Responses that precede every prompt (written first, as they came first): stored with no parent event.
@@ -3127,7 +3129,7 @@ def store_conversation(
     # Process prompts
     for prompt in conversation.prompts:
         prompt_id = insert_prompt(
-            conn, conversation_id, prompt.external_id, prompt.timestamp, sequence=next(position)
+            conn, conversation_id, prompt.external_id, prompt.timestamp, sequence=_recorded(prompt, position)
         )
 
         # Insert prompt content blocks
@@ -3149,6 +3151,11 @@ def store_conversation(
     return conversation_id
 
 
+def _recorded(event: Prompt | Response | ToolCall, position: Iterator[int]) -> int:
+    """The event's recorded position: its own when the assembler numbered it, else the next in the walk."""
+    return event.sequence if event.sequence is not None else next(position)
+
+
 def _store_response(
     conn: sqlite3.Connection,
     conversation_id: str,
@@ -3161,8 +3168,9 @@ def _store_response(
 ) -> None:
     """Store one response, its content and its tool calls. ``prompt_id`` is None for a preamble response.
 
-    ``position`` hands out the conversation's next ``events.sequence``: the
-    response takes one, then each of its tool calls.
+    An event stores its own ``sequence`` when it has one; otherwise ``position``
+    hands out the conversation's next: the response takes one, then each of its
+    tool calls.
 
     ``provider_id`` is the harness's provider, the fallback for a response that
     names none; a multi-provider harness (pi) names one per response.
@@ -3189,7 +3197,7 @@ def _store_response(
         timestamp=response.timestamp,
         input_tokens=input_tokens,
         output_tokens=output_tokens,
-        sequence=next(position),
+        sequence=_recorded(response, position),
     )
 
     # Insert response content blocks
@@ -3221,7 +3229,7 @@ def _store_response(
             status=tool_call.status,
             timestamp=tool_call.timestamp or response.timestamp,
             filter_binary=filter_binary,
-            sequence=next(position),
+            sequence=_recorded(tool_call, position),
         )
 
         for attr_key, attr_value in tool_call.attributes.items():

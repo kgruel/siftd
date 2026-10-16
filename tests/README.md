@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 204 | 3610 |
-| `tests/adapters/` | 22 | 468 |
+| `tests/` | 205 | 3614 |
+| `tests/adapters/` | 22 | 477 |
 | `tests/architecture/` | 15 | 90 |
-| `tests/cli/` | 31 | 686 |
+| `tests/cli/` | 31 | 690 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -143,6 +143,7 @@ docstring so its row is meaningful.
 | [test_api_stats_edges.py](test_api_stats_edges.py) | 2 | — |
 | [test_api_tags_edges.py](test_api_tags_edges.py) | 2 | — |
 | [test_api_tags_mutation.py](test_api_tags_mutation.py) | 13 | — |
+| [test_assembled_storage.py](test_assembled_storage.py) | 4 | What the assembler produces is what storage can keep, in the order it arrived. |
 | [test_attributes.py](test_attributes.py) | 6 | Tests for storage/attributes.py — set_attribute / get_attributes and downstream consumers. |
 | [test_auth.py](test_auth.py) | 4 | Tests for siftd.api.auth — token acquisition. |
 | [test_auto_index_hook.py](test_auto_index_hook.py) | 22 | Tests for the post-ingest auto-index hook (base lane — collaborators stubbed). |
@@ -335,7 +336,7 @@ docstring so its row is meaningful.
 | [adapters/test_aider.py](adapters/test_aider.py) | 23 | Tests for Aider adapter. |
 | [adapters/test_aider_edges.py](adapters/test_aider_edges.py) | 1 | — |
 | [adapters/test_antigravity_cli.py](adapters/test_antigravity_cli.py) | 54 | Tests for Antigravity CLI adapter. |
-| [adapters/test_assembly.py](adapters/test_assembly.py) | 50 | The shared assembler places every record and accounts for every one. |
+| [adapters/test_assembly.py](adapters/test_assembly.py) | 59 | The shared assembler places every record and accounts for every one. |
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
@@ -391,7 +392,7 @@ docstring so its row is meaningful.
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
 | [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
-| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 30 | ``siftd ingest --reparse`` through the argparse layer. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 34 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

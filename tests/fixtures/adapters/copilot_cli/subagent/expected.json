@@ -46,9 +46,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 1,
             "timestamp": "2026-02-18T01:49:49.568Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:06.605000+00:00"
+                },
                 "external_id": "toolu_01Ha2aGaxBPQB3yGbQniFgNs",
                 "input": {
                   "choices": [
@@ -63,8 +67,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:06.605Z",
+                "timestamp": "2026-02-18T01:49:49.568Z",
                 "tool_name": "ask_user"
               }
             ]
@@ -101,9 +106,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 3,
             "timestamp": "2026-02-18T01:50:09.538Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:09.540000+00:00"
+                },
                 "external_id": "toolu_016Cce8LSNWmoPyH9qvz5xYX",
                 "input": {
                   "intent": "example"
@@ -112,11 +121,15 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:09.540Z",
+                "timestamp": "2026-02-18T01:50:09.538Z",
                 "tool_name": "report_intent"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T02:01:25.155000+00:00"
+                },
                 "external_id": "toolu_01Xj5hydeGkf1X1sZDqEPmix",
                 "input": {
                   "agent_type": "example",
@@ -127,8 +140,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 5,
                 "status": "success",
-                "timestamp": "2026-02-18T02:01:25.155Z",
+                "timestamp": "2026-02-18T01:50:09.538Z",
                 "tool_name": "task"
               }
             ]
@@ -167,9 +181,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 6,
             "timestamp": "2026-02-18T01:50:13.542Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:13.553000+00:00"
+                },
                 "external_id": "toolu_013YDgu9H9WCbo7Yb2ZqZzkK",
                 "input": {
                   "intent": "example"
@@ -178,11 +196,15 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 7,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:13.553Z",
+                "timestamp": "2026-02-18T01:50:13.542Z",
                 "tool_name": "report_intent"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:14.003000+00:00"
+                },
                 "external_id": "toolu_01WHSGBrqEL7BJ9xrzYmBHMk",
                 "input": {
                   "command": "example",
@@ -192,8 +214,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 8,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:14.003Z",
+                "timestamp": "2026-02-18T01:50:13.542Z",
                 "tool_name": "bash"
               }
             ]
@@ -222,9 +245,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 9,
             "timestamp": "2026-02-18T01:50:16.688Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:17.092000+00:00"
+                },
                 "external_id": "toolu_01NaMyGnPo3dR8b4BqJ4oM1u",
                 "input": {
                   "command": "example",
@@ -234,8 +261,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 10,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:17.092Z",
+                "timestamp": "2026-02-18T01:50:16.688Z",
                 "tool_name": "bash"
               }
             ]
@@ -264,9 +292,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 11,
             "timestamp": "2026-02-18T01:50:18.673Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:19.079000+00:00"
+                },
                 "external_id": "toolu_0146AXn2PT3rhpvxrcLa7oJC",
                 "input": {
                   "command": "example",
@@ -276,8 +308,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 12,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:19.079Z",
+                "timestamp": "2026-02-18T01:50:18.673Z",
                 "tool_name": "bash"
               }
             ]
@@ -306,9 +339,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 13,
             "timestamp": "2026-02-18T01:50:21.194Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:21.602000+00:00"
+                },
                 "external_id": "toolu_01UjaiAgiq1QerhT7o39bovw",
                 "input": {
                   "command": "example",
@@ -318,8 +355,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 14,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:21.602Z",
+                "timestamp": "2026-02-18T01:50:21.194Z",
                 "tool_name": "bash"
               }
             ]
@@ -367,9 +405,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 15,
             "timestamp": "2026-02-18T01:50:23.528Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:23.559000+00:00"
+                },
                 "external_id": "toolu_01Lgz15puSLitQYhmfftTuFd",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/adapters/vscode.py"
@@ -378,11 +420,15 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 16,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:23.559Z",
+                "timestamp": "2026-02-18T01:50:23.528Z",
                 "tool_name": "view"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:23.553000+00:00"
+                },
                 "external_id": "toolu_018QmhvjgZ4p4F1DpW5zeskn",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/config.py"
@@ -391,11 +437,15 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 17,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:23.553Z",
+                "timestamp": "2026-02-18T01:50:23.528Z",
                 "tool_name": "view"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:23.552000+00:00"
+                },
                 "external_id": "toolu_015tJk6Ps6Nwcxzo9GKcuJfi",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/cli_query.py"
@@ -404,8 +454,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 18,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:23.552Z",
+                "timestamp": "2026-02-18T01:50:23.528Z",
                 "tool_name": "view"
               }
             ]
@@ -434,9 +485,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 19,
             "timestamp": "2026-02-18T01:50:26.067Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:26.570000+00:00"
+                },
                 "external_id": "toolu_01JuDZTXA7rachD2QTN2Lis2",
                 "input": {
                   "command": "example",
@@ -446,8 +501,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 20,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:26.570Z",
+                "timestamp": "2026-02-18T01:50:26.067Z",
                 "tool_name": "bash"
               }
             ]
@@ -476,9 +532,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 21,
             "timestamp": "2026-02-18T01:50:29.197Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:29.700000+00:00"
+                },
                 "external_id": "toolu_01WGQ6tC1gyRz2zR47eUX11e",
                 "input": {
                   "command": "example",
@@ -488,8 +548,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 22,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:29.700Z",
+                "timestamp": "2026-02-18T01:50:29.197Z",
                 "tool_name": "bash"
               }
             ]
@@ -518,9 +579,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 23,
             "timestamp": "2026-02-18T01:50:32.210Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:36.842000+00:00"
+                },
                 "external_id": "toolu_01KgC1gF2w36ELdgfTsrKS5x",
                 "input": {
                   "command": "example",
@@ -530,8 +595,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 24,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:36.842Z",
+                "timestamp": "2026-02-18T01:50:32.210Z",
                 "tool_name": "bash"
               }
             ]
@@ -560,9 +626,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 25,
             "timestamp": "2026-02-18T01:50:39.300Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:40.913000+00:00"
+                },
                 "external_id": "toolu_01D8tupLvno8K574qyGhcz3t",
                 "input": {
                   "command": "example",
@@ -572,8 +642,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 26,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:40.913Z",
+                "timestamp": "2026-02-18T01:50:39.300Z",
                 "tool_name": "bash"
               }
             ]
@@ -602,9 +673,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 27,
             "timestamp": "2026-02-18T01:50:43.207Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:45.133000+00:00"
+                },
                 "external_id": "toolu_019HTW82PxAVHWAMgRu84a4b",
                 "input": {
                   "command": "example",
@@ -614,8 +689,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 28,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:45.133Z",
+                "timestamp": "2026-02-18T01:50:43.207Z",
                 "tool_name": "bash"
               }
             ]
@@ -647,9 +723,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 29,
             "timestamp": "2026-02-18T01:50:47.409Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:50:47.428000+00:00"
+                },
                 "external_id": "toolu_01ViACyVFQiDe1KJiujP89bj",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/adapters/vscode.py",
@@ -662,8 +742,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 30,
                 "status": "success",
-                "timestamp": "2026-02-18T01:50:47.428Z",
+                "timestamp": "2026-02-18T01:50:47.409Z",
                 "tool_name": "view"
               }
             ]
@@ -692,9 +773,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 31,
             "timestamp": "2026-02-18T01:50:51.735Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:43.194000+00:00"
+                },
                 "external_id": "toolu_01LJB1Kbo7afacRjP2UiyjzJ",
                 "input": {
                   "command": "example",
@@ -704,8 +789,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 32,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:43.194Z",
+                "timestamp": "2026-02-18T01:50:51.735Z",
                 "tool_name": "bash"
               }
             ]
@@ -734,9 +820,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 33,
             "timestamp": "2026-02-18T01:51:47.163Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:47.672000+00:00"
+                },
                 "external_id": "toolu_018C7qrsDfA7bDFNwGLdsNje",
                 "input": {
                   "command": "example",
@@ -746,8 +836,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 34,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:47.672Z",
+                "timestamp": "2026-02-18T01:51:47.163Z",
                 "tool_name": "bash"
               }
             ]
@@ -779,9 +870,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 35,
             "timestamp": "2026-02-18T01:51:50.625Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:50.633000+00:00"
+                },
                 "external_id": "toolu_016TAZcENRy5MXa1U1drQiZ2",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/cli_query.py",
@@ -794,8 +889,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 36,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:50.633Z",
+                "timestamp": "2026-02-18T01:51:50.625Z",
                 "tool_name": "view"
               }
             ]
@@ -827,9 +923,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 37,
             "timestamp": "2026-02-18T01:51:53.912Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:53.945000+00:00"
+                },
                 "external_id": "toolu_012pwAHhwdhTHjNedX6qrBUX",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/config.py",
@@ -842,8 +942,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 38,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:53.945Z",
+                "timestamp": "2026-02-18T01:51:53.912Z",
                 "tool_name": "view"
               }
             ]
@@ -875,9 +976,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 39,
             "timestamp": "2026-02-18T01:51:56.130Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:51:56.144000+00:00"
+                },
                 "external_id": "toolu_01V7QLWLx3vqvZHHry8Db7Cf",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/config.py",
@@ -890,8 +995,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 40,
                 "status": "success",
-                "timestamp": "2026-02-18T01:51:56.144Z",
+                "timestamp": "2026-02-18T01:51:56.130Z",
                 "tool_name": "view"
               }
             ]
@@ -920,9 +1026,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 41,
             "timestamp": "2026-02-18T01:51:58.500Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:00.221000+00:00"
+                },
                 "external_id": "toolu_01BwUFsJekLanKvGjGaDkV3T",
                 "input": {
                   "command": "example",
@@ -932,8 +1042,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 42,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:00.221Z",
+                "timestamp": "2026-02-18T01:51:58.500Z",
                 "tool_name": "bash"
               }
             ]
@@ -962,9 +1073,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 43,
             "timestamp": "2026-02-18T01:52:02.539Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:03.049000+00:00"
+                },
                 "external_id": "toolu_01WSQ2VzoMqzQYgS4LtHXHRi",
                 "input": {
                   "command": "example",
@@ -974,8 +1089,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 44,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:03.049Z",
+                "timestamp": "2026-02-18T01:52:02.539Z",
                 "tool_name": "bash"
               }
             ]
@@ -1004,9 +1120,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 45,
             "timestamp": "2026-02-18T01:52:11.159Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:37.361000+00:00"
+                },
                 "external_id": "toolu_01JrT1HZmB2AaXFmVY91RAHr",
                 "input": {
                   "command": "example",
@@ -1016,8 +1136,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 46,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:37.361Z",
+                "timestamp": "2026-02-18T01:52:11.159Z",
                 "tool_name": "bash"
               }
             ]
@@ -1045,9 +1166,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 47,
             "timestamp": "2026-02-18T01:52:41.388Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:41.398000+00:00"
+                },
                 "external_id": "toolu_01H8JcEn65AkxixciNDpt3YS",
                 "input": {
                   "path": "/Users/user/Code/siftd/tests/fixtures/vscode_minimal.jsonl"
@@ -1056,8 +1181,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 48,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:41.398Z",
+                "timestamp": "2026-02-18T01:52:41.388Z",
                 "tool_name": "view"
               }
             ]
@@ -1089,9 +1215,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 49,
             "timestamp": "2026-02-18T01:52:44.037Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:44.044000+00:00"
+                },
                 "external_id": "toolu_01ELLFq1PDYiLt6PJwaYwFca",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/adapters/vscode.py",
@@ -1104,8 +1234,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 50,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:44.044Z",
+                "timestamp": "2026-02-18T01:52:44.037Z",
                 "tool_name": "view"
               }
             ]
@@ -1134,9 +1265,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 51,
             "timestamp": "2026-02-18T01:52:48.619Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:52:49.127000+00:00"
+                },
                 "external_id": "toolu_011H5R9kTQnXqXJqnYGgwQM6",
                 "input": {
                   "command": "example",
@@ -1146,8 +1281,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 52,
                 "status": "success",
-                "timestamp": "2026-02-18T01:52:49.127Z",
+                "timestamp": "2026-02-18T01:52:48.619Z",
                 "tool_name": "bash"
               }
             ]
@@ -1176,9 +1312,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 53,
             "timestamp": "2026-02-18T01:52:53.513Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:53:17.582000+00:00"
+                },
                 "external_id": "toolu_01QPm5bVPFAfrhGnFxHsyi68",
                 "input": {
                   "command": "example",
@@ -1188,8 +1328,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 54,
                 "status": "success",
-                "timestamp": "2026-02-18T01:53:17.582Z",
+                "timestamp": "2026-02-18T01:52:53.513Z",
                 "tool_name": "bash"
               }
             ]
@@ -1218,9 +1359,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 55,
             "timestamp": "2026-02-18T01:53:20.069Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:53:37.372000+00:00"
+                },
                 "external_id": "toolu_01Wdyer5JeK99SCfEpkByEq3",
                 "input": {
                   "command": "example",
@@ -1230,8 +1375,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 56,
                 "status": "success",
-                "timestamp": "2026-02-18T01:53:37.372Z",
+                "timestamp": "2026-02-18T01:53:20.069Z",
                 "tool_name": "bash"
               }
             ]
@@ -1259,9 +1405,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 57,
             "timestamp": "2026-02-18T01:53:39.762Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:53:39.774000+00:00"
+                },
                 "external_id": "toolu_01SPYzM9wheWuxZjWgRZKbnF",
                 "input": {
                   "path": "/Users/user/Code/siftd/src/siftd/builtin_queries/session-tools.sql"
@@ -1270,8 +1420,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 58,
                 "status": "success",
-                "timestamp": "2026-02-18T01:53:39.774Z",
+                "timestamp": "2026-02-18T01:53:39.762Z",
                 "tool_name": "view"
               }
             ]
@@ -1300,9 +1451,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 59,
             "timestamp": "2026-02-18T01:53:43.405Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:53:43.913000+00:00"
+                },
                 "external_id": "toolu_01CciqeCWk6TnT2zhk1TjtHD",
                 "input": {
                   "command": "example",
@@ -1312,8 +1467,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 60,
                 "status": "success",
-                "timestamp": "2026-02-18T01:53:43.913Z",
+                "timestamp": "2026-02-18T01:53:43.405Z",
                 "tool_name": "bash"
               }
             ]
@@ -1342,9 +1498,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 61,
             "timestamp": "2026-02-18T01:53:46.521Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T01:53:47.030000+00:00"
+                },
                 "external_id": "toolu_01HpCVtnbRktpvyEvP2iWziR",
                 "input": {
                   "command": "example",
@@ -1354,8 +1514,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 62,
                 "status": "success",
-                "timestamp": "2026-02-18T01:53:47.030Z",
+                "timestamp": "2026-02-18T01:53:46.521Z",
                 "tool_name": "bash"
               }
             ]
@@ -1384,9 +1545,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 63,
             "timestamp": "2026-02-18T01:53:50.875Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T02:01:14.047000+00:00"
+                },
                 "external_id": "toolu_01483tM4XqiDZbMgwJETEcUH",
                 "input": {
                   "command": "example",
@@ -1396,8 +1561,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 64,
                 "status": "success",
-                "timestamp": "2026-02-18T02:01:14.047Z",
+                "timestamp": "2026-02-18T01:53:50.875Z",
                 "tool_name": "bash"
               }
             ]
@@ -1420,9 +1586,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 65,
             "timestamp": "2026-02-18T02:01:18.021Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T02:01:18.535000+00:00"
+                },
                 "external_id": "toolu_01GdEZLUH14wXhcvFyvYDwu9",
                 "input": {
                   "command": "example",
@@ -1432,8 +1602,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 66,
                 "status": "success",
-                "timestamp": "2026-02-18T02:01:18.535Z",
+                "timestamp": "2026-02-18T02:01:18.021Z",
                 "tool_name": "bash"
               }
             ]
@@ -1456,9 +1627,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 67,
             "timestamp": "2026-02-18T02:01:20.476Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-02-18T02:01:20.985000+00:00"
+                },
                 "external_id": "toolu_013RwhcWn4Y4ccXNaePHpXA1",
                 "input": {
                   "command": "example",
@@ -1468,8 +1643,9 @@
                   "content": "Example text.",
                   "detailedContent": "Example text."
                 },
+                "sequence": 68,
                 "status": "success",
-                "timestamp": "2026-02-18T02:01:20.985Z",
+                "timestamp": "2026-02-18T02:01:20.476Z",
                 "tool_name": "bash"
               }
             ]
@@ -1487,6 +1663,7 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 69,
             "timestamp": "2026-02-18T02:01:25.141Z"
           },
           {
@@ -1499,9 +1676,11 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 70,
             "timestamp": "2026-02-18T02:01:29.629Z"
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-18T01:49:45.780Z"
       }
     ],

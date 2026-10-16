@@ -4,8 +4,10 @@ Order used to be ``(timestamp, id)``, and ULIDs are random within a
 millisecond, so events that share a timestamp resolved arbitrarily: an adapter
 that stamps every event with the session start (aider) made an exchange-index
 lookup return the wrong prompt at 38 of 40 positions in a reproduction.
-``store_conversation`` now assigns each event its tree-walk position; legacy
-rows keep a NULL sequence and readers fall back to ``(timestamp, id)``.
+``store_conversation`` now stores each event's recorded position: the number
+the assembler gave it, or the tree-walk position for a conversation that arrives
+unnumbered. Legacy rows keep a NULL sequence and readers fall back to
+``(timestamp, id)``.
 """
 
 from __future__ import annotations

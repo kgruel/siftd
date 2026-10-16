@@ -46,9 +46,13 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 1,
             "timestamp": "2024-04-20T09:00:12Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2024-04-20T09:00:14+00:00"
+                },
                 "external_id": "call-001",
                 "input": {
                   "command": "ls -la"
@@ -56,8 +60,9 @@
                 "result": {
                   "content": "total 8\ndrwxr-xr-x  4 user  staff  128 Apr 20 09:00 .\n-rw-r--r--  1 user  staff   45 Apr 20 09:00 README.md\ndrwxr-xr-x  3 user  staff   96 Apr 20 09:00 src/"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2024-04-20T09:00:14Z",
+                "timestamp": "2024-04-20T09:00:12Z",
                 "tool_name": "bash"
               }
             ]
@@ -72,9 +77,11 @@
               }
             ],
             "model": "claude-haiku-4.5",
+            "sequence": 3,
             "timestamp": "2024-04-20T09:00:16Z"
           }
         ],
+        "sequence": 0,
         "timestamp": "2024-04-20T09:00:10Z"
       }
     ],

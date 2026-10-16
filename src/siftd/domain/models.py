@@ -23,6 +23,18 @@ class Usage:
     output_tokens: int | None = None
 
 
+#: Response attribute listing the external ids of the later chunks merged into
+#: it (a JSON list). A merged response keeps its first chunk's id, so a tag a
+#: person put on a later chunk finds its event again through this.
+MERGED_EXTERNAL_IDS_ATTRIBUTE = "merged_external_ids"
+
+#: Tool-call attribute stating the rank of a call that shares its ``call_id``
+#: with an earlier one (2 and up), whose ``external_id`` is ``<id>:<rank>``. It
+#: marks that suffix as a distinct call's identity, not a legacy alias of the
+#: bare id, so a tag on it follows only an exact match.
+CALL_OCCURRENCE_ATTRIBUTE = "call_occurrence"
+
+
 @dataclass
 class ToolCall:
     """A tool invocation within a response."""
@@ -42,6 +54,8 @@ class ToolCall:
     # Antigravity's backgrounded RUN_COMMAND. See claude_code.py/
     # antigravity_cli.py for the two current examples.
     attributes: dict[str, str] = field(default_factory=dict)
+    # Recorded position among the conversation's events; see Prompt.sequence.
+    sequence: int | None = None
 
 
 @dataclass
@@ -55,6 +69,7 @@ class Response:
     provider: str | None = None
     external_id: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)
+    sequence: int | None = None
 
 
 @dataclass
@@ -64,6 +79,10 @@ class Prompt:
     content: list[ContentBlock] = field(default_factory=list)
     responses: list[Response] = field(default_factory=list)
     external_id: str | None = None
+    # Position in the order the conversation recorded its events, stored as
+    # ``events.sequence``. Set by the assembler on every event; a version-1
+    # adapter sets none, and storage numbers its tree walk instead.
+    sequence: int | None = None
 
 
 @dataclass

@@ -26,7 +26,8 @@
           {
             "attributes": {
               "cache_creation_ephemeral_1h_input_tokens": "42987",
-              "cache_creation_input_tokens": "42987"
+              "cache_creation_input_tokens": "42987",
+              "merged_external_ids": "[\"claude_code::ef19020f-8908-4424-be8e-44e658dbb16a\"]"
             },
             "content": [
               {
@@ -54,9 +55,13 @@
             ],
             "external_id": "claude_code::0a709a4a-7e64-4fc2-b4b7-cf316ca149e6",
             "model": "claude-haiku-4-5-20251001",
+            "sequence": 1,
             "timestamp": "2026-09-26T20:51:55.050Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-09-26T20:51:55.536000+00:00"
+                },
                 "external_id": "toolu_01RPLzhWmAs6NqcxzavJzNt8",
                 "input": {
                   "file_path": "x"
@@ -64,8 +69,9 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-09-26T20:51:55.536Z",
+                "timestamp": "2026-09-26T20:51:55.473Z",
                 "tool_name": "Read"
               }
             ],
@@ -78,7 +84,8 @@
             "attributes": {
               "cache_creation_ephemeral_1h_input_tokens": "5697",
               "cache_creation_input_tokens": "5697",
-              "cache_read_input_tokens": "42987"
+              "cache_read_input_tokens": "42987",
+              "merged_external_ids": "[\"claude_code::071d25d8-fee0-41a9-8d63-01d7fff03142\", \"claude_code::89f7afe0-e2eb-4cac-aef3-96609100bd05\"]"
             },
             "content": [
               {
@@ -116,9 +123,13 @@
             ],
             "external_id": "claude_code::c4eb3ed9-eaed-4812-b7e2-00db2907895e",
             "model": "claude-haiku-4-5-20251001",
+            "sequence": 3,
             "timestamp": "2026-09-26T20:52:12.887Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-09-26T20:52:16.998000+00:00"
+                },
                 "external_id": "toolu_01RaueQZJ68BCEXQfnS83Wuo",
                 "input": {
                   "file_path": "x",
@@ -129,8 +140,9 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-09-26T20:52:16.998Z",
+                "timestamp": "2026-09-26T20:52:16.966Z",
                 "tool_name": "Edit"
               }
             ],
@@ -140,6 +152,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-09-26T20:51:49.779Z"
       }
     ],

@@ -44,6 +44,7 @@ from siftd.domain import Conversation, Source
 from siftd.storage.attributes import get_attribute
 from siftd.storage.replacement import (
     ConversationCarryover,
+    merged_external_ids,
     release_carryover,
     restore_and_report,
     snapshot_conversation,
@@ -1548,7 +1549,8 @@ def _replacement_event_keys(conversation) -> frozenset[tuple[str, str]]:
 
     The same events :func:`store_conversation` writes, keyed the way
     :func:`~siftd.storage.replacement.unrestorable_user_tags` matches them. An
-    event with no external_id is not a key: nothing can carry onto it.
+    event with no external_id is not a key: nothing can carry onto it. A
+    response is also keyed by the ids of the chunks merged into it.
     """
     if conversation is None:
         return frozenset()
@@ -1557,6 +1559,7 @@ def _replacement_event_keys(conversation) -> frozenset[tuple[str, str]]:
     ]
     pairs = [("prompt", prompt.external_id) for prompt in conversation.prompts]
     pairs += [("response", response.external_id) for response in responses]
+    pairs += [("response", merged) for response in responses for merged in merged_external_ids(response)]
     pairs += [
         ("tool_call", tool_call.external_id)
         for response in responses

@@ -28,7 +28,8 @@
           {
             "attributes": {
               "cache_creation_ephemeral_1h_input_tokens": "30529",
-              "cache_creation_input_tokens": "30529"
+              "cache_creation_input_tokens": "30529",
+              "merged_external_ids": "[\"claude_code::280fe32f-8ecd-4810-96ec-6d631853fbe6\", \"claude_code::56778aeb-6c49-4840-b6f8-3a7590283784\", \"claude_code::d5e79968-06c4-4ba6-ac96-c01cf5726eec\", \"claude_code::b7f9c0ed-b90d-4f73-8ba8-322fc6f96865\", \"claude_code::43a4bb2b-3ef8-46de-9fa0-7c926f8e696a\"]"
             },
             "content": [
               {
@@ -105,9 +106,13 @@
             ],
             "external_id": "claude_code::5a1fe899-6211-4d89-b67f-49e1d33b1e93",
             "model": "claude-opus-4-7",
+            "sequence": 1,
             "timestamp": "2026-04-20T20:21:16.860Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-04-20T20:21:17.715000+00:00"
+                },
                 "external_id": "toolu_01CVRApyvQgq5FAYvS4GqZK6",
                 "input": {
                   "file_path": "x"
@@ -115,11 +120,15 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-04-20T20:21:17.715Z",
+                "timestamp": "2026-04-20T20:21:17.708Z",
                 "tool_name": "Read"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-04-20T20:21:18.064000+00:00"
+                },
                 "external_id": "toolu_01CbHR4fRrHuBZ1tfvCmhKFS",
                 "input": {
                   "file_path": "x"
@@ -127,11 +136,15 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 3,
                 "status": "success",
-                "timestamp": "2026-04-20T20:21:18.064Z",
+                "timestamp": "2026-04-20T20:21:18.062Z",
                 "tool_name": "Read"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-04-20T20:21:18.857000+00:00"
+                },
                 "external_id": "toolu_019DSVHDBaeCxpv3ra4W1qs9",
                 "input": {
                   "file_path": "x"
@@ -139,11 +152,15 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-04-20T20:21:18.857Z",
+                "timestamp": "2026-04-20T20:21:18.855Z",
                 "tool_name": "Read"
               },
               {
+                "attributes": {
+                  "completed_at": "2026-04-20T20:21:19.034000+00:00"
+                },
                 "external_id": "toolu_01Jkir9HQG7LbJLKHAAFNztH",
                 "input": {
                   "file_path": "x"
@@ -151,8 +168,9 @@
                 "result": {
                   "content": "x"
                 },
+                "sequence": 5,
                 "status": "success",
-                "timestamp": "2026-04-20T20:21:19.034Z",
+                "timestamp": "2026-04-20T20:21:19.031Z",
                 "tool_name": "Read"
               }
             ],
@@ -165,7 +183,8 @@
             "attributes": {
               "cache_creation_ephemeral_1h_input_tokens": "5126",
               "cache_creation_input_tokens": "5126",
-              "cache_read_input_tokens": "30529"
+              "cache_read_input_tokens": "30529",
+              "merged_external_ids": "[\"claude_code::e007e7e2-3a8b-4080-a2d4-48d7c503400e\"]"
             },
             "content": [
               {
@@ -186,6 +205,7 @@
             ],
             "external_id": "claude_code::874f27e5-874d-486a-b876-d5cfffddb1d2",
             "model": "claude-opus-4-7",
+            "sequence": 6,
             "timestamp": "2026-04-20T20:22:29.602Z",
             "usage": {
               "input_tokens": 1,
@@ -193,6 +213,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-04-20T20:21:11.193Z"
       }
     ],

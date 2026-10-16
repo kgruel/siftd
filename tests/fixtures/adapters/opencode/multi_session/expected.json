@@ -46,6 +46,7 @@
             ],
             "external_id": "opencode::msg_fa6d6c8d2001aa3n08mS8MSDIO",
             "model": "big-pickle",
+            "sequence": 1,
             "timestamp": "2026-07-28T03:48:41.810000+00:00",
             "usage": {
               "input_tokens": 6866,
@@ -53,6 +54,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-07-28T03:48:41.799000+00:00"
       }
     ],
@@ -106,6 +108,7 @@
             ],
             "external_id": "opencode::msg_fa6d71a5e001IBwM3C2ppxGqJT",
             "model": "big-pickle",
+            "sequence": 1,
             "timestamp": "2026-07-28T03:49:02.686000+00:00",
             "usage": {
               "input_tokens": 6954,
@@ -113,6 +116,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-07-28T03:49:02.665000+00:00"
       }
     ],
@@ -167,9 +171,13 @@
             ],
             "external_id": "opencode::msg_fa6d758350016sy5zK6V7E6OPS",
             "model": "big-pickle",
+            "sequence": 1,
             "timestamp": "2026-07-28T03:49:18.517000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:49:23.562000+00:00"
+                },
                 "external_id": "call_0d5584a18a6f4745b18bf7f7",
                 "input": {
                   "content": "sample",
@@ -178,8 +186,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-07-28T03:49:23.562000+00:00",
+                "timestamp": "2026-07-28T03:49:21.979000+00:00",
                 "tool_name": "write"
               }
             ],
@@ -212,9 +221,13 @@
             ],
             "external_id": "opencode::msg_fa6d76c40001zx4CN3a7xuWvnh",
             "model": "big-pickle",
+            "sequence": 3,
             "timestamp": "2026-07-28T03:49:23.648000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:49:28.305000+00:00"
+                },
                 "external_id": "call_586323dad8844526811228b6",
                 "input": {
                   "command": "sample"
@@ -222,8 +235,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 4,
                 "status": "success",
-                "timestamp": "2026-07-28T03:49:28.305000+00:00",
+                "timestamp": "2026-07-28T03:49:27.981000+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -255,6 +269,7 @@
             ],
             "external_id": "opencode::msg_fa6d77e9b0010ucr5vLWDiI4iX",
             "model": "big-pickle",
+            "sequence": 5,
             "timestamp": "2026-07-28T03:49:28.347000+00:00",
             "usage": {
               "input_tokens": 142,
@@ -262,6 +277,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-07-28T03:49:18.506000+00:00"
       },
       {
@@ -299,9 +315,13 @@
             ],
             "external_id": "opencode::msg_fa6d85a09001GlyfNq91hXGmEn",
             "model": "big-pickle",
+            "sequence": 7,
             "timestamp": "2026-07-28T03:50:24.522000+00:00",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-07-28T03:50:28.324000+00:00"
+                },
                 "external_id": "call_68f64854362c4bf59654478a",
                 "input": {
                   "command": "sample"
@@ -309,8 +329,9 @@
                 "result": {
                   "output": "sample output"
                 },
+                "sequence": 8,
                 "status": "success",
-                "timestamp": "2026-07-28T03:50:28.324000+00:00",
+                "timestamp": "2026-07-28T03:50:28.182000+00:00",
                 "tool_name": "bash"
               }
             ],
@@ -342,6 +363,7 @@
             ],
             "external_id": "opencode::msg_fa6d8692f001zFz3JYPD9dtLXC",
             "model": "big-pickle",
+            "sequence": 9,
             "timestamp": "2026-07-28T03:50:28.399000+00:00",
             "usage": {
               "input_tokens": 149,
@@ -349,6 +371,7 @@
             }
           }
         ],
+        "sequence": 6,
         "timestamp": "2026-07-28T03:50:24.374000+00:00"
       }
     ],

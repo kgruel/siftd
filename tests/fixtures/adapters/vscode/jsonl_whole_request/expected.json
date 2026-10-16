@@ -90,9 +90,11 @@
             ],
             "external_id": "response_f554a511-2f11-4daf-8926-86dadaae92ec",
             "model": "copilot/auto",
+            "sequence": 1,
             "timestamp": "2026-02-16T16:33:22.117000+00:00"
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-02-16T16:33:22.117000+00:00"
       },
       {
@@ -130,9 +132,11 @@
             ],
             "external_id": "response_6f91fec9-46e3-492f-8980-f82fc5795f3d",
             "model": "copilot/auto",
+            "sequence": 3,
             "timestamp": "2026-02-16T16:34:36.461000+00:00"
           }
         ],
+        "sequence": 2,
         "timestamp": "2026-02-16T16:34:36.461000+00:00"
       },
       {
@@ -170,9 +174,11 @@
             ],
             "external_id": "response_bf5f1757-5bd7-459d-baf9-c1323d1d567d",
             "model": "copilot/auto",
+            "sequence": 5,
             "timestamp": "2026-02-16T16:34:52.709000+00:00"
           }
         ],
+        "sequence": 4,
         "timestamp": "2026-02-16T16:34:52.709000+00:00"
       },
       {
@@ -210,9 +216,11 @@
             ],
             "external_id": "response_52f50261-b699-48ac-be0e-8f8bdbe6a628",
             "model": "copilot/auto",
+            "sequence": 7,
             "timestamp": "2026-02-16T16:35:14.599000+00:00"
           }
         ],
+        "sequence": 6,
         "timestamp": "2026-02-16T16:35:14.599000+00:00"
       }
     ],

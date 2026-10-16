@@ -48,9 +48,13 @@
         ],
         "external_id": "claude_code::95a04e15-f50d-41a3-bc8b-a6dad275e865",
         "model": "claude-opus-5-5",
+        "sequence": 0,
         "timestamp": "2026-09-26T20:53:01.493Z",
         "tool_calls": [
           {
+            "attributes": {
+              "completed_at": "2026-09-26T20:53:01.506000+00:00"
+            },
             "external_id": "toolu_01WTomJtrPqEMkket2FHeXVs",
             "input": {
               "description": "x",
@@ -66,8 +70,9 @@
                 }
               ]
             },
+            "sequence": 1,
             "status": "success",
-            "timestamp": "2026-09-26T20:53:01.506Z",
+            "timestamp": "2026-09-26T20:53:01.493Z",
             "tool_name": "Agent"
           }
         ],
@@ -80,7 +85,8 @@
         "attributes": {
           "cache_creation_ephemeral_5m_input_tokens": "3044",
           "cache_creation_input_tokens": "3044",
-          "cache_read_input_tokens": "135370"
+          "cache_read_input_tokens": "135370",
+          "merged_external_ids": "[\"claude_code::f37a135d-523e-44ef-8411-c3ca6a403922\", \"claude_code::e102eccb-a3d4-4ca9-b008-b68764458931\"]"
         },
         "content": [
           {
@@ -116,10 +122,12 @@
         ],
         "external_id": "claude_code::01b1968e-06fe-4652-8be7-2673418a8930",
         "model": "claude-opus-5-5",
+        "sequence": 2,
         "timestamp": "2026-09-26T20:53:04.039Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-09-26T20:53:05.194000+00:00",
               "stderr": "x",
               "stdout": "x"
             },
@@ -131,8 +139,9 @@
             "result": {
               "content": "x"
             },
+            "sequence": 3,
             "status": "success",
-            "timestamp": "2026-09-26T20:53:05.194Z",
+            "timestamp": "2026-09-26T20:53:04.917Z",
             "tool_name": "Bash"
           }
         ],
@@ -159,6 +168,7 @@
         ],
         "external_id": "claude_code::ed9aee59-1ade-4d07-a6ce-e58b372197dc",
         "model": "claude-opus-5-5",
+        "sequence": 4,
         "timestamp": "2026-09-26T20:53:15.392Z",
         "usage": {
           "input_tokens": 2,

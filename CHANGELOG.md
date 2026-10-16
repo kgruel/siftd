@@ -19,6 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Adapter contract version 2.** An adapter declares `read` and `decoder` and
   siftd derives `parse()` and peek from them; the adapter template is a
   working decoder. Version 1 drop-in adapters load unchanged.
+- **Tool calls record when their result arrived.** A `completed_at` attribute
+  (UTC) sits beside the call's own time, which stays the time it was made.
 - **`./dev probe` reports what each adapter drops.** A read-only comparison of
   every adapter's raw files with its parsed output, for development.
 
@@ -37,6 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Prompts that share a timestamp keep their order.** Events now record their
   position (schema v13), so `--at-turn` and exchange-index tags find the right
   prompt; stored rows gain it when re-parsed.
+- **A Claude Code reply that resumes after a Skill expansion or image stays in
+  its own turn.** Its usage is still counted once.
 - **Responses stored before a conversation's first prompt are shown.** A forked
   sub-agent's transcript rendered empty in `show`, export and the web folio; it
   now reads as a "Continued from" turn, and every surface counts turns the same

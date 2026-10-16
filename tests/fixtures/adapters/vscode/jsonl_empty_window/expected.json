@@ -44,9 +44,11 @@
             ],
             "external_id": "response_7f6439d3-68ee-4a24-8a08-8dd62283e413",
             "model": "copilot/auto",
+            "sequence": 1,
             "timestamp": "2026-04-23T20:30:33.958000+00:00"
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-04-23T20:30:33.958000+00:00"
       }
     ],

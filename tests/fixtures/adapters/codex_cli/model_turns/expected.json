@@ -29,6 +29,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-08-27T18:52:47.581Z"
       },
       {
@@ -55,9 +56,11 @@
               }
             ],
             "model": "gpt-5.6-sol",
+            "sequence": 2,
             "timestamp": "2026-08-27T18:52:47.581Z"
           }
         ],
+        "sequence": 1,
         "timestamp": "2026-08-27T18:52:47.581Z"
       },
       {
@@ -80,9 +83,11 @@
               }
             ],
             "model": "gpt-5.6-terra",
+            "sequence": 4,
             "timestamp": "2026-08-27T18:52:51.339Z"
           }
         ],
+        "sequence": 3,
         "timestamp": "2026-08-27T18:52:47.581Z"
       }
     ],

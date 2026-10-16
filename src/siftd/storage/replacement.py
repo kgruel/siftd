@@ -68,11 +68,14 @@ without deleting the row, and a gate that only asked about deletes let it.
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 import re
 import sqlite3
 from dataclasses import dataclass, field
 
+from siftd.domain import Response
+from siftd.domain.models import CALL_OCCURRENCE_ATTRIBUTE, MERGED_EXTERNAL_IDS_ATTRIBUTE
 from siftd.storage.filters import EVENT_TAG_KINDS
 from siftd.storage.sql_helpers import has_conversation_owners_table
 from siftd.storage.tags import apply_tag, get_tag_assignments, is_shell_tag_rederived
@@ -83,7 +86,8 @@ logger = logging.getLogger(__name__)
 # external_id to ``<id>:<rank>`` with rank >= 2, so the events table could hold it
 # under UNIQUE (conversation_id, kind, external_id). A re-parse emits the bare id
 # only, so a tag on such a legacy row has to fall back to the bare id to follow
-# the call it duplicated.
+# the call it duplicated. A call the assembler gave that suffix as a distinct
+# call's identity states ``call_occurrence`` and matches exactly instead.
 _LEGACY_DUPLICATE_SUFFIX = re.compile(r"^(?P<base>.+):(?:[2-9]|[1-9][0-9]+)$")
 
 
@@ -100,8 +104,11 @@ class ConversationCarryover:
     conversation: list[tuple[str, str]] = field(default_factory=list)
     """(tag_id, applied_at) for the conversation row itself."""
 
-    events: list[tuple[str, str, str, str, str]] = field(default_factory=list)
-    """(target_kind, event_kind, event_external_id, tag_id, applied_at)."""
+    events: list[tuple[str, str, str, str, str, bool]] = field(default_factory=list)
+    """(target_kind, event_kind, event_external_id, tag_id, applied_at, exact).
+
+    ``exact`` says the id is a distinct call's own, so no legacy alias applies.
+    """
 
     owners: list[tuple[str, str | None, str]] = field(default_factory=list)
     """(user_id, push_id, assigned_at) from ``conversation_owners``."""
@@ -181,19 +188,23 @@ def snapshot_conversation(
     event_kinds = ",".join("?" * len(EVENT_TAG_KINDS))
     for row in conn.execute(
         f"""
-        SELECT ta.target_kind, e.kind, e.external_id, ta.tag_id, ta.applied_at
+        SELECT ta.target_kind, e.kind, e.external_id, ta.tag_id, ta.applied_at,
+               EXISTS (
+                   SELECT 1 FROM attributes a
+                   WHERE a.target_kind = 'tool_call' AND a.target_id = e.id AND a.key = ?
+               ) AS exact
         FROM events e
         CROSS JOIN tag_assignments ta ON ta.target_id = e.id
         WHERE ta.target_kind IN ({event_kinds}) AND e.conversation_id = ?
         """,
-        (*sorted(EVENT_TAG_KINDS), conversation_id),
+        (CALL_OCCURRENCE_ATTRIBUTE, *sorted(EVENT_TAG_KINDS), conversation_id),
     ).fetchall():
         if row["external_id"] is None:
             # Synthetic event — nothing stable to rejoin on.
             carryover.dropped_events += 1
             continue
         carryover.events.append(
-            (row["target_kind"], row["kind"], row["external_id"], row["tag_id"], row["applied_at"])
+            (row["target_kind"], row["kind"], row["external_id"], row["tag_id"], row["applied_at"], bool(row["exact"]))
         )
 
     # The count below joins every content block of the conversation. Block
@@ -271,15 +282,32 @@ def _find_event(
     conversation_id: str,
     event_kind: str,
     external_id: str,
+    *,
+    exact: bool = False,
 ) -> sqlite3.Row | None:
     """The replacement's event for a carried assignment, or None.
 
-    Exact match first. Only a legacy duplicate suffix on a tool call is retried
-    on its bare id; the migration renamed nothing else.
+    Exact match first. Then the two ids an event can answer to besides its own:
+    a legacy duplicate suffix on a tool call is retried on its bare id (the
+    migration renamed nothing else; not when ``exact``, where the suffix names a
+    distinct call), and a response also answers to the id of any later chunk
+    merged into it.
     """
     sql = "SELECT id FROM events WHERE conversation_id = ? AND kind = ? AND external_id = ?"
     row = conn.execute(sql, (conversation_id, event_kind, external_id)).fetchone()
-    if row is None and event_kind == "tool_call":
+    if row is None and event_kind == "response":
+        row = conn.execute(
+            """
+            SELECT e.id FROM events e
+            JOIN attributes a ON a.target_id = e.id AND a.target_kind = 'response' AND a.key = ?
+            WHERE e.conversation_id = ? AND e.kind = 'response'
+              AND CASE WHEN json_valid(a.value)
+                       THEN EXISTS (SELECT 1 FROM json_each(a.value) WHERE value = ?)
+                       ELSE 0 END
+            """,
+            (MERGED_EXTERNAL_IDS_ATTRIBUTE, conversation_id, external_id),
+        ).fetchone()
+    if row is None and event_kind == "tool_call" and not exact:
         match = _LEGACY_DUPLICATE_SUFFIX.match(external_id)
         if match:
             row = conn.execute(sql, (conversation_id, event_kind, match["base"])).fetchone()
@@ -311,8 +339,8 @@ def restore_conversation(
         apply_tag(conn, "conversation", conversation_id, tag_id, applied_at=applied_at)
 
     unmatched = 0
-    for target_kind, event_kind, external_id, tag_id, applied_at in carryover.events:
-        row = _find_event(conn, conversation_id, event_kind, external_id)
+    for target_kind, event_kind, external_id, tag_id, applied_at, exact in carryover.events:
+        row = _find_event(conn, conversation_id, event_kind, external_id, exact=exact)
         if row is None:
             unmatched += 1
             continue
@@ -378,20 +406,30 @@ def restore_and_report(
     return unmatched
 
 
+def merged_external_ids(response: Response) -> list[str]:
+    """The ids of the later chunks merged into ``response``, as the assembler recorded them."""
+    raw = response.attributes.get(MERGED_EXTERNAL_IDS_ATTRIBUTE)
+    return json.loads(raw) if raw else []
+
+
 def _replacement_carries(
     event_kind: str,
     external_id: str,
     replacement_keys: frozenset[tuple[str, str]],
+    *,
+    exact: bool = False,
 ) -> bool:
     """Whether a replacement's events include the one an assignment points at.
 
     Mirrors :func:`_find_event`, which :func:`restore_conversation` uses, so the
     count and the restore agree: exact match first, and a legacy duplicate
-    suffix on a tool call falls back to its bare id.
+    suffix on a tool call falls back to its bare id unless ``exact``. The keys include the ids
+    merged chunks answer to (see :func:`merged_external_ids`), so a chunk id
+    matches exactly here.
     """
     if (event_kind, external_id) in replacement_keys:
         return True
-    if event_kind == "tool_call":
+    if event_kind == "tool_call" and not exact:
         match = _LEGACY_DUPLICATE_SUFFIX.match(external_id)
         return match is not None and ("tool_call", match["base"]) in replacement_keys
     return False
@@ -452,7 +490,11 @@ def unrestorable_user_tags(
     for row in conn.execute(
         f"""
         SELECT e.kind, e.external_id, t.name AS tag_name,
-               tl.name AS tool_name, etc.input AS tool_input
+               tl.name AS tool_name, etc.input AS tool_input,
+               EXISTS (
+                   SELECT 1 FROM attributes a
+                   WHERE a.target_kind = 'tool_call' AND a.target_id = e.id AND a.key = ?
+               ) AS exact
         FROM events e
         CROSS JOIN tag_assignments ta ON ta.target_id = e.id
         JOIN tags t ON t.id = ta.tag_id
@@ -460,7 +502,7 @@ def unrestorable_user_tags(
         LEFT JOIN tools tl ON tl.id = etc.tool_id
         WHERE ta.target_kind IN ({event_kinds}) AND e.conversation_id = ?
         """,
-        (*sorted(EVENT_TAG_KINDS), conversation_id),
+        (CALL_OCCURRENCE_ATTRIBUTE, *sorted(EVENT_TAG_KINDS), conversation_id),
     ).fetchall():
         if is_shell_tag_rederived(row["tag_name"], row["tool_name"], row["tool_input"]):
             continue
@@ -468,7 +510,7 @@ def unrestorable_user_tags(
             # Never re-pointable. A delete loses it; a release leaves it on the row.
             if not row_is_kept:
                 lost += 1
-        elif not _replacement_carries(row["kind"], row["external_id"], replacement_keys):
+        elif not _replacement_carries(row["kind"], row["external_id"], replacement_keys, exact=bool(row["exact"])):
             lost += 1
 
     if not row_is_kept and conn.execute(

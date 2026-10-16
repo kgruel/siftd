@@ -117,7 +117,8 @@ class TestDecoding:
         assert [b.block_type for b in resp.content] == ["thinking", "text", "tool_use"]
         (call,) = resp.tool_calls
         assert (call.tool_name, call.external_id, call.status) == ("bash", "c1", "success")
-        assert call.result == {"output": "5 passed"} and call.timestamp == _iso(24)
+        assert call.result == {"output": "5 passed"} and call.timestamp == _iso(21)
+        assert call.attributes["completed_at"] == _iso(24)
 
         assembly = _assembly(path)
         assert _reasons(assembly, Disposition.IGNORED) == {"part:step-start", "part:step-finish", "part:patch"}

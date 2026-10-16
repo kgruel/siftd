@@ -248,7 +248,8 @@ class TestAssembledShape:
         ])
         (response,) = _only(path).prompts[0].responses
         assert [c.external_id for c in response.tool_calls] == ["first", "second"]
-        assert [c.timestamp for c in response.tool_calls] == ["T4", "T3"]
+        assert [c.timestamp for c in response.tool_calls] == ["T2", "T2"]
+        assert [c.attributes["completed_at"] for c in response.tool_calls] == ["T4", "T3"]
 
     def test_a_call_that_never_completes_stays_pending_with_no_result(self, tmp_path):
         path = _write(tmp_path, [_start(), _event("user.message", "T1", {"content": "go"}),

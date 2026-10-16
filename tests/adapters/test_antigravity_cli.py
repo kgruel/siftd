@@ -466,7 +466,7 @@ class TestDecoding:
         ])
         (call,) = _responses(_only(path))[0].tool_calls
         assert call.status == "error"
-        assert call.attributes == {"error": "permission denied"}
+        assert call.attributes == {"error": "permission denied", "completed_at": "T3"}
 
     def test_skipped_steps_still_bound_the_conversation(self, tmp_path):
         """A checkpoint or reminder states a time; the span has always covered it, though nothing is stored."""
@@ -572,9 +572,9 @@ class TestAntigravityCliBackgroundTasks:
         assert first.status == "pending"
         assert second.status == "success" and second.result == {"output": "second done"}
 
-    def test_the_completion_is_the_calls_time_of_completion(self, tmp_path):
-        """A completed call is stamped with its completion, as the assembler does for every result; the
-        declaration's time is the response's."""
+    def test_the_completion_is_an_attribute_and_the_call_keeps_its_own_time(self, tmp_path):
+        """A completed call keeps the time it was made and records its completion as ``completed_at``, as the
+        assembler does for every result."""
         root = tmp_path / "antigravity-cli"
         path = _write_transcript(root, "conv-1", [
             _user(0, at="T0"),
@@ -582,7 +582,8 @@ class TestAntigravityCliBackgroundTasks:
             _running_step("conv-1/task-1", created_at="T2"),
             _finished_message("conv-1/task-1", "done", created_at="T9"),
         ])
-        assert _responses(_only(path))[0].tool_calls[0].timestamp == "T9"
+        call = _responses(_only(path))[0].tool_calls[0]
+        assert (call.timestamp, call.attributes["completed_at"]) == ("T1", "T9")
 
     def test_task_log_helper_reads_or_gives_none(self, tmp_path):
         log = tmp_path / "task.log"

@@ -27,10 +27,12 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-10-03T18:19:12Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:13+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) cannot view \"/Users/user/project/scratchpad/agytest/img\": path is a directory, not a file"
             },
             "external_id": "1:0",
@@ -42,8 +44,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:13-05:00\nCompleted At: 2026-10-03T13:19:13-05:00\n\nRedacted output."
             },
+            "sequence": 1,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:13Z",
+            "timestamp": "2026-10-03T18:19:12Z",
             "tool_name": "view_file"
           }
         ],
@@ -76,10 +79,12 @@
             }
           }
         ],
+        "sequence": 2,
         "timestamp": "2026-10-03T18:19:13Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:16+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/README.md: no such file or directory"
             },
             "external_id": "3:0",
@@ -91,8 +96,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:16-05:00\nCompleted At: 2026-10-03T13:19:16-05:00\n\nRedacted output."
             },
+            "sequence": 3,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:16Z",
+            "timestamp": "2026-10-03T18:19:13Z",
             "tool_name": "view_file"
           }
         ],
@@ -125,10 +131,12 @@
             }
           }
         ],
+        "sequence": 4,
         "timestamp": "2026-10-03T18:19:16Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:20+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/img/.DS_Store: no such file or directory"
             },
             "external_id": "5:0",
@@ -140,8 +148,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:20-05:00\nCompleted At: 2026-10-03T13:19:20-05:00\n\nRedacted output."
             },
+            "sequence": 5,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:20Z",
+            "timestamp": "2026-10-03T18:19:16Z",
             "tool_name": "view_file"
           }
         ],
@@ -174,10 +183,12 @@
             }
           }
         ],
+        "sequence": 6,
         "timestamp": "2026-10-03T18:19:20Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:25+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/.git/HEAD: no such file or directory"
             },
             "external_id": "7:0",
@@ -189,8 +200,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:25-05:00\nCompleted At: 2026-10-03T13:19:25-05:00\n\nRedacted output."
             },
+            "sequence": 7,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:25Z",
+            "timestamp": "2026-10-03T18:19:20Z",
             "tool_name": "view_file"
           }
         ],
@@ -217,10 +229,12 @@
             }
           }
         ],
+        "sequence": 8,
         "timestamp": "2026-10-03T18:19:25Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:27+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/Code/sgov/README.md: no such file or directory"
             },
             "external_id": "9:0",
@@ -232,8 +246,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:27-05:00\nCompleted At: 2026-10-03T13:19:27-05:00\n\nRedacted output."
             },
+            "sequence": 9,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:27Z",
+            "timestamp": "2026-10-03T18:19:25Z",
             "tool_name": "view_file"
           }
         ],
@@ -266,10 +281,12 @@
             }
           }
         ],
+        "sequence": 10,
         "timestamp": "2026-10-03T18:19:27Z",
         "tool_calls": [
           {
             "attributes": {
+              "completed_at": "2026-10-03T18:19:31+00:00",
               "error": "declaring permissions: cortex tool view_file: convert tool call for permissions: model output error: invalid tool call error (invalid_args) failed to read file: stat /Users/user/project/scratchpad/agytest/img/test.png: no such file or directory"
             },
             "external_id": "11:0",
@@ -281,8 +298,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:31-05:00\nCompleted At: 2026-10-03T13:19:31-05:00\n\nRedacted output."
             },
+            "sequence": 11,
             "status": "error",
-            "timestamp": "2026-10-03T18:19:31Z",
+            "timestamp": "2026-10-03T18:19:27Z",
             "tool_name": "view_file"
           }
         ],
@@ -316,9 +334,13 @@
             }
           }
         ],
+        "sequence": 12,
         "timestamp": "2026-10-03T18:19:31Z",
         "tool_calls": [
           {
+            "attributes": {
+              "completed_at": "2026-10-03T18:19:40+00:00"
+            },
             "external_id": "13:0",
             "input": {
               "Message": "redacted",
@@ -329,8 +351,9 @@
             "result": {
               "output": "Created At: 2026-10-03T13:19:40-05:00\nCompleted At: 2026-10-03T13:19:40-05:00\n\nRedacted output."
             },
+            "sequence": 13,
             "status": "success",
-            "timestamp": "2026-10-03T18:19:40Z",
+            "timestamp": "2026-10-03T18:19:31Z",
             "tool_name": "send_message"
           }
         ],
@@ -351,6 +374,7 @@
             }
           }
         ],
+        "sequence": 14,
         "timestamp": "2026-10-03T18:19:40Z",
         "usage": {
           "input_tokens": 14864,

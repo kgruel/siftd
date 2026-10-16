@@ -173,7 +173,7 @@ class TestClaudeCodeAdapter:
         ]
         conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         tc = conv.prompts[0].responses[0].tool_calls[0]
-        assert tc.attributes == {}
+        assert "background_task_id" not in tc.attributes
 
     def test_default_locations_prefer_config_dir(self):
         # ~/.config/claude/projects is where modern installs write live logs;
@@ -345,7 +345,7 @@ class TestClaudeCodeAdapter:
         ]
         conv = list(adapt(claude_code).parse(Source(kind="file", location=write_jsonl(tmp_path, records))))[0]
         tc = conv.prompts[0].responses[0].tool_calls[0]
-        assert tc.status == "error" and tc.attributes == {}
+        assert tc.status == "error" and tc.attributes == {"completed_at": "T3"}
 
     def test_usage_ttl_split_and_server_tool_use(self, tmp_path):
         records = [
@@ -533,9 +533,9 @@ class TestDecoding:
             _user("r1", "T3", [_tool_result("bg", said), _tool_result("auto", said), _tool_result("rd", quoted)]),
         ]
         calls = {c.external_id: c for c in _calls(_only(write_jsonl(tmp_path, records)))}
-        assert calls["bg"].attributes == {"background_task_id": "abc123"}
-        assert calls["auto"].attributes == {"background_task_id": "abc123"}
-        assert calls["rd"].attributes == {}
+        assert calls["bg"].attributes["background_task_id"] == "abc123"
+        assert calls["auto"].attributes["background_task_id"] == "abc123"
+        assert "background_task_id" not in calls["rd"].attributes
 
     def test_a_background_result_written_before_its_call_still_names_its_task(self, tmp_path):
         """Pairing handles a result that precedes its call (14 in the corpus), but the task id was only read when
@@ -547,7 +547,7 @@ class TestDecoding:
         for order in ([call, result], [result, call]):
             records = [_user("u1", "T1", "go"), *order]
             outcomes.append(_calls(_only(write_jsonl(tmp_path, records, name=f"o{len(outcomes)}.jsonl")))[0])
-        assert [c.attributes for c in outcomes] == [{"background_task_id": "abc123"}] * 2
+        assert [c.attributes["background_task_id"] for c in outcomes] == ["abc123"] * 2
         assert all(c.status == "success" for c in outcomes)
 
     def test_every_record_type_is_named_and_the_table_matches_the_code(self):

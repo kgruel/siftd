@@ -45,9 +45,13 @@
             ],
             "model": "gpt-5.4",
             "provider": "openai",
+            "sequence": 1,
             "timestamp": "2026-03-17T18:52:38.217Z",
             "tool_calls": [
               {
+                "attributes": {
+                  "completed_at": "2026-03-17T18:52:38.247000+00:00"
+                },
                 "external_id": "call_fM8K63Zfpm18vCMTW33UO41Y|fc_0532954b4695ccd40169b9a2f5b84c81a181159bd605fb5157",
                 "input": {
                   "path": "/Users/user/project/file.txt"
@@ -67,8 +71,9 @@
                   ],
                   "output": "output 3"
                 },
+                "sequence": 2,
                 "status": "success",
-                "timestamp": "2026-03-17T18:52:38.247Z",
+                "timestamp": "2026-03-17T18:52:38.217Z",
                 "tool_name": "read"
               }
             ],
@@ -105,6 +110,7 @@
             ],
             "model": "gpt-5.4",
             "provider": "openai",
+            "sequence": 3,
             "timestamp": "2026-03-17T18:52:50.061Z",
             "tool_calls": [
               {
@@ -114,6 +120,7 @@
                   "offset": 1,
                   "path": "/Users/user/project/file.txt"
                 },
+                "sequence": 4,
                 "timestamp": "2026-03-17T18:52:50.061Z",
                 "tool_name": "read"
               }
@@ -124,6 +131,7 @@
             }
           }
         ],
+        "sequence": 0,
         "timestamp": "2026-03-17T18:52:22.052Z"
       }
     ],
