@@ -372,6 +372,14 @@ def _unrecognized_message(name: str, unknown: int, orphan: int) -> str:
     return f"Adapter '{name}': {', '.join(parts)} in the sources read this run"
 
 
+def _refused_adoption_message(refused) -> str:
+    return (
+        f"Adapter '{refused.adapter}': did not adopt conversation {refused.conversation_id} for "
+        f"{refused.external_id} ({refused.path}); it may be another conversation's, so that row "
+        "and its tags were left as they were and this one was stored beside it"
+    )
+
+
 def _report_reparse(stats, *, renderer) -> None:
     """Report what ``--reparse`` did: totals, and each conversation it declined.
 
@@ -595,6 +603,16 @@ def cmd_ingest(args) -> int:
                 "ignored": stats.by_harness[name]["ignored"],
                 "message": _unrecognized_message(name, unknown, orphan),
             })
+        for refused in stats.refused_adoptions:
+            renderer._emit({
+                "type": "adapter_warning",
+                "kind": "refused_adoption",
+                "adapter": refused.adapter,
+                "path": refused.path,
+                "conversation_id": refused.conversation_id,
+                "external_id": refused.external_id,
+                "message": _refused_adoption_message(refused),
+            })
         for path, error in result.dropin_failures:
             renderer._emit({
                 "type": "adapter_warning",
@@ -621,12 +639,15 @@ def cmd_ingest(args) -> int:
                 status.info(
                     f"Adapter '{name}' skipped — disabled via config ([adapters.{name}] enabled = false)"
                 )
-        # Records an adapter lost track of are data quality, not chatter: auto-quiet
-        # (any non-TTY, which is every scripted ingest) must not swallow them, as it
-        # must not swallow a skipped-by-lock run. Only an explicit --quiet does.
+        # Records an adapter lost track of, and rows ingest would not adopt, are
+        # data quality, not chatter: auto-quiet (any non-TTY, which is every
+        # scripted ingest) must not swallow them, as it must not swallow a
+        # skipped-by-lock run. Only an explicit --quiet does.
         if not quiet_explicit:
             for name, unknown, orphan in unrecognized:
                 status.warning(_unrecognized_message(name, unknown, orphan))
+            for refused in stats.refused_adoptions:
+                status.warning(_refused_adoption_message(refused))
         # Drop-in import failures are hard errors and stay visible even in quiet
         # mode; the info-level notices above ride the quiet gate.
         for path, error in result.dropin_failures:

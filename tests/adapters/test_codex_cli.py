@@ -212,12 +212,13 @@ class TestIdentity:
         conv = _parse_one(tmp_path, records)
         assert conv.external_id == "codex_cli::child"
 
-    def test_the_restated_id_is_superseded_so_ingest_can_adopt_its_old_row(self, tmp_path):
+    def test_the_restated_id_is_inherited_not_superseded_since_the_parent_still_owns_it(self, tmp_path):
         records = [_meta("child"), _meta("parent"), _user(), _assistant("T2")]
-        assert _parse_one(tmp_path, records).superseded_external_ids == ("codex_cli::parent",)
+        conv = _parse_one(tmp_path, records)
+        assert (conv.inherited_external_ids, conv.superseded_external_ids) == (("codex_cli::parent",), ())
 
-    def test_a_file_with_one_meta_supersedes_nothing(self, tmp_path):
-        assert _parse_one(tmp_path, [_meta("only"), _user(), _assistant("T2")]).superseded_external_ids == ()
+    def test_a_file_with_one_meta_inherits_nothing(self, tmp_path):
+        assert _parse_one(tmp_path, [_meta("only"), _user(), _assistant("T2")]).inherited_external_ids == ()
 
     def test_files_that_restated_one_parent_keep_distinct_identities(self, tmp_path):
         """Eleven parent ids were each shared by 2-6 files: the collision that kept one child per parent."""
@@ -614,7 +615,7 @@ class TestGoldenCases:
     def test_a_forked_child_keeps_its_own_identity_and_both_parents(self):
         conv = _only(GOLDEN / "forked_child" / "input.jsonl")
         assert conv.external_id.startswith("codex_cli::019f66ea-bd42")
-        assert conv.superseded_external_ids == ("codex_cli::019f66ea-963d-7101-a549-37c4fd3fccaa",)
+        assert conv.inherited_external_ids == ("codex_cli::019f66ea-963d-7101-a549-37c4fd3fccaa",)
         assert conv.parent("subagent").parent == conv.parent("fork").parent
 
     def test_an_injected_context_capture_has_no_text_block_from_the_harness(self):

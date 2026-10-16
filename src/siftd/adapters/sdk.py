@@ -6,6 +6,7 @@ Helpers that reduce boilerplate in adapter implementations.
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
@@ -82,6 +83,23 @@ def discover_files(
                 except (OSError, ValueError):
                     continue
                 yield Source(kind="file", location=match)
+
+
+def spells(spelling: str, path: str) -> bool:
+    """Whether a recorded path spelling can name the file at ``path``.
+
+    A spelling that resolves from the working directory names the file it
+    resolves to. One that does not names ``path`` only if it is relative and,
+    past its leading ``..``, is a trailing part of ``path`` (a scan from some
+    other directory). An absolute spelling that does not resolve names a file
+    that has moved or gone, not this one.
+    """
+    if os.path.exists(spelling):
+        return os.path.exists(path) and os.path.samefile(spelling, path)
+    if os.path.isabs(spelling):
+        return False
+    parts = [part for part in Path(os.path.normpath(spelling)).parts if part != ".."]
+    return bool(parts) and Path(path).resolve().parts[-len(parts):] == tuple(parts)
 
 
 def build_harness(

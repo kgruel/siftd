@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from siftd.adapters.records import Ignored, PatchRec, PromptRec, Record, ResponseRec, Session, Unknown, UsageRec
-from siftd.adapters.sdk import seek_last_lines
+from siftd.adapters.sdk import seek_last_lines, spells
 from siftd.dateparse import local_to_utc
 from siftd.domain import ContentBlock, Source, Usage
 
@@ -283,20 +283,22 @@ def _superseded_digests(source: Source, current: str) -> list[str]:
     recorded anywhere, so the candidates are: the spelling as scanned, the path
     relative to each ancestor of the file (a scan from inside the file's tree), and
     every spelling the bookkeeping recorded (``recorded_locations``, which covers a
-    scan from a directory that is not an ancestor, such as ``../proj``). The
-    ancestor candidates are a guess; the recorded ones are what was stored. Candidates
-    are not trusted on their own. Ingest adopts a stored row under one only when the
-    row holds this file's own prompts (see ``orchestration._superseded_conversation``),
-    so a candidate that names a different file (a basename-only spelling is one for
-    every project) adopts nothing.
+    scan from a directory that is not an ancestor, such as ``../proj``). Generated
+    and recorded spellings alike are kept only when they can name this file
+    (``sdk.spells``): ``proj/...`` from a directory where it resolves to another
+    project, or another project's absolute path, is that project's key, and a copy
+    of its history holds its prompts, so containment would not refuse it. Ingest
+    adopts a row under a candidate only when the row holds this file's own prompts
+    (``orchestration._superseded_conversation``); a relative spelling that does not
+    resolve and so may name another file too (a basename-only one names every
+    project) is refused unless that file's history is a prefix of this one's.
     """
     spellings = [str(Path(source.location))]
-    if not source.metadata.get("identity_path"):
-        spellings.extend(os.path.relpath(current, ancestor) for ancestor in Path(current).parents)
-    # A relative scan from a directory that does not contain the file (`--path ../proj`)
-    # is not an ancestor spelling. The spelling itself was recorded by the bookkeeping
-    # of the release that keyed on it, so ingest hands every recorded spelling over.
-    spellings.extend(source.metadata.get("recorded_locations", ()))
+    generated = [] if source.metadata.get("identity_path") else [
+        os.path.relpath(current, ancestor) for ancestor in Path(current).parents
+    ]
+    recorded = source.metadata.get("recorded_locations", ())
+    spellings.extend(s for s in (*generated, *recorded) if spells(s, current))
     digests = [_digest(s) for s in dict.fromkeys(spellings)]
     current_digest = _digest(current)
     return [d for d in dict.fromkeys(digests) if d != current_digest]

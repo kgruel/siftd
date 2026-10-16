@@ -85,8 +85,8 @@ REPLACEMENT_SITES = {
     # A move, not a replacement: the row another path claims stays, and the
     # assignments its transcript owns are released from it and re-attached to
     # the conversation stored beside it. That conversation is restored through
-    # `_restore_carryover_after_replacement`, which every ingest door calls, so
-    # this snapshot has no restore of its own (see SPLIT_SNAPSHOT_SITES).
+    # `_restore_carryover_after_replacement`, which `_execute` calls, so this
+    # snapshot has no restore of its own (see SPLIT_SNAPSHOT_SITES).
     ("ingestion/orchestration.py", "_split_carryover"): {"snapshot_conversation": 1},
 }
 # Snapshot sites whose carryover is moved to a conversation the caller stores
@@ -163,70 +163,43 @@ DESTROY_SITES = {
 }
 
 # Where ingest's own wrapper is called from, in the same shape. The wrapper is
-# what makes "ask before replacing" structural for ingest — merge answers that
-# question with its owner gate instead — so its arity is worth pinning, one
-# level down from the primitive count above. Deliberately not filtered to
-# `ingestion/`: if the wrapper is ever called from outside ingest, the mismatch
-# should be the alarm rather than something the query silently discards.
+# what keeps a claimed row from being deleted — merge answers that question with
+# its owner gate instead — so its arity is worth pinning, one level down from the
+# primitive count above. Deliberately not filtered to `ingestion/`: if the
+# wrapper is ever called from outside ingest, the mismatch should be the alarm.
+#
+# One door: every way ingest stores a conversation (a new or changed file, a
+# legacy marker's orphan, a session that moved, an adoption under a superseded
+# key) is one plan applied by `_execute`. It was five copies of the sequence
+# until the arc's final review, and the session branch's copy had lost the
+# refusal half the file branch kept (F1/F6).
 INGEST_REPLACEMENT_DOORS = {
-    ("ingestion/orchestration.py", "ingest_all"): {
-        # One more than before: the session branch adopts a row stored under a
-        # superseded external_id (aider's path-identity re-key), the same door the
-        # file branch has for gemini_cli. Same wrapper, same refusal.
-        "_take_conversation_for_replacement": 3,
-    },
-    # One door, reached by two resolutions: the orphan found by external_id, or a
-    # legacy row under a superseded external_id (gemini_cli chat identity, #93).
-    # The target is resolved once (_replacement_target, shared with the --reparse
-    # tag gate), then taken by the same call; only the superseded case settles a
-    # refusal as a duplicate, because a refused orphan collides into the existing
-    # duplicate handler instead. Was two call sites before the tag gate needed the
-    # same resolution.
-    ("ingestion/orchestration.py", "_reingest_file"): {
-        "_take_conversation_for_replacement": 1,
-    },
-    # A new file adopting a row stored under a superseded external_id (gemini_cli
-    # chat identity, #93). Same wrapper, same refusal, so the same ratchet shape.
-    ("ingestion/orchestration.py", "_ingest_file"): {
-        "_take_conversation_for_replacement": 1,
-    },
+    ("ingestion/orchestration.py", "_execute"): {"_take_conversation_for_replacement": 1},
 }
 
-# The `--reparse` tag gate: one question, asked by every door that removes
-# assignments, about the assignments *that door* would remove.
+# The `--reparse` tag gate, and the door it guards.
 #
-# Two primitives remove them: `_take_conversation_for_replacement` deletes the
-# row, `_split_carryover` takes assignments off a row it keeps. A door is any
-# function that calls either. Each must consult `_declined_for_tags` before it
-# acts, or be named in GATED_BY_CALLER with the reason its caller already did.
-# A gate added per door, by hand, is how a door comes to ask about the wrong
-# row, or to skip the question: the new-file route did exactly that, and a
-# split removed assignments from a row the gate had exempted as "claimed".
+# Two primitives remove assignments: `_take_conversation_for_replacement` deletes
+# the row, `_split_carryover` takes assignments off a row it keeps. Both are
+# reached only from `_execute`, which acts on a `_Plan`; a plan is made only in
+# `_plan`, which consults `_declined_for_tags` before returning it. "Every door
+# asks the gate, about the row it acts on" is therefore three equalities over
+# populations read off the source rather than a count per door, and the row is
+# the plan's own target, so the gate and the door cannot name different rows.
 TAG_GATE = "_declined_for_tags"
 GATE_DOOR_PRIMITIVES = ("_take_conversation_for_replacement", "_split_carryover")
+PLANNER = ("ingestion/orchestration.py", "_plan")
+DOOR_SITES = {
+    ("ingestion/orchestration.py", "_execute"): {
+        "_take_conversation_for_replacement": 1,
+        "_split_carryover": 1,
+    },
+}
+TAG_GATE_SITES = {PLANNER: {TAG_GATE: 1}}
 # What removes assignments from a row that is kept. Asserted by equality: a
 # second function releasing assignments would be a door the list above cannot see.
 RELEASE_SITES = {
     ("ingestion/orchestration.py", "_split_carryover"): {"release_carryover": 1},
-}
-# Gate consultations per door function, counted. Each is at least the number of
-# `_take_conversation_for_replacement` calls in the same function; a split rides
-# on the gate of the take it follows (the gate asks about both, see
-# `_door_tag_loss`).
-TAG_GATE_SITES = {
-    # file branch (one gate for the pointer/orphan/legacy-marker row, resolved by
-    # `_replacement_target`), session adoption, session replacement
-    ("ingestion/orchestration.py", "ingest_all"): {TAG_GATE: 3},
-    # a new file adopting a superseded row
-    ("ingestion/orchestration.py", "_ingest_file"): {TAG_GATE: 1},
-}
-# Door functions that do not consult the gate themselves, and why that holds.
-# Shrink-only: an entry is a claim about a caller, and the test below checks it.
-GATED_BY_CALLER = {
-    ("ingestion/orchestration.py", "_reingest_file"): (
-        "reached only from ingest_all's file branch, which resolves the same target "
-        "(_replacement_target) and gates it before calling"
-    ),
 }
 
 # What a conversation delete removes, and what a replacement does about it.
@@ -441,9 +414,9 @@ def test_every_ingest_replacement_door_is_accounted_for():
     """Ingest's own wrapper still guards every delete-then-insert it owns.
 
     Separate from the primitive count above because it answers a different
-    question: the wrapper is where ingest asks "may I replace this at all"
-    (`_conversation_claimed_elsewhere`), which merge answers with its owner gate
-    instead. A new call here is a new place that can refuse — or fail to.
+    question: the wrapper is where ingest refuses to delete a row another path
+    points at, which merge answers with its owner gate instead. A new call here
+    is a new place that deletes, and must refuse too.
     """
     found = sites_by_function(call_to(("_take_conversation_for_replacement",)))
     assert found == INGEST_REPLACEMENT_DOORS, (
@@ -452,52 +425,34 @@ def test_every_ingest_replacement_door_is_accounted_for():
 
 
 def test_every_door_that_removes_assignments_consults_the_tag_gate():
-    """A replacement, an adoption, or a split asks `_declined_for_tags` before it acts.
+    """A replacement, an adoption, or a split happens only through a plan the tag gate has seen.
 
     The gate is the single decision ``siftd ingest --reparse`` makes about user
-    tags, so the property is that no door bypasses it, and it is read off two
-    populations rather than trusted: the functions that call a removing primitive
-    (a delete or a release), and the functions that call the gate.
+    tags, so the property is that no door bypasses it, read off three
+    populations: the functions that call a removing primitive, the functions
+    that call the gate, and the functions that construct a `_Plan`.
 
-    Scope, stated so a reader can judge what it does not catch: this counts
-    *consultations*, not their order or the row they name. A door that calls the
-    gate and then acts on a different row passes; what keeps the two on one row
-    is that the target is resolved once (`_replacement_target`) and the door
-    predicates (`_split_moves_assignments`, `_refused_claim_is_a_copy`) are shared
-    between the gate and the door. The gate itself is a no-op without `--reparse`,
-    so a plain ingest is not covered by this property.
+    Scope, stated so a reader can judge what it does not catch: a plan copied
+    with `dataclasses.replace` outside `_plan` is not a construction this sees,
+    and the gate is a no-op without `--reparse`, so a plain ingest is not covered.
     """
-    # The removing primitives are reached only through the two door wrappers.
     release = sites_by_function(call_to(("release_carryover",)), exclude=DEFINITION_SITE)
     assert release == RELEASE_SITES, (
         f"release sites moved: {release} != {RELEASE_SITES}. A function that releases "
-        "assignments from a kept row is a replacement door: it must consult the tag gate."
+        "assignments from a kept row is a replacement door: it must act on a plan."
     )
-
     doors = sites_by_function(call_to(GATE_DOOR_PRIMITIVES))
+    assert doors == DOOR_SITES, (
+        f"doors that remove assignments moved: {doors} != {DOOR_SITES}. Remove a "
+        "conversation or its assignments only in `_execute`, from a plan made by `_plan`."
+    )
     gated = sites_by_function(call_to((TAG_GATE,)))
-    assert gated == TAG_GATE_SITES, (
-        f"tag-gate consultations moved: {gated} != {TAG_GATE_SITES}."
+    assert gated == TAG_GATE_SITES, f"tag-gate consultations moved: {gated} != {TAG_GATE_SITES}."
+    planners = set(sites_by_function(call_to(("_Plan",))))
+    assert planners == {PLANNER}, (
+        f"`_Plan` is constructed in {sorted(planners)}; a plan made outside `_plan` "
+        "skips the tag gate."
     )
-
-    for site, per in doors.items():
-        if site in GATED_BY_CALLER:
-            continue
-        takes = per.get("_take_conversation_for_replacement", 0)
-        consults = gated.get(site, {}).get(TAG_GATE, 0)
-        assert consults >= max(takes, 1), (
-            f"{site} removes assignments ({per}) but consults the tag gate {consults} time(s). "
-            "Ask `_declined_for_tags` before the door acts, or name the caller that does in "
-            "GATED_BY_CALLER."
-        )
-
-    # An exemption is a claim about a caller: check it, so it cannot go stale.
-    callers = sites_by_function(call_to(("_reingest_file",)))
-    assert callers == {("ingestion/orchestration.py", "ingest_all"): {"_reingest_file": 1}}, (
-        f"_reingest_file is called from {callers}; its exemption assumed ingest_all's gated file branch only."
-    )
-    unlisted = set(GATED_BY_CALLER) - set(doors)
-    assert not unlisted, f"GATED_BY_CALLER names {unlisted}, which are not doors any more: remove them."
 
 
 def test_carried_set_matches_the_carryover(tmp_path):

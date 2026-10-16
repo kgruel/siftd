@@ -53,13 +53,13 @@ Placement rules, which are the decisions the adapters each used to make alone:
   Parsing never reads the wall clock, so it is a pure function of the source.
 - **Identity.** ``Session`` records open conversations; a restated
   ``Session`` fills only what is still unknown, and the keys it names as
-  superseded accumulate onto the conversation. A source with no ``Session``
+  superseded or inherited accumulate onto the conversation's fields of those
+  names, so ingest can adopt the row stored under an id the adapter no longer
+  uses. A source with no ``Session``
   uses the caller's ``default_session``, whose fields sit beneath anything
   the stream stated; with neither, assembly fails loudly. ``ended_at`` is
   inferred from event times unless a Session says the source cannot know it
-  (``infer_end=False``). Ids a ``Session`` names as superseded are carried to
-  ``Conversation.superseded_external_ids``, so ingest can adopt the row stored
-  under an id the adapter no longer uses.
+  (``infer_end=False``).
 - **Lineage.** A conversation has at most one parent per relation: where it
   ran (``subagent``) and what it continues (``fork``, ``resume``, ``branch``),
   so a forked subagent keeps both. Each becomes a ``Conversation.lineage`` link
@@ -225,8 +225,6 @@ class _Build:
         self.workspace_path: str | None = None
         self.branch: str | None = None
         self.attributes: dict[str, str] = {}
-        # Ids the conversation was stored under before a re-key, first stated first.
-        self.superseded: list[str] = []
         # Context for later responses (a later Meta replaces it).
         self.model: str | None = None
         self.provider: str | None = None
@@ -270,6 +268,10 @@ class _Build:
         self.results_on_unplaced: dict[int, list[ToolResultRec]] = {}
         self.placed: set[int] = set()
         self.lineage: list[Lineage] = []
+        # Ids the conversation was stored under before a re-key, and ids it was
+        # stored under that another conversation owns; first stated first.
+        self.superseded: list[str] = []
+        self.inherited_ids: list[str] = []
 
         # Every record's timestamp in arrival order, with the event it created
         # (or None for records that only lend their time: merged chunks,
@@ -391,6 +393,7 @@ class Assembler:
                 attributes={**(default.attributes if default else {}), **build.attributes},
                 lineage=tuple(build.lineage),
                 superseded_external_ids=tuple(old for old in build.superseded if old != external_id),
+                inherited_external_ids=tuple(old for old in build.inherited_ids if old != external_id),
             )
         )
 
@@ -413,9 +416,11 @@ class Assembler:
         build.branch = build.branch or rec.branch
         for k, v in rec.attributes.items():
             build.attributes.setdefault(k, v)
-        for old in rec.superseded_external_ids:
-            if old not in build.superseded:
-                build.superseded.append(old)
+        for olds, accumulated in (
+            (rec.superseded_external_ids, build.superseded),
+            (rec.inherited_external_ids, build.inherited_ids),
+        ):
+            accumulated.extend(old for old in olds if old not in accumulated)
         self.ledger.record(rec, Disposition.META)
 
     def _on_meta(self, rec: Meta) -> None:

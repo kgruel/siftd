@@ -3,7 +3,7 @@
 import io
 import json
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -62,6 +62,7 @@ class FakeStats:
     responses: int = 10
     tool_calls: int = 3
     by_harness: dict = None
+    refused_adoptions: list = field(default_factory=list)
 
     def __post_init__(self):
         if self.by_harness is None:

@@ -95,9 +95,11 @@ class Session:
     workspace_path: str | None = None
     branch: str | None = None
     attributes: dict[str, str] = field(default_factory=dict)
-    # Ids this conversation was stored under before its adapter re-keyed it.
-    # Carried to Conversation.superseded_external_ids, where ingest reads them.
+    # Ids this conversation was stored under before its adapter re-keyed it,
+    # and ids it was stored under that another conversation also owns. Carried
+    # to the Conversation fields of the same names, where ingest reads them.
     superseded_external_ids: tuple[str, ...] = ()
+    inherited_external_ids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, kw_only=True)

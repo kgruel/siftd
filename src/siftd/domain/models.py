@@ -159,6 +159,13 @@ class Conversation:
     # transcript (ingestion/orchestration.py, _holds_transcript_of). A superseded
     # key alone never claims a row.
     superseded_external_ids: tuple[str, ...] = ()
+    # external_ids this conversation was stored under that are another
+    # conversation's own id too: a forked codex file a previous release named by
+    # the parent id it restates. Containment cannot tell the fork's row from the
+    # parent's (a fork holds its parent's prompts), so ingest adopts a row under
+    # one only when the row is also a read of this source: it begins when this
+    # conversation begins.
+    inherited_external_ids: tuple[str, ...] = ()
     # The conversations this one belongs to and continues: at most one per
     # relation (where it ran, CONTAINMENT_KINDS; what it continues, the rest).
     # Persisted as conversation_links rows, resolved against

@@ -14,7 +14,7 @@ import json
 import logging
 import os
 import sqlite3
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from pathlib import Path
 
 from siftd.domain import Conversation, Prompt, Response, ToolCall
@@ -3253,16 +3253,24 @@ def find_conversation_by_external_id(
 ) -> dict | None:
     """Find a conversation by harness + external_id.
 
-    Returns dict with {id, ended_at} or None if not found.
+    Returns dict with {id, started_at, ended_at} or None if not found.
     """
     cur = conn.execute(
-        "SELECT id, ended_at FROM conversations WHERE harness_id = ? AND external_id = ?",
+        "SELECT id, started_at, ended_at FROM conversations WHERE harness_id = ? AND external_id = ?",
         (harness_id, external_id)
     )
     row = cur.fetchone()
     if row:
-        return {"id": row["id"], "ended_at": row["ended_at"]}
+        return {"id": row["id"], "started_at": row["started_at"], "ended_at": row["ended_at"]}
     return None
+
+
+def find_conversation_by_id(conn: sqlite3.Connection, conversation_id: str) -> dict | None:
+    """A conversation's {id, external_id, started_at, ended_at}, or None if it is gone."""
+    row = conn.execute(
+        "SELECT id, external_id, started_at, ended_at FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone()
+    return dict(row) if row else None
 
 
 def get_harness_id_by_name(conn: sqlite3.Connection, name: str) -> str | None:
@@ -3572,6 +3580,60 @@ def clear_ingested_file_error(
 ) -> None:
     """Clear error and delete the ingested_files record so the file can be re-ingested."""
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (path,))
+
+
+def ingested_paths_for_conversation(
+    conn: sqlite3.Connection, conversation_id: str, *, excluding: str
+) -> list[str]:
+    """Paths other than ``excluding`` whose bookkeeping row points at the conversation."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT path FROM ingested_files WHERE conversation_id = ? AND path != ?",
+            (conversation_id, excluding),
+        )
+    ]
+
+
+def ingested_paths_for_harness(conn: sqlite3.Connection, harness_name: str) -> list[str]:
+    """Every path the bookkeeping recorded for a harness, as each was spelled."""
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT f.path FROM ingested_files f JOIN harnesses h ON h.id = f.harness_id WHERE h.name = ?",
+            (harness_name,),
+        )
+    ]
+
+
+def release_conversation_pointers(
+    conn: sqlite3.Connection, conversation_id: str, paths: Iterable[str]
+) -> None:
+    """Clear these paths' pointers at the conversation, keeping their rows as markers."""
+    conn.executemany(
+        "UPDATE ingested_files SET conversation_id = NULL WHERE conversation_id = ? AND path = ?",
+        [(conversation_id, path) for path in paths],
+    )
+
+
+def conversation_exists(conn: sqlite3.Connection, conversation_id: str) -> bool:
+    """Whether a conversation row is still present."""
+    return conn.execute(
+        "SELECT 1 FROM conversations WHERE id = ?", (conversation_id,)
+    ).fetchone() is not None
+
+
+def message_rows(
+    conn: sqlite3.Connection, conversation_id: str, kinds: tuple[str, ...]
+) -> list[sqlite3.Row]:
+    """``kind, external_id, timestamp, content`` (first block) of a conversation's events of ``kinds``."""
+    placeholders = ",".join("?" * len(kinds))
+    return conn.execute(
+        "SELECT e.kind, e.external_id, e.timestamp, ec.content FROM events e "
+        "LEFT JOIN event_content ec ON ec.event_id = e.id AND ec.block_index = 0 "
+        f"WHERE e.conversation_id = ? AND e.kind IN ({placeholders})",
+        (conversation_id, *kinds),
+    ).fetchall()
 
 
 def get_ingest_errors(conn: sqlite3.Connection) -> list[dict]:

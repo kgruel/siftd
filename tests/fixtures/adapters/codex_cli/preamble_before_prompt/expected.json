@@ -8,6 +8,9 @@
       "name": "codex_cli",
       "source": "openai"
     },
+    "inherited_external_ids": [
+      "codex_cli::01a04553-38f7-7540-b5b5-7db72c3f5ea8"
+    ],
     "lineage": [
       {
         "kind": "subagent",
@@ -71,9 +74,6 @@
       }
     ],
     "started_at": "2026-08-29T00:03:11.495Z",
-    "superseded_external_ids": [
-      "codex_cli::01a04553-38f7-7540-b5b5-7db72c3f5ea8"
-    ],
     "workspace_path": "/Users/user/Code/gruel-design-system"
   }
 ]

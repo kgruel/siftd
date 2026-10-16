@@ -1019,6 +1019,45 @@ class TestTagDecisionsHoldTheWriteLock:
         assert rc == 0
         assert writable == [False], "another connection could tag the row between the snapshot and the delete"
 
+    @pytest.mark.parametrize("dedup", DEDUP)
+    def test_a_declined_source_releases_the_write_lock_before_the_next_source(self, tmp_path, run_cli, dedup):
+        """Final review F3: a decline writes nothing, so the lock the plan read under is released at once.
+
+        Held until the next commit, it kept ``siftd tag`` on another connection out
+        for every source the run reached in the meantime. (A session container
+        commits at its end whatever it declined, so only the file branch held it.)
+        """
+        first, second = _write_source(tmp_path / "a.jsonl"), _write_source(tmp_path / "b.jsonl")
+        probe = {"on": False, "writable": []}
+
+        def parse(source):
+            if probe["on"] and source.as_path == second:
+                probe["writable"].append(_writable_from_another_connection(run_cli.db))
+            yield make_conversation(
+                external_id=f"conv-{source.as_path.stem}", harness_name=HARNESS,
+                started_at="2024-01-15T10:00:00Z", ended_at="2024-01-15T11:00:00Z",
+            )
+
+        adapter = make_test_adapter(
+            [first, second], name=HARNESS, dedup=dedup, harness_log_format="jsonl", parse_fn=parse,
+        )
+        run_cli([adapter])
+        declined = _conversation_id(run_cli.db, "conv-a")
+        conn = open_database(run_cli.db)
+        block_id = conn.execute(
+            "SELECT ec.id FROM event_content ec JOIN events e ON e.id = ec.event_id WHERE e.conversation_id = ? LIMIT 1",
+            (declined,),
+        ).fetchone()["id"]
+        conn.close()
+        _tag(run_cli.db, "block", block_id, "quoted")
+        probe["on"] = True
+
+        rc, events = run_cli([adapter], "--reparse")
+
+        assert rc == 0
+        assert [s["conversation_id"] for s in _reparse_event(events)["skipped_for_tags"]] == [declined]
+        assert probe["writable"] == [True], "the declined source still held the write lock"
+
 
 # ---------------------------------------------------------------------------
 # A tag on a later chunk of a streamed message

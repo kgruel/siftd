@@ -8,6 +8,9 @@
       "name": "codex_cli",
       "source": "openai"
     },
+    "inherited_external_ids": [
+      "codex_cli::019f66ea-963d-7101-a549-37c4fd3fccaa"
+    ],
     "lineage": [
       {
         "kind": "subagent",
@@ -601,9 +604,6 @@
       }
     ],
     "started_at": "2026-07-15T17:54:48.069Z",
-    "superseded_external_ids": [
-      "codex_cli::019f66ea-963d-7101-a549-37c4fd3fccaa"
-    ],
     "workspace_path": "/Users/user/Code/forks/subtask"
   }
 ]

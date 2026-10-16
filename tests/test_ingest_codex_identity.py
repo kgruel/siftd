@@ -24,12 +24,14 @@ from __future__ import annotations
 import itertools
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from conftest import tag_names
 
 from siftd.adapters import codex_cli
 from siftd.adapters.contract import adapt
+from siftd.cli import main
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
 from siftd.storage.sqlite import (
@@ -431,15 +433,13 @@ def test_a_row_its_claimant_also_holds_keeps_its_assignments(tmp_path):
     assert tag not in tag_names(conn, "conversation", own)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "A legacy row holding the parent's transcript is a prefix of child_a's, so with no claim left "
-        "to tell them apart it is adopted by child_a when child_a is discovered first. The claim "
-        "history that would say which file produced it is what the documented recovery clears."
-    ),
-)
 def test_a_legacy_row_holding_the_parent_is_not_adopted_by_a_child_discovered_first(tmp_path):
+    """The parent's row is a prefix of child_a's transcript, and no claim is left to tell them apart.
+
+    child_a inherits the parent's id, so the containment that makes the row a candidate
+    is what any fork of the parent shows, and the row began before child_a did.
+    Adoption is refused and reported: the row and its tag stay for the parent.
+    """
     root = tmp_path / "sessions"
     parent, child_a, _child_b = _family(root)
     conn = create_database(tmp_path / "siftd.db")
@@ -448,6 +448,137 @@ def test_a_legacy_row_holding_the_parent_is_not_adopted_by_a_child_discovered_fi
     conn.execute("DELETE FROM ingested_files")
     conn.commit()
 
-    _ingest(conn, root, order=[child_a, parent])
+    stats = _ingest(conn, root, order=[child_a, parent])
 
-    assert tag in tag_names(conn, "conversation", _external_ids(conn)[LEGACY_KEY])
+    by_id = _external_ids(conn)
+    assert by_id[LEGACY_KEY] == legacy_id
+    assert tag in tag_names(conn, "conversation", legacy_id)
+    assert tag not in tag_names(conn, "conversation", by_id[f"{codex_cli.NAME}::{CHILD_A}"])
+    assert _prompt_texts(conn, by_id[f"{codex_cli.NAME}::{CHILD_A}"]) == ["alpha question", "bravo child question"]
+    assert [(r.path, r.conversation_id, r.external_id) for r in stats.refused_adoptions] == [
+        (str(child_a), legacy_id, f"{codex_cli.NAME}::{CHILD_A}")
+    ]
+
+
+def test_a_childs_legacy_pointer_at_the_parents_row_is_not_an_adoption(tmp_path):
+    """External review r2, finding 2: a collision pointer is not evidence the row holds that file's conversation.
+
+    The legacy release pointed child_a's bookkeeping at the parent's row, and the
+    parent's own bookkeeping is gone, so no claim is left to tell them apart. The row
+    is under the id child_a inherits and began before child_a did, so the grown child
+    is stored beside it, the row keeps its tag, and the refusal is reported.
+    """
+    root = tmp_path / "sessions"
+    parent, child_a, _child_b = _family(root)
+    conn = create_database(tmp_path / "siftd.db")
+    legacy_id = _store_legacy_parent(conn, root, parent)
+    tag = _tag(conn, legacy_id)
+    conn.execute("DELETE FROM ingested_files")
+    _claim(conn, child_a, legacy_id)
+    child_a.write_text(child_a.read_text() + _user("2026-07-15T17:55:00.000Z", "bravo follow-up") + "\n")
+
+    stats = _ingest(conn, root, order=[child_a])
+
+    by_id = _external_ids(conn)
+    own = by_id[f"{codex_cli.NAME}::{CHILD_A}"]
+    assert by_id[LEGACY_KEY] == legacy_id
+    assert _prompt_texts(conn, legacy_id) == ["alpha question"]
+    assert tag in tag_names(conn, "conversation", legacy_id)
+    assert tag not in tag_names(conn, "conversation", own)
+    assert [(r.path, r.conversation_id) for r in stats.refused_adoptions] == [(str(child_a), legacy_id)]
+
+
+@pytest.mark.parametrize("json_mode", [False, True], ids=["text", "json"])
+def test_siftd_ingest_names_a_refused_adoption(tmp_path, monkeypatch, capsys, json_mode):
+    """The refusal is reported where the unrecognized-records line is, even when auto-quiet."""
+    root = tmp_path / "sessions"
+    parent, child_a, _child_b = _family(root)
+    db = tmp_path / "siftd.db"
+    conn = create_database(db)
+    legacy_id = _store_legacy_parent(conn, root, parent)
+    conn.execute("DELETE FROM ingested_files")
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr("siftd.paths.ensure_dirs", lambda: None)
+    monkeypatch.setattr(
+        "siftd.api.ingest.load_all_adapters",
+        lambda **_kw: [SimpleNamespace(name=codex_cli.NAME, module=_codex_adapter_at(root, [child_a]))],
+    )
+
+    rc = main(["--db", str(db), "ingest", *(["--json"] if json_mode else [])])
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    child = f"{codex_cli.NAME}::{CHILD_A}"
+    if json_mode:
+        events = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
+        (warning,) = [e for e in events if e.get("kind") == "refused_adoption"]
+        assert (warning["adapter"], warning["path"], warning["conversation_id"], warning["external_id"]) == (
+            codex_cli.NAME, str(child_a), legacy_id, child,
+        )
+    else:
+        assert f"did not adopt conversation {legacy_id} for {child}" in captured.err
+
+
+def _fork(root: Path, name: str, own_lines: list[str], **lineage) -> Path:
+    """A fork of the parent: its own meta (with ``lineage`` fields, if any), the parent's restated meta and history."""
+    return _write(root / "2026" / "07" / "15" / f"rollout-d-{name}.jsonl", [
+        _meta("2026-07-15T17:54:47.000Z", CHILD_A, **lineage),
+        _meta("2026-07-15T17:54:48.000Z", PARENT),
+        *_parent_history(),
+        *own_lines,
+    ])
+
+
+@pytest.mark.parametrize(
+    "own_lines, lineage",
+    [
+        pytest.param([], {"forked_from_id": PARENT}, id="fork-adding-no-prompt"),
+        pytest.param([_user("2026-07-15T17:54:50.000Z", "bravo child question")], {}, id="fork-stating-no-lineage"),
+    ],
+)
+def test_a_parent_row_is_not_adopted_on_prompts_or_lineage_alone(tmp_path, own_lines, lineage):
+    """External review r1, finding 2: equal prompt sets and absent lineage fields are not ownership.
+
+    A fork that adds no prompt holds exactly its parent's prompts, and a fork whose meta
+    states no lineage still restates its parent's id. Either way the parent's row (a read
+    of the parent's file, which began before the fork) keeps its tag, and the refusal is
+    reported.
+    """
+    root = tmp_path / "sessions"
+    parent, _child_a, _child_b = _family(root)
+    child = _fork(root, CHILD_A, own_lines, **lineage)
+    conn = create_database(tmp_path / "siftd.db")
+    legacy_id = _store_legacy_parent(conn, root, parent)
+    tag = _tag(conn, legacy_id)
+    conn.execute("DELETE FROM ingested_files")
+    conn.commit()
+
+    stats = _ingest(conn, root, order=[child])
+
+    by_id = _external_ids(conn)
+    assert by_id[LEGACY_KEY] == legacy_id
+    assert tag in tag_names(conn, "conversation", legacy_id)
+    assert tag not in tag_names(conn, "conversation", by_id[f"{codex_cli.NAME}::{CHILD_A}"])
+    assert [r.conversation_id for r in stats.refused_adoptions] == [legacy_id]
+
+
+def test_a_legacy_row_holding_an_older_read_of_the_child_is_adopted(tmp_path):
+    """The row a previous release stored from the child, before the child grew, is the child's: it began when the child began."""
+    root = tmp_path / "sessions"
+    _parent, child_a, _child_b = _family(root)
+    conn = create_database(tmp_path / "siftd.db")
+    legacy_id = _store_legacy_child(conn, root, child_a)
+    tag = _tag(conn, legacy_id)
+    conn.execute("DELETE FROM ingested_files")
+    conn.commit()
+    child_a.write_text(child_a.read_text() + _user("2026-07-15T17:55:00.000Z", "bravo follow-up") + "\n")
+
+    stats = _ingest(conn, root, order=[child_a])
+
+    by_id = _external_ids(conn)
+    own = by_id[f"{codex_cli.NAME}::{CHILD_A}"]
+    assert set(by_id) == {f"{codex_cli.NAME}::{CHILD_A}"}
+    assert _prompt_texts(conn, own) == ["alpha question", "bravo child question", "bravo follow-up"]
+    assert tag in tag_names(conn, "conversation", own)
+    assert stats.refused_adoptions == []

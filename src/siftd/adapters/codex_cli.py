@@ -190,8 +190,10 @@ class CodexDecoder:
     ``codex_cli::<id>``. A forked file restates its parent's meta after its own,
     so the last id is not the file's own (the earlier last-wins rule gave 35 child
     files their parent's name). A file with no id is named for its stem. When a
-    file restated a different id, that id is stated as superseded, so ingest can
-    adopt a row a previous release stored under it. A subagent's lineage names the
+    file restated a different id, that id is stated as inherited: a previous
+    release may have stored this file under it, but it is the parent's own id
+    too, so ingest adopts a row under it only when the row is a read of this file.
+    A subagent's lineage names the
     parent it ran in (``thread_spawn.parent_thread_id``, or the top-level
     ``parent_thread_id``); a fork's lineage names ``forked_from_id``. Both are kept:
     they are different relations.
@@ -256,15 +258,15 @@ class CodexDecoder:
         """
         if not self._units:
             return []
-        superseded = ()
+        inherited = ()
         if self._restated_id is not None and self._restated_id != self._session_id:
-            superseded = (f"{NAME}::{self._restated_id}",)
+            inherited = (f"{NAME}::{self._restated_id}",)
         return [
             Session(
                 external_id=self._external_id(),
                 started_at=self._first_at,
                 ended_at=self._last_at,
-                superseded_external_ids=superseded,
+                inherited_external_ids=inherited,
             )
         ]
 

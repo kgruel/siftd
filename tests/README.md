@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 206 | 3620 |
+| `tests/` | 206 | 3628 |
 | `tests/adapters/` | 22 | 482 |
 | `tests/architecture/` | 15 | 91 |
-| `tests/cli/` | 31 | 690 |
+| `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -207,12 +207,12 @@ docstring so its row is meaningful.
 | [test_html_workspaces.py](test_html_workspaces.py) | 7 | Unit tests for the Swiss Workspaces renderer (output/html_fmt.render_workspaces). |
 | [test_id_resolution.py](test_id_resolution.py) | 26 | Tests for converged ID resolver (AmbiguousPrefix detection) and short_id bump. |
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
-| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 13 | Regression tests for #36: aider history files with more than one session. |
-| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 10 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
+| [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 16 | Regression tests for #36: aider history files with more than one session. |
+| [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 14 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
 | [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
-| [test_ingestion.py](test_ingestion.py) | 52 | Tests for ingestion orchestration utility functions. |
+| [test_ingestion.py](test_ingestion.py) | 53 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
@@ -393,7 +393,7 @@ docstring so its row is meaningful.
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
 | [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
-| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 34 | ``siftd ingest --reparse`` through the argparse layer. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 35 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

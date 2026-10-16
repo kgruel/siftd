@@ -8,6 +8,9 @@
       "name": "codex_cli",
       "source": "openai"
     },
+    "inherited_external_ids": [
+      "codex_cli::01a04485-3b2a-7e10-9a61-9dee4fe55c0b"
+    ],
     "lineage": [
       {
         "kind": "subagent",
@@ -92,9 +95,6 @@
       }
     ],
     "started_at": "2026-08-27T18:52:47.581Z",
-    "superseded_external_ids": [
-      "codex_cli::01a04485-3b2a-7e10-9a61-9dee4fe55c0b"
-    ],
     "workspace_path": "/Users/user/Code/brezza"
   }
 ]
