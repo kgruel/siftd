@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -442,16 +443,21 @@ class TestReparseOneFileUnderTwoPaths:
     """
 
     @staticmethod
-    def _recorded_as(db, source, spellings):
-        """Leave the bookkeeping as an older release did: the row under each of ``spellings``."""
+    def _recorded_as(db, source, spellings, *, unpointed=()):
+        """Leave the bookkeeping as an older release did: the row under each of ``spellings``.
+
+        A spelling in ``unpointed`` keeps its row but names no conversation.
+        """
         conn = open_database(db)
         row = dict(conn.execute("SELECT * FROM ingested_files WHERE path = ?", (str(source),)).fetchone())
         conn.execute("DELETE FROM ingested_files WHERE path = ?", (str(source),))
         for spelling in spellings:
-            columns = ", ".join(row)
+            values = {**row, "id": ulid(), "path": str(spelling)}
+            if spelling in unpointed:
+                values["conversation_id"] = None
             conn.execute(
-                f"INSERT INTO ingested_files ({columns}) VALUES ({', '.join('?' * len(row))})",
-                [str(spelling) if k == "path" else (ulid() if k == "id" else v) for k, v in row.items()],
+                f"INSERT INTO ingested_files ({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
+                list(values.values()),
             )
         conn.commit()
         conn.close()
@@ -463,18 +469,28 @@ class TestReparseOneFileUnderTwoPaths:
         conn.close()
         return rows
 
-    @pytest.mark.parametrize("recorded", ["both", "only-the-other"])
-    def test_the_conversation_is_replaced_and_one_row_remains(self, tmp_path, run_cli, recorded):
+    @pytest.mark.parametrize("recorded", ["both", "only-the-other", "own-row-unpointed", "relative-scan"])
+    def test_the_conversation_is_replaced_and_one_row_remains(self, tmp_path, run_cli, monkeypatch, recorded):
         (tmp_path / "real").mkdir()
         (tmp_path / "link").symlink_to(tmp_path / "real")
         source = _write_source(tmp_path / "real" / "s.jsonl")
         alias = tmp_path / "link" / "s.jsonl"
         run_cli([_adapter(source)])
         cid = _conversation_id(run_cli.db, "conv-1")
-        self._recorded_as(run_cli.db, source, [source, alias] if recorded == "both" else [alias])
+        spellings, unpointed = {
+            "both": ([source, alias], ()),
+            "only-the-other": ([alias], ()),
+            "own-row-unpointed": ([source, alias], (source,)),
+            "relative-scan": ([source, alias], ()),
+        }[recorded]
+        self._recorded_as(run_cli.db, source, spellings, unpointed=unpointed)
         _tag(run_cli.db, "conversation", cid, "kept")
+        scanned = source
+        if recorded == "relative-scan":
+            monkeypatch.chdir(tmp_path)
+            scanned = Path("real") / "s.jsonl"
 
-        rc, events = run_cli([_adapter(source)], "--reparse")
+        rc, events = run_cli([_adapter(scanned)], "--reparse")
 
         assert rc == 0
         summary = _reparse_event(events)
@@ -483,6 +499,28 @@ class TestReparseOneFileUnderTwoPaths:
         assert new != cid
         assert "kept" in _conversation_tags(run_cli.db, new)
         assert self._rows(run_cli.db) == [(str(source), new)], "the alias row would claim the file again"
+
+    def test_an_emptied_file_takes_its_conversation_from_the_alias_that_named_it(self, tmp_path, run_cli):
+        """Its own row names nothing and only the alias names the conversation.
+
+        An empty parse has no key to find the conversation by, so the pointer is the
+        only way back to it: kept on the alias's row folded into this one, the
+        conversation goes with its emptied file instead of outliving it unreachable.
+        """
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        source = _write_source(tmp_path / "real" / "s.jsonl")
+        alias = tmp_path / "link" / "s.jsonl"
+        state = {"empty": False}
+        run_cli([_toggled_adapter(source, state)])
+        self._recorded_as(run_cli.db, source, [source, alias], unpointed=(source,))
+        state["empty"] = True
+
+        rc, _events = run_cli([_toggled_adapter(source, state)], "--reparse")
+
+        assert rc == 0
+        assert _conversation_id(run_cli.db, "conv-1") is None
+        assert self._rows(run_cli.db) == [(str(source), None)]
 
 
 class TestReparseFlags:

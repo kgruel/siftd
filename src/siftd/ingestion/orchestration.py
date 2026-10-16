@@ -71,8 +71,8 @@ from siftd.storage.sqlite import (
     harness_id_for_conversation,
     ingested_paths_for_conversation,
     ingested_paths_for_harness,
-    merge_ingested_file_spellings,
     link_ingested_file,
+    merge_ingested_file_spellings,
     message_rows,
     record_empty_file,
     record_failed_file,
@@ -827,9 +827,12 @@ def ingest_all(
     run = _Run(stats=stats, filter_binary=filter_binary, reparse=reparse, force=force)
 
     for source, adapter in sources:
-        file_path = str(source.location)
         harness_name = adapter.NAME
         dedup_strategy = getattr(adapter, "DEDUP_STRATEGY", "file")
+        if dedup_strategy == "file" and not source.as_path.is_absolute():
+            # Recorded absolute, so a relative scan and an absolute one keep one row per file.
+            source = replace(source, location=source.as_path.absolute())
+        file_path = str(source.location)
         seen[harness_name] = seen.get(harness_name, 0) + 1
         index = seen[harness_name]
         total = totals.get(harness_name)
@@ -1219,13 +1222,11 @@ def _adopt_other_spellings(conn, run: _Run, harness_name: str, file_path: str) -
     A log directory reached through a symlink (``~/.claude`` linked to
     ``~/.config/claude``) recorded each file under both paths. Discovery now
     yields one, and a row under the other would name this file as a second
-    claimant of its own conversation, so it could never be replaced. Only
-    absolute spellings are compared: a relative one resolves against whatever
-    directory ingest runs in, and a session source's spellings are what aider
-    adopts its legacy rows by (:func:`~siftd.adapters.sdk.spells`).
+    claimant of its own conversation, so it could never be replaced. Recorded
+    relative spellings are left out: they resolve against whatever directory
+    ingest ran in. (A session source's spellings are what aider adopts its
+    legacy rows by, so this runs for the file strategy only.)
     """
-    if not os.path.isabs(file_path):
-        return
     if harness_name not in run.spellings:
         by_file: dict[str, list[str]] = {}
         for path in ingested_paths_for_harness(conn, harness_name):
