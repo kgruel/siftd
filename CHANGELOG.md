@@ -43,6 +43,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `multi` (16,375 of 22,372 responses on one machine now match a price), cache
   reads are counted the way pricing expects, and `siftd peek` shows pi's tool
   calls, which it showed none of.
+- **Copilot CLI sub-agent turns name the call that spawned them,** tool calls
+  keep the order the model requested them in, and a session with no messages
+  is no longer stored as an empty conversation.
 - **Antigravity sessions now record their token usage**, which the adapter
   never read; cost stays empty until its models have pricing rows. ([#98](https://github.com/kgruel/siftd/issues/98))
 

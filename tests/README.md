@@ -114,7 +114,7 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 201 | 3530 |
-| `tests/adapters/` | 22 | 318 |
+| `tests/adapters/` | 22 | 337 |
 | `tests/architecture/` | 14 | 84 |
 | `tests/cli/` | 29 | 641 |
 | `tests/snapshots/` | 1 | 5 |
@@ -336,7 +336,7 @@ docstring so its row is meaningful.
 | [adapters/test_claude_code.py](adapters/test_claude_code.py) | 45 | Tests for Claude Code adapter. |
 | [adapters/test_claude_code_edges.py](adapters/test_claude_code_edges.py) | 1 | — |
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 29 | Tests for Codex CLI adapter. |
-| [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 7 | Tests for Copilot CLI adapter. |
+| [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
 | [adapters/test_infra.py](adapters/test_infra.py) | 12 | Tests for adapter infrastructure: validation, registry, SDK utilities. |

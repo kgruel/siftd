@@ -9,12 +9,12 @@ from siftd.adapters.sdk import iter_jsonl, peek_exchanges_from_records, peek_sca
 # Adapters that still peek through a normalize_record() record fold.
 JSONL_ADAPTERS = [
     pytest.param(CodexSession, codex_cli, id="codex_cli"),
-    pytest.param(CopilotSession, copilot_cli, id="copilot_cli"),
 ]
 # Every adapter with module-level peek hooks, whether folded or built from a decoder.
 PEEK_ADAPTERS = [
     pytest.param(ClaudeSession, claude_code, id="claude_code"),
     pytest.param(PiAgentSession, pi_agent, id="pi_agent"),
+    pytest.param(CopilotSession, copilot_cli, id="copilot_cli"),
     *JSONL_ADAPTERS,
 ]
 
