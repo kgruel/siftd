@@ -268,3 +268,11 @@ def test_priced_without_provenance_is_surfaced(tmp_path):
     assert "some-synced-only-model" in names
     assert "claude-opus-4-5" not in names  # governed → has provenance
     conn.close()
+
+
+def test_pinned_key_is_ignored_by_the_runtime_loader():
+    """`pinned` is read only by scripts/pricing_sync.py; the runtime loader must not change."""
+    base = '[[price]]\nmodel = "m"\nprovider = "p"\ninput_per_mtok = 1.0\noutput_per_mtok = 2.0\n'
+    plain = pricing_mod._parse_toml(base)[("m", "p")]
+    pinned = pricing_mod._parse_toml(base + "pinned = true\n")[("m", "p")]
+    assert pinned == plain
