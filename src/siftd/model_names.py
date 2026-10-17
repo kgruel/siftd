@@ -146,7 +146,7 @@ def _parse_claude(raw_name: str) -> dict:
 def _parse_gemini(raw_name: str) -> dict:
     """Parse Gemini model names.
 
-    Pattern: gemini-{version}-{variant}[-preview]
+    Pattern: gemini-{version}-{variant}[-preview], or ...-preview-customtools.
     Version can be "3", "2.5", etc.
     """
     # gemini-{version}-{variant}[-preview]
@@ -161,6 +161,25 @@ def _parse_gemini(raw_name: str) -> dict:
         name = f"gemini-{version}-{variant}"
         return {
             "name": name,
+            "creator": "google",
+            "family": "gemini",
+            "version": version,
+            "variant": variant,
+            "released": None,
+        }
+
+    # gemini-{version}-{variant}-preview-customtools: a separate upstream model with
+    # its own price (the tool-calling build of a Gemini text model), so unlike a bare
+    # "-preview" it keeps its raw id as the canonical name — collapsing it onto
+    # gemini-{version}-{variant} would merge two pricing keys.
+    m = re.match(
+        r"^gemini-(\d+(?:\.\d+)?)-(" + "|".join(_GEMINI_VARIANTS) + r")-preview-customtools$",
+        raw_name,
+    )
+    if m:
+        version, variant = m.groups()
+        return {
+            "name": raw_name,
             "creator": "google",
             "family": "gemini",
             "version": version,

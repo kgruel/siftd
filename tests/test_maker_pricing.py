@@ -65,7 +65,12 @@ as_of = "2026-10-16"
 
 @pytest.fixture
 def prices(tmp_path, monkeypatch):
-    """Install the override price file; returns a function that appends entries."""
+    """Install the override price file as the WHOLE reference; returns a function that appends entries.
+
+    The shipped reference is emptied so no test depends on which models it happens to
+    price (a sync adding ``gpt-4o-mini`` must not change what these tests mean).
+    """
+    monkeypatch.setattr(pricing_mod, "_load_shipped", lambda: {})
     override = tmp_path / "pricing.toml"
     override.write_text(PRICES)
     monkeypatch.setattr(pricing_mod, "pricing_override_file", lambda: override)
@@ -105,21 +110,16 @@ def _pi_session(root: Path, responses: list[tuple[str | None, str, int, int]]) -
 
 
 def _ingest_pi(tmp_path, monkeypatch, responses):
-    """Ingest a pi session, then reopen: the pricing projection runs on open."""
+    """Ingest a pi session and return the connection ingest left: no reopen, no extra rebuild.
+
+    What the rollup says here is what one real ``ingest`` run materializes.
+    """
     root = tmp_path / ".pi" / "agent" / "sessions"
     _pi_session(root, responses)
     monkeypatch.setattr(pi_agent, "DEFAULT_LOCATIONS", [str(root)])
     db = tmp_path / "siftd.db"
     conn = create_database(db)
     ingest_all(conn, [pi_agent], filter_binary=False)
-    conn.close()
-    return _reprice(db)
-
-
-def _reprice(db: Path) -> sqlite3.Connection:
-    """The state after a later open + rebuild: prices projected onto the models ingest created."""
-    conn = open_database(db)
-    rebuild_rollups(conn, commit=True)
     return conn
 
 
@@ -158,20 +158,71 @@ class TestMakerFallback:
         assert costs[("gpt-4o", "github-copilot")] == pytest.approx(1.0 + 2.0)
         assert costs[("gpt-4o", "openai")] == pytest.approx(2.5 + 10.0)
 
-    def test_a_serving_row_with_no_input_rate_does_not_shadow_the_makers(self, tmp_path, monkeypatch, prices):
+    @pytest.mark.parametrize("rates", [(None, 99.0), (99.0, None), (None, None)])
+    def test_a_serving_row_missing_a_base_rate_does_not_shadow_the_makers(
+        self, tmp_path, monkeypatch, prices, rates
+    ):
+        """Cost multiplies BOTH base rates, so a row missing either prices nothing."""
         conn = _ingest_pi(tmp_path, monkeypatch, [("github-copilot", "gpt-4o", MTOK, MTOK)])
         conn.execute(
-            "UPDATE pricing SET input_per_mtok = NULL "
-            "WHERE provider_id = (SELECT id FROM providers WHERE name = 'github-copilot')"
-        )
-        conn.execute(
             "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
-            "SELECT 'x', m.id, p.id, NULL, 99 FROM models m, providers p "
-            "WHERE m.name = 'gpt-4o' AND p.name = 'github-copilot'"
+            "SELECT 'x', m.id, p.id, ?, ? FROM models m, providers p "
+            "WHERE m.name = 'gpt-4o' AND p.name = 'github-copilot'",
+            rates,
         )
         conn.commit()
         rebuild_rollups(conn, commit=True)
         assert _costs(conn)[("gpt-4o", "github-copilot")] == pytest.approx(2.5 + 10.0)
+        assert get_models_without_pricing(conn) == []
+
+    @pytest.mark.parametrize("rates", [(None, 99.0), (99.0, None)])
+    def test_an_incomplete_price_with_no_maker_behind_it_is_unpriced_and_reported(
+        self, tmp_path, monkeypatch, prices, rates
+    ):
+        """The report and the cost agree: NULL cost is exactly what is reported."""
+        conn = _ingest_pi(tmp_path, monkeypatch, [("ollama", "gemma4:e4b", MTOK, MTOK)])
+        conn.execute(
+            "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
+            "SELECT 'x', m.id, p.id, ?, ? FROM models m, providers p "
+            "WHERE m.name = 'gemma4:e4b' AND p.name = 'ollama'",
+            rates,
+        )
+        conn.commit()
+        rebuild_rollups(conn, commit=True)
+        assert _costs(conn)[("gemma4:e4b", "ollama")] is None
+        assert get_models_without_pricing(conn) == [{"model_name": "gemma4:e4b", "provider_name": "ollama"}]
+
+    @pytest.mark.parametrize("column", ["input_per_mtok", "output_per_mtok"])
+    def test_an_incomplete_makers_price_is_unpriced_and_reported(self, tmp_path, monkeypatch, prices, column):
+        """The maker's own row is the one picked, and it cannot price: NULL cost, reported."""
+        conn = _ingest_pi(tmp_path, monkeypatch, [("github-copilot", "gpt-4o", MTOK, MTOK)])
+        conn.execute(
+            f"UPDATE pricing SET {column} = NULL "
+            "WHERE provider_id = (SELECT id FROM providers WHERE name = 'openai')"
+        )
+        conn.commit()
+        rebuild_rollups(conn, commit=True)
+        assert _costs(conn)[("gpt-4o", "github-copilot")] is None
+        assert get_models_without_pricing(conn) == [{"model_name": "gpt-4o", "provider_name": "github-copilot"}]
+
+    def test_a_gemini_customtools_response_is_priced_at_googles_rate(self, tmp_path, monkeypatch, prices):
+        """A valid upstream text model must not be junk: github-copilot serving it falls back to google."""
+        prices("""
+[[price]]
+model = "gemini-3.1-pro-preview-customtools"
+provider = "google"
+input_per_mtok = 2.0
+output_per_mtok = 12.0
+source = "test"
+as_of = "2026-10-16"
+""")
+        conn = _ingest_pi(tmp_path, monkeypatch, [
+            ("github-copilot", "gemini-3.1-pro-preview-customtools", MTOK, MTOK),
+        ])
+        assert _costs(conn) == {
+            ("gemini-3.1-pro-preview-customtools", "github-copilot"): pytest.approx(14.0)
+        }
+        assert get_models_without_pricing(conn) == []
 
     def test_a_local_model_stays_unpriced_and_is_reported(self, tmp_path, monkeypatch, prices):
         conn = _ingest_pi(tmp_path, monkeypatch, [
@@ -207,8 +258,6 @@ class TestMakerFallback:
         db = tmp_path / "siftd.db"
         conn = create_database(db)
         ingest_all(conn, [copilot_cli], filter_binary=False)
-        conn.close()
-        conn = _reprice(db)
         assert _costs(conn) == {("claude-haiku-4-5", "multi"): 0.0}
         assert get_models_without_pricing(conn) == []
 

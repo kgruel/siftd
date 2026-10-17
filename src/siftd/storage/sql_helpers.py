@@ -160,6 +160,20 @@ def uncached_input_sql(response_alias: str = "r") -> str:
     )
 
 
+def price_is_complete_sql(pricing_alias: str = "pr") -> str:
+    """SQL predicate: ``pricing_alias`` is a row that can price a response.
+
+    Cost multiplies tokens by BOTH base rates (:func:`cost_expr_sql`), and a NULL
+    rate propagates to a NULL cost, so a row missing either one prices nothing. This
+    is the one definition of "complete": :func:`price_provider_id_sql` skips an
+    incomplete serving row (it must not shadow the maker's), and the unpriced report
+    treats an incomplete or absent row as unpriced, so the two cannot disagree.
+    Evaluates to 0 (not NULL) over a LEFT JOIN's missing row.
+    """
+    a = pricing_alias
+    return f"({a}.input_per_mtok IS NOT NULL AND {a}.output_per_mtok IS NOT NULL)"
+
+
 def price_provider_id_sql(
     model_id: str = "r.model_id",
     provider_id: str = "r.provider_id",
@@ -178,8 +192,8 @@ def price_provider_id_sql(
 
     The serving provider is the response's ``provider_id``, else the provider named
     by the harness ``source`` (legacy rows). A router's own price, once filed for
-    it, wins over the maker's. A row with a NULL ``input_per_mtok`` prices nothing,
-    so it does not shadow the maker's. A local model has no ``creator`` and stays
+    it, wins over the maker's. A row missing either base rate prices nothing
+    (:func:`price_is_complete_sql`), so it does not shadow the maker's. A local model has no ``creator`` and stays
     unpriced.
 
     Inputs of the rule: ``model_id``, ``provider_id``, ``source`` (SQL expressions,
@@ -192,7 +206,7 @@ def price_provider_id_sql(
     return (
         "COALESCE("
         "(SELECT _ps.provider_id FROM pricing _ps"
-        f" WHERE _ps.model_id = {model_id} AND _ps.input_per_mtok IS NOT NULL"
+        f" WHERE _ps.model_id = {model_id} AND {price_is_complete_sql('_ps')}"
         f" AND _ps.provider_id = COALESCE({provider_id},"
         f" (SELECT _pv.id FROM providers _pv WHERE _pv.name = {source}))),"
         " (SELECT _pk.id FROM models _pm JOIN providers _pk ON _pk.name = _pm.creator"

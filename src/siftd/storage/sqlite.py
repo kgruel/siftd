@@ -35,7 +35,7 @@ from siftd.storage.links import insert_conversation_link
 from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
-from siftd.storage.sql_helpers import price_join_sql
+from siftd.storage.sql_helpers import price_is_complete_sql, price_join_sql
 from siftd.storage.tags import (
     ensure_tag_pins_table,
     tag_derivative_conversation,
@@ -3775,7 +3775,7 @@ def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
         JOIN models m ON m.id = r.model_id
         LEFT JOIN providers p ON p.id = r.provider_id
         {price_join_sql("r", "pr")}
-        WHERE pr.input_per_mtok IS NULL
+        WHERE NOT {price_is_complete_sql("pr")}
         ORDER BY provider_name, m.name
     """)
     return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]

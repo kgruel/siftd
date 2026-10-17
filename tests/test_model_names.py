@@ -94,6 +94,8 @@ def test_dateless_dot_dash_canonicalizes(raw, expected_name):
         # google: flash-lite collapses its preview spelling like the other variants
         ("gemini-2.5-flash-lite", "gemini-2.5-flash-lite", "google", "gemini"),
         ("gemini-3.1-flash-lite-preview", "gemini-3.1-flash-lite", "google", "gemini"),
+        # a distinct upstream model with its own price: the raw id stays the pricing key
+        ("gemini-3.1-pro-preview-customtools", "gemini-3.1-pro-preview-customtools", "google", "gemini"),
     ],
 )
 def test_creator_for_each_shape(raw, name, creator, family):
@@ -116,7 +118,6 @@ def test_creator_for_each_shape(raw, name, creator, family):
         "gpt-5.4 (xhigh)",  # a display string with a suffix, not an id
         "Gemini 3.7 Flash (High)",
         "text-embedding-3-small",
-        "gemini-3.1-pro-preview-customtools",
         "o",  # not an o-series id
         "omlx",
     ],
