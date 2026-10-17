@@ -72,6 +72,7 @@ from siftd.storage.sqlite import (
     ingested_paths_for_conversation,
     ingested_paths_for_harness,
     link_ingested_file,
+    merge_ingested_file_spellings,
     message_rows,
     record_empty_file,
     record_failed_file,
@@ -826,9 +827,13 @@ def ingest_all(
     run = _Run(stats=stats, filter_binary=filter_binary, reparse=reparse, force=force)
 
     for source, adapter in sources:
-        file_path = str(source.location)
         harness_name = adapter.NAME
         dedup_strategy = getattr(adapter, "DEDUP_STRATEGY", "file")
+        scanned_as = str(source.location)
+        if dedup_strategy == "file" and not source.as_path.is_absolute():
+            # Recorded absolute, so a relative scan and an absolute one keep one row per file.
+            source = replace(source, location=source.as_path.absolute())
+        file_path = str(source.location)
         seen[harness_name] = seen.get(harness_name, 0) + 1
         index = seen[harness_name]
         total = totals.get(harness_name)
@@ -879,6 +884,7 @@ def ingest_all(
         ledger_before = {key: stats.by_harness[harness_name][key] for key in LEDGER_COUNTS}
         try:
             if dedup_strategy == "file":
+                _adopt_other_spellings(conn, run, harness_name, file_path, scanned_as)
                 existing_info = get_ingested_file_info(conn, file_path)
                 location = source.as_path
                 st = location.stat()
@@ -1207,6 +1213,36 @@ class _Run:
     reparse: bool
     force: bool
     workspace_cache: dict[str, str] = field(default_factory=dict)
+    # harness -> resolved path -> the recorded absolute paths that resolve to it
+    spellings: dict[str, dict[str, list[str]]] = field(default_factory=dict)
+
+
+def _adopt_other_spellings(conn, run: _Run, harness_name: str, file_path: str, scanned_as: str) -> None:
+    """Make this path the one bookkeeping row of its file, taking over rows recorded under other paths to it.
+
+    A log directory reached through a symlink (``~/.claude`` linked to
+    ``~/.config/claude``) recorded each file under both paths. Discovery now
+    yields one, and a row under the other would name this file as a second
+    claimant of its own conversation, so it could never be replaced. A recorded
+    relative spelling resolves against whatever directory ingest ran in, so it
+    is taken only when it is the spelling scanned now (``scanned_as``), from
+    which it reaches this file. (A session source's spellings are what aider
+    adopts its legacy rows by, so this runs for the file strategy only.)
+    """
+    if harness_name not in run.spellings:
+        by_file: dict[str, list[str]] = {}
+        for path in ingested_paths_for_harness(conn, harness_name):
+            if os.path.isabs(path):
+                by_file.setdefault(os.path.realpath(path), []).append(path)
+        run.spellings[harness_name] = by_file
+    recorded = run.spellings[harness_name].setdefault(os.path.realpath(file_path), [])
+    others = [path for path in recorded if path != file_path]
+    if scanned_as != file_path:
+        others.append(scanned_as)
+    if others:
+        merge_ingested_file_spellings(conn, file_path, others)
+        conn.commit()
+    recorded[:] = [file_path]
 
 
 class _Target(NamedTuple):

@@ -68,6 +68,9 @@ def discover_files(
                 ["**/*.jsonl"],
             )
     """
+    # One file reached through two locations (one symlinked to the other) is one
+    # source, yielded under the first path found.
+    seen: set[Path] = set()
     for location in locations or default_locations:
         base = Path(location).expanduser()
         if not base.exists():
@@ -78,10 +81,14 @@ def discover_files(
                 if not match.is_file():
                     continue
                 try:
-                    if not match.resolve(strict=False).is_relative_to(base_resolved):
+                    resolved = match.resolve(strict=False)
+                    if not resolved.is_relative_to(base_resolved):
                         continue
                 except (OSError, ValueError):
                     continue
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
                 yield Source(kind="file", location=match)
 
 

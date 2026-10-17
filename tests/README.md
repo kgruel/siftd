@@ -114,9 +114,9 @@ docstring so its row is meaningful.
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
 | `tests/` | 206 | 3630 |
-| `tests/adapters/` | 22 | 483 |
+| `tests/adapters/` | 22 | 484 |
 | `tests/architecture/` | 15 | 91 |
-| `tests/cli/` | 31 | 691 |
+| `tests/cli/` | 31 | 694 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -345,7 +345,7 @@ docstring so its row is meaningful.
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
 | [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
-| [adapters/test_infra.py](adapters/test_infra.py) | 12 | Tests for adapter infrastructure: validation, registry, SDK utilities. |
+| [adapters/test_infra.py](adapters/test_infra.py) | 13 | Tests for adapter infrastructure: validation, registry, SDK utilities. |
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |
 | [adapters/test_opencode.py](adapters/test_opencode.py) | 24 | Tests for the OpenCode adapter: the decoder, the row reader, the content revision, and peek's deferral. |
 | [adapters/test_peek_projection.py](adapters/test_peek_projection.py) | 22 | Peek built from the assembler: the projection's own contract, and claude_code's hooks over it. |
@@ -393,7 +393,7 @@ docstring so its row is meaningful.
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |
 | [cli/test_id_cmd.py](cli/test_id_cmd.py) | 19 | Tests for 'siftd id' command - ULID classification. |
 | [cli/test_ingest_ledger.py](cli/test_ingest_ledger.py) | 15 | The ledger at ingest: counts reach IngestStats, and `siftd ingest` says so only when nonzero. |
-| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 35 | ``siftd ingest --reparse`` through the argparse layer. |
+| [cli/test_ingest_reparse.py](cli/test_ingest_reparse.py) | 38 | ``siftd ingest --reparse`` through the argparse layer. |
 | [cli/test_install.py](cli/test_install.py) | 32 | Tests for 'siftd install plugin' and 'siftd install skill' commands. |
 | [cli/test_lane_grouping.py](cli/test_lane_grouping.py) | 7 | Tests for the lane-grouped top-level help (CLI UX audit, presentation slice). |
 | [cli/test_meta.py](cli/test_meta.py) | 12 | Tests for siftd.cli.meta command handlers. |

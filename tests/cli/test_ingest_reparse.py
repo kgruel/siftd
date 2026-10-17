@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +25,15 @@ from siftd.adapters.assembly import Assembler
 from siftd.adapters.records import PromptRec, ResponseRec, Session, ToolCallRec
 from siftd.cli import main
 from siftd.domain import Harness, ToolCall
-from siftd.storage.sqlite import ensure_conversation_owners_table, open_database
+from siftd.ids import ulid
+from siftd.storage.sqlite import (
+    create_database,
+    ensure_conversation_owners_table,
+    merge_ingested_file_spellings,
+    open_database,
+    record_ingested_file,
+    store_conversation,
+)
 from siftd.storage.tags import apply_tag, get_or_create_tag
 
 HARNESS = "reparse_test"
@@ -430,6 +439,113 @@ class TestReparseRecoversLegacyGeminiRows:
 # ---------------------------------------------------------------------------
 # Flags
 # ---------------------------------------------------------------------------
+
+
+class TestReparseOneFileUnderTwoPaths:
+    """A log directory reached through a symlink recorded each file under two paths.
+
+    Discovery now yields one path per file, and the rows recorded under the other
+    become this path's row: honouring them as a second claimant settled every such
+    conversation, so --reparse never applied a parser fix to it.
+    """
+
+    @staticmethod
+    def _recorded_as(db, source, spellings, *, unpointed=()):
+        """Leave the bookkeeping as an older release did: the row under each of ``spellings``.
+
+        A spelling in ``unpointed`` keeps its row but names no conversation.
+        """
+        conn = open_database(db)
+        row = dict(conn.execute("SELECT * FROM ingested_files WHERE path = ?", (str(source),)).fetchone())
+        conn.execute("DELETE FROM ingested_files WHERE path = ?", (str(source),))
+        for spelling in spellings:
+            values = {**row, "id": ulid(), "path": str(spelling)}
+            if spelling in unpointed:
+                values["conversation_id"] = None
+            conn.execute(
+                f"INSERT INTO ingested_files ({', '.join(values)}) VALUES ({', '.join('?' * len(values))})",
+                list(values.values()),
+            )
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def _rows(db):
+        conn = open_database(db)
+        rows = [tuple(r) for r in conn.execute("SELECT path, conversation_id FROM ingested_files")]
+        conn.close()
+        return rows
+
+    @pytest.mark.parametrize(
+        "recorded", ["both", "only-the-other", "own-row-unpointed", "relative-scan", "relative-history"]
+    )
+    def test_the_conversation_is_replaced_and_one_row_remains(self, tmp_path, run_cli, monkeypatch, recorded):
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        source = _write_source(tmp_path / "real" / "s.jsonl")
+        alias = tmp_path / "link" / "s.jsonl"
+        run_cli([_adapter(source)])
+        cid = _conversation_id(run_cli.db, "conv-1")
+        spellings, unpointed = {
+            "both": ([source, alias], ()),
+            "only-the-other": ([alias], ()),
+            "own-row-unpointed": ([source, alias], (source,)),
+            "relative-scan": ([source, alias], ()),
+            # An older relative scan from the same directory recorded the relative spelling.
+            "relative-history": ([Path("real") / "s.jsonl"], ()),
+        }[recorded]
+        self._recorded_as(run_cli.db, source, spellings, unpointed=unpointed)
+        _tag(run_cli.db, "conversation", cid, "kept")
+        scanned = source
+        if recorded in ("relative-scan", "relative-history"):
+            monkeypatch.chdir(tmp_path)
+            scanned = Path("real") / "s.jsonl"
+
+        rc, events = run_cli([_adapter(scanned)], "--reparse")
+
+        assert rc == 0
+        summary = _reparse_event(events)
+        assert (summary["replaced"], summary["skipped_for_tags"]) == (1, [])
+        new = _conversation_id(run_cli.db, "conv-1")
+        assert new != cid
+        assert "kept" in _conversation_tags(run_cli.db, new)
+        assert self._rows(run_cli.db) == [(str(source), new)], "the alias row would claim the file again"
+
+    def test_spellings_that_name_different_conversations_are_not_folded(self, tmp_path):
+        """A symlink retargeted from file A to file B: its row is A's conversation's only way back."""
+        db = create_database(tmp_path / "siftd.db")
+        a = store_conversation(db, make_conversation(external_id="a", harness_name=HARNESS))
+        b = store_conversation(db, make_conversation(external_id="b", harness_name=HARNESS))
+        record_ingested_file(db, "/logs/b.jsonl", "h-b", b)
+        record_ingested_file(db, "/logs/link.jsonl", "h-a", a)
+        db.commit()
+
+        merge_ingested_file_spellings(db, "/logs/b.jsonl", ["/logs/link.jsonl"])
+
+        rows = dict(db.execute("SELECT path, conversation_id FROM ingested_files").fetchall())
+        assert (rows["/logs/b.jsonl"], rows["/logs/link.jsonl"]) == (b, a)
+
+    def test_an_emptied_file_takes_its_conversation_from_the_alias_that_named_it(self, tmp_path, run_cli):
+        """Its own row names nothing and only the alias names the conversation.
+
+        An empty parse has no key to find the conversation by, so the pointer is the
+        only way back to it: kept on the alias's row folded into this one, the
+        conversation goes with its emptied file instead of outliving it unreachable.
+        """
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").symlink_to(tmp_path / "real")
+        source = _write_source(tmp_path / "real" / "s.jsonl")
+        alias = tmp_path / "link" / "s.jsonl"
+        state = {"empty": False}
+        run_cli([_toggled_adapter(source, state)])
+        self._recorded_as(run_cli.db, source, [source, alias], unpointed=(source,))
+        state["empty"] = True
+
+        rc, _events = run_cli([_toggled_adapter(source, state)], "--reparse")
+
+        assert rc == 0
+        assert _conversation_id(run_cli.db, "conv-1") is None
+        assert self._rows(run_cli.db) == [(str(source), None)]
 
 
 class TestReparseFlags:
