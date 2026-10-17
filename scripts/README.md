@@ -32,6 +32,7 @@ current command list.
 | [gen-adapter-fixture](gen-adapter-fixture.sh) | Generate or update tests/fixtures/adapters/<adapter>/<case>/expected.json |
 | [gen-schema-fixture](gen-schema-fixture.sh) | Dump current schema as fixture for tests/fixtures/schemas/v${SCHEMA_VERSION}.sql |
 | [lint](lint.sh) | Run ty type checker + ruff linter (with autofix) |
+| [pricing-sync](pricing-sync.sh) | Refresh src/siftd/data/pricing.toml from models.dev |
 | [probe](probe.sh) | Conservation probe: raw-file counts vs adapter parse() output, per adapter (read-only) |
 | [setup](setup.sh) | Setup worktree (venv, deps, optional extras) |
 | [smoke-homelab](smoke-homelab.sh) | End-to-end docker-compose homelab smoke harness driver |
