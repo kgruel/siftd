@@ -12,34 +12,56 @@ what belongs in the release — don't invent changelog content.
 
 ## Steps
 
-1. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - <today's date>`
+1. **Pricing sync**: run `./dev pricing-sync` and read its summary: added,
+   changed (old -> new), kept-unlisted, pin disagreements, and the tiered count.
+   It fetches models.dev live. If the fetch fails, `--from FILE` takes a saved
+   copy; say so to the user. Review every changed price, since a repriced model
+   changes the cost of history users already have. Pin a value you verified by
+   hand, or leave it, before tagging. If the summary says `file changed`, commit
+   the data on its own, with its changelog line in the same commit:
+
+   ```bash
+   git add src/siftd/data/pricing.toml CHANGELOG.md
+   git commit -m "chore(pricing): sync from models.dev"
+   ```
+
+   The `[Unreleased]` line names the models added or repriced. If the summary
+   says `file unchanged`, skip the commit. `./dev pricing-sync --check` gives the
+   same answer without writing.
+
+   This is a release step, not a CI step. A tag must publish exactly what a
+   person reviewed, and the publish path must not depend on a third-party fetch.
+   A CI job that rewrote prices would make a tag's contents depend on whatever
+   models.dev served when CI happened to run.
+
+2. **Changelog**: rename `## [Unreleased]` to `## [X.Y.Z] - <today's date>`
    (check `currentDate` context, don't guess). Leave the rest of the section
    content as-is. Then fix the link footer: point `[Unreleased]:` at
    `compare/vX.Y.Z...HEAD` and add `[X.Y.Z]: …/compare/v<previous>...vX.Y.Z`
    above the previous version's line. `tests/test_changelog.py` fails until
    both are right.
 
-2. **Version bump**: `pyproject.toml` `[project].version = "X.Y.Z"`.
+3. **Version bump**: `pyproject.toml` `[project].version = "X.Y.Z"`.
 
-3. **Lockfile**: `uv lock` (updates the `siftd` version pin inside).
+4. **Lockfile**: `uv lock` (updates the `siftd` version pin inside).
 
-4. **Docs regen**: `./dev docs` — regenerates `docs/reference/*.md`
+5. **Docs regen**: `./dev docs` — regenerates `docs/reference/*.md`
    (version string is embedded in `cli.md`'s `--help` capture) and the
    generated spans of the managed per-folder READMEs. Note: the tracked
    pre-commit hook (`.githooks/pre-commit`, wired by `./dev setup`) lints
    and re-runs this on commit, auto-staging `docs/reference/` (READMEs are
    not auto-staged; stage those yourself if their spans changed).
 
-5. **Full check**: `./dev check` (lint + test). Must be green before
+6. **Full check**: `./dev check` (lint + test). Must be green before
    proceeding — do not tag on red. After the bump, `tests/test_compat_ledger.py` fails on any
    `siftd.api.compat` entry whose removal version this release reaches: remove
    the surface with its entry, or restate the entry with a later version.
 
-6. **Confirm with the user before pushing** — tagging and pushing to origin
+7. **Confirm with the user before pushing** — tagging and pushing to origin
    triggers a public PyPI publish. Use AskUserQuestion if not already
    explicitly authorized in this conversation.
 
-7. **Commit, tag, push**:
+8. **Commit, tag, push**:
    ```bash
    git add CHANGELOG.md docs/reference/*.md pyproject.toml uv.lock
    git commit -m "chore(release): X.Y.Z\n\n<1-2 sentence summary of the release>"

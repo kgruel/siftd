@@ -179,14 +179,14 @@ def test_merge_does_not_import_source_pricing(tmp_path):
     )
     s_conn = open_database(source)
     s_m = s_conn.execute("SELECT id FROM models WHERE name = 'claude-opus-4-5'").fetchone()["id"]
-    # Name the provider 'anthropic' so the reference (keyed by provider name) can match.
-    s_p = s_conn.execute("SELECT id FROM providers LIMIT 1").fetchone()["id"]
-    s_conn.execute("UPDATE providers SET name = 'anthropic' WHERE id = ?", (s_p,))
+    # Opening the source gave the model's maker ('anthropic') a providers row and
+    # projected the reference onto it; corrupt that row to the WRONG price.
     s_conn.execute(
-        "INSERT INTO pricing (id, model_id, provider_id, input_per_mtok, output_per_mtok) "
-        "VALUES (?, ?, ?, 99.0, 199.0)",
-        (sq._ulid(), s_m, s_p),
+        "UPDATE pricing SET input_per_mtok = 99.0, output_per_mtok = 199.0 "
+        "WHERE model_id = ?",
+        (s_m,),
     )
+    assert s_conn.execute("SELECT COUNT(*) FROM pricing WHERE model_id = ?", (s_m,)).fetchone()[0] == 1
     s_conn.commit()
     s_conn.close()
 
@@ -268,3 +268,11 @@ def test_priced_without_provenance_is_surfaced(tmp_path):
     assert "some-synced-only-model" in names
     assert "claude-opus-4-5" not in names  # governed → has provenance
     conn.close()
+
+
+def test_pinned_key_is_ignored_by_the_runtime_loader():
+    """`pinned` is read only by scripts/pricing_sync.py; the runtime loader must not change."""
+    base = '[[price]]\nmodel = "m"\nprovider = "p"\ninput_per_mtok = 1.0\noutput_per_mtok = 2.0\n'
+    plain = pricing_mod._parse_toml(base)[("m", "p")]
+    pinned = pricing_mod._parse_toml(base + "pinned = true\n")[("m", "p")]
+    assert pinned == plain

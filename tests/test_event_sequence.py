@@ -398,7 +398,7 @@ class TestLegacyDatabase:
 
         conn = open_database(path)
         try:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION == 13
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
             assert conn.execute("SELECT COUNT(*), COUNT(sequence) FROM events").fetchone()[:] == (3, 0)
             tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             assert "conversation_links" in tables
@@ -443,6 +443,6 @@ class TestLegacyDatabase:
         open_database(path).close()
         conn = open_database(path)
         try:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 13
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
         finally:
             conn.close()

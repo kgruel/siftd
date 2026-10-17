@@ -144,6 +144,9 @@ class TestGetCostCoverage:
         from siftd.storage.usage_rollup import rebuild_rollups
 
         conn = open_database(test_db)
+        # A model with no known maker is priced by no one: claude-3-opus would be
+        # priced at anthropic's rate through its creator.
+        conn.execute("UPDATE models SET creator = NULL")
         rebuild_rollups(conn, commit=True)
         result = get_cost_coverage(conn)
         conn.close()
