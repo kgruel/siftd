@@ -63,6 +63,7 @@ from siftd.storage.sqlite import (
     compute_file_hash,
     conversation_exists,
     delete_conversation,
+    ensure_pricing_table,
     ensure_tool_aliases,
     find_conversation_by_external_id,
     find_conversation_by_id,
@@ -1046,6 +1047,12 @@ def ingest_all(
                 conn, source, adapter, file_path, str(e), stats, on_file, emit_event,
                 known_hash=current_hash, known_stat=st,
             )
+
+    # Price the models this run created: the projection ran at open, before ingest
+    # made them (and, for a maker, before its providers row existed), so without this
+    # the rebuild below would materialize NULL cost for every new model and only a
+    # later open + rebuild would price it.
+    ensure_pricing_table(conn)
 
     # Rebuild the derived tier: usage_by_conv_model rollup, then conversation_stats
     # (its model/provider-dropped cache) re-derived from it.
