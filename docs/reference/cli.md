@@ -18,7 +18,8 @@ lanes:
   SETUP     install · config
 
 Run 'siftd <command> --help' for details.
-Advanced (hidden): backfill, copy, id, migrate, register, session-id, upgrade
+Advanced (hidden): backfill, copy, dump, id, migrate, register, session-id,
+upgrade
 ```
 
 ## siftd query

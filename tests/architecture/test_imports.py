@@ -284,12 +284,18 @@ def test_no_sqlite3_connect_outside_storage():
     # databases it opens belong to other tools, not to siftd.
     adapter_sdk = SRC / "adapters" / "sdk.py"
 
+    # api/golden.py builds a throwaway database from a fixture's setup.sql so an
+    # adapter has a file to read (the golden dump of opencode's fixtures). It is
+    # a scratch file in a temp dir, not a siftd database: no read-only handling or
+    # WAL concern applies, and storage has no helper for a bare writable open.
+    golden_dump = SRC / "api" / "golden.py"
+
     for py_file in source_files():
         # Allow sqlite3.connect() inside storage/
         if storage_dir in py_file.parents or py_file.parent == storage_dir:
             continue
         # Allow sqlite3.connect() in adapter SDK (external DB helper)
-        if py_file == adapter_sdk:
+        if py_file in (adapter_sdk, golden_dump):
             continue
 
         for line_num, call_text in find_sqlite3_connect_calls(py_file):

@@ -27,6 +27,7 @@ exclusive groups, type coercion) actually lives, so CLI tests should drive
 | [auth.py](auth.py) | CLI for client-side token acquisition: `siftd auth login/status/logout`. |
 | [data.py](data.py) | CLI handlers for data operations (ingest, backfill, migrate, doctor, copy). |
 | [db.py](db.py) | CLI handlers for 'siftd db' namespace — container-level operations. |
+| [dump.py](dump.py) | CLI handler for 'siftd dump' — golden assembly files for differential testing. |
 | [embed.py](embed.py) | CLI handler for 'siftd embed' — build and inspect the semantic-search index. |
 | [export.py](export.py) | CLI handler for export command (export conversations as markdown or JSON). |
 | [id_cmd.py](id_cmd.py) | CLI handler for the 'id' command - classify and display ULID information. |

@@ -67,6 +67,12 @@ from siftd.api.file_refs import (
     FileRef,
     fetch_file_refs,
 )
+from siftd.api.golden import (
+    FixtureDump,
+    dump_fixtures,
+    golden_json,
+)
+from siftd.api.golden import dump_source as dump_golden_source
 from siftd.api.ingest import (
     AdapterSelectionError,
     AutoIndexReport,
@@ -280,6 +286,11 @@ __all__ = [
     # file refs
     "FileRef",
     "fetch_file_refs",
+    # golden dump
+    "FixtureDump",
+    "dump_fixtures",
+    "dump_golden_source",
+    "golden_json",
     # ingest
     "AdapterSelectionError",
     "AutoIndexReport",

@@ -1356,6 +1356,17 @@ A single event with content, tags, and kind-specific data.
 | `conversation` | `dict[str, Any] \| None` |  |
 | `neighbors` | `dict[str, str \| None] \| None` |  |
 
+### FixtureDump
+
+What :func:`dump_fixtures` wrote, and what it found nothing for.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `commit` | `str` |  |
+| `files` | `list[DumpedFile]` |  |
+| `undiscovered` | `dict[str, list[str]]` |  |
+| `empty` | `list[str]` |  |
+
 ### AutoIndexReport
 
 Outcome of the post-ingest auto-index hook, surfaced by the ingest renderer.
@@ -1749,6 +1760,30 @@ Tokenize and quote a user query for safe FTS5 MATCH use.
 
 ```python
 def sanitize_fts5_query(query: str, *, raw: bool = ..., operator: Literal[and, or] = ...) -> SanitizedFts5Query
+```
+
+### dump_fixtures
+
+Write one golden JSON per fixture source under ``fixtures``, at ``out/<adapter>/<case>.json``.
+
+```python
+def dump_fixtures(fixtures: str | pathlib.Path, out: str | pathlib.Path, *, commit: str | None = ...) -> FixtureDump
+```
+
+### dump_golden_source
+
+The golden document for the one source at ``path``.
+
+```python
+def dump_golden_source(path: str | pathlib.Path, *, adapter: str | None = ..., root: str | pathlib.Path | None = ..., commit: str | None = ...) -> dict[str, Any]
+```
+
+### golden_json
+
+The canonical text of a golden document (sorted keys, indent 1, non-ASCII kept).
+
+```python
+def golden_json(obj: Any) -> str
 ```
 
 ### egress_notice_pending

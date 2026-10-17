@@ -8,6 +8,7 @@ from siftd.cli._common import _get_version
 from siftd.cli.auth import build_auth_parser
 from siftd.cli.data import build_data_parser
 from siftd.cli.db import build_db_parser
+from siftd.cli.dump import build_dump_parser
 from siftd.cli.embed import build_embed_parser
 from siftd.cli.export import build_export_parser
 from siftd.cli.id_cmd import build_id_parser
@@ -90,7 +91,7 @@ _LANES: tuple[tuple[str, str], ...] = (
 # Plumbing: hook machinery + power-user tools. Hidden from the lane view but
 # fully runnable — they stay registered; only the help listing drops them.
 _PLUMBING: frozenset[str] = frozenset(
-    {"register", "session-id", "id", "backfill", "migrate", "copy", "upgrade"}
+    {"register", "session-id", "id", "backfill", "migrate", "copy", "upgrade", "dump"}
 )
 
 
@@ -293,6 +294,7 @@ def _build_parser() -> argparse.ArgumentParser:
     build_sessions_parser(subparsers)  # register, session-id (hidden)
     build_id_parser(subparsers)  # hidden
     build_upgrade_parser(subparsers)  # hidden
+    build_dump_parser(subparsers)  # hidden
 
     _hide_plumbing(subparsers)
     return parser

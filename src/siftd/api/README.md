@@ -43,6 +43,7 @@ the tag" respectively).
 | [events.py](events.py) | Event detail API. |
 | [export.py](export.py) | Export API for siftd. |
 | [file_refs.py](file_refs.py) | File reference queries for search results. |
+| [golden.py](golden.py) | Golden assembly dump: a source's conversations and ledger as canonical JSON. |
 | [inbox.py](inbox.py) | Sync inbox — stage received payloads for deferred merge. |
 | [ingest.py](ingest.py) | Ingest API wrappers. |
 | [merge.py](merge.py) | Merge an external SQLite database (slice) into the main siftd database. |

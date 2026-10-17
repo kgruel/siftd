@@ -113,10 +113,10 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 208 | 3674 |
+| `tests/` | 209 | 3690 |
 | `tests/adapters/` | 22 | 484 |
 | `tests/architecture/` | 16 | 96 |
-| `tests/cli/` | 31 | 694 |
+| `tests/cli/` | 32 | 701 |
 | `tests/snapshots/` | 1 | 5 |
 
 ### `tests/`
@@ -131,6 +131,7 @@ docstring so its row is meaningful.
 | [test_api_doctor.py](test_api_doctor.py) | 6 | Tests for siftd.api.doctor — wrapper re-exports from siftd.doctor. |
 | [test_api_events.py](test_api_events.py) | 24 | Phase 4: tests for the event detail surface. |
 | [test_api_export_edges.py](test_api_export_edges.py) | 1 | — |
+| [test_api_golden.py](test_api_golden.py) | 16 | Tests for the golden assembly dump (api/golden.py). |
 | [test_api_ingest.py](test_api_ingest.py) | 15 | Tests for siftd.api.ingest. |
 | [test_api_init_edges.py](test_api_init_edges.py) | 1 | — |
 | [test_api_merge_edges.py](test_api_merge_edges.py) | 2 | — |
@@ -391,6 +392,7 @@ docstring so its row is meaningful.
 | [cli/test_cmd_search.py](cli/test_cmd_search.py) | 30 | Integration tests for 'siftd search' semantic search CLI. |
 | [cli/test_data.py](cli/test_data.py) | 108 | Tests for siftd data CLI commands (ingest, backfill, migrate, doctor, copy). |
 | [cli/test_db.py](cli/test_db.py) | 54 | Tests for siftd db namespace commands. |
+| [cli/test_dump.py](cli/test_dump.py) | 7 | Tests for 'siftd dump' — golden assembly files. |
 | [cli/test_embed_status_render.py](cli/test_embed_status_render.py) | 4 | Rendering tests for 'siftd embed --status' states (base lane — synthetic status). |
 | [cli/test_export_cli.py](cli/test_export_cli.py) | 15 | Tests for siftd cli export — cmd_export and build_export_parser. |
 | [cli/test_filter_args.py](cli/test_filter_args.py) | 4 | Tests for the shared CLI filter argument group. |

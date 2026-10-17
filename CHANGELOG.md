@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`siftd dump --golden` writes a source's parse as canonical JSON.** One
+  file holds the conversations and the ledger of one source;
+  `--golden-fixtures` writes one per fixture source. These are the golden
+  assemblies the Rust rewrite is tested against; the parse path is unchanged.
 - **`siftd ingest --reparse` applies adapter fixes to conversations already
   stored.** It re-parses every source, unchanged or not, and declines any
   replacement that would lose a tag you applied unless `--force` is given.

@@ -210,9 +210,10 @@ class TestCommandReferences:
 
         # Plumbing commands are hidden from the lane listing but remain valid;
         # the help advertises them on the epilog 'Advanced (hidden): ...' line.
-        hidden_match = re.search(r"Advanced \(hidden\):\s*(.+)", result.stdout)
+        # The list wraps at the help width, so it runs to the end of the paragraph.
+        hidden_match = re.search(r"Advanced \(hidden\):\s*(.+?)(?:\n\s*\n|\Z)", result.stdout, re.DOTALL)
         if hidden_match:
-            for cmd in hidden_match.group(1).split(","):
+            for cmd in hidden_match.group(1).replace("\n", " ").split(","):
                 valid_subcommands.add(cmd.strip())
 
         assert valid_subcommands, "Failed to parse subcommands from help output"
