@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 207 | 3652 |
+| `tests/` | 207 | 3656 |
 | `tests/adapters/` | 22 | 484 |
 | `tests/architecture/` | 15 | 91 |
 | `tests/cli/` | 31 | 694 |
@@ -247,7 +247,7 @@ docstring so its row is meaningful.
 | [test_portable_filenames.py](test_portable_filenames.py) | 1 | Every tracked path is a legal filename on every platform siftd ships to. |
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 11 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
-| [test_pricing_sync.py](test_pricing_sync.py) | 21 | Pricing sync (scripts/pricing_sync.py): models.dev -> src/siftd/data/pricing.toml. |
+| [test_pricing_sync.py](test_pricing_sync.py) | 25 | Pricing sync (scripts/pricing_sync.py): models.dev -> src/siftd/data/pricing.toml. |
 | [test_probe.py](test_probe.py) | 31 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |

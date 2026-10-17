@@ -206,12 +206,44 @@ def test_pinned_entry_that_agrees_reports_nothing():
     assert result.pin_disagreements == []
 
 
+def test_pin_disagreement_compares_runtime_derived_cache_rates():
+    # A pin that omits the cache fields bills them at input x 0.1 (read) and input x 1.25
+    # (creation) at cost time. Upstream publishes no cache rate for this model, so the
+    # sync's rule is cache = input (2.0). Runtime bills 0.2, so this is a disagreement.
+    old = (
+        '[[price]]\nmodel = "claude-sonnet-5"\nprovider = "anthropic"\npinned = true\n'
+        'input_per_mtok = 2.0\noutput_per_mtok = 10.0\nsource = "hand"\nas_of = "2026-06-04"\n'
+    )
+    result = ps.sync(_doc(old), FIXTURE, TODAY)
+    assert any("cache_read_per_mtok 0.2 (derived) != upstream" in line for line in result.pin_disagreements)
+    assert any("cache_creation_per_mtok 2.5 (derived) != upstream" in line for line in result.pin_disagreements)
+
+
+def test_owned_entry_omitting_cache_fields_is_unchanged_when_derived_rate_matches():
+    # Legacy owned row: no cache fields, so runtime derives read 3.0 x 0.1 (= 0.30000000000000004)
+    # and creation 3.0 x 1.25. Upstream publishes 0.3 and 3.75. Same price: no change, no as_of bump.
+    upstream = _upstream(anthropic={"claude-sonnet-4-5": _cost(3, 15, 0.3, 3.75)})
+    old = (
+        '[[price]]\nmodel = "claude-sonnet-4-5"\nprovider = "anthropic"\ninput_per_mtok = 3.0\n'
+        'output_per_mtok = 15.0\nsource = "old"\nas_of = "2026-06-04"\n'
+    )
+    result = ps.sync(_doc(old), upstream, TODAY)
+    assert result.changed == {}
+    row = _rows(result.text)[("claude-sonnet-4-5", "anthropic")]
+    assert row["as_of"] == OLD_DAY
+    assert row["cache_read_per_mtok"] == 0.3
+    assert row["cache_creation_per_mtok"] == 3.75
+
+
 def test_other_provider_entries_are_kept_verbatim():
     old = (
-        '[[price]]\nmodel = "grok-9"\nprovider = "xai"\ninput_per_mtok = 1.5\n'
+        "# verified by hand against the xAI pricing page\n"
+        '[[price]]\nmodel = "grok-9"\nprovider = "xai"\ninput_per_mtok = 1.5  # per M, standard tier\n'
         'output_per_mtok = 2.5\ncache_read_per_mtok = 0.3\nsource = "note"\nas_of = "2026-01-02"\n'
     )
     result = ps.sync(_doc(old), FIXTURE, TODAY)
+    # Text, not just parsed values: comments and formatting must survive the rewrite.
+    assert old in result.text
     row = _rows(result.text)[("grok-9", "xai")]
     assert row == {
         "model": "grok-9",
@@ -222,6 +254,25 @@ def test_other_provider_entries_are_kept_verbatim():
         "source": "note",
         "as_of": "2026-01-02",
     }
+
+
+def test_pinned_entry_text_is_preserved_verbatim():
+    pinned = (
+        "# hand-verified 2026-06-04 against the Anthropic pricing page\n"
+        '[[price]]\nmodel = "claude-opus-4-5"\nprovider = "anthropic"\npinned = true\n'
+        "input_per_mtok = 7.0  # pinned above upstream on purpose\n"
+        'output_per_mtok = 35.0\nsource = "hand-verified"\nas_of = "2026-06-04"\n'
+    )
+    result = ps.sync(_doc(pinned), FIXTURE, TODAY)
+    assert pinned in result.text
+
+
+def test_derived_cache_multiples_match_the_runtime_sql():
+    # The sync derives omitted cache rates exactly as the cost SQL does. If the SQL
+    # multiples move, this fails: the sync and the runtime must agree on the same price.
+    sql = (_REPO_ROOT / "src" / "siftd" / "storage" / "sql_helpers.py").read_text(encoding="utf-8")
+    assert f"{{input_rate}} * {ps.CACHE_READ_MULTIPLE}" in sql
+    assert f"{{input_rate}} * {ps.CACHE_CREATION_MULTIPLE}" in sql
 
 
 def test_unlisted_owned_entry_is_kept_and_reported():
@@ -242,7 +293,7 @@ def test_unlisted_owned_entry_is_kept_and_reported():
 def test_as_of_preserved_when_unchanged_and_moved_when_changed():
     old = (
         '[[price]]\nmodel = "gpt-5.5"\nprovider = "openai"\ninput_per_mtok = 5.0\n'
-        'output_per_mtok = 30.0\ncache_read_per_mtok = 0.5\ncache_creation_per_mtok = 5.0\n'
+        "output_per_mtok = 30.0\ncache_read_per_mtok = 0.5\ncache_creation_per_mtok = 5.0\n"
         'source = "https://developers.openai.com/api/docs/pricing"\nas_of = "2026-06-04"\n'
     )
     result = ps.sync(_doc(old), FIXTURE, TODAY)
@@ -331,11 +382,7 @@ def test_conflict_exits_two_and_leaves_file_untouched(tmp_path, capsys):
     target.write_text(original, encoding="utf-8")
     source = tmp_path / "models_dev.json"
     source.write_text(
-        json.dumps(
-            _upstream(
-                anthropic={"claude-haiku-4.5": _cost(1, 5), "claude-haiku-4-5-20251001": _cost(2, 10)}
-            )
-        ),
+        json.dumps(_upstream(anthropic={"claude-haiku-4.5": _cost(1, 5), "claude-haiku-4-5-20251001": _cost(2, 10)})),
         encoding="utf-8",
     )
     code = ps.main(["--from", str(source), "--target", str(target), "--as-of", TODAY])
