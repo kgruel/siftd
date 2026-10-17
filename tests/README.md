@@ -113,9 +113,9 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 206 | 3630 |
+| `tests/` | 207 | 3644 |
 | `tests/adapters/` | 22 | 484 |
-| `tests/architecture/` | 15 | 91 |
+| `tests/architecture/` | 16 | 96 |
 | `tests/cli/` | 31 | 694 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -217,6 +217,7 @@ docstring so its row is meaningful.
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
 | [test_live_tagging.py](test_live_tagging.py) | 29 | Integration tests for live session tagging flow. |
+| [test_maker_pricing.py](test_maker_pricing.py) | 11 | A response is priced at its serving provider's rate, else at its model maker's. |
 | [test_markdown_render.py](test_markdown_render.py) | 21 | Tests for terminal markdown rendering of transcript bodies. |
 | [test_math.py](test_math.py) | 9 | Tests for siftd.math module. |
 | [test_merge.py](test_merge.py) | 42 | Tests for siftd db merge — importing a slice into the main database. |
@@ -225,7 +226,7 @@ docstring so its row is meaningful.
 | [test_migrations.py](test_migrations.py) | 67 | Tests for siftd storage migration paths. |
 | [test_mmr.py](test_mmr.py) | 12 | Tests for MMR diversity reranking in search.py. |
 | [test_mmr_focus.py](test_mmr_focus.py) | 1 | — |
-| [test_model_names.py](test_model_names.py) | 4 | Tests for model name parsing. |
+| [test_model_names.py](test_model_names.py) | 7 | Tests for model name parsing. |
 | [test_model_names_edges.py](test_model_names_edges.py) | 1 | — |
 | [test_narrative.py](test_narrative.py) | 13 | Tests for siftd.serialization.narrative + conversations + json_fmt + format_registry. |
 | [test_normalizers.py](test_normalizers.py) | 2 | Cross-format normalizer validation tests. |
@@ -370,6 +371,7 @@ docstring so its row is meaningful.
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 34 | Static code analysis tests for architectural invariants. |
 | [architecture/test_imports.py](architecture/test_imports.py) | 3 | Test import dependency rules to enforce layered architecture. |
 | [architecture/test_prefix_resolution.py](architecture/test_prefix_resolution.py) | 2 | One function spells the id-prefix predicate; every resolver asks it. |
+| [architecture/test_price_resolution.py](architecture/test_price_resolution.py) | 5 | Which price a response gets is decided in one place; the sites that read `pricing` are enumerated. |
 | [architecture/test_readonly_opens.py](architecture/test_readonly_opens.py) | 2 | A read-only open derives immutability from the medium. It does not assert it. |
 | [architecture/test_replacement_carry.py](architecture/test_replacement_carry.py) | 10 | A conversation replacement is answerable to one list of what it must carry. |
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |

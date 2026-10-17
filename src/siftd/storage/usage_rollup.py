@@ -16,12 +16,14 @@ providers for one model splits into correct rows instead of a lossy merge.  A
 side effect that keeps cost coherent: each group is single-provider, so its
 pricing join resolves to exactly one row (or none) — a group is uniformly
 priced or uniformly unpriced, never mixed, so per-group ``cost`` is cleanly a
-number-or-NULL.
+number-or-NULL. "Unpriced" is therefore exactly ``cost IS NULL`` on this table:
+readers that report unpriced models read it here instead of re-deriving the
+price rule.
 """
 
 import sqlite3
 
-from siftd.storage.sql_helpers import cost_expr_sql, uncached_input_sql
+from siftd.storage.sql_helpers import cost_expr_sql, price_join_sql, uncached_input_sql
 
 _TABLE = "usage_by_conv_model"
 
@@ -87,8 +89,8 @@ def rebuild_usage_by_conv_model(conn: sqlite3.Connection, *, commit: bool = Fals
 
     All joins are 1:1 — conversations/harnesses by PK, the two cache subqueries
     GROUP BY ``target_id`` (one row per response), ``providers.name`` UNIQUE,
-    ``pricing`` UNIQUE(model_id, provider_id) — so no row fans out before the
-    aggregate (the precondition that keeps the 290x fan-out class structurally out
+    ``pricing`` UNIQUE(model_id, provider_id) behind a scalar provider id — so no row
+    fans out before the aggregate (the precondition that keeps the 290x fan-out class structurally out
     of reach).  ``cost`` is stored UNROUNDED (dollars); the per-conversation round
     happens once, when ``conversation_stats`` sums these rows.
 
@@ -163,14 +165,20 @@ def rebuild_usage_by_conv_model(conn: sqlite3.Connection, *, commit: bool = Fals
     if has_pricing:
         # Unrounded per-group dollars.  NULL propagates when unpriced (no COALESCE
         # on the per-mtok rates), preserving the cost>0 vs IS NULL distinction.
-        # Route pricing through the harness source when provider_id is NULL.
         cost_expr = f"SUM({per_response_cost}) / 1000000.0"
-        cost_join = (
-            "LEFT JOIN providers p_fallback ON p_fallback.name = r.source "
-            "LEFT JOIN pricing pr "
-            "ON pr.model_id = r.model_id "
-            "AND pr.provider_id = COALESCE(r.provider_id, p_fallback.id)"
-        )
+        if cache_aware:
+            # Which price row a response gets (serving provider, else the model's
+            # maker) is decided once, in price_join_sql.
+            cost_join = price_join_sql("r", "pr")
+        else:
+            # FROZEN with the v9-era cost above: the serving provider's price only,
+            # so v9's cost-parity assertion compares like with like.
+            cost_join = (
+                "LEFT JOIN providers p_fallback ON p_fallback.name = r.source "
+                "LEFT JOIN pricing pr "
+                "ON pr.model_id = r.model_id "
+                "AND pr.provider_id = COALESCE(r.provider_id, p_fallback.id)"
+            )
 
     # Trailing cache columns (when cache_aware) keep the SELECT aligned with the
     # column list, which ends with cost then the two cache columns.

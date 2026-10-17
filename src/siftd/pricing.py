@@ -9,6 +9,11 @@ The ``pricing`` SQLite table is a *projection* of ``load_pricing_reference()``,
 UPSERT-applied on every DB open by ``storage.sqlite.ensure_pricing_table`` — so
 correcting a value here (or in the override) fixes the table on the next open, and
 nothing is ever frozen. See ``siftd/data/pricing.toml`` for the file format.
+
+A price is filed per ``(model, provider)`` but read by the cost rule, not by this
+module: a response gets the price filed for the provider that served it, else the
+one filed for the model's maker (``models.creator``) — see
+``storage.sql_helpers.price_provider_id_sql``.
 """
 
 import importlib.resources

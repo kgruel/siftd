@@ -10,8 +10,9 @@ from conftest import make_db as _make_db
 
 from siftd.ids import ulid as _ulid
 from siftd.storage.attributes import get_attributes, set_attribute
-from siftd.storage.sql_helpers import cost_expr_sql
+from siftd.storage.sql_helpers import cost_expr_sql, price_join_sql
 from siftd.storage.sqlite import open_database
+from siftd.storage.usage_rollup import rebuild_rollups
 
 
 @pytest.fixture()
@@ -139,13 +140,15 @@ def test_cost_expr_sql_parity(tmp_path):
             LEFT JOIN harnesses h ON h.id = c.harness_id
             WHERE e.kind = 'response'
         ) r
-        LEFT JOIN pricing pr ON pr.model_id = r.model_id AND pr.provider_id = r.provider_id
+        {price_join_sql("r", "pr")}
         WHERE r.id = ?
     """, (event_id,)).fetchone()[0]
 
     assert path_a == pytest.approx(0.0106, abs=1e-6), f"cost_expr_sql path gave {path_a}"
 
-    # Path B: cost.sql builtin query — must agree with cost_expr_sql to the cent.
+    # Path B: cost.sql builtin query — reads the rollup, so it agrees with the
+    # rebuild (and with path A) to the cent without copying the formula.
+    rebuild_rollups(conn, commit=True)
     cost_sql = files("siftd.builtin_queries").joinpath("cost.sql").read_text()
     cost_sql_runnable = cost_sql.replace("$limit", "100").replace("LIMIT $limit", "LIMIT 100")
     rows = conn.execute(cost_sql_runnable).fetchall()

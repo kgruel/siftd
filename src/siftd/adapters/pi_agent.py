@@ -46,8 +46,10 @@ TOOL_ALIASES: dict[str, str] = {}
 
 # pi's provider names, spelled as siftd's pricing and harness sources spell
 # them: the codex route serves OpenAI's models and the gemini CLI route serves
-# Google's, as codex_cli and gemini_cli store them. Any other provider keeps its
-# own name, under which no price is filed, so its responses stay unpriced.
+# Google's, as codex_cli and gemini_cli store them. Any other provider
+# (github-copilot, ollama, omlx) keeps its own name, under which no price is
+# filed; its responses are priced at the model maker's rate when the model has
+# one (storage.sql_helpers.price_provider_id_sql) and stay unpriced otherwise.
 _PROVIDERS = {"openai-codex": "openai", "google-gemini-cli": "google"}
 
 # Record types with no conversation content, skipped by name. The decoder's

@@ -182,12 +182,12 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                         AND er.model_id IS NOT NULL)
     """)
 
-    # Providers referenced by responses, OR named by a copied harness's source.
-    # The canonical rollup cost prices NULL-provider responses through the
-    # harness source (usage_rollup.py: providers.name = harnesses.source), so the
-    # fallback provider — which no response.provider_id references — must travel
-    # with the slice or the target reprices that cost as NULL/0.  (Harnesses are
-    # copied above, so slice.harnesses is populated here.)
+    # Providers the cost rule can name (sql_helpers.price_provider_id_sql): the
+    # serving provider of a response, the provider named by a copied harness's
+    # source (the fallback for a NULL-provider response — no response.provider_id
+    # references it), and the maker of a copied model (the price a response gets when
+    # its serving provider has none).  Each must travel with the slice or the target
+    # reprices that cost as NULL.  (Harnesses and models are copied above.)
     conn.execute("""
         INSERT OR IGNORE INTO slice.providers
         SELECT p.* FROM providers p
@@ -196,6 +196,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
                         WHERE e.conversation_id IN (SELECT id FROM _slice_conv_ids)
                         AND er.provider_id IS NOT NULL)
            OR p.name IN (SELECT source FROM slice.harnesses WHERE source IS NOT NULL)
+           OR p.name IN (SELECT creator FROM slice.models WHERE creator IS NOT NULL)
     """)
 
     # Tools referenced by tool_calls
@@ -216,7 +217,7 @@ def _populate_slice(conn, conv_ids: list[str]) -> None:
           AND ta.harness_id IN (SELECT id FROM slice.harnesses)
     """)
 
-    # Pricing for copied models and providers
+    # Pricing for copied models and providers (serving, harness-source and maker)
     conn.execute("""
         INSERT OR IGNORE INTO slice.pricing
         SELECT pr.* FROM pricing pr

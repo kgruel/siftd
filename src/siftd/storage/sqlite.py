@@ -35,6 +35,7 @@ from siftd.storage.links import insert_conversation_link
 from siftd.storage.queries import ensure_workspace_pins_table
 from siftd.storage.search_log import ensure_search_log_tables
 from siftd.storage.sessions import ensure_session_tables
+from siftd.storage.sql_helpers import price_join_sql
 from siftd.storage.tags import (
     ensure_tag_pins_table,
     tag_derivative_conversation,
@@ -42,7 +43,7 @@ from siftd.storage.tags import (
 )
 
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 def schema_version(conn: sqlite3.Connection, schema: str = "main") -> int:
@@ -2189,6 +2190,18 @@ def _project_pricing_reference(conn: sqlite3.Connection) -> None:
     from siftd.pricing import load_pricing_reference
 
     for e in load_pricing_reference():
+        # A model's maker is a price source even when no response names it as the
+        # serving provider (a pi-only database never sees "anthropic" serve): give
+        # the maker a providers row once a model it made exists, so its price
+        # projects. Any other provider must already exist, having served.
+        if conn.execute(
+            "SELECT 1 FROM models WHERE name = ? AND creator = ? LIMIT 1",
+            (e.model, e.provider),
+        ).fetchone():
+            conn.execute(
+                "INSERT OR IGNORE INTO providers (id, name) VALUES (?, ?)",
+                (_ulid(), e.provider),
+            )
         # One reference name can resolve to several model_ids (spelling variants
         # canonicalized to one name). Insert per (model_id, provider_id) with a FRESH
         # id each — a single shared id across N fresh rows would collide on the PK
@@ -2428,6 +2441,43 @@ def _migrate_v13_event_sequence_and_links(conn: sqlite3.Connection) -> None:
 
 
 MIGRATIONS[13] = _migrate_v13_event_sequence_and_links
+
+
+def _migrate_v14_maker_pricing(conn: sqlite3.Connection) -> None:
+    """v14: a response with no price from its serving provider is priced at its maker's.
+
+    Data-only: no DDL. The rule (``sql_helpers.price_provider_id_sql``) reads
+    ``models.creator``, which only :func:`recanonicalize_model_names` backfills on an
+    existing database, and which an improved parser (openai, single-number claude,
+    fable, flash-lite) did not reach. So this: (1) re-parses the models the parser
+    could not place before (creator NULL) — names do not change for any shape the
+    parser already handled; (2) reprojects the pricing reference, which now gives each
+    maker a providers row so its prices exist to fall back on; (3) rebuilds the
+    rollups so materialized cost follows the rule. Cost CHANGES BY DESIGN (responses
+    that were unpriced gain a cost), so there is no cost-parity assertion; the check
+    is that no response was lost or duplicated. Caller owns the transaction.
+    """
+    from siftd.storage.usage_rollup import rebuild_rollups
+
+    recanonicalize_model_names(conn)
+    ensure_pricing_table(conn)
+    rebuild_rollups(conn)
+
+    flatten_n = conn.execute(
+        "SELECT COUNT(*) FROM events e JOIN event_response er ON er.event_id = e.id "
+        "WHERE e.kind = 'response'"
+    ).fetchone()[0]
+    post_resp = conn.execute(
+        "SELECT COALESCE(SUM(response_count), 0) FROM usage_by_conv_model"
+    ).fetchone()[0]
+    if post_resp != flatten_n:
+        raise MigrationAssertionError(
+            f"Migration v14 response_count integrity: rollup SUM={post_resp} "
+            f"vs {flatten_n} flattened response rows"
+        )
+
+
+MIGRATIONS[14] = _migrate_v14_maker_pricing
 
 
 def ensure_content_blobs_table(conn: sqlite3.Connection) -> None:
@@ -3694,7 +3744,12 @@ def get_ingest_errors(conn: sqlite3.Connection) -> list[dict]:
 
 
 def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
-    """Get models used in responses that have no pricing data.
+    """Get models used in responses that no price covers.
+
+    A response is covered exactly when the cost rule prices it
+    (:func:`siftd.storage.sql_helpers.price_provider_id_sql`: the serving provider's
+    price, else the model maker's) — this joins through the same fragment the rollup
+    does, so "unpriced" here and ``cost IS NULL`` there cannot disagree.
 
     Returns list of dicts with keys: model_name, provider_name.
     Returns empty list if the pricing table doesn't exist yet.
@@ -3705,17 +3760,22 @@ def get_models_without_pricing(conn: sqlite3.Connection) -> list[dict]:
     if not cur.fetchone():
         return []
 
-    cur = conn.execute("""
-        SELECT DISTINCT m.name as model_name, COALESCE(p.name, 'unknown') as provider_name
-        FROM event_response er
-        JOIN models m ON er.model_id = m.id
-        LEFT JOIN providers p ON er.provider_id = p.id
-        WHERE er.model_id IS NOT NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM pricing pr
-            WHERE pr.model_id = er.model_id
-              AND (er.provider_id IS NULL OR pr.provider_id = er.provider_id)
-          )
+    # Price depends only on (model, provider, harness source): resolve once per
+    # distinct triple, not once per response.
+    cur = conn.execute(f"""
+        SELECT DISTINCT m.name AS model_name, COALESCE(p.name, 'unknown') AS provider_name
+        FROM (
+            SELECT DISTINCT er.model_id, er.provider_id, h.source AS source
+            FROM event_response er
+            JOIN events e ON e.id = er.event_id
+            LEFT JOIN conversations c ON c.id = e.conversation_id
+            LEFT JOIN harnesses h ON h.id = c.harness_id
+            WHERE er.model_id IS NOT NULL
+        ) r
+        JOIN models m ON m.id = r.model_id
+        LEFT JOIN providers p ON p.id = r.provider_id
+        {price_join_sql("r", "pr")}
+        WHERE pr.input_per_mtok IS NULL
         ORDER BY provider_name, m.name
     """)
     return [{"model_name": row[0], "provider_name": row[1]} for row in cur.fetchall()]

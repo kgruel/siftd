@@ -2,15 +2,32 @@
 
 Decomposes raw model identifiers (e.g. 'claude-opus-4-5-20251101')
 into structured fields: name, creator, family, version, variant, released.
+
+``creator`` is the model's maker (anthropic, openai, google). It is load-bearing:
+when no price is filed for the provider that served a response, cost falls back
+to the maker's price (see ``storage.sql_helpers.price_provider_id_sql``). A name
+the parser does not recognise keeps ``creator=None`` — an unknown maker is never
+guessed, so such a model stays unpriced rather than mispriced.
 """
 
 import re
 
 # Claude variants and their position patterns
-_CLAUDE_VARIANTS = {"opus", "sonnet", "haiku"}
+_CLAUDE_VARIANTS = {"opus", "sonnet", "haiku", "fable"}
 
 # Gemini variants
-_GEMINI_VARIANTS = {"pro", "flash", "ultra"}
+_GEMINI_VARIANTS = {"pro", "flash", "flash-lite", "ultra"}
+
+# OpenAI ids. A bare identifier only: no whitespace or parentheses, so a display
+# string such as "gpt-5.4 (xhigh)" is not an id and keeps creator=None. ``name``
+# stays the raw id: upstream files a dated snapshot (gpt-4o-2024-08-06) and its
+# alias (gpt-4o) as separate priced models, so collapsing dates would merge keys.
+_OPENAI_ID = r"[A-Za-z0-9][A-Za-z0-9._-]*"
+_OPENAI_FAMILIES = (
+    ("gpt", re.compile(rf"^gpt-{_OPENAI_ID}$")),
+    ("o", re.compile(r"^o\d+(-[a-z0-9]+)*$")),  # o1, o3-mini, o4-mini, o3-pro
+    ("codex", re.compile(rf"^codex-{_OPENAI_ID}$")),
+)
 
 
 def parse_model_name(raw_name: str) -> dict:
@@ -23,8 +40,7 @@ def parse_model_name(raw_name: str) -> dict:
         return _parse_claude(raw_name)
     elif raw_name.startswith("gemini-"):
         return _parse_gemini(raw_name)
-    else:
-        return _fallback(raw_name)
+    return _parse_openai(raw_name)
 
 
 def _parse_claude(raw_name: str) -> dict:
@@ -111,6 +127,19 @@ def _parse_claude(raw_name: str) -> dict:
             "released": None,
         }
 
+    # Pattern 5: claude-{variant}-{major}, no minor and no date (claude-opus-5).
+    m = re.match(r"^claude-(" + "|".join(_CLAUDE_VARIANTS) + r")-(\d+)$", raw_name)
+    if m:
+        variant, major = m.groups()
+        return {
+            "name": raw_name,
+            "creator": "anthropic",
+            "family": "claude",
+            "version": major,
+            "variant": variant,
+            "released": None,
+        }
+
     return _fallback(raw_name)
 
 
@@ -139,6 +168,24 @@ def _parse_gemini(raw_name: str) -> dict:
             "released": None,
         }
 
+    return _fallback(raw_name)
+
+
+def _parse_openai(raw_name: str) -> dict:
+    """Parse OpenAI model ids: gpt-*, the o-series, codex-*.
+
+    Only the maker and family are recorded; the id is the canonical name.
+    """
+    for family, pattern in _OPENAI_FAMILIES:
+        if pattern.match(raw_name):
+            return {
+                "name": raw_name,
+                "creator": "openai",
+                "family": family,
+                "version": None,
+                "variant": None,
+                "released": None,
+            }
     return _fallback(raw_name)
 
 

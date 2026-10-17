@@ -135,10 +135,10 @@ def uncached_input_sql(response_alias: str = "r") -> str:
     — ``cache_read`` is a subset already counted in ``input_tokens``. Verified on
     the live corpus (claude: input ≪ cache_read; codex: input ≥ cache_read). Since
     that convention is a hard API-contract property of the provider, it's keyed on
-    the harness ``source``; an ambiguous source (e.g. ``multi`` — a Claude-backed
-    multiplexer) falls back to the per-row signature, which is unambiguous exactly
-    where it matters: a ``cache_read`` exceeding ``input_tokens`` can only be the
-    exclusive convention.
+    the harness ``source``; an ambiguous source (e.g. ``multi`` — a multiplexer that
+    serves Claude, OpenAI and Google models) falls back to the per-row signature,
+    which is unambiguous exactly where it matters: a ``cache_read`` exceeding
+    ``input_tokens`` can only be the exclusive convention.
 
     The default branch is the inclusive form, so every row that reaches it must
     store ``input_tokens`` INCLUSIVE. An adapter whose native input is exclusive
@@ -157,6 +157,61 @@ def uncached_input_sql(response_alias: str = "r") -> str:
         f" WHEN {it} < {cr} THEN {it}"               # exclusive signature (claude-backed 'multi')
         f" ELSE {it} - {cr}"                          # inclusive (openai + default): strip the subset
         f" END"
+    )
+
+
+def price_provider_id_sql(
+    model_id: str = "r.model_id",
+    provider_id: str = "r.provider_id",
+    source: str = "r.source",
+) -> str:
+    """SQL scalar: the ``providers.id`` whose ``pricing`` row prices a response.
+
+    THE rule for which price a response gets — every read of "what does this
+    response cost" goes through it (today: :func:`price_join_sql`, used by the rollup
+    rebuild; everything else reads the rollup's ``cost``). Siftd's cost is the
+    model maker's list price for the tokens, so a response is priced at::
+
+        (model, serving provider)   when that price exists, else
+        (model, models.creator)     the maker's, else
+        NULL                        unpriced — cost stays NULL, never $0
+
+    The serving provider is the response's ``provider_id``, else the provider named
+    by the harness ``source`` (legacy rows). A router's own price, once filed for
+    it, wins over the maker's. A row with a NULL ``input_per_mtok`` prices nothing,
+    so it does not shadow the maker's. A local model has no ``creator`` and stays
+    unpriced.
+
+    Inputs of the rule: ``model_id``, ``provider_id``, ``source`` (SQL expressions,
+    default the rollup flatten's columns) and ``models.creator``. A copy of the data
+    that rule can read (``api/slice.py``) must carry all of them — the serving and
+    harness-source providers, the maker provider, and their pricing rows.
+
+    Returns a scalar subquery expression (NULL when nothing prices the response).
+    """
+    return (
+        "COALESCE("
+        "(SELECT _ps.provider_id FROM pricing _ps"
+        f" WHERE _ps.model_id = {model_id} AND _ps.input_per_mtok IS NOT NULL"
+        f" AND _ps.provider_id = COALESCE({provider_id},"
+        f" (SELECT _pv.id FROM providers _pv WHERE _pv.name = {source}))),"
+        " (SELECT _pk.id FROM models _pm JOIN providers _pk ON _pk.name = _pm.creator"
+        f" WHERE _pm.id = {model_id}))"
+    )
+
+
+def price_join_sql(response_alias: str = "r", pricing_alias: str = "pr") -> str:
+    """SQL fragment: ``LEFT JOIN pricing`` on the row :func:`price_provider_id_sql` picks.
+
+    1:1 by construction (``pricing`` is UNIQUE ``(model_id, provider_id)`` and the
+    provider id is a scalar), so it cannot fan a response out. The flatten must
+    expose ``{r}.model_id``, ``{r}.provider_id`` and ``{r}.source``.
+    """
+    r = response_alias
+    p = pricing_alias
+    return (
+        f"LEFT JOIN pricing {p} ON {p}.model_id = {r}.model_id"
+        f" AND {p}.provider_id = {price_provider_id_sql(f'{r}.model_id', f'{r}.provider_id', f'{r}.source')}"
     )
 
 
