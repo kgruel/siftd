@@ -81,6 +81,7 @@ FIXTURE = _upstream(
     google={
         "gemini-3.1-pro-preview": _cost(2, 12, 0.2),
         "gemini-3.1-pro": _cost(2, 12, 0.2),
+        "lyria-3-pro-preview": _cost(0, 0),  # billed per song, not per token
     },
     xai={"grok-9": _cost(1, 2)},  # not an owned provider: never synced into the file
 )
@@ -158,6 +159,12 @@ def test_tiered_models_are_counted_and_base_rate_written():
     assert rows[("claude-haiku-5-5", "anthropic")]["input_per_mtok"] == 0.1
     assert result.tiered == 2  # haiku tiers + gpt-5.5 context_over_200k
     assert result.modeled == 6  # 3 anthropic (opus collapses two ids), 2 openai, 1 google
+
+
+def test_a_model_listed_at_zero_input_and_output_is_not_filed_as_free():
+    rows = _rows(ps.sync(_doc(""), FIXTURE, TODAY).text)
+    assert ("lyria-3-pro-preview", "google") not in rows
+    assert ("text-embedding-3-small", "openai") in rows  # zero output alone is a real price
 
 
 def test_non_owned_provider_models_are_not_synced():

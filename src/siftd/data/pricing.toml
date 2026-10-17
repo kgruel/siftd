@@ -864,16 +864,6 @@ source = "https://models.dev/api.json"
 as_of = "2026-10-16"
 
 [[price]]
-model = "gemini-3.1-flash-lite-preview"
-provider = "google"
-input_per_mtok = 0.25
-output_per_mtok = 1.5
-cache_read_per_mtok = 0.025
-cache_creation_per_mtok = 0.25
-source = "https://models.dev/api.json"
-as_of = "2026-10-16"
-
-[[price]]
 model = "gemini-3.1-flash-live-preview"
 provider = "google"
 input_per_mtok = 0.75
@@ -1030,25 +1020,5 @@ input_per_mtok = 1.5
 output_per_mtok = 17.5
 cache_read_per_mtok = 1.5
 cache_creation_per_mtok = 1.5
-source = "https://models.dev/api.json"
-as_of = "2026-10-16"
-
-[[price]]
-model = "lyria-3-clip-preview"
-provider = "google"
-input_per_mtok = 0.0
-output_per_mtok = 0.0
-cache_read_per_mtok = 0.0
-cache_creation_per_mtok = 0.0
-source = "https://models.dev/api.json"
-as_of = "2026-10-16"
-
-[[price]]
-model = "lyria-3-pro-preview"
-provider = "google"
-input_per_mtok = 0.0
-output_per_mtok = 0.0
-cache_read_per_mtok = 0.0
-cache_creation_per_mtok = 0.0
 source = "https://models.dev/api.json"
 as_of = "2026-10-16"

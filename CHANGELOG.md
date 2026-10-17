@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (UTC) sits beside the call's own time, which stays the time it was made.
 - **`./dev probe` reports what each adapter drops.** A read-only comparison of
   every adapter's raw files with its parsed output, for development.
+- **Prices come from models.dev.** `./dev pricing-sync` refreshes the shipped
+  price list as a release step; Claude 5, gpt-5.6, gpt-6 and Gemini 3.x are now
+  priced, and a `pinned = true` entry keeps a hand-checked price.
 
 ### Deprecated
 
@@ -32,6 +35,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Models reached through Copilot, pi or another multi-provider tool are
+  priced.** A response is priced at its model maker's rate when the provider
+  that served it has none (schema v14); local models stay unpriced.
+- **OpenAI and Gemini cache writes no longer carry Anthropic's 1.25× surcharge.**
 - **Claude Code sessions keep everything they hold.** A forked sub-agent's
   transcript, which was dropped whole, is stored; tool results written before
   their call are paired; a message streamed over several records is one

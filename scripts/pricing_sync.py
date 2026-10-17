@@ -2,7 +2,7 @@
 """Refresh src/siftd/data/pricing.toml from models.dev.
 
 Scope: models under the models.dev providers ``anthropic``, ``openai`` and
-``google`` whose ``cost`` has numeric ``input`` and ``output``. Each upstream id is
+``google`` whose ``cost`` has numeric ``input`` and ``output``, not both zero. Each upstream id is
 canonicalized with ``siftd.model_names.parse_model_name`` (the function ingest uses),
 so dated aliases and ``-preview`` ids land on the name responses are stored under.
 
@@ -103,6 +103,10 @@ def _upstream_from_model(provider: str, model_id: str, model: dict) -> Upstream 
     cost = model.get("cost") or {}
     inp, out = cost.get("input"), cost.get("output")
     if not (_is_number(inp) and _is_number(out)):
+        return None
+    if inp == 0 and out == 0:
+        # A maker listing 0/0 bills the model some other way (Lyria is priced per
+        # song); filing $0 would render it free, and unknown is not free.
         return None
     cache_read = cost.get("cache_read")
     cache_write = cost.get("cache_write")
