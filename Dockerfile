@@ -40,8 +40,10 @@ FROM python:3.13-slim AS runtime
 # curl: container healthcheck against /api/v1/health.
 # ca-certificates: outbound TLS for OIDC JWKS / RFC 7662 introspection calls
 # to the IdP (introspection mode POSTs to the IdP's HTTPS endpoint per request).
+# trust store: pick up security-suite ca-certificates (eMudhra distrust, 2026-10)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl ca-certificates \
+    && apt-get install -y --no-install-recommends --only-upgrade ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd -r -u 10001 -s /usr/sbin/nologin siftd
 
