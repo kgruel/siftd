@@ -10,14 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# --- debug_ids (#94) ---------------------------------------------------------
-# The `--debug-ids` CLI flag went in v0.10.0 as promised; its trail did not:
-#   - `debug_ids=` on domain.search_types.SearchChunk.to_render_dict
-#   - serve's `?debug_ids=` query parameter on search (accepted, ignored)
-# Missed its v0.10.0 removal; restated here so a release can enforce it.
-DEBUG_IDS_REMOVAL = "0.13.0"
-
-
 # --- gemini_cli adapter (#93) ------------------------------------------------
 # Gemini CLI became Antigravity CLI; `antigravity_cli` is its successor and reads
 # the logs the tool writes now. The `gemini_cli` adapter stays loaded until

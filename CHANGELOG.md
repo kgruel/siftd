@@ -37,6 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`rebuild_fts=`, `siftd db merge --no-fts` and `serve.fts_rebuild`,** no-ops
   since 0.12.2 (#74). `siftd db receive --no-fts` stays accepted for sync clients.
+- **The `debug_ids` trail of the removed `--debug-ids` flag** (#94). Serve ignores
+  the `?debug_ids=` older clients still send.
 
 ### Fixed
 

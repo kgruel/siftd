@@ -1,14 +1,13 @@
-"""Phase 2: chunk IDs are now default-on in JSON.
+"""Chunk IDs are always on in JSON.
 
-Previously H5b hid them behind --debug-ids. Phase 2 reverses that to make
-events addressable by default. The --debug-ids flag is retained as a
-deprecated no-op alias for one minor version.
+H5b once hid them behind --debug-ids; Phase 2 made events addressable by
+default, and the flag's trail was removed in 0.13.0 (#94).
 
 Covers:
-- SearchChunk.to_render_dict default-on
-- json_fmt._json_chunk_list default-on
-- json_fmt.render_search default-on (debug_ids kwarg accepted, no longer gates)
-- serve_fmt.render_search default-on (same)
+- SearchChunk.to_render_dict
+- json_fmt._json_chunk_list
+- json_fmt.render_search
+- serve_fmt.render_search
 - conversation_id preserved in conversation serializers (regression guard)
 """
 
@@ -49,12 +48,6 @@ class TestToRenderDict:
         assert d["chunk_type"] == "exchange"
         assert d["text"] == "hello world"
 
-    def test_explicit_debug_ids_false_omits(self):
-        """Legacy opt-out still works for callers that want the old shape."""
-        d = _chunk().to_render_dict(debug_ids=False)
-        assert "chunk_id" not in d
-        assert "source_ids" not in d
-
 
 # ── json_fmt._json_chunk_list ───────────────────────────────────────────────
 
@@ -88,16 +81,6 @@ class TestJsonFmtRenderSearch:
         assert chunk["score"] == 0.85
         assert "conversation" in chunk
 
-    def test_debug_ids_kwarg_is_noop(self):
-        """--debug-ids no longer gates IDs; flag accepted for back-compat."""
-        from painted import Fidelity
-        out = json_fmt.render_search(
-            self._results(), Fidelity(), query="q", view="chunks", debug_ids=False,
-        )
-        chunk = out["results"][0]
-        assert chunk["chunk_id"] == "chunk-xyz"
-        assert chunk["source_ids"] == ["src-001", "src-002"]
-
     def test_thread_mode_default_includes_chunk_ids(self):
         from painted import Fidelity
         rows = self._results()
@@ -127,35 +110,8 @@ class TestServeFmtRenderSearch:
     def test_result_count_unchanged(self):
         from painted import Fidelity
         chunks = [_chunk(), _chunk(conversation_id="c2", chunk_id="k2")]
-        for debug_ids in (False, True):
-            out = serve_render_search(chunks, Fidelity(), debug_ids=debug_ids)
-            assert out["result_count"] == 2
-
-
-# ── Serve route render_context plumbing (kept for back-compat) ─────────────
-
-import pytest
-
-
-@pytest.mark.serve
-def test_search_route_still_accepts_debug_ids(monkeypatch, tmp_path):
-    """search_route still accepts debug_ids parameter (kept for backward compat).
-
-    The rendered output no longer changes based on the value, but the route
-    still threads it through for one minor version of deprecation.
-    """
-    pytest.importorskip("litestar")
-    from siftd.serve import routes
-
-    seen_rc = []
-
-    def fake_dispatch(*args, **kwargs):
-        seen_rc.append(kwargs.get("render_context") or {})
-        return {"result_count": 0, "results": []}
-
-    monkeypatch.setattr(routes, "_dispatch", fake_dispatch)
-    routes.search_route.fn(SimpleNamespace(), tmp_path / "db.db", q="hi", debug_ids=False, mode="fts")
-    assert "debug_ids" in seen_rc[0]
+        out = serve_render_search(chunks, Fidelity())
+        assert out["result_count"] == 2
 
 
 # ── Regression: conversation_id in conversation serializers ─────────────────

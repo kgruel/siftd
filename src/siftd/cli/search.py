@@ -231,7 +231,6 @@ def cmd_search(args) -> int:
             "recency_half_life": args.recency_half_life,
             "recency_max_boost": args.recency_max_boost,
             "raw_fts": getattr(args, "raw_fts", False),
-            "debug_ids": getattr(args, "debug_ids", False),
             "view": args.view,
             "sort": args.sort,
             "select": args.select,
@@ -312,7 +311,6 @@ def cmd_search(args) -> int:
         fidelity,
         query=query,
         mode=effective_mode,
-        debug_ids=getattr(args, "debug_ids", False),
         caveats=caveats,
     )
     from siftd.output.painted_bridge import emit_output
@@ -409,7 +407,6 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             "exclude_active": not args.no_exclude_active,
             "include_derivative": args.include_derivative,
             "raw_fts": getattr(args, "raw_fts", False),
-            "debug_ids": getattr(args, "debug_ids", False),
             # FTS only ever produces the chunks shape; the embeddings-dependent
             # recipe steps (views/threshold/select/full) were warned-and-dropped
             # above. --sort and --around still apply.
@@ -485,7 +482,7 @@ def _search_fts_only(args, db: Path, query: str, filters=None) -> int:
             f"filtered {view_result.n_skipped} result(s) without --around phrase '{args.around}' in conversation"
         )
 
-    output = fmt.render_search(view_result, fidelity, query=query, mode="fts", debug_ids=getattr(args, "debug_ids", False), caveats=caveats)
+    output = fmt.render_search(view_result, fidelity, query=query, mode="fts", caveats=caveats)
     if isinstance(output, dict):
         if unsupported_flags:
             output["warnings"] = [

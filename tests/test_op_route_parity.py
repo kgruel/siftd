@@ -212,7 +212,6 @@ def test_search_op_keys_accepted_by_route():
             "recency_half_life": 30.0,
             "recency_max_boost": 1.15,
             "raw_fts": False,
-            "debug_ids": False,                  # render annotation (wire param)
             # Slice 4 recipe controls — all travel on the wire.
             "view": "chunks",
             "sort": "score",

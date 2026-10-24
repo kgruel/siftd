@@ -177,7 +177,6 @@ def render_search(result: Any, fidelity: Fidelity, **context: Any) -> dict:
         mode: str — resolved engine that ran ("fts"/"semantic"/"hybrid").
         view: str — fallback shape when a bare list is passed (the SearchView's
             own ``view`` is authoritative).
-    chunk_id/source_ids are emitted by default; any ``debug_ids`` is ignored.
     """
     from siftd.domain.search_types import as_search_view
 

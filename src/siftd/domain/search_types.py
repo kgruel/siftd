@@ -188,12 +188,8 @@ class SearchChunk:
             tags=list(data.get("tags") or []),
         )
 
-    def to_render_dict(self, debug_ids: bool = True) -> dict[str, Any]:
-        """Convert to the legacy dict shape expected by current formatters.
-
-        chunk_id/source_ids are emitted by default. The debug_ids kwarg is
-        deprecated: it missed its v0.10.0 removal and is removed in 0.13.0 (#94).
-        """
+    def to_render_dict(self) -> dict[str, Any]:
+        """Convert to the legacy dict shape expected by current formatters."""
         out: dict[str, Any] = {
             "conversation_id": self.conversation_id,
             "score": self.score,
@@ -202,10 +198,9 @@ class SearchChunk:
             "text": self.text,
             "_workspace": self.workspace_path or "",
             "_started_at": (self.started_at or "")[:10] if self.started_at else "",
+            "chunk_id": self.chunk_id,
+            "source_ids": self.source_ids,
         }
-        if debug_ids:
-            out["chunk_id"] = self.chunk_id
-            out["source_ids"] = self.source_ids
         out["turn_index"] = self.turn_index
         if self.event_id is not None:
             out["event_id"] = self.event_id

@@ -52,7 +52,6 @@ def test_to_local_strips_annotation_keys():
             "q": "hello",
             "n": 10,
             "around": "delta",          # NOT excluded — search_view recipe param (Slice 4)
-            "debug_ids": True,           # excluded — render-context annotation
             "action": "search",          # excluded — routing key
             "db_path": Path("/tmp/x"),   # NOT excluded — fn takes db_path
         },
@@ -62,7 +61,6 @@ def test_to_local_strips_annotation_keys():
     )
     out = op.to_local()
     assert out["around"] == "delta"  # search_view takes around (Slice 4)
-    assert "debug_ids" not in out
     assert "action" not in out
     assert out["q"] == "hello"
     assert out["n"] == 10

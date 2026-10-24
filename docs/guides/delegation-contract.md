@@ -13,7 +13,7 @@ The local/wire seam is named via methods on `Operation` plus a per-op rule regis
 
 ### Request side — `Operation` methods
 
-- **`Operation.to_local(self) -> dict`** — kwargs for `op.fn(**...)` local execution. Strips `OpSpec.local_excludes` for the op's `(path_template, method)` (e.g. for `/api/v1/search`: `around`, `debug_ids`, `action`, `embeddings_only`). Ops with no registered spec are valid local-only ops; their params pass through unchanged. Defined in `api/dispatch.py`; rules in `api/op_spec.py`.
+- **`Operation.to_local(self) -> dict`** — kwargs for `op.fn(**...)` local execution. Strips `OpSpec.local_excludes` for the op's `(path_template, method)` (e.g. for `/api/v1/search`: `around`, `action`, `embeddings_only`). Ops with no registered spec are valid local-only ops; their params pass through unchanged. Defined in `api/dispatch.py`; rules in `api/op_spec.py`.
 - **`Operation.to_wire(self) -> dict`** — query params dict for GET delegation. Drops `OpSpec.wire_excludes` (e.g. `db_path`, `embed_db`, `around`), drops `None` values (urlencode would emit them as literal `"None"`), expands non-scalar types (`Fidelity` → `include_thinking` + `include_tool_content` via `fidelity_to_wire`), applies `OpSpec.wire_remaps` (Python-keyword renames, e.g. `lambda_` → `lambda`). **Raises `MissingOpSpec` if no spec is registered** — wire serialization without a spec would silently leak local-only keys, so it fails loudly at delegation time.
 - **`Operation.to_wire_body(self) -> dict`** — JSON body dict for POST delegation. Drops `wire_excludes` but preserves `None` (JSON `null` is a legitimate body value).
 
