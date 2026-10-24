@@ -387,7 +387,7 @@ class TestReparseTagSafety:
 
 
 class TestReparseRecoversLegacyGeminiRows:
-    """The release-note recovery, end to end: the real gemini_cli parser.
+    """Reparse recovers a superseded file key, end to end, through fakes.gemini_chat.
 
     Before the chat-file key, the sessionId-keyed conversation was stored once,
     and every other chat file of that session left only a session marker (a
@@ -396,7 +396,7 @@ class TestReparseRecoversLegacyGeminiRows:
     """
 
     def test_reparse_adopts_legacy_marker_and_stores_the_sibling(self, tmp_path, run_cli):
-        from test_ingest_gemini_chat_identity import (
+        from test_ingest_superseded_file_key import (
             START_A,
             START_B,
             _gemini_adapter_at,
@@ -404,13 +404,13 @@ class TestReparseRecoversLegacyGeminiRows:
             _store_superseded_row,
         )
 
-        from siftd.adapters import gemini_cli
+        from fakes import gemini_chat
         from siftd.storage.sqlite import compute_file_hash, create_database, get_or_create_harness, record_session_file
 
         project, a, b, key = _legacy_pair(tmp_path)
         conn = create_database(run_cli.db)
         legacy_id = _store_superseded_row(conn, a, key)  # A's legacy conversation
-        harness_id = get_or_create_harness(conn, gemini_cli.NAME, source=gemini_cli.HARNESS_SOURCE)
+        harness_id = get_or_create_harness(conn, gemini_chat.NAME, source=gemini_chat.HARNESS_SOURCE)
         st = b.stat()
         record_session_file(  # B: the marker the previous release left, no conversation
             conn, str(b), compute_file_hash(b), harness_id,
@@ -688,15 +688,15 @@ class TestReparseTagSafetyOnEveryPath:
         ]
 
     def test_legacy_marker_with_a_blocking_tag_is_skipped_without_force(self, tmp_path, run_cli):
-        from test_ingest_gemini_chat_identity import _gemini_adapter_at, _legacy_pair, _store_superseded_row
+        from test_ingest_superseded_file_key import _gemini_adapter_at, _legacy_pair, _store_superseded_row
 
         from siftd.storage.sqlite import compute_file_hash, create_database, get_or_create_harness, record_session_file
-        from siftd.adapters import gemini_cli
+        from fakes import gemini_chat
 
         project, a, b, key = _legacy_pair(tmp_path)
         conn = create_database(run_cli.db)
         legacy_id = _store_superseded_row(conn, a, key)
-        harness_id = get_or_create_harness(conn, gemini_cli.NAME, source=gemini_cli.HARNESS_SOURCE)
+        harness_id = get_or_create_harness(conn, gemini_chat.NAME, source=gemini_chat.HARNESS_SOURCE)
         st = b.stat()
         record_session_file(
             conn, str(b), compute_file_hash(b), harness_id,
@@ -864,7 +864,7 @@ class TestReparseGatesTheNewFileRoute:
     """
 
     def _legacy_rows_without_bookkeeping(self, tmp_path, run_cli):
-        from test_ingest_gemini_chat_identity import _gemini_adapter_at, _legacy_pair, _store_superseded_row
+        from test_ingest_superseded_file_key import _gemini_adapter_at, _legacy_pair, _store_superseded_row
 
         from siftd.storage.sqlite import create_database
 

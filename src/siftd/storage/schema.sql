@@ -11,9 +11,9 @@
 -- The CLI/tool that wraps model interactions
 CREATE TABLE harnesses (
     id              TEXT PRIMARY KEY,           -- ULID
-    name            TEXT NOT NULL UNIQUE,       -- claude_code, gemini_cli, codex_cli, opencode
+    name            TEXT NOT NULL UNIQUE,       -- claude_code, antigravity_cli, codex_cli, opencode
     version         TEXT,                       -- 1.0.3, 2.1.0
-    display_name    TEXT,                       -- "Claude Code", "Gemini CLI"
+    display_name    TEXT,                       -- "Claude Code", "Codex CLI"
     source          TEXT,                       -- anthropic, openai, google, community
     log_format      TEXT                        -- jsonl, json_array, event_stream
 );

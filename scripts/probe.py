@@ -278,29 +278,6 @@ def _native_antigravity_cli(path: Path) -> Tally:
     return t
 
 
-def _native_gemini_cli(path: Path) -> Tally:
-    # One JSON document; the messages array holds user, gemini, info and error.
-    # A tool call has a result when its result list is non-empty.
-    t = Tally()
-    for message in _list(_load_json_object(path).get("messages")):
-        if not isinstance(message, dict):
-            continue
-        kind = str(message.get("type"))
-        t.records[kind] += 1
-        if kind == "user":
-            t.user += 1
-        elif kind == "gemini":
-            t.assistant += 1
-            calls = [c for c in _list(message.get("toolCalls")) if isinstance(c, dict)]
-            t.tool_calls += len(calls)
-            t.tool_results += sum(1 for c in calls if c.get("result"))
-            tokens = _obj(message.get("tokens"))
-            t.input_tokens += _num(tokens.get("input"))
-            t.output_tokens += _num(tokens.get("output"))
-            t.cache_tokens += _num(tokens.get("cached"))
-    return t
-
-
 def _replay_vscode_session(path: Path, t: Tally) -> dict:
     """Whole-file JSON, or a JSON-lines patch log replayed onto its kind-0 root.
 
@@ -515,7 +492,6 @@ NATIVE_COUNTERS: dict[str, NativeCounter] = {
     "claude_code": NativeCounter(_native_claude_code, True),
     "codex_cli": NativeCounter(_native_codex_cli, True),
     "antigravity_cli": NativeCounter(_native_antigravity_cli, True),
-    "gemini_cli": NativeCounter(_native_gemini_cli, True),
     "vscode": NativeCounter(_native_vscode, True),
     "pi_agent": NativeCounter(_native_pi_agent, True),
     "copilot_cli": NativeCounter(_native_copilot_cli, False),

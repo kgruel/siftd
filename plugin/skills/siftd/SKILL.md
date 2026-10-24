@@ -7,7 +7,7 @@ argument-hint: '"query" or [-w workspace] "query" or --recent or --genesis "conc
 
 # siftd — Search past coding conversations
 
-siftd searches your past coding conversations (Claude Code, Codex, Gemini CLI, Pi, Aider, VSCode, Copilot CLI, OpenCode) to find decisions, trace how ideas evolved, and retrieve context.
+siftd searches your past coding conversations (Claude Code, Codex, Antigravity, Pi, Aider, VSCode, Copilot CLI, OpenCode) to find decisions, trace how ideas evolved, and retrieve context.
 
 ## Auto-trigger guidance
 

@@ -14,7 +14,7 @@ See [Storage — Direct SQL access](../../../docs/concepts/storage.md#direct-sql
 | [__init__.py](__init__.py) | Built-in SQL query templates shipped with siftd. |
 | [cost.sql](cost.sql) | Approximate cost by workspace |
 | [daily-activity.sql](daily-activity.sql) | Daily activity summary |
-| [harness-stats.sql](harness-stats.sql) | Usage breakdown by harness (Claude Code, Gemini CLI, etc.) |
+| [harness-stats.sql](harness-stats.sql) | Usage breakdown by harness (Claude Code, Codex CLI, etc.) |
 | [model-usage.sql](model-usage.sql) | Model usage with token breakdown |
 | [overview.sql](overview.sql) | Quick overview of your siftd data |
 | [session-tools.sql](session-tools.sql) | Tool calls for a session with character counts |

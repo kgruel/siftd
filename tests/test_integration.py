@@ -7,7 +7,8 @@ Each test creates an isolated database and runs real adapters.
 from conftest import FIXTURES_DIR, make_conversation, make_session_adapter, make_test_adapter
 
 from siftd.adapters.contract import adapt
-from siftd.adapters import claude_code, gemini_cli
+from siftd.adapters import claude_code
+from siftd.adapters.sdk import AdapterParseError
 from painted import Fidelity
 from siftd.api import get_conversation, get_stats, list_conversations
 from siftd.domain.models import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall, Usage
@@ -125,23 +126,21 @@ class TestIngestEdgeCases:
             conn.close()
 
     def test_records_adapter_parse_failures_as_failed_files(self, tmp_path):
-        chats = tmp_path / "hash" / "chats"
-        chats.mkdir(parents=True)
-        bad = chats / "bad.json"
+        bad = tmp_path / "bad.json"
         bad.write_text("{}")
 
-        class _GeminiAdapter:
-            NAME = gemini_cli.NAME
-            DEDUP_STRATEGY = gemini_cli.DEDUP_STRATEGY
-            HARNESS_SOURCE = gemini_cli.HARNESS_SOURCE
+        class _LegacyAdapter:
+            NAME = "legacy_json"
+            DEDUP_STRATEGY = "file"
+            HARNESS_SOURCE = "test"
 
             @staticmethod
             def can_handle(source):
-                return gemini_cli.can_handle(source)
+                return True
 
             @staticmethod
             def parse(source):
-                return gemini_cli.parse(source)
+                raise AdapterParseError(f"{source.location} is missing a messages array")
 
             @staticmethod
             def discover():
@@ -149,7 +148,7 @@ class TestIngestEdgeCases:
 
         conn = open_database(tmp_path / "test.db")
         try:
-            stats = ingest_all(conn, [_GeminiAdapter])
+            stats = ingest_all(conn, [_LegacyAdapter])
 
             info = get_ingested_file_info(conn, str(bad))
 

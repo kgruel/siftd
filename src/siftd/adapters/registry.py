@@ -8,7 +8,6 @@ from siftd.adapters import (
     claude_code,
     codex_cli,
     copilot_cli,
-    gemini_cli,
     opencode,
     pi_agent,
     vscode,
@@ -36,8 +35,7 @@ def load_builtin_adapters() -> list[PluginInfo]:
         claude_code,
         codex_cli,
         copilot_cli,
-        gemini_cli,
-        opencode,
+            opencode,
         pi_agent,
         vscode,
     ]

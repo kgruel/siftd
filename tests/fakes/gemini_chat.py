@@ -1,7 +1,11 @@
-"""Gemini CLI adapter for siftd. Deprecated: removed in 0.13.0; antigravity_cli is its successor.
+"""The former gemini_cli adapter, kept as a test double; siftd no longer ships it.
 
-Pure parser: reads session JSON files and yields Conversation domain objects.
-No storage coupling.
+It is the one version-1 adapter with a ``"file"`` dedup strategy that re-keys
+its conversations (a chat file's stem replaced the ``sessionId`` siblings
+shared, naming the old key in ``superseded_external_ids``). Ingest's superseded
+adoption is generic, and these tests are its coverage on the file branch; a
+drop-in can still reach it. It leaves with the version-1 interface
+(``V1_INTERFACE_REMOVAL`` in ``siftd.api.compat``).
 """
 
 import functools

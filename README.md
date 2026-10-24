@@ -1,6 +1,6 @@
 # siftd
 
-You've been using Claude Code, Aider, Gemini CLI, or Codex for months. Each session produces a log file — decisions made, problems solved, dead ends explored. When the session ends, that knowledge sits in a directory you'll never open.
+You've been using Claude Code, Aider, Antigravity, or Codex for months. Each session produces a log file — decisions made, problems solved, dead ends explored. When the session ends, that knowledge sits in a directory you'll never open.
 
 siftd makes it searchable.
 
@@ -46,7 +46,7 @@ aider:
   responses: 1,834
   tool_calls: 7,241
 
-gemini_cli:
+antigravity_cli:
   conversations: 47
   prompts: 683
   responses: 849
@@ -271,7 +271,7 @@ siftd export -w myproject --since 7d      # recent work in a project
 
 ## You use a tool siftd doesn't support
 
-siftd ships adapters for Claude Code, Aider, Gemini CLI (deprecated: removed in 0.13.0; use Antigravity CLI), and Codex. Each adapter carries a support tier (`core`, `contrib`, or `frozen`) that sets expectations for how actively its log format is tracked — `siftd adapters` shows it. If you use something else, write an adapter.
+siftd ships adapters for Claude Code, Aider, Antigravity CLI, and Codex, among others. Each adapter carries a support tier (`core`, `contrib`, or `frozen`) that sets expectations for how actively its log format is tracked — `siftd adapters` shows it. If you use something else, write an adapter.
 
 Start from the template or copy an existing adapter to modify:
 

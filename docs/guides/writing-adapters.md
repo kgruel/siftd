@@ -73,8 +73,7 @@ external_id = f"{NAME}::{path.stem}"  # file-based ID
 Use when:
 - Each log file represents a single session
 - Files are append-only or immutable
-- Examples: Claude Code, Codex CLI, Gemini CLI (one chat JSON per session;
-  its `external_id` is the file stem, not the `sessionId` it reuses)
+- Examples: Claude Code, Codex CLI
 
 ### `session`
 The source is a *container* of conversations. Each is deduped independently by
@@ -456,7 +455,7 @@ peek_scan, peek_exchanges, peek_tail = make_peek_hooks(
 
 Moving to version 2 is a rewrite of `parse()` as a decoder, not a flag: delete the
 tree-building, return a record per unit, and let the assembler place them.
-`gemini_cli` (deprecated, removed in 0.13.0) is the one built-in still on version 1.
+No built-in is on version 1; a drop-in on it keeps loading until 1.0.0.
 
 ## Installation Methods
 

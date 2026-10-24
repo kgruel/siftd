@@ -13,7 +13,7 @@ from types import ModuleType, SimpleNamespace
 
 import pytest
 
-from siftd.adapters import aider, claude_code, gemini_cli, opencode, template, vscode
+from siftd.adapters import aider, claude_code, opencode, template, vscode
 from siftd.adapters.assembly import AssemblyError
 from siftd.adapters.contract import DecodingAdapter, LegacyAdapter, adapt, decodes
 from siftd.adapters.records import Disposition
@@ -236,13 +236,17 @@ class TestDerivation:
     def test_the_explicit_hook_list_only_shrinks(self):
         assert set(EXPLICIT_HOOKS) == {("aider", "peek_tail")}
 
-    def test_gemini_cli_stays_on_the_legacy_interface(self):
-        assert gemini_cli.ADAPTER_INTERFACE_VERSION == LEGACY_VERSION
+    def test_a_version_1_module_is_wrapped_as_legacy(self):
+        # No built-in is on version 1 since gemini_cli left (0.13.0); drop-ins
+        # may be until V1_INTERFACE_REMOVAL.
+        legacy = ModuleType("legacy_dropin")
+        legacy.ADAPTER_INTERFACE_VERSION = LEGACY_VERSION
+        legacy.parse = lambda source: iter(())
         # Wrapped, not returned bare: peek hooks have one source. parse is the module's own.
-        wrapped = adapt(gemini_cli)
-        assert isinstance(wrapped, LegacyAdapter) and wrapped.parse is gemini_cli.parse
+        wrapped = adapt(legacy)
+        assert isinstance(wrapped, LegacyAdapter) and wrapped.parse is legacy.parse
 
-    def test_every_other_builtin_decodes(self):
+    def test_every_builtin_decodes(self):
         decoding = {p.name for p in load_builtin_adapters() if decodes(p.module)}
         assert decoding == {
             "aider", "antigravity_cli", "claude_code", "codex_cli", "copilot_cli", "opencode", "pi_agent", "vscode",

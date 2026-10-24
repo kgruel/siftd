@@ -10,23 +10,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# --- gemini_cli adapter (#93) ------------------------------------------------
-# Gemini CLI became Antigravity CLI; `antigravity_cli` is its successor and reads
-# the logs the tool writes now. The `gemini_cli` adapter stays loaded until
-# GEMINI_CLI_REMOVAL, so conversations already ingested keep resolving and any
-# chat file still on disk keeps ingesting. Its notice is named where a user meets
-# the adapter (`siftd adapters`, the ingest summary) through DEPRECATED_ADAPTERS.
-GEMINI_CLI_REMOVAL = "0.13.0"
-
-
 # --- version-1 adapter interface (#93) --------------------------------------
 # One lifetime for everything a version-1 adapter needs: the interface itself
 # (adapters/validation.py, LEGACY_VERSION), the record folds that give such an
 # adapter peek (sdk.peek_scan_from_records, sdk.peek_exchanges_from_records and
 # the derivation in adapters/contract.py, LegacyAdapter), and the SDK helpers
 # only a legacy parse() builds its tree with (sdk.load_jsonl, sdk.ToolCallLinker,
-# sdk.timestamp_bounds). They leave together with V1_INTERFACE_REMOVAL. The one
-# built-in still on version 1 is gemini_cli, which has its own entry above.
+# sdk.timestamp_bounds). They leave together with V1_INTERFACE_REMOVAL. No
+# built-in is on version 1; the last, gemini_cli, left in 0.13.0.
 V1_INTERFACE_REMOVAL = "1.0.0"
 
 
@@ -52,10 +43,11 @@ class Deprecation:
         return f"Its successor is '{self.successor}'."
 
 
-# An entry leaves with the `*_REMOVAL` constant it names, when that version ships.
-DEPRECATED_ADAPTERS: dict[str, Deprecation] = {
-    "gemini_cli": Deprecation(successor="antigravity_cli", removed_in=GEMINI_CLI_REMOVAL),
-}
+# Named where a user meets the adapter: the `siftd adapters` listing (and its
+# JSON `deprecated` field) and the ingest summary when the adapter contributed
+# sources. An entry names a `*_REMOVAL` constant above and leaves with it, when
+# that version ships. Empty since gemini_cli left in 0.13.0.
+DEPRECATED_ADAPTERS: dict[str, Deprecation] = {}
 
 
 def adapter_deprecation(name: str) -> Deprecation | None:

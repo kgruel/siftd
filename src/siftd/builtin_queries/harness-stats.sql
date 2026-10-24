@@ -1,4 +1,4 @@
--- Usage breakdown by harness (Claude Code, Gemini CLI, etc.)
+-- Usage breakdown by harness (Claude Code, Codex CLI, etc.)
 -- Usage: siftd query sql harness-stats
 
 -- One events scan per conversation (uses idx_events_conversation_kind) with
