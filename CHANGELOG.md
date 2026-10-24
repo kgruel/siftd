@@ -27,14 +27,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   price list as a release step; Claude 5, gpt-5.6, gpt-6 and Gemini 3.x are now
   priced, and a `pinned = true` entry keeps a hand-checked price.
 
-### Deprecated
-
-- **The `gemini_cli` adapter is deprecated and removed in 0.13.0.** Gemini CLI
-  became Antigravity; use `antigravity_cli`. `siftd adapters` and `siftd ingest`
-  say so when it has sources.
-
 ### Removed
 
+- **The `gemini_cli` adapter.** Gemini CLI became Antigravity; `antigravity_cli`
+  reads it. Conversations already stored stay searchable.
 - **`rebuild_fts=`, `siftd db merge --no-fts` and `serve.fts_rebuild`,** no-ops
   since 0.12.2 (#74). `siftd db receive --no-fts` stays accepted for sync clients.
 - **The `debug_ids` trail of the removed `--debug-ids` flag** (#94). Serve ignores
@@ -77,9 +73,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Codex token and cost totals count every API call.** Each call's usage
   overwrote the last, so about 19% of tokens were kept; stored conversations
   correct on re-ingest. ([#98](https://github.com/kgruel/siftd/issues/98))
-- **Gemini CLI chat files that shared a session id are stored separately.**
-  124 prompts on one machine were never stored; an existing database recovers
-  them with the steps in the adapters concept page.
 - **VS Code chat sessions keep their answers, tool calls and token usage.** The
   adapter read field names the real format never has, so every answer was
   dropped, every tool call was named `unknown`, and usage was never read.

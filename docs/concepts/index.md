@@ -19,7 +19,7 @@ These docs explain how siftd works under the hood. Understanding these concepts 
 ## The flow
 
 ```
-Log files (Claude Code, Aider, Gemini CLI, ...)
+Log files (Claude Code, Aider, Codex, ...)
     │
     ▼
 Adapters parse → Conversations (data model)

@@ -171,7 +171,7 @@ _STORED_SHAPES = (
     # the `.` it lined up against.
     "{sec}+00:00",
     # No designator at all — reachable from any adapter that passes its log's
-    # own timestamp through (claude_code, codex_cli, gemini_cli) when the log
+    # own timestamp through (claude_code, codex_cli) when the log
     # spells it this way. Meets a second-precision bound by equality rather
     # than by being a longer string, the tightest case the prefix property has.
     # aider used to land here too, until it stopped writing local wall time

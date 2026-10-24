@@ -1791,7 +1791,7 @@ def build_data_parser(subparsers) -> None:
   siftd ingest -a claude_code       # only run claude_code adapter
   siftd ingest -p ~/logs -p /tmp    # scan additional directories
   siftd ingest --rebuild-fts        # rebuild FTS index from scratch
-  siftd ingest --reparse -a gemini_cli  # re-parse unchanged files under the current parser
+  siftd ingest --reparse -a codex_cli   # re-parse unchanged files under the current parser
   siftd ingest --reparse --force    # ...and replace conversations that would lose user tags""",
     )
     _verbosity = p_ingest.add_mutually_exclusive_group()

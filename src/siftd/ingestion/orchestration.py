@@ -7,8 +7,7 @@ conversation. Which of the two branches below a source takes decides what that
 row means:
 
 - `"file"`: one conversation per source (JSONL session logs, single-transcript
-  exports, a Gemini CLI chat JSON). The row points at it, and a content change
-  replaces it outright.
+  exports). The row points at it, and a content change replaces it outright.
   A parse yielding more than one conversation is an adapter bug and fails the
   source.
 - `"session"`: conversations are deduped by external_id rather than by the
@@ -524,7 +523,7 @@ def _superseded_conversation(conn, harness_id, conversation) -> tuple[dict, str]
 def _adoption_is_ambiguous(target: _Target, conversation) -> bool:
     """Whether a candidate row may be another live conversation's, so adopting it would move that one's tags.
 
-    A superseded key (aider's path spelling, gemini_cli's shared sessionId) is
+    A superseded key (aider's old path spelling) is
     retired: no current parse produces it, so a row holding this transcript is
     an earlier read of this file. An inherited key (codex_cli's restated parent
     id) is the parent's own key too, and a fork holds its parent's prompts, so
@@ -532,8 +531,8 @@ def _adoption_is_ambiguous(target: _Target, conversation) -> bool:
     one a previous release stored for the fork. The row is then this
     conversation's only if it is a read of this file: codex bounds are the
     file's own line times, and a fork's file begins at the fork, after its
-    parent began. Start instant does not decide a superseded key: a legacy
-    gemini row carries a parse-time stamp no later parse reproduces.
+    parent began. Start instant does not decide a superseded key: a legacy row
+    may carry a parse-time stamp no later parse reproduces (gemini_cli's did).
     """
     if target.superseded_key not in conversation.inherited_external_ids:
         return False

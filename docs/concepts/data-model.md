@@ -93,7 +93,7 @@ Tool calls are where the real work happens. A typical coding session might have 
 siftd normalizes raw names into canonical forms using vocabulary tables:
 
 **Harnesses** — the CLI tools that wrap model interactions
-- `claude_code`, `aider`, `gemini_cli`, `codex_cli`
+- `claude_code`, `aider`, `antigravity_cli`, `codex_cli`
 - Each has different log formats, but siftd normalizes them
 
 **Models** — the actual model being invoked
@@ -107,7 +107,7 @@ siftd normalizes raw names into canonical forms using vocabulary tables:
 **Providers** — who serves the model and bills you
 - anthropic, openai, google, openrouter, local
 
-This normalization lets you query across tools. "Show me all shell commands" works whether the session was Claude Code (Bash tool), Aider (run command), or Gemini CLI (execute_shell).
+This normalization lets you query across tools. "Show me all shell commands" works whether the session was Claude Code (Bash tool), Aider (run command), or Codex (exec_command).
 
 ## Workspaces
 

@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from siftd.adapters import aider, claude_code, codex_cli, gemini_cli
+from siftd.adapters import aider, claude_code, codex_cli
 from siftd.adapters.registry import (
     load_builtin_adapters,
     load_dropin_adapters,
@@ -18,7 +18,6 @@ _BUILTIN_ADAPTERS = {
     "aider": aider,
     "claude_code": claude_code,
     "codex_cli": codex_cli,
-    "gemini_cli": gemini_cli,
 }
 
 

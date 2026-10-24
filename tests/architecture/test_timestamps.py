@@ -18,7 +18,7 @@ let #31 straight back in wearing a suffix.
 It is a tripwire, not a proof, and the limits are worth naming:
 
 - The base is golden fixtures, so it covers the inputs those cases exercise.
-- `claude_code`, `codex_cli`, and `gemini_cli` pass their log's own timestamp
+- `claude_code` and `codex_cli` pass their log's own timestamp
   through, so what they emit is a property of third-party log content — no
   static analysis of the adapter could prove its shape. Fixture-level is the
   only enforceable version.

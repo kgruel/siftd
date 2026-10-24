@@ -5,7 +5,7 @@ from types import ModuleType
 from conftest import ClaudeSession, CodexSession, write_jsonl
 
 import siftd.adapters.sdk as sdk
-from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, gemini_cli, pi_agent, vscode
+from siftd.adapters import aider, claude_code, codex_cli, copilot_cli, pi_agent, vscode
 from siftd.adapters.claude_code import _is_injected_user_record, effective_role, message_id_of
 from siftd.adapters.contract import adapt
 from siftd.adapters.registry import load_all_adapters, load_builtin_adapters, load_dropin_adapters, wrap_adapter_paths
@@ -281,8 +281,6 @@ class TestRegistryAndDiscover:
         assert list(claude_code.discover(locations=[str(tmp_path / "proj")]))
         _touch("sessions/2024/r.jsonl")
         assert list(codex_cli.discover(locations=[str(tmp_path / "sessions")]))
-        _touch("h/chats/s.json")
-        assert list(gemini_cli.discover(locations=[str(tmp_path)]))
         (tmp_path / ".aider.chat.history.md").write_text("# aider\n")
         assert list(aider.discover(locations=[str(tmp_path)]))
         _touch("pi/s.jsonl")

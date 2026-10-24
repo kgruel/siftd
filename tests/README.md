@@ -113,8 +113,8 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 208 | 3669 |
-| `tests/adapters/` | 22 | 484 |
+| `tests/` | 208 | 3666 |
+| `tests/adapters/` | 21 | 473 |
 | `tests/architecture/` | 16 | 96 |
 | `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
@@ -123,6 +123,7 @@ docstring so its row is meaningful.
 
 | File | Tests | Summary |
 |------|-------|---------|
+| [test_adapter_deprecation.py](test_adapter_deprecation.py) | 9 | A deprecated adapter's notice reaches users where they meet the adapter. |
 | [test_adapter_health.py](test_adapter_health.py) | 22 | Tests for adapter-health warnings: zero-discovery and drop-in import failures. |
 | [test_api.py](test_api.py) | 114 | Tests for the public API module. |
 | [test_api_adapters_edges.py](test_api_adapters_edges.py) | 2 | — |
@@ -194,7 +195,6 @@ docstring so its row is meaningful.
 | [test_formatters.py](test_formatters.py) | 43 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
-| [test_gemini_cli_deprecation.py](test_gemini_cli_deprecation.py) | 9 | gemini_cli is deprecated, and the notice reaches users where they meet the adapter. |
 | [test_gen_docs_cli.py](test_gen_docs_cli.py) | 4 | Tests for the cli target of scripts/gen_docs.py (parser-introspection generator). |
 | [test_gen_docs_exceptions.py](test_gen_docs_exceptions.py) | 4 | Tests for the exceptions target of scripts/gen_docs.py (taxonomy reference). |
 | [test_gen_docs_readmes.py](test_gen_docs_readmes.py) | 12 | Tests for the readmes target of scripts/gen_docs.py (marker engine + strict mode). |
@@ -209,8 +209,8 @@ docstring so its row is meaningful.
 | [test_inbox.py](test_inbox.py) | 17 | Tests for siftd.api.inbox — staged receive and inbox processing. |
 | [test_ingest_aider_multi_session.py](test_ingest_aider_multi_session.py) | 16 | Regression tests for #36: aider history files with more than one session. |
 | [test_ingest_codex_identity.py](test_ingest_codex_identity.py) | 15 | Regression tests for codex_cli file identity under a legacy collision (ar/codex-port, #93). |
-| [test_ingest_gemini_chat_identity.py](test_ingest_gemini_chat_identity.py) | 15 | Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93). |
 | [test_ingest_session_multi.py](test_ingest_session_multi.py) | 5 | Regression tests for C01 (comprehensive-review 2026-05-28). |
+| [test_ingest_superseded_file_key.py](test_ingest_superseded_file_key.py) | 13 | Superseded-key adoption on the ``"file"`` dedup branch. |
 | [test_ingest_vocab_cache_rollback.py](test_ingest_vocab_cache_rollback.py) | 1 | Regression test for C02 (comprehensive-review 2026-05-28). |
 | [test_ingestion.py](test_ingestion.py) | 53 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
@@ -249,7 +249,7 @@ docstring so its row is meaningful.
 | [test_preflight.py](test_preflight.py) | 12 | Unit tests for siftd.api.database preflight functions. |
 | [test_pricing.py](test_pricing.py) | 11 | v11 pricing-as-reference: the pricing table is a projection of the version-controlled |
 | [test_pricing_sync.py](test_pricing_sync.py) | 26 | Pricing sync (scripts/pricing_sync.py): models.dev -> src/siftd/data/pricing.toml. |
-| [test_probe.py](test_probe.py) | 31 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
+| [test_probe.py](test_probe.py) | 30 | Conservation probe (scripts/probe.py): native raw-file counts vs parse() output. |
 | [test_progress.py](test_progress.py) | 5 | Tests for the ProgressEvent contract (domain/progress.py). |
 | [test_progress_view.py](test_progress_view.py) | 20 | Tests for the generic ProgressEvent consumer (output/progress_view.py). |
 | [test_push_error_mapping.py](test_push_error_mapping.py) | 5 | I1 — push failures surface a structured, actionable error (client side). |
@@ -345,7 +345,6 @@ docstring so its row is meaningful.
 | [adapters/test_codex_cli.py](adapters/test_codex_cli.py) | 62 | Tests for the Codex CLI adapter. |
 | [adapters/test_contract.py](adapters/test_contract.py) | 42 | The adapter contract: versions, optional hooks, derivation, drop-ins, template. |
 | [adapters/test_copilot_cli.py](adapters/test_copilot_cli.py) | 26 | Tests for Copilot CLI adapter. |
-| [adapters/test_gemini_cli.py](adapters/test_gemini_cli.py) | 11 | Tests for Gemini CLI adapter. |
 | [adapters/test_golden.py](adapters/test_golden.py) | 1 | Parametrized golden-fixture tests for adapter parse() contracts. |
 | [adapters/test_infra.py](adapters/test_infra.py) | 13 | Tests for adapter infrastructure: validation, registry, SDK utilities. |
 | [adapters/test_jsonl_edges.py](adapters/test_jsonl_edges.py) | 3 | — |

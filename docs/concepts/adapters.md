@@ -1,12 +1,12 @@
 # Adapters
 
-Every AI coding tool writes logs differently. Claude Code uses JSONL with one structure, Aider uses Markdown, Gemini CLI uses a different JSON schema. Adapters are the translation layer — they read these different formats and produce the common data model siftd understands.
+Every AI coding tool writes logs differently. Claude Code uses JSONL with one structure, Aider uses Markdown, Antigravity CLI uses a different JSONL schema. Adapters are the translation layer — they read these different formats and produce the common data model siftd understands.
 
 ## The problem adapters solve
 
 Without adapters, you'd need separate tools for each coding assistant. Want to search across Claude Code and Aider sessions? You'd need to understand both log formats and write custom queries for each.
 
-Adapters let siftd treat all your conversations uniformly. Once ingested, a conversation from Claude Code looks the same as one from Gemini CLI — same fields, same query interface, same search.
+Adapters let siftd treat all your conversations uniformly. Once ingested, a conversation from Claude Code looks the same as one from Antigravity CLI — same fields, same query interface, same search.
 
 ## How adapters work
 
@@ -68,7 +68,6 @@ siftd ships with adapters for:
 |---------|------|--------------|--------|
 | `claude_code` | Claude Code | `~/.claude/projects/`, `~/.config/claude/projects/` | JSONL |
 | `aider` | Aider | `~/.aider/` | Markdown |
-| `gemini_cli` | Gemini CLI (deprecated: removed in 0.13.0; use `antigravity_cli`) | `~/.gemini/tmp/` | JSON |
 | `antigravity_cli` | Antigravity CLI | `~/.gemini/antigravity-cli/` | JSONL |
 | `codex_cli` | Codex CLI | `~/.codex/sessions/` | JSONL |
 
@@ -84,7 +83,7 @@ log format is tracked:
 - **contrib** — best-effort; parse errors are possible when the tool's format
   drifts. This is the default for drop-in adapters.
 - **frozen** — kept working as-is; upstream format changes may not be tracked
-  (`aider`, and `gemini_cli` until it is removed in 0.13.0).
+  (`aider`).
 
 Tiers show up in the `siftd adapters` listing, and ingest tags file-error
 warnings from non-core adapters with their tier.
@@ -96,30 +95,13 @@ siftd adapters    # list discovered adapters
 ```
 claude_code      builtin  core    ~/.claude/projects, ~/.config/claude/projects
 aider            builtin  frozen  ~/.aider
-gemini_cli       builtin  frozen  ~/.gemini/tmp
 antigravity_cli  builtin  core    ~/.gemini/antigravity-cli
 codex_cli        builtin  core    ~/.codex/sessions
 ```
 
-`siftd adapters` also prints a deprecation line under any deprecated adapter. At
-present that is `gemini_cli`: removed in 0.13.0, successor `antigravity_cli`. Ingest
-prints the same line whenever `gemini_cli` contributes sources.
-
-#### Recovering Gemini CLI conversations from before the chat-file key
-
-Releases before the chat-file key stored one Gemini conversation per `sessionId`,
-so every chat file that shared a session except one was never stored. A plain
-`siftd ingest` does not recover them: it skips a file whose stat and hash are
-unchanged. Re-parse them:
-
-```sh
-siftd ingest --reparse -a gemini_cli
-```
-
-The legacy conversation for each chat file is replaced by its chat-file
-conversation, and the tags on it carry over. Running the command again is safe.
-This adapter reads only the `.json` chat files; the newer Gemini `.jsonl` logs are
-not discovered.
+The `gemini_cli` adapter was removed in 0.13.0: Gemini CLI became Antigravity
+CLI, which `antigravity_cli` reads. Conversations it already stored stay in the
+database, searchable as before; nothing new is read from `~/.gemini/tmp`.
 
 ### Re-parsing stored sources
 
@@ -179,14 +161,14 @@ parse warnings are noise for a tool you no longer use:
 
 ```toml
 # ~/.config/siftd/config.toml
-[adapters.gemini_cli]
+[adapters.aider]
 enabled = false
 ```
 
 Or via the CLI:
 
 ```bash
-siftd config set adapters.gemini_cli.enabled false
+siftd config set adapters.aider.enabled false
 ```
 
 A disabled adapter is skipped everywhere the registry is consulted — ingest,

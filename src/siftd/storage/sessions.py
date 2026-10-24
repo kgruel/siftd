@@ -336,8 +336,8 @@ def rekey_pending_tags(
 ) -> int:
     """Move queued rows held under superseded external_ids to ``key``. Returns the count.
 
-    An adapter that re-keys its conversations (gemini_cli: sessionId to chat
-    file) leaves queued tags under the old key, and the doctor resolver matches
+    An adapter that re-keys its conversations (aider: a path's old spelling
+    to its current one) leaves queued tags under the old key, and the doctor resolver matches
     queue keys against external_id, so they would stop resolving. The caller
     passes the key only when the stored row under it was adopted by the
     replacement, which makes the move unambiguous: the replacement is the

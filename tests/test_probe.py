@@ -260,12 +260,6 @@ def test_antigravity_minimal_native():
     }
 
 
-def test_gemini_cli_minimal_native():
-    t = probe._native_gemini_cli(_golden_input("gemini_cli", "minimal"))
-    assert (t.user, t.assistant, t.tool_calls, t.tool_results) == (1, 1, 1, 1)
-    assert (t.input_tokens, t.output_tokens, t.cache_tokens) == (50, 30, 0)
-
-
 def test_pi_agent_minimal_native():
     t = probe._native_pi_agent(_golden_input("pi_agent", "minimal"))
     assert (t.user, t.assistant, t.tool_calls, t.tool_results) == (1, 2, 1, 1)

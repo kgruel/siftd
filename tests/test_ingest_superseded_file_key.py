@@ -1,14 +1,14 @@
-"""Regression tests for gemini_cli chat-file identity (ar/gemini-key, #93).
+"""Superseded-key adoption on the ``"file"`` dedup branch.
 
-Gemini CLI reuses one sessionId across several chat files: 24 ids span 61 files
-in the local corpus, each a distinct conversation with its own startTime and
-messages. The adapter used to key conversations on sessionId under
-DEDUP_STRATEGY = "session", and a conversation is unique per (harness,
-external_id), so only the copy with the greatest lastUpdated survived. The
-losing files' prompts were never stored.
+Born as the gemini_cli chat-file identity fix (ar/gemini-key, #93): Gemini CLI
+reused one sessionId across several chat files, each a distinct conversation,
+and the adapter's sessionId key kept only one of them. The re-keyed adapter
+named the old key as superseded. siftd no longer ships gemini_cli (0.13.0), but
+it remains the one file-strategy adapter that re-keys, so its parser lives on as
+``fakes.gemini_chat`` and these keep covering the generic adoption path.
 
-These drive the real gemini_cli parser through the real ingest_all against a
-temp database. They pin three properties:
+These drive that parser through the real ingest_all against a temp database.
+They pin these properties:
 
 - two chat files sharing a sessionId are two conversations, with all prompts;
 - a database holding the superseded sessionId-keyed row (what the previous
@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 from conftest import tag_names
 
-from siftd.adapters import gemini_cli
+from fakes import gemini_chat
 from siftd.domain.source import Source
 from siftd.ingestion import ingest_all
 from siftd.storage.sessions import get_pending_tags, queue_tag, recover_pending_tags
@@ -96,7 +96,7 @@ def _write_chat(project_dir, stem, *, session_id, start, last_updated, prompts, 
 
 
 def _gemini_adapter_at(root, order=None):
-    """The real gemini_cli parser, discovering only under ``root``.
+    """The gemini_chat parser, discovering only under ``root``.
 
     ``order`` pins the sources' discovery order, for tests whose result depends on
     which file is ingested first.
@@ -104,20 +104,20 @@ def _gemini_adapter_at(root, order=None):
 
     class _Adapter:
         ADAPTER_INTERFACE_VERSION = 1
-        NAME = gemini_cli.NAME
+        NAME = gemini_chat.NAME
         DEFAULT_LOCATIONS: list[str] = []
-        DEDUP_STRATEGY = gemini_cli.DEDUP_STRATEGY
-        HARNESS_SOURCE = gemini_cli.HARNESS_SOURCE
-        HARNESS_LOG_FORMAT = gemini_cli.HARNESS_LOG_FORMAT
-        HARNESS_DISPLAY_NAME = gemini_cli.HARNESS_DISPLAY_NAME
-        TOOL_ALIASES = gemini_cli.TOOL_ALIASES
-        can_handle = staticmethod(gemini_cli.can_handle)
-        parse = staticmethod(gemini_cli.parse)
+        DEDUP_STRATEGY = gemini_chat.DEDUP_STRATEGY
+        HARNESS_SOURCE = gemini_chat.HARNESS_SOURCE
+        HARNESS_LOG_FORMAT = gemini_chat.HARNESS_LOG_FORMAT
+        HARNESS_DISPLAY_NAME = gemini_chat.HARNESS_DISPLAY_NAME
+        TOOL_ALIASES = gemini_chat.TOOL_ALIASES
+        can_handle = staticmethod(gemini_chat.can_handle)
+        parse = staticmethod(gemini_chat.parse)
 
         @staticmethod
         def discover(locations=None):
             if order is None:
-                yield from gemini_cli.discover([str(root)])
+                yield from gemini_chat.discover([str(root)])
             else:
                 for path in order:
                     yield Source(kind="file", location=path)
@@ -155,7 +155,7 @@ def _store_superseded_row(conn, path, superseded_external_id):
     conversation_id NULL — the session-strategy bookkeeping that never pointed
     at a conversation.
     """
-    conversation = next(gemini_cli.parse(Source(kind="file", location=path)))
+    conversation = next(gemini_chat.parse(Source(kind="file", location=path)))
     conversation.external_id = superseded_external_id
     conversation.superseded_external_ids = ()
     conv_id = store_conversation(conn, conversation, filter_binary=False)
@@ -175,7 +175,7 @@ def _ingest(conn, root, order=None):
 def _legacy_pair(tmp_path):
     """Two chat files sharing a sessionId: A is the one the old key kept."""
     project = tmp_path / "proj"
-    legacy_key = f"{gemini_cli.NAME}::{SESSION}"
+    legacy_key = f"{gemini_chat.NAME}::{SESSION}"
     a = _write_chat(
         project, "session-2025-12-28T16-42-2c1f6a0e",
         session_id=SESSION, start=START_A, last_updated="2025-12-28T17:00:00.000Z",
@@ -379,22 +379,11 @@ def test_legacy_row_of_a_file_without_start_time_is_adopted(tmp_path):
     assert _starts(conn, "2026-01-01T00:00:00.000Z") == []
     adopted = conn.execute(
         "SELECT id FROM conversations WHERE external_id = ?",
-        (f"{gemini_cli.NAME}::{a.stem}",),
+        (f"{gemini_chat.NAME}::{a.stem}",),
     ).fetchone()["id"]
     assert adopted != legacy_id
     assert _prompt_texts(conn, adopted) == ["alpha one", "alpha three", "alpha two"]
     assert tag in tag_names(conn, "conversation", adopted)
-
-
-def test_file_without_start_time_gets_a_stable_started_at(tmp_path):
-    """Finding 2: a parse-time started_at would differ on every parse, so it could never be matched."""
-    project, a, _b, _key = _legacy_pair(tmp_path)
-    _without_start_time(a)
-
-    first = next(gemini_cli.parse(Source(kind="file", location=a))).started_at
-    second = next(gemini_cli.parse(Source(kind="file", location=a))).started_at
-
-    assert first == second == START_A
 
 
 def test_queued_tag_under_a_legacy_session_id_follows_its_chat_file(tmp_path):
@@ -416,18 +405,6 @@ def test_queued_tag_under_a_legacy_session_id_follows_its_chat_file(tmp_path):
     assert get_pending_tags(conn, SESSION) == []
 
 
-def test_peek_names_a_chat_file_by_its_own_identity(tmp_path):
-    """Finding 3, peek side: sibling files must not report the one shared sessionId."""
-    project, a, b, _key = _legacy_pair(tmp_path)
-
-    ids = [
-        gemini_cli.normalize_record(next(gemini_cli.iter_gemini_records(p))).session_id
-        for p in (a, b)
-    ]
-
-    assert ids == [a.stem, b.stem]
-
-
 # --- Messages without ids ----------------------------------------------------
 # The parser accepts a message with no id (Gemini chat JSON does not guarantee
 # one), so adoption must not depend on ids alone. A message without one is
@@ -437,7 +414,7 @@ def test_peek_names_a_chat_file_by_its_own_identity(tmp_path):
 def _idless_pair(tmp_path):
     """Two id-less chat files sharing a sessionId, as _legacy_pair but without ids."""
     project = tmp_path / "proj"
-    legacy_key = f"{gemini_cli.NAME}::{SESSION}"
+    legacy_key = f"{gemini_chat.NAME}::{SESSION}"
     a = _write_chat(
         project, "session-2025-12-28T16-42-2c1f6a0e",
         session_id=SESSION, start=START_A, last_updated="2025-12-28T17:00:00.000Z",
@@ -547,7 +524,7 @@ def test_idless_sibling_a_month_later_with_the_same_prompt_does_not_claim_the_le
         prompts=["continue"], idless=True,
     )
     conn = create_database(tmp_path / "siftd.db")
-    legacy_id = _store_superseded_row(conn, a, f"{gemini_cli.NAME}::{SESSION}")
+    legacy_id = _store_superseded_row(conn, a, f"{gemini_chat.NAME}::{SESSION}")
     tag = _tag(conn, legacy_id)
     conn.execute("DELETE FROM ingested_files WHERE path = ?", (str(a),))
     conn.commit()

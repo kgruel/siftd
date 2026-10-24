@@ -209,10 +209,9 @@ def test_a_session_reporting_no_ended_at_is_not_frozen(tmp_path):
     `ended_at` used to freeze at its first ingest, silently and permanently,
     however much its source changed afterwards.
 
-    This is not hypothetical and not aider-specific: `gemini_cli` reads
-    `data.get("lastUpdated")` with no fallback (contrast `started_at`, which
-    guards with `or now_iso()` on the line above), so any chat JSON missing
-    that key lands here. Pinned at the strategy layer rather than through one
+    This was not hypothetical and not aider-specific: the former `gemini_cli`
+    read `data.get("lastUpdated")` with no fallback, so any chat JSON missing
+    that key landed here. Pinned at the strategy layer rather than through one
     adapter, because the gate is shared by all of them.
     """
     conn = create_database(tmp_path / "db.sqlite")
