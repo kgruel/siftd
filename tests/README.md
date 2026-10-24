@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 208 | 3673 |
+| `tests/` | 208 | 3669 |
 | `tests/adapters/` | 22 | 484 |
 | `tests/architecture/` | 16 | 96 |
 | `tests/cli/` | 31 | 691 |
@@ -165,7 +165,7 @@ docstring so its row is meaningful.
 | [test_conversation_links.py](test_conversation_links.py) | 35 | conversation_links: lineage as a first-class edge, resolved at read time. |
 | [test_credentials.py](test_credentials.py) | 31 | Tests for client-side token acquisition (src/siftd/credentials.py). |
 | [test_date_parsing.py](test_date_parsing.py) | 27 | Tests for date and timestamp parsing in CLI filters. |
-| [test_debug_ids.py](test_debug_ids.py) | 13 | Phase 2: chunk IDs are now default-on in JSON. |
+| [test_debug_ids.py](test_debug_ids.py) | 10 | Chunk IDs are always on in JSON. |
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
@@ -191,7 +191,7 @@ docstring so its row is meaningful.
 | [test_findability_review.py](test_findability_review.py) | 6 | — |
 | [test_fixture_redaction.py](test_fixture_redaction.py) | 2 | Adapter fixtures carry no personal data, so captured transcripts can be committed. |
 | [test_follow.py](test_follow.py) | 24 | Tests for siftd.peek.follow — live session following utilities. |
-| [test_formatters.py](test_formatters.py) | 44 | Tests for output formatters and format registry. |
+| [test_formatters.py](test_formatters.py) | 43 | Tests for output formatters and format registry. |
 | [test_fts_h1.py](test_fts_h1.py) | 37 | Tests for H1: R9 (FTS5 sanitization), H11 (short tokens), H28 (exception narrowing). |
 | [test_fts_rebuild_on_push.py](test_fts_rebuild_on_push.py) | 9 | Merged content is searchable, on every path and at every setting. |
 | [test_gemini_cli_deprecation.py](test_gemini_cli_deprecation.py) | 9 | gemini_cli is deprecated, and the notice reaches users where they meet the adapter. |

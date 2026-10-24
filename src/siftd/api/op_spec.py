@@ -79,11 +79,10 @@ class OpSpec:
 # path params (today: only ``/api/v1/conversations/{id}``), see
 # :func:`_normalize_path`.
 
-# ``debug_ids`` is a render-only annotation the local ``search_view`` fn does
-# not accept; ``around``/``turns``/``view``/``sort``/``select``/``threshold``/
-# ``full`` ARE recipe params on ``search_view`` (Slice 4), so they are no longer
-# excluded locally and travel on the wire.
-_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action", "debug_ids"})
+# ``around``/``turns``/``view``/``sort``/``select``/``threshold``/``full`` ARE
+# recipe params on ``search_view`` (Slice 4), so they are not excluded locally
+# and travel on the wire.
+_LOCAL_FN_EXCLUDE_SEARCH = frozenset({"action"})
 _WIRE_EXCLUDE_COMMON = frozenset({"db_path", "around"})
 
 

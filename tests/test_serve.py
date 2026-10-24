@@ -609,8 +609,12 @@ class TestSearchParams:
             resp = client.get("/api/v1/search", params={"q": "hello", "raw_fts": "true"})
         assert resp.status_code != 422, "raw_fts param should not be rejected by Litestar"
 
-    def test_search_accepts_debug_ids_param(self, tmp_path):
-        """search_route accepts debug_ids without 422 Unprocessable Entity."""
+    def test_search_tolerates_removed_debug_ids_param(self, tmp_path):
+        """Clients before 0.13.0 send `?debug_ids=` on every delegated search.
+
+        The parameter was removed in 0.13.0 (#94); an undeclared query parameter
+        must still be ignored, or every older client's search breaks.
+        """
         team_db = _make_team_db(
             tmp_path / "team.db",
             conversations=[{"external_id": "c1"}],
@@ -618,7 +622,7 @@ class TestSearchParams:
         app = create_app(db_path=team_db, auth_config=None)
         with TestClient(app) as client:
             resp = client.get("/api/v1/search", params={"q": "hello", "debug_ids": "true"})
-        assert resp.status_code != 422, "debug_ids param should not be rejected by Litestar"
+        assert resp.status_code == 200, resp.text
 
 
 class TestCLI:
