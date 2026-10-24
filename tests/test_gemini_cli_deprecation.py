@@ -82,7 +82,7 @@ class TestIngestSummary:
         assert "deprecated" not in capsys.readouterr().err
 
     def test_notice_survives_quiet_mode(self, tmp_path, capsys, monkeypatch):
-        """Like `db merge --no-fts`, a deprecation is a standing warning, not chatter."""
+        """A deprecation is a standing warning, not chatter."""
         result = _result(tmp_path, by_harness={"gemini_cli": {}})
         assert _run_ingest(tmp_path, monkeypatch, result, ["-q"]) == 0
         assert "removed in 0.13.0" in capsys.readouterr().err

@@ -416,11 +416,6 @@ def cmd_db_merge(args) -> int:
 
     from siftd.api.merge import merge_database
 
-    if args.no_fts:
-        from siftd.api.compat import rebuild_fts_notice
-
-        message, hint = rebuild_fts_notice("--no-fts")
-        status.warning(message, hint=hint)
     dry_run = args.dry_run
     replace = not args.no_replace
 
@@ -1070,8 +1065,6 @@ Sync remotes:
     )
     p_merge.add_argument("input", help="Source database path to merge in")
     p_merge.add_argument("--dry-run", action="store_true", help="Preview merge without modifying database")
-    p_merge.add_argument("--no-fts", action="store_true",
-                         help="Deprecated, no effect (removed in 0.13.0)")
     p_merge.add_argument("--no-replace", action="store_true",
                          help="Keep existing conversations instead of replacing with newer versions")
     p_merge.add_argument("--no-preflight", action="store_true",
@@ -1089,6 +1082,9 @@ creates or merges it into the target database.
 examples:
   ssh host siftd --db /path/team.db db receive < slice.db""",
     )
+    # Permanent, without a protocol decision: api/sync.py::_push_ssh sends
+    # `--no-fts`, so dropping it breaks pushes from every client that predates
+    # the drop. Accepted silently and hidden from --help (#74).
     p_receive.add_argument("--no-fts", action="store_true", help=argparse.SUPPRESS)
     p_receive.add_argument("--stage", action="store_true",
                            help="Stage payload in inbox for deferred merge (fast ACK)")

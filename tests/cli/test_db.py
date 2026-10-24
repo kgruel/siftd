@@ -17,12 +17,13 @@ def test_db_help():
     assert rc == 0
 
 
-def test_db_merge_no_fts_help_says_deprecated(capsys):
+def test_db_merge_no_longer_accepts_no_fts():
+    """Removed in 0.13.0 (#74); unlike `db receive`, no client sends it."""
+    from siftd.cli import _build_parser
+
     with pytest.raises(SystemExit) as exc:
-        main(["db", "merge", "--help"])
-    assert exc.value.code == 0
-    output = " ".join(capsys.readouterr().out.split())
-    assert "--no-fts Deprecated, no effect (removed in 0.13.0)" in output
+        _build_parser().parse_args(["db", "merge", "x.db", "--no-fts"])
+    assert exc.value.code == 2
 
 
 def test_db_receive_hides_no_fts_but_accepts_it(capsys):
@@ -886,18 +887,3 @@ class TestDbReceiveDryRun:
         assert "would merge" in capsys.readouterr().out.lower()
 
 
-def test_db_merge_no_fts_warns_and_still_merges(tmp_path, capsys):
-    """`db merge --no-fts` has done nothing since #49; it now says so (#74)."""
-    from conftest import make_db
-
-    target = make_db(tmp_path / "target.db", conversations=[{"external_id": "a"}])
-    source = make_db(tmp_path / "source.db", conversations=[{"external_id": "b"}])
-
-    rc = main(["--db", str(target), "db", "merge", str(source), "--no-fts"])
-
-    assert rc == 0
-    err = capsys.readouterr().err
-    assert "--no-fts is deprecated and has no effect" in err
-    assert "0.13.0" in err
-    with sqlite3.connect(target) as conn:
-        assert conn.execute("SELECT COUNT(*) FROM conversations").fetchone()[0] == 2

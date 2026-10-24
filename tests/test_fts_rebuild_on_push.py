@@ -2,17 +2,16 @@
 
 Two invariants live here, and they are two halves of one thing.
 
-ST-3b: ``rebuild_fts=True`` makes ``content_fts`` searchable for phrases in
-``event_content``, through both paths of ``receive_database`` — first-push
-(``_create_from_source``) and subsequent-push (``merge_database``).
+ST-3b: ``content_fts`` is searchable for phrases in ``event_content``, through
+both paths of ``receive_database`` — first-push (``_create_from_source``) and
+subsequent-push (``merge_database``).
 
-siftd#49: whether merged content is indexed was never the flag's to decide.
-Nothing may reach a committed merge unindexed, whatever the caller passed — and
-since 0.12.2 the flag decides nothing at all (#74 retires it in 0.13.0) — so
-``test_merged_content_is_always_searchable`` runs the matrix of paths and
-settings and asserts ``missing_count == 0`` across all of them. Before #49 six
-of its nine cases failed, including a *replaced* conversation, which #20's
-index-delete had made unsearchable rather than stale.
+siftd#49: whether merged content is indexed was never a caller's flag to decide.
+Nothing may reach a committed merge unindexed — the ``rebuild_fts`` flag decided
+nothing from 0.12.2 and was removed in 0.13.0 (#74) — so these tests assert
+``missing_count == 0`` on every path. Before #49 six of the nine path×flag cases
+failed, including a *replaced* conversation, which #20's index-delete had made
+unsearchable rather than stale.
 """
 
 import sqlite3
@@ -137,18 +136,12 @@ def test_subsequent_push_drops_replaced_text_without_rebuild(tmp_path):
 
 # --- siftd#49: the invariant, across every path a merge can arrive by --------
 
-@pytest.mark.parametrize("rebuild_fts", [False, True])
-def test_merged_content_is_always_searchable(tmp_path, rebuild_fts):
-    """No merge may commit with its own content unindexed, at either value of the flag.
-
-    ``rebuild_fts`` is a deprecated no-op (removal in 0.13.0, #74); both values
-    stay covered until it is gone.
-    """
+def test_merged_content_is_always_searchable(tmp_path):
+    """No merge may commit with its own content unindexed."""
     anchor = "merge-invariant-anchor"
     target = _seed(tmp_path, "target.db", "pre-existing-text", indexed=True)
-    with pytest.warns(DeprecationWarning):
-        receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
-                         target, rebuild_fts=rebuild_fts, preflight=False)
+    receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
+                     target, preflight=False)
 
     assert _fts_sync_status(target) == {"orphaned_count": 0, "missing_count": 0}
     assert _fts_hit_count(target, anchor) >= 1
@@ -157,19 +150,17 @@ def test_merged_content_is_always_searchable(tmp_path, rebuild_fts):
     assert _fts_hit_count(target, "pre-existing-text") >= 1
 
 
-@pytest.mark.parametrize("rebuild_fts", [False, True])
-def test_first_push_is_always_searchable(tmp_path, rebuild_fts):
+def test_first_push_is_always_searchable(tmp_path):
     """The copy path has nothing to scope to: the whole file is what arrived.
 
-    Subsumes ST-3b's two first-push cases, which asserted only the
-    rebuild_fts=True half and — before #49 — asserted the False half as an
-    empty index, i.e. the defect written down as a contract.
+    Subsumes ST-3b's two first-push cases, which before #49 asserted the
+    rebuild_fts=False half as an empty index, i.e. the defect written down as a
+    contract.
     """
     anchor = "first-push-invariant-anchor"
     target = tmp_path / "fresh.db"
-    with pytest.warns(DeprecationWarning):
-        receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
-                         target, rebuild_fts=rebuild_fts, preflight=False)
+    receive_database(_seed(tmp_path, "sender.db", anchor, indexed=False),
+                     target, preflight=False)
 
     assert _fts_sync_status(target) == {"orphaned_count": 0, "missing_count": 0}
     assert _fts_hit_count(target, anchor) >= 1

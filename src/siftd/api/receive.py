@@ -11,8 +11,6 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from siftd.api.compat import warn_rebuild_fts_deprecated
-
 _SQLITE_MAGIC = b"SQLite format 3\x00"
 
 
@@ -20,7 +18,6 @@ def receive_database(
     source_path: Path,
     target_db: Path,
     *,
-    rebuild_fts: bool | None = None,
     user_id: str | None = None,
     push_id: str | None = None,
     preflight: bool = True,
@@ -30,9 +27,6 @@ def receive_database(
     Args:
         source_path: Path to the incoming database (e.g. a slice).
         target_db: Path to the target siftd database.
-        rebuild_fts: Deprecated, no effect; passing it warns, and it is removed
-            in 0.13.0 (#74). Received content is indexed on both paths: the
-            merge indexes what it wrote, the create path the file it copied.
         user_id: Authenticated user identity to stamp as conversation owner.
         push_id: Push log ID for provenance linking.
         preflight: If True (default), run structural integrity checks on the
@@ -47,8 +41,6 @@ def receive_database(
         FileNotFoundError: If source does not exist.
         PreflightError: If preflight=True and source fails integrity checks.
     """
-    warn_rebuild_fts_deprecated("receive_database", rebuild_fts)
-
     if not source_path.exists():
         raise FileNotFoundError(f"Source not found: {source_path}")
 

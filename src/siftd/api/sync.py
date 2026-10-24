@@ -433,7 +433,7 @@ async def _push_ssh(
     remote_db = shlex.quote(remote.path)
     # `--no-fts` is a no-op on servers >= 0.12.2 and still saves an older
     # server a full index rebuild per push. `db receive` keeps accepting it
-    # (hidden) for as long as clients send it; see api/compat.py.
+    # (hidden) for as long as clients send it; see cli/db.py.
     receive_cmd = f"siftd --db {remote_db} db receive --no-fts"
     if staged:
         receive_cmd += " --stage"

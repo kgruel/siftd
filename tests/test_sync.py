@@ -514,7 +514,7 @@ class TestPullLocalAndHttp:
             lambda **kw: {"conversations": 2, "size_bytes": 11},
         )
         got = []
-        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d: got.append((s, d)))
         remote = _remote(path=str(_db(tmp_path, "remote.db")))
         local = _db(tmp_path, "local.db")
         assert _pull_local(remote, local, None, {}, True) == (2, 11)
@@ -565,7 +565,7 @@ class TestPullLocalAndHttp:
         _patch_httpx_module(monkeypatch, lambda timeout=None: client)
         monkeypatch.setattr("siftd.config_sync.get_sync_remote", lambda n: None)
         monkeypatch.setattr("siftd.api.auth.acquire_token", lambda a: (_ for _ in ()).throw(AuthError("no-auth")))
-        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d: got.append((s, d)))
         conv, size = _pull_http(_remote(path="http://srv"), _db(tmp_path), None, {}, False)
         assert conv == 1 and size == len(b"sqlite-bytes") and got
 
@@ -688,7 +688,7 @@ class TestSshErrorAndEdgePaths:
             lambda *_a, **_kw: _Conn(SimpleNamespace(returncode=0, stdout=b"abc", stderr='{"conversations":1}')),
         )
         got = []
-        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d, rebuild_fts=True: got.append((s, d)))
+        monkeypatch.setattr("siftd.api.receive.receive_database", lambda s, d: got.append((s, d)))
         conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
         assert conv == 1 and size == 3 and got
 
@@ -814,7 +814,7 @@ class TestSyncProtocolHeader:
         conn = _Conn(SimpleNamespace(returncode=0, stdout=stdout, stderr='{"conversations":1}'))
         monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
         contents = []
-        def _capture(s, d, rebuild_fts=True):
+        def _capture(s, d):
             contents.append(s.read_bytes())
         monkeypatch.setattr("siftd.api.receive.receive_database", _capture)
         conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))
@@ -829,7 +829,7 @@ class TestSyncProtocolHeader:
         conn = _Conn(SimpleNamespace(returncode=0, stdout=b"raw-db", stderr='{"conversations":1}'))
         monkeypatch.setattr("siftd.api.sync.asyncssh.connect", lambda *_a, **_kw: conn)
         contents = []
-        def _capture(s, d, rebuild_fts=True):
+        def _capture(s, d):
             contents.append(s.read_bytes())
         monkeypatch.setattr("siftd.api.receive.receive_database", _capture)
         conv, size = asyncio.run(_pull_ssh(_remote(host="box"), _db(tmp_path), None, {}, False))

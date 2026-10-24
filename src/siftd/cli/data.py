@@ -653,8 +653,8 @@ def cmd_ingest(args) -> int:
         for path, error in result.dropin_failures:
             status.warning(f"Drop-in adapter at '{path}' failed to load: {error}")
 
-    # Deprecated adapters that contributed sources. Shown even in quiet mode, as
-    # `db merge --no-fts` warns: a deprecation is a standing instruction, not chatter.
+    # Deprecated adapters that contributed sources. Shown even in quiet mode: a
+    # deprecation is a standing instruction, not chatter.
     from siftd.api.compat import adapter_deprecation
 
     deprecated = [
