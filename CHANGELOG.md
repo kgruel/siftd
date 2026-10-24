@@ -24,8 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`./dev probe` reports what each adapter drops.** A read-only comparison of
   every adapter's raw files with its parsed output, for development.
 - **Prices come from models.dev.** `./dev pricing-sync` refreshes the shipped
-  price list as a release step; Claude 5, gpt-5.6, gpt-6 and Gemini 3.x are now
-  priced, and a `pinned = true` entry keeps a hand-checked price.
+  price list as a release step; Claude 5, gpt-5.6, gpt-6, Gemini 3.x and
+  gemini-pro-latest are now priced, and a `pinned = true` entry keeps a hand-checked price.
 
 ### Removed
 
