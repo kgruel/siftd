@@ -48,11 +48,11 @@ def _ledger() -> dict[str, str]:
     return {name: value for name, value in vars(compat).items() if name.endswith("_REMOVAL")}
 
 
-def _promises() -> list[tuple[str, str]]:
+def _promises(root: Path = SRC) -> list[tuple[str, str]]:
     found = []
-    for path in sorted(SRC.rglob("*.py")):
+    for path in sorted(root.rglob("*.py")):
         text = " ".join(path.read_text().split())
-        found += [(path.relative_to(REPO).as_posix(), m[1]) for m in _PROMISE.finditer(text)]
+        found += [(path.relative_to(root.parent).as_posix(), m[1]) for m in _PROMISE.finditer(text)]
     return found
 
 
@@ -78,10 +78,17 @@ def test_every_removal_promise_is_in_the_ledger():
     )
 
 
-def test_the_scanners_see_what_they_check():
-    """Positive controls: a scan that finds nothing passes both tests above."""
-    assert {"REBUILD_FTS_REMOVAL", "DEBUG_IDS_REMOVAL"} <= set(_ledger())
-    assert ("src/siftd/api/merge.py", compat.REBUILD_FTS_REMOVAL) in _promises()
+def test_the_scanners_see_what_they_check(tmp_path):
+    """Positive controls: a scan that finds nothing passes both tests above.
+
+    The promise scan runs over a planted tree, not ``src/``: the ledger empties as
+    removals ship, and a control that needs a live promise would go with them.
+    """
+    assert {"V1_INTERFACE_REMOVAL", "LEGACY_AGENT_EDGE_REMOVAL"} <= set(_ledger())
+    planted = tmp_path / "siftd" / "api"
+    planted.mkdir(parents=True)
+    (planted / "knob.py").write_text('"""Deprecated: will be\n    removed in 9.9.9."""\n')
+    assert _promises(tmp_path / "siftd") == [("siftd/api/knob.py", "9.9.9")]
 
     wrapped = " ".join("Deprecated: will be\n            removed in 0.13.0.".split())
     assert [m[1] for m in _PROMISE.finditer(wrapped)] == ["0.13.0"]

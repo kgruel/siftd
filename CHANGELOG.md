@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   became Antigravity; use `antigravity_cli`. `siftd adapters` and `siftd ingest`
   say so when it has sources.
 
+### Removed
+
+- **`rebuild_fts=`, `siftd db merge --no-fts` and `serve.fts_rebuild`,** no-ops
+  since 0.12.2 (#74). `siftd db receive --no-fts` stays accepted for sync clients.
+
 ### Fixed
 
 - **Models reached through Copilot, pi or another multi-provider tool are

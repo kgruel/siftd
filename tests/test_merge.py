@@ -291,9 +291,8 @@ def _fts_matches(db_path, term):
         conn.close()
 
 
-@pytest.mark.parametrize("rebuild_fts", [False, True])
-def test_fts_rebuild(tmp_path, rebuild_fts):
-    """Search finds content from both DBs after merge, at either flag value."""
+def test_fts_rebuild(tmp_path):
+    """Search finds content from both DBs after merge."""
     from siftd.storage.fts import rebuild_fts_index
 
     target = _make_db(
@@ -309,39 +308,20 @@ def test_fts_rebuild(tmp_path, rebuild_fts):
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
 
-    with pytest.warns(DeprecationWarning, match="removed in 0.13.0"):
-        merge_database(target, source, rebuild_fts=rebuild_fts)
+    merge_database(target, source)
 
     assert _fts_matches(target, "Python") >= 1
     assert _fts_matches(target, "Rust") >= 1
 
 
-def test_rebuild_fts_warns_only_when_passed(tmp_path):
-    """The deprecated knob (#74) warns its caller; leaving it out stays silent."""
-    import warnings
+def test_merge_does_not_repair_pre_existing_drift(tmp_path):
+    """The trade #49 makes, stated: a merge indexes what it wrote and nothing else.
 
-    target = _make_db(tmp_path / "target.db", conversations=[{"external_id": "a"}])
-    source = _make_db(tmp_path / "source.db", conversations=[{"external_id": "b"}])
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        merge_database(target, source)
-        receive_database(source, target)
-
-    with pytest.warns(DeprecationWarning, match=r"receive_database\(rebuild_fts"):
-        receive_database(source, target, rebuild_fts=False)
-
-
-def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
-    """The trade #49 makes, stated: `rebuild_fts=True` is a no-op.
-
-    It used to run a full corpus rebuild post-commit, which incidentally healed
-    index drift the merge did not cause. That side effect is gone — the merge
-    indexes what it wrote and nothing else. Repair has two deliberate owners,
-    `siftd ingest --rebuild-fts` and `siftd doctor fix`, and O(corpus) on every
-    push is exactly the cost that made the push paths skip indexing at all.
-
-    This test exists so removing the knob outright (in 0.13.0) cannot look like
-    a behavior change: it already is one, here.
+    The `rebuild_fts=True` knob (removed in 0.13.0, #74) used to run a full
+    corpus rebuild post-commit, which incidentally healed index drift the merge
+    did not cause. Repair has two deliberate owners, `siftd ingest --rebuild-fts`
+    and `siftd doctor fix`, and O(corpus) on every push is exactly the cost that
+    made the push paths skip indexing at all.
     """
     target = _make_db(
         tmp_path / "target.db",
@@ -353,8 +333,7 @@ def test_rebuild_fts_true_no_longer_repairs_pre_existing_drift(tmp_path):
         tmp_path / "source.db",
         conversations=[{"external_id": "conv-B", "prompt_text": "Rust lifetimes"}],
     )
-    with pytest.warns(DeprecationWarning):
-        merge_database(target, source, rebuild_fts=True)
+    merge_database(target, source)
 
     assert _fts_matches(target, "Rust") >= 1, "what the merge wrote is indexed"
     assert _fts_matches(target, "Python") == 0, "what it did not write is left alone"

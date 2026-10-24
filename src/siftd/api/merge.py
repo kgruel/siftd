@@ -13,7 +13,6 @@ import sqlite3
 from collections.abc import Callable
 from pathlib import Path
 
-from siftd.api.compat import warn_rebuild_fts_deprecated
 from siftd.storage.fts import rebuild_fts_index
 from siftd.storage.replacement import (
     ConversationCarryover,
@@ -30,7 +29,6 @@ def merge_database(
     target_db: Path,
     source_path: Path,
     *,
-    rebuild_fts: bool | None = None,
     dry_run: bool = False,
     replace: bool = True,
     before_commit: Callable[[sqlite3.Connection, dict], None] | None = None,
@@ -42,9 +40,6 @@ def merge_database(
     Args:
         target_db: Path to the main siftd database.
         source_path: Path to the source database to merge in.
-        rebuild_fts: Deprecated, no effect; passing it warns, and it is removed
-            in 0.13.0 (#74). Merged content is indexed as part of the merge
-            (#49), so this no longer decides whether it is searchable.
         dry_run: If True, compute counts but roll back all changes.
         replace: If True (default), replace stale conversations with newer
             versions from the source. If False, keep existing versions.
@@ -69,7 +64,6 @@ def merge_database(
         FileNotFoundError: If either database does not exist.
         PreflightError: If preflight=True and source fails integrity checks.
     """
-    warn_rebuild_fts_deprecated("merge_database", rebuild_fts)
     if not target_db.exists():
         raise FileNotFoundError(f"Target database not found: {target_db}")
     if not source_path.exists():
@@ -150,7 +144,7 @@ def merge_database(
         stats = _merge_attached(conn, replace=replace, user_id=user_id)
 
         # Index what this merge wrote, in the merge's own transaction —
-        # unconditional, never gated on rebuild_fts (#49). In-transaction
+        # unconditional (#49). In-transaction
         # because `_replace_stale_conversations` already deleted the replaced
         # rows' index entries below; splitting the delete from the insert is
         # what would leave a window where search sees neither version.
