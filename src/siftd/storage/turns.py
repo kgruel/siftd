@@ -40,7 +40,15 @@ from siftd.storage.sql_helpers import event_order
 #: the rule has one literal (tests/architecture/test_turn_fold.py holds it). Its
 #: columns are unqualified: it is interpolated only where ``events`` is the one
 #: table in scope that has them.
-PREAMBLE_RESPONSE_SQL = "kind = 'response' AND parent_id IS NULL"
+#:
+#: The unary ``+`` keeps ``idx_events_parent`` out of the plan. Every prompt has a
+#: NULL ``parent_id`` too, so a lookup on that index walks every parentless event
+#: in the database before it filters by conversation: the listing's per-row
+#: ``has_preamble`` check cost O(corpus) per row (~20 ms a row on a 20k-session
+#: server). ``sqlite_stat1`` doesn't save it, because it averages rows per distinct
+#: value and the NULLs are one value. Without the index the conversation-scoped
+#: callers use ``idx_events_conversation_kind`` (tests/test_listing_plan.py).
+PREAMBLE_RESPONSE_SQL = "kind = 'response' AND +parent_id IS NULL"
 
 
 @dataclass(frozen=True)

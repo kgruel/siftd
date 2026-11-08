@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Listing conversations no longer costs a scan of the whole archive per
+  row.** Each row's preamble check (a response with no parent prompt) was
+  searched through the `parent_id` index, which holds every prompt under
+  NULL, so `siftd query -n 1000` against a 20k-session server took ~21 s
+  (~20 ms a row). Planner statistics chose that plan: they average rows per
+  distinct `parent_id`, and NULL is one value. The check now reads one
+  conversation's events (`idx_events_conversation_kind`), ~0.03 ms a row on
+  an 800k-event copy.
 - **A slow answer from an explicit `serve.url` is no longer taken for a
   missing server.** Once `/health` answers, a delegated request may take
   `serve.timeout` seconds (new, default 60) instead of 1, so a page of more
