@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd doctor` no longer reports a deadlock now and then.** Its checks
+  run on a thread pool, and `embed-config` imported
+  `siftd.embeddings.availability` directly while its neighbours imported the
+  package, which imports that module: opposite lock orders. About 1% of runs
+  under load (seen in CI on 3.12 and 3.14) failed three embedding checks with
+  `deadlock detected by _ModuleLock(...)` and exited 1. Every check now enters
+  through the package.
+
 - **Listing conversations no longer costs a scan of the whole archive per
   row.** Each row's preamble check (a response with no parent prompt) was
   searched through the `parent_id` index, which holds every prompt under

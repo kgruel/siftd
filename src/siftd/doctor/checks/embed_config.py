@@ -26,11 +26,16 @@ class EmbedConfigCheck:
     cost: CheckCost = "fast"
 
     def run(self, ctx: CheckContext) -> list[Finding]:
-        from siftd.embeddings.availability import embedding_status
+        # Through the package, as the other embedding checks do: checks run on a
+        # thread pool, and importing the submodule directly takes the package's
+        # and availability's import locks in the opposite order from them, which
+        # races into a _ModuleLock deadlock (tests/architecture/test_doctor_imports.py).
+        # Called through the module so tests patch availability.embedding_status.
+        from siftd.embeddings import availability
 
         findings: list[Finding] = []
 
-        status = embedding_status()
+        status = availability.embedding_status()
         configured = self._configured_backend_name()
 
         if not status.usable:
