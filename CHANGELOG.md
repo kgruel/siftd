@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`siftd show` reports the same tokens as `siftd query`.** Since 0.9 every
+  aggregate's input tokens are the true total, cache included, but the
+  conversation detail still summed each response's raw `input_tokens`, which for
+  Anthropic leaves the cache out. A cached Claude session's detail showed a
+  fraction of its listing row: 161 of 458 conversations over two weeks on a real
+  server, by up to 180x. The listing's live fallbacks (a conversation the
+  rollup hasn't reached yet, a DB with no derived tier) summed raw input too, so
+  a row's tokens jumped at the next rebuild. All of them now use the rollup's
+  definition (`true_input_sql` over `response_usage_sql`, one place for every
+  reader).
+
 - **`siftd doctor` no longer reports a deadlock now and then.** Its checks
   run on a thread pool, and `embed-config` imported
   `siftd.embeddings.availability` directly while its neighbours imported the

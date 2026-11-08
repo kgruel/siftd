@@ -19,6 +19,8 @@ from siftd.storage.sql_helpers import (
     event_order,
     has_conversation_owners_table,
     owner_predicate,
+    response_usage_sql,
+    true_input_sql,
 )
 from siftd.storage.turns import PREAMBLE_RESPONSE_SQL, TurnSpan, fold_turns, load_turns
 
@@ -406,13 +408,13 @@ def fetch_conversation_token_totals(
 ) -> tuple[int, int]:
     """Get total input and output tokens for a conversation.
 
-    Returns (input_tokens, output_tokens).
+    Returns (input_tokens, output_tokens). Input is the true total, cache included
+    (:func:`~siftd.storage.sql_helpers.true_input_sql`), as on every aggregate.
     """
     row = conn.execute(
-        "SELECT COALESCE(SUM(er.input_tokens), 0) AS input_tok, "
-        "COALESCE(SUM(er.output_tokens), 0) AS output_tok "
-        "FROM events e JOIN event_response er ON er.event_id = e.id "
-        "WHERE e.conversation_id = ? AND e.kind = 'response'",
+        f"SELECT COALESCE(SUM({true_input_sql('r')}), 0) AS input_tok, "
+        "COALESCE(SUM(r.output_tokens), 0) AS output_tok "
+        f"FROM ({response_usage_sql('e.conversation_id = ?')}) r",
         (conversation_id,),
     ).fetchone()
     return row["input_tok"], row["output_tok"]
@@ -472,11 +474,15 @@ def fetch_responses_for_conversation(
     conn: sqlite3.Connection,
     conversation_id: str,
 ) -> list[sqlite3.Row]:
-    """Fetch all responses for a conversation, in recorded order."""
+    """Fetch all responses for a conversation, in recorded order.
+
+    ``input_tokens`` is the true total, cache included
+    (:func:`~siftd.storage.sql_helpers.true_input_sql`), as on every aggregate.
+    """
     return conn.execute(
-        "SELECT e.id, e.parent_id AS prompt_id, e.timestamp, er.input_tokens, er.output_tokens "
-        "FROM events e JOIN event_response er ON er.event_id = e.id "
-        f"WHERE e.conversation_id = ? AND e.kind = 'response' ORDER BY {event_order('e')}",
+        f"SELECT r.id, r.parent_id AS prompt_id, r.timestamp, {true_input_sql('r')} AS input_tokens,"
+        " r.output_tokens"
+        f" FROM ({response_usage_sql('e.conversation_id = ?')}) r ORDER BY {event_order('r')}",
         (conversation_id,),
     ).fetchall()
 

@@ -160,6 +160,54 @@ def uncached_input_sql(response_alias: str = "r") -> str:
     )
 
 
+def true_input_sql(response_alias: str = "r") -> str:
+    """SQL fragment: per-response TRUE TOTAL input tokens (uncached + cache read + cache creation).
+
+    The one definition of "input tokens" every reported number uses: the usage rollup
+    (``usage_by_conv_model.input_tokens``, hence the listing's ``tokens``) and the
+    conversation detail's per-turn and per-conversation sums. Provider conventions
+    are normalized by :func:`uncached_input_sql`. The caller's flatten MUST expose
+    ``{r}.input_tokens``, ``{r}.cache_read``, ``{r}.cache_creation`` and ``{r}.source``;
+    :func:`response_usage_sql` is one.
+    """
+    r = response_alias
+    return f"(({uncached_input_sql(r)}) + {r}.cache_read + {r}.cache_creation)"
+
+
+def response_usage_sql(where: str) -> str:
+    """A flatten of response events with the columns :func:`true_input_sql` reads.
+
+    Use as ``FROM ({response_usage_sql("e.conversation_id = ?")}) r``. The cache
+    components are correlated lookups on ``idx_attributes_key``, so a flatten scoped
+    to one conversation reads only its responses' attributes (the whole-corpus
+    rollup keeps its grouped joins). Exposes ``id``, ``conversation_id``,
+    ``parent_id``, ``timestamp``, ``sequence``, ``input_tokens``, ``output_tokens``,
+    ``source``, ``cache_read`` and ``cache_creation``.
+
+    ``where`` sees the response as ``e`` (and ``er``). The joined tables use
+    ``usage_``-prefixed aliases so a correlated caller's ``c`` (``e.conversation_id
+    = c.id``) still binds to the outer conversation instead of this flatten's join.
+    """
+
+    def cache(key: str) -> str:
+        return (
+            "COALESCE((SELECT MAX(CAST(usage_a.value AS INTEGER)) FROM attributes usage_a"
+            f" WHERE usage_a.key = '{key}' AND usage_a.target_kind = 'response'"
+            " AND usage_a.target_id = e.id), 0)"
+        )
+
+    return (
+        "SELECT e.id, e.conversation_id, e.parent_id, e.timestamp, e.sequence,"
+        " er.input_tokens, er.output_tokens, usage_h.source AS source,"
+        f" {cache('cache_read_input_tokens')} AS cache_read,"
+        f" {cache('cache_creation_input_tokens')} AS cache_creation"
+        " FROM events e JOIN event_response er ON er.event_id = e.id"
+        " LEFT JOIN conversations usage_c ON usage_c.id = e.conversation_id"
+        " LEFT JOIN harnesses usage_h ON usage_h.id = usage_c.harness_id"
+        f" WHERE e.kind = 'response' AND {where}"
+    )
+
+
 def price_is_complete_sql(pricing_alias: str = "pr") -> str:
     """SQL predicate: ``pricing_alias`` is a row that can price a response.
 
