@@ -2,9 +2,9 @@
 #
 # siftd's functional CI (lint, test, PyPI publish, Homebrew tap) lives on
 # GitHub Actions (.github/workflows/). This pipeline exists only on the
-# gruel.network GitLab mirror (git.gruel.network/gruel/siftd) and does one
-# thing: build the production `siftd serve` image and push it to the homelab
-# registry so the `dev` stack can pull it.
+# gruel.network GitLab mirror (git.gruel.network/gruel/siftd): build the
+# production `siftd serve` image, push it to the homelab registry, and have
+# the `dev` stack roll it (deploy:dev, below).
 #
 # Mirrors the garden-house:build pattern in the gruel.network repo: docker:27
 # + dind, login to the project registry, build the root Dockerfile, push
@@ -18,6 +18,7 @@
 
 stages:
   - build
+  - deploy
 
 image:build:
   stage: build
@@ -43,7 +44,7 @@ image:build:
         .
       docker push "${CI_REGISTRY_IMAGE}:latest"
       docker push "${CI_REGISTRY_IMAGE}:${CI_COMMIT_SHORT_SHA}"
-  rules:
+  rules: &image-rules
     # Rebuild when anything that lands in the image changes.
     - if: $CI_COMMIT_BRANCH == "main"
       changes:
@@ -56,3 +57,20 @@ image:build:
         - .gitlab-ci.yml
     # Manual / scheduled trigger from the GitLab UI.
     - if: $CI_PIPELINE_SOURCE == "web"
+
+# Roll the image just pushed onto the dev stack: gruel.network's
+# dev-service:deploy pulls and recreates only the siftd service. `depend`
+# makes this pipeline's status the deploy's, so a green main pipeline means
+# the new image is running.
+deploy:dev:
+  stage: deploy
+  needs:
+    - image:build
+  trigger:
+    project: gruel/gruel.network
+    branch: main
+    strategy: depend
+  variables:
+    DEPLOY_DEV_SERVICE: siftd
+    DEPLOY_SOURCE_SHA: $CI_COMMIT_SHA
+  rules: *image-rules
