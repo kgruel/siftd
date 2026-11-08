@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 208 | 3673 |
+| `tests/` | 209 | 3675 |
 | `tests/adapters/` | 21 | 473 |
 | `tests/architecture/` | 18 | 101 |
 | `tests/cli/` | 31 | 691 |
@@ -215,6 +215,7 @@ docstring so its row is meaningful.
 | [test_ingestion.py](test_ingestion.py) | 53 | Tests for ingestion orchestration utility functions. |
 | [test_integration.py](test_integration.py) | 14 | End-to-end integration tests. |
 | [test_listing.py](test_listing.py) | 26 | Tests for siftd.output.listing — the aligned key:value report atom. |
+| [test_listing_plan.py](test_listing_plan.py) | 2 | The listing's per-row preamble check stays a per-conversation lookup. |
 | [test_live.py](test_live.py) | 23 | Tests for the live-render policy (output/live.py). |
 | [test_live_tagging.py](test_live_tagging.py) | 29 | Integration tests for live session tagging flow. |
 | [test_maker_pricing.py](test_maker_pricing.py) | 14 | A response is priced at its serving provider's rate, else at its model maker's. |
