@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **A slow answer from an explicit `serve.url` is no longer taken for a
+  missing server.** Once `/health` answers, a delegated request may take
+  `serve.timeout` seconds (new, default 60) instead of 1, so a page of more
+  than about fifty conversations from a remote server no longer answers from
+  the local database instead. An auto-discovered loopback sidecar keeps the
+  1-second bound.
+- **Falling back from an explicit `serve.url` says so.** One line on stderr
+  names the server, why it didn't answer, and that the local database is
+  answering. The only trace was a `fresh-corpus` caveat, easy to read as a
+  small archive.
+
 ## [0.13.0] - 2026-10-23
 
 ### Added

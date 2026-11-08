@@ -58,6 +58,7 @@ All keys can be managed via `siftd config set <key> <value>`.
 |-----|------|---------|-------------|
 | `delegate` | bool | `true` | CLI delegates read ops to running serve instance |
 | `url` | string | — | Explicit serve URL for delegation (skips auto-discovery) |
+| `timeout` | int | `60` | Seconds a delegated request to an explicit serve.url may take, once /health has answered |
 | `db` | string | — | Database path for serve (overrides db.path) |
 | `host` | string | `127.0.0.1` | Bind address |
 | `port` | int | `8484` | Listen port |

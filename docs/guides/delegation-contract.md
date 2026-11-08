@@ -62,6 +62,8 @@ emit_output(fmt.render_detail(result.turns, op.fidelity, ...))
 
 `try_serve` returns `None` when delegation isn't configured, the server isn't reachable, or the HTTP response is malformed at the transport layer. `from_wire` returns `None` when the response body's *shape* doesn't match what the render method expects (older/newer server, error body, unexpected structure). Both signals route to the same local-execute fallback, so the CLI doesn't need to distinguish them.
 
+The probe and the request are bounded differently. `/health` answers *is the server there* (0.02 s for an auto-discovered loopback sidecar, 0.5 s for an explicit `serve.url`). Once it has answered, the request's bound is about the operation: an auto-discovered sidecar keeps 1 s, so the hot path never stalls on it; an explicit `serve.url` gets `serve.timeout` seconds (default 60), because a page of results from a remote can take longer than a second and treating "slow" as "gone" would answer from a different database. When an explicit `serve.url` does fall back, one line on stderr says so (`siftd: <url> didn't answer (<why>); answering from the local database`) — the local answer is still correct for the local database; the line says which database it is. An auto-discovered sidecar falls back silently, as before.
+
 ## The contract
 
 When adding a new delegated route, or extending an existing route's accepted params:

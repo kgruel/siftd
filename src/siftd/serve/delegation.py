@@ -144,12 +144,51 @@ def _db_identities_match(health: dict[str, Any], local_db: Path) -> bool:
     return served_db_path == str(local_db.resolve())
 
 
+AUTO_REQUEST_TIMEOUT_S = 1.0
+EXPLICIT_REQUEST_TIMEOUT_S = 60
+
+
+def request_timeout(explicit: bool) -> float:
+    """How long a delegated request may take once /health has answered.
+
+    The probe answers *is the server there*; once it has, the request's timeout
+    is about the operation, not liveness. An auto-discovered loopback sidecar
+    keeps the short bound (the hot path must not stall on it). An explicit
+    ``serve.url`` gets ``serve.timeout`` seconds: a page of results from a
+    remote can take longer than a second, and treating "slow" as "gone" would
+    answer from a different database.
+    """
+    if not explicit:
+        return AUTO_REQUEST_TIMEOUT_S
+    try:
+        from siftd.config import get_config
+
+        configured = get_config("serve.timeout")
+        if configured:
+            return float(int(configured))
+    except (ImportError, ValueError, TypeError):
+        pass
+    return float(EXPLICIT_REQUEST_TIMEOUT_S)
+
+
+def note_local_fallback(base_url: str, reason: str) -> None:
+    """Say on stderr that an explicit remote didn't answer and the local DB will.
+
+    A location claim, not a verdict: the answer that follows is still correct
+    for the local database — it just isn't the remote's. Without this line the
+    only trace is a corpus-size caveat, easy to read as "the archive is small".
+    """
+    import sys
+
+    print(f"siftd: {base_url} didn't answer ({reason}); answering from the local database", file=sys.stderr)
+
+
 def try_delegate(
     endpoint: str,
     params: dict[str, Any] | None = None,
     *,
     db: Path,
-    timeout_s: float = 1.0,
+    timeout_s: float | None = None,
 ) -> dict[str, Any] | None:
     """Attempt to delegate a GET request to siftd-serve.
 
@@ -168,7 +207,9 @@ def try_delegate(
         health = probe_health(base_url=base_url, timeout_s=probe_timeout)
     except ServeRequest4xx:
         raise  # 4xx from /health is a real error (e.g. 401 auth failure)
-    except (ServeUnavailable, Exception):
+    except (ServeUnavailable, Exception) as e:
+        if explicit:
+            note_local_fallback(base_url, f"/health: {e}")
         return None
 
     # DB identity check: only applied for auto-discovered (loopback) delegation,
@@ -182,11 +223,14 @@ def try_delegate(
 
     from siftd.serve.client import _get_json
 
+    timeout = request_timeout(explicit) if timeout_s is None else timeout_s
     try:
-        return _get_json(base_url, endpoint, params=params, timeout_s=timeout_s)
+        return _get_json(base_url, endpoint, params=params, timeout_s=timeout)
     except ServeRequest4xx:
         raise  # propagate — caller must surface this, not fall back locally
-    except Exception:
+    except Exception as e:
+        if explicit:
+            note_local_fallback(base_url, f"{endpoint}: {e}")
         return None
 
 
@@ -195,7 +239,7 @@ def try_delegate_post(
     body: dict[str, Any],
     *,
     db: Path,
-    timeout_s: float = 1.0,
+    timeout_s: float | None = None,
 ) -> dict[str, Any] | None:
     """Attempt to delegate a POST request to siftd-serve.
 
@@ -213,7 +257,9 @@ def try_delegate_post(
         health = probe_health(base_url=base_url, timeout_s=probe_timeout)
     except ServeRequest4xx:
         raise  # 4xx from /health is a real error (e.g. 401 auth failure)
-    except (ServeUnavailable, Exception):
+    except (ServeUnavailable, Exception) as e:
+        if explicit:
+            note_local_fallback(base_url, f"/health: {e}")
         return None
 
     # See try_delegate's rationale for the explicit-bypass.
@@ -222,11 +268,14 @@ def try_delegate_post(
 
     from siftd.serve.client import _post_json
 
+    timeout = request_timeout(explicit) if timeout_s is None else timeout_s
     try:
-        return _post_json(base_url, endpoint, body=body, timeout_s=timeout_s)
+        return _post_json(base_url, endpoint, body=body, timeout_s=timeout)
     except ServeRequest4xx:
         raise  # propagate — caller must surface this, not fall back locally
-    except Exception:
+    except Exception as e:
+        if explicit:
+            note_local_fallback(base_url, f"{endpoint}: {e}")
         return None
 
 

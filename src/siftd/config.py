@@ -154,6 +154,8 @@ _CONFIG_SCHEMA: list[_SchemaEntry] = [
                  "CLI delegates read ops to running serve instance", "true"),
     _SchemaEntry("serve.url", "string", _is_str,
                  "Explicit serve URL for delegation (skips auto-discovery)", ""),
+    _SchemaEntry("serve.timeout", "int", _is_int_like,
+                 "Seconds a delegated request to an explicit serve.url may take, once /health has answered", "60"),
     _SchemaEntry("serve.db", "string", _is_str,
                  "Database path for serve (overrides db.path)", ""),
     _SchemaEntry("serve.host", "string", _is_str,

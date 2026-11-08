@@ -264,3 +264,83 @@ def test_resolve_serve_url_invalid_port_falls_back(monkeypatch, tmp_path):
     monkeypatch.setattr("siftd.config.get_config", fake_get)
     monkeypatch.setattr("siftd.paths.state_dir", lambda: tmp_path)
     assert delegation.resolve_serve_url() == ("http://127.0.0.1:8484", False)
+
+
+class TestExplicitRemoteTimeoutAndFallbackNotice:
+    """An explicit serve.url: a slow answer isn't a missing server, and a fallback says so."""
+
+    def _setup(self, monkeypatch, tmp_path, *, explicit, get_json):
+        db = tmp_path / "siftd.db"
+        db.touch()
+        db_id = hashlib.sha256(str(db.resolve()).encode("utf-8")).hexdigest()
+        monkeypatch.setattr("siftd.serve.delegation.can_delegate", lambda **k: True)
+        monkeypatch.setattr("siftd.serve.delegation.resolve_serve_url",
+                            lambda: ("https://siftd.example", explicit))
+        monkeypatch.setattr("siftd.serve.client.probe_health", lambda **k: {"db_id": db_id})
+        monkeypatch.setattr("siftd.serve.client._get_json", get_json)
+        monkeypatch.setattr("siftd.serve.client._post_json", get_json)
+        return db
+
+    def test_explicit_request_gets_the_operation_timeout(self, monkeypatch, tmp_path):
+        seen = {}
+        db = self._setup(monkeypatch, tmp_path, explicit=True,
+                         get_json=lambda *a, **k: seen.update(k) or {"ok": True})
+        monkeypatch.setattr("siftd.config.get_config", lambda key: None)
+        assert delegation.try_delegate("/api/v1/conversations", db=db) == {"ok": True}
+        assert seen["timeout_s"] == delegation.EXPLICIT_REQUEST_TIMEOUT_S
+
+    def test_serve_timeout_config_sets_it(self, monkeypatch, tmp_path):
+        seen = {}
+        db = self._setup(monkeypatch, tmp_path, explicit=True,
+                         get_json=lambda *a, **k: seen.update(k) or {"ok": True})
+        monkeypatch.setattr("siftd.config.get_config", lambda key: {"serve.timeout": "7"}.get(key))
+        delegation.try_delegate_post("/api/v1/tag", {}, db=db)
+        assert seen["timeout_s"] == 7.0
+
+    def test_auto_discovered_keeps_the_short_bound(self, monkeypatch, tmp_path):
+        seen = {}
+        db = self._setup(monkeypatch, tmp_path, explicit=False,
+                         get_json=lambda *a, **k: seen.update(k) or {"ok": True})
+        delegation.try_delegate("/api/v1/conversations", db=db)
+        assert seen["timeout_s"] == delegation.AUTO_REQUEST_TIMEOUT_S
+
+    def test_an_explicit_caller_timeout_still_wins(self, monkeypatch, tmp_path):
+        seen = {}
+        db = self._setup(monkeypatch, tmp_path, explicit=True,
+                         get_json=lambda *a, **k: seen.update(k) or {"ok": True})
+        delegation.try_delegate("/api/v1/conversations", db=db, timeout_s=3.0)
+        assert seen["timeout_s"] == 3.0
+
+    def test_explicit_fallback_says_so_on_stderr(self, monkeypatch, tmp_path, capsys):
+        from siftd.serve.client import ServeUnavailable
+
+        def slow(*a, **k):
+            raise ServeUnavailable("timed out")
+
+        db = self._setup(monkeypatch, tmp_path, explicit=True, get_json=slow)
+        assert delegation.try_delegate("/api/v1/conversations", db=db) is None  # still falls back
+        err = capsys.readouterr().err
+        assert "https://siftd.example didn't answer" in err
+        assert "answering from the local database" in err
+
+    def test_explicit_probe_failure_says_so_too(self, monkeypatch, tmp_path, capsys):
+        from siftd.serve.client import ServeUnavailable
+
+        db = self._setup(monkeypatch, tmp_path, explicit=True, get_json=lambda *a, **k: {"ok": True})
+
+        def down(**k):
+            raise ServeUnavailable("connection refused")
+
+        monkeypatch.setattr("siftd.serve.client.probe_health", down)
+        assert delegation.try_delegate("/api/v1/conversations", db=db) is None
+        assert "/health: connection refused" in capsys.readouterr().err
+
+    def test_auto_discovered_fallback_stays_quiet(self, monkeypatch, tmp_path, capsys):
+        from siftd.serve.client import ServeUnavailable
+
+        def slow(*a, **k):
+            raise ServeUnavailable("timed out")
+
+        db = self._setup(monkeypatch, tmp_path, explicit=False, get_json=slow)
+        assert delegation.try_delegate("/api/v1/conversations", db=db) is None
+        assert capsys.readouterr().err == ""
