@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Declared tool aliases take effect on a database that already holds the
+  harness's calls.** Before an adapter declared `bash -> shell.execute`,
+  ingesting its `bash` calls stored a self-alias (`bash -> bash`), and
+  `tool_aliases` is unique per raw name and harness, so the declaration (0.13.1
+  added Pi's, OpenCode's and Copilot CLI's) was silently dropped: new calls kept
+  landing under `bash` and `--tool shell.execute` missed them. Over two weeks on a
+  real server that was 176 of 358 shell sessions. Ingest now re-points a stale
+  alias and moves that harness's stored calls; a new `tool-aliases` doctor check
+  reports any left, and `siftd doctor fix --tool-aliases` repairs a database that
+  doesn't ingest itself, such as a server.
+
 ## [0.13.1] - 2026-11-08
 
 ### Fixed

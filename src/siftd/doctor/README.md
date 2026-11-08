@@ -91,5 +91,6 @@ that only reads a cached count is `fast`; one that walks the filesystem is
 | `pending-tags` | [checks/pending_tags.py](checks/pending_tags.py) | fast | Queued session tags waiting to be applied |
 | `pricing-provenance` | [checks/pricing_provenance.py](checks/pricing_provenance.py) | fast | Priced models lacking version-controlled reference provenance |
 | `schema-current` | [checks/schema_current.py](checks/schema_current.py) | fast | Database schema migrations are up to date |
+| `tool-aliases` | [checks/tool_aliases.py](checks/tool_aliases.py) | fast | Stored tool aliases that don't follow an adapter's declared canonical name |
 | `workspace-identity` | [checks/workspace_identity.py](checks/workspace_identity.py) | fast | Workspace identity via git remote (dedup detection) |
 <!-- gen:end -->

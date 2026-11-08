@@ -315,7 +315,10 @@ class TestVocabulary:
         assert sq.get_or_create_harness(db, "t") == sq.get_or_create_harness(db, "t")
         assert sq.get_or_create_provider(db, "a") == sq.get_or_create_provider(db, "a")
         assert sq.get_or_create_model(db, "claude-3-opus-20240229") == mid
-        assert sq.get_or_create_tool_by_alias(db, "Read", h) == tid
+        # The declared alias replaced the self-alias "Read" got before it was declared.
+        (file_read,) = db.execute("SELECT id FROM tools WHERE name = 'file.read'").fetchone()
+        assert tid != file_read
+        assert sq.get_or_create_tool_by_alias(db, "Read", h) == file_read
         # Tag cache: create, clear, re-lookup
         tag_id = tags.get_or_create_tag(db, "vocab_test")
         sq.clear_vocabulary_caches()

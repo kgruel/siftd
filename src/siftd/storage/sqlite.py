@@ -2988,6 +2988,16 @@ def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict
     """Register tool alias mappings for a harness. Idempotent.
 
     aliases: dict of raw_name -> canonical_name
+
+    The declaration wins over an alias already stored for ``(raw_name, harness)``.
+    Before an adapter declared one, :func:`get_or_create_tool_by_alias` met the raw
+    name at ingest and stored a self-alias (raw name -> a tool of the same name);
+    ``tool_aliases`` is unique on ``(raw_name, harness_id)``, so inserting the
+    declaration beside it was a silent no-op and the harness's calls stayed under
+    the raw name forever. Re-pointing the alias also moves that harness's stored
+    calls from the old tool to the canonical one (the old ``tools`` row stays: it
+    is shared by name with any harness that hasn't declared the alias). Once the
+    alias is current this does nothing.
     """
     for raw_name, canonical_name in aliases.items():
         # Look up the canonical tool id
@@ -2996,10 +3006,64 @@ def ensure_tool_aliases(conn: sqlite3.Connection, harness_id: str, aliases: dict
         if not row:
             continue  # canonical tool not found, skip
         tool_id = row["id"]
+        stored = conn.execute(
+            "SELECT tool_id FROM tool_aliases WHERE raw_name = ? AND harness_id = ?",
+            (raw_name, harness_id),
+        ).fetchone()
+        if stored is None:
+            conn.execute(
+                "INSERT INTO tool_aliases (id, raw_name, harness_id, tool_id) VALUES (?, ?, ?, ?)",
+                (_ulid(), raw_name, harness_id, tool_id),
+            )
+            continue
+        old_tool_id = stored["tool_id"]
+        if old_tool_id == tool_id:
+            continue
         conn.execute(
-            "INSERT OR IGNORE INTO tool_aliases (id, raw_name, harness_id, tool_id) VALUES (?, ?, ?, ?)",
-            (_ulid(), raw_name, harness_id, tool_id),
+            "UPDATE tool_aliases SET tool_id = ? WHERE raw_name = ? AND harness_id = ?",
+            (tool_id, raw_name, harness_id),
         )
+        conn.execute(
+            "UPDATE event_tool_call SET tool_id = ? WHERE tool_id = ? AND event_id IN ("
+            " SELECT e.id FROM events e JOIN conversations c ON c.id = e.conversation_id"
+            " WHERE e.kind = 'tool_call' AND c.harness_id = ?)",
+            (tool_id, old_tool_id, harness_id),
+        )
+        _tool_alias_cache.pop((raw_name, harness_id), None)
+
+
+def stale_tool_aliases(conn: sqlite3.Connection, declared: dict[str, dict[str, str]]) -> list[dict]:
+    """Aliases a harness declares that the stored ``tool_aliases`` don't follow.
+
+    ``declared`` maps harness name -> its adapter's ``TOOL_ALIASES``. One row per
+    ``(harness, raw name)`` whose stored alias points at another tool than the
+    seeded canonical one, with how many of the harness's stored calls sit under
+    the old tool. A harness the DB has never seen, and a canonical tool the DB
+    doesn't seed, are skipped, as :func:`ensure_tool_aliases` skips them.
+    """
+    out = []
+    for harness_name, aliases in sorted(declared.items()):
+        h = conn.execute("SELECT id FROM harnesses WHERE name = ?", (harness_name,)).fetchone()
+        if not h or not aliases:
+            continue
+        for raw_name, canonical_name in sorted(aliases.items()):
+            row = conn.execute(
+                "SELECT a.tool_id, t.name FROM tool_aliases a JOIN tools t ON t.id = a.tool_id"
+                " WHERE a.raw_name = ? AND a.harness_id = ?",
+                (raw_name, h["id"]),
+            ).fetchone()
+            canonical = conn.execute("SELECT id FROM tools WHERE name = ?", (canonical_name,)).fetchone()
+            if row is None or canonical is None or row["tool_id"] == canonical["id"]:
+                continue
+            (calls,) = conn.execute(
+                "SELECT COUNT(*) FROM event_tool_call tc JOIN events e ON e.id = tc.event_id"
+                " JOIN conversations c ON c.id = e.conversation_id"
+                " WHERE tc.tool_id = ? AND c.harness_id = ?",
+                (row["tool_id"], h["id"]),
+            ).fetchone()
+            out.append({"harness": harness_name, "raw_name": raw_name, "stored": row["name"],
+                        "declared": canonical_name, "calls": calls})
+    return out
 
 
 # =============================================================================
