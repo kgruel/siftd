@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 208 | 3666 |
+| `tests/` | 208 | 3673 |
 | `tests/adapters/` | 21 | 473 |
 | `tests/architecture/` | 17 | 99 |
 | `tests/cli/` | 31 | 691 |
@@ -283,7 +283,7 @@ docstring so its row is meaningful.
 | [test_serve_client_auth.py](test_serve_client_auth.py) | 9 | Client-side auth wiring in serve/client.py. |
 | [test_serve_client_edges.py](test_serve_client_edges.py) | 16 | — |
 | [test_serve_delegation.py](test_serve_delegation.py) | 19 | Tests for serve/delegation.py — generalized CLI-to-serve delegation policy. |
-| [test_serve_delegation_edges.py](test_serve_delegation_edges.py) | 14 | — |
+| [test_serve_delegation_edges.py](test_serve_delegation_edges.py) | 21 | — |
 | [test_serve_delegation_wire.py](test_serve_delegation_wire.py) | 15 | Tests for wire-format expansion + parity between CLI op params and serve routes. |
 | [test_serve_e2e_smoke.py](test_serve_e2e_smoke.py) | 46 | E2E smoke tests for the serve HTTP path. |
 | [test_serve_fmt.py](test_serve_fmt.py) | 8 | Tests for siftd.serialization.serve_fmt — serve-side JSON renderers. |

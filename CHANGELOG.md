@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A slow answer from an explicit `serve.url` is no longer taken for a
+  missing server.** Once `/health` answers, a delegated request may take
+  `serve.timeout` seconds (new, default 60) instead of 1, so a page of more
+  than about fifty conversations from a remote server no longer answers from
+  the local database instead. An auto-discovered loopback sidecar keeps the
+  1-second bound.
+- **Falling back from an explicit `serve.url` says so.** One line on stderr
+  names the server, why it didn't answer, and that the local database is
+  answering. The only trace was a `fresh-corpus` caveat, easy to read as a
+  small archive.
 - **Pi, OpenCode and Copilot CLI tool calls are stored under canonical
   names.** Their adapters declared no aliases, so `bash`, `read`, `edit`,
   `write`, `view` and `ask_user` sat beside every other harness's
