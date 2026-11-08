@@ -115,7 +115,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 208 | 3673 |
 | `tests/adapters/` | 21 | 473 |
-| `tests/architecture/` | 17 | 99 |
+| `tests/architecture/` | 18 | 101 |
 | `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -366,6 +366,7 @@ docstring so its row is meaningful.
 | [architecture/test_contracts.py](architecture/test_contracts.py) | 9 | CLI behavior contract tests. |
 | [architecture/test_csp_fitness.py](architecture/test_csp_fitness.py) | 6 | CSP fitness functions (T1 + T2 of docs/guides/serve-browser-testing.md). |
 | [architecture/test_dedup_cardinality.py](architecture/test_dedup_cardinality.py) | 2 | A `"file"`-strategy adapter yields at most one conversation per source. |
+| [architecture/test_doctor_imports.py](architecture/test_doctor_imports.py) | 2 | Doctor checks reach what siftd.embeddings re-exports through the package. |
 | [architecture/test_event_order.py](architecture/test_event_order.py) | 3 | One definition of event order; every reader that orders events asks it. |
 | [architecture/test_exceptions.py](architecture/test_exceptions.py) | 4 | Every custom exception joins the taxonomy or is explicitly allowlisted. |
 | [architecture/test_hard_rules.py](architecture/test_hard_rules.py) | 34 | Static code analysis tests for architectural invariants. |
