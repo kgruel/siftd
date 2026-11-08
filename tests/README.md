@@ -115,7 +115,7 @@ docstring so its row is meaningful.
 |-----------|------------|----------------|
 | `tests/` | 208 | 3666 |
 | `tests/adapters/` | 21 | 473 |
-| `tests/architecture/` | 16 | 96 |
+| `tests/architecture/` | 17 | 99 |
 | `tests/cli/` | 31 | 691 |
 | `tests/snapshots/` | 1 | 5 |
 
@@ -377,6 +377,7 @@ docstring so its row is meaningful.
 | [architecture/test_shared_mechanics.py](architecture/test_shared_mechanics.py) | 2 | One module in `tests/architecture/` locates the source tree; the rest import it. |
 | [architecture/test_timestamp_converters.py](architecture/test_timestamp_converters.py) | 2 | `dateparse` is the only module that turns a timestamp string into a datetime. |
 | [architecture/test_timestamps.py](architecture/test_timestamps.py) | 2 | Every timestamp an adapter emits carries a UTC designator. |
+| [architecture/test_tool_aliases.py](architecture/test_tool_aliases.py) | 3 | Raw tool names reach canonical `category.action` forms, or are listed as not doing so. |
 | [architecture/test_turn_fold.py](architecture/test_turn_fold.py) | 5 | One fold from events to turns; the places that ask "which events are prompts" are enumerated. |
 
 ### `tests/cli/`

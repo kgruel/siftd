@@ -41,8 +41,13 @@ HARNESS_SOURCE = "multi"
 HARNESS_LOG_FORMAT = "jsonl"
 HARNESS_DISPLAY_NAME = "Pi Coding Agent"
 
-# Raw tool name → canonical tool name
-TOOL_ALIASES: dict[str, str] = {}
+# Raw tool name → canonical tool name. Names as pi writes them in
+# tests/fixtures/adapters/pi_agent; a tool not seen there yet stays raw.
+TOOL_ALIASES: dict[str, str] = {
+    "bash": "shell.execute",
+    "read": "file.read",
+    "edit": "file.edit",
+}
 
 # pi's provider names, spelled as siftd's pricing and harness sources spell
 # them: the codex route serves OpenAI's models and the gemini CLI route serves
