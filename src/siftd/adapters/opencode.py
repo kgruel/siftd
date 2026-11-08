@@ -47,8 +47,13 @@ HARNESS_SOURCE = "multi"
 HARNESS_LOG_FORMAT = "sqlite"
 HARNESS_DISPLAY_NAME = "OpenCode"
 
-# Raw tool name → canonical tool name
-TOOL_ALIASES: dict[str, str] = {}
+# Raw tool name → canonical tool name. Names as OpenCode writes them in
+# tests/fixtures/adapters/opencode; a tool not seen there yet stays raw.
+TOOL_ALIASES: dict[str, str] = {
+    "bash": "shell.execute",
+    "read": "file.read",
+    "write": "file.write",
+}
 
 # Part types that carry no conversation content. Each is Ignored by name; the
 # docstring of OpencodeDecoder says why, and tests/adapters/test_opencode.py keeps
