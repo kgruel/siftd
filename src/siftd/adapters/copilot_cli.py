@@ -43,9 +43,14 @@ HARNESS_SOURCE = "multi"
 HARNESS_LOG_FORMAT = "jsonl"
 HARNESS_DISPLAY_NAME = "Copilot CLI"
 
-# Raw tool name → canonical tool name. Empty: ingest stores raw names, and
-# peek canonicalizes through this table.
-TOOL_ALIASES: dict[str, str] = {}
+# Raw tool name → canonical tool name. Names as Copilot CLI writes them in
+# tests/fixtures/adapters/copilot_cli; a tool not seen there yet (or, like
+# `task` and `report_intent`, with no clear canonical form) stays raw.
+TOOL_ALIASES: dict[str, str] = {
+    "bash": "shell.execute",
+    "view": "file.read",
+    "ask_user": "ui.ask",
+}
 
 # Event types that are not conversation content. Each is Ignored by name; the
 # docstring of CopilotDecoder says why, and tests/adapters/test_copilot_cli.py

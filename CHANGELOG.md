@@ -19,6 +19,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the server, why it didn't answer, and that the local database is
   answering. The only trace was a `fresh-corpus` caveat, easy to read as a
   small archive.
+- **Pi, OpenCode and Copilot CLI tool calls are stored under canonical
+  names.** Their adapters declared no aliases, so `bash`, `read`, `edit`,
+  `write`, `view` and `ask_user` sat beside every other harness's
+  `shell.execute`, `file.read`, `file.edit`, `file.write` and `ui.ask`, and a
+  per-tool count across harnesses split in two.
+- **Claude Code's `BashOutput`, `ToolSearch`, `SendMessage`, `Workflow` and
+  plan-mode tools, and Codex's `wait`, reach their canonical names.** Their
+  aliases pointed at tools `CANONICAL_TOOLS` didn't seed, which
+  `ensure_tool_aliases` skips without a word; those six are now seeded.
+  Conversations already stored keep their raw names until
+  `siftd ingest --reparse`. `tests/architecture/test_tool_aliases.py` keeps
+  every alias seeded and every fixture tool name aliased or listed with why.
 
 ## [0.13.0] - 2026-10-23
 
