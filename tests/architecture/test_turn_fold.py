@@ -98,9 +98,11 @@ def test_every_listed_prompt_selection_still_exists():
     assert not stale, f"drop {stale} from PROMPT_SELECTIONS: it no longer selects kind = 'prompt'"
 
 
-# The preamble predicate, respelled with or without an alias. A respelling in any
-# file is a second definition of "a response with no parent prompt".
-PREAMBLE_PREDICATE = re.compile(r"kind\s*=\s*'response'\s+AND\s+(?:\w+\.)?parent_id\s+IS\s+NULL", re.IGNORECASE)
+# The preamble predicate, respelled with or without an alias or the planner's unary
+# plus. A respelling in any file is a second definition of "a response with no parent prompt".
+PREAMBLE_PREDICATE = re.compile(
+    r"kind\s*=\s*'response'\s+AND\s+\+?\s*(?:\w+\.)?parent_id\s+IS\s+NULL", re.IGNORECASE
+)
 
 
 def test_the_preamble_predicate_has_one_spelling():
