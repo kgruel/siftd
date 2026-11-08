@@ -265,7 +265,7 @@
   
   usage: siftd doctor [-h] [--json] [--strict] [--pending-tags]
                       [--discard-unresolved] [--deep] [--fast] [--blob-refcount]
-                      [--triggers] [--no-hints] [subcommand ...]
+                      [--triggers] [--tool-aliases] [--no-hints] [subcommand ...]
   
   ARGUMENTS
     subcommand  list | run [checks...] | fix | <check-name>
@@ -282,6 +282,8 @@
     --blob-refcount       Re-derive blob ref counts and sweep orphans (use with
                           'fix').
     --triggers            Recreate blob ref-count triggers (use with 'fix').
+    --tool-aliases        Point stale tool aliases at their declared canonical
+                          tool and move the stranded calls (use with 'fix').
     --no-hints            Suppress hint-severity findings.
   
   examples:

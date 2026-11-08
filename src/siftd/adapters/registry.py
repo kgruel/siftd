@@ -49,6 +49,11 @@ def load_builtin_adapters() -> list[PluginInfo]:
     ]
 
 
+def declared_tool_aliases(plugins: list[PluginInfo]) -> dict[str, dict[str, str]]:
+    """Harness name -> its adapter's ``TOOL_ALIASES`` (raw name -> canonical tool)."""
+    return {p.name: dict(getattr(p.module, "TOOL_ALIASES", None) or {}) for p in plugins}
+
+
 def load_dropin_adapters(
     path: Path,
     *,

@@ -182,6 +182,42 @@ def repair_blob_refcounts(conn: sqlite3.Connection, *, commit: bool = False) -> 
     return _repair(conn, commit=commit)
 
 
+def _enabled_adapters() -> list:
+    from siftd.adapters.registry import load_all_adapters
+    from siftd.paths import adapters_dir
+
+    return load_all_adapters(dropin_path=adapters_dir())
+
+
+def find_stale_tool_aliases(conn: sqlite3.Connection, plugins: list | None = None) -> list[dict]:
+    """Declared aliases the DB doesn't follow, with the calls stranded under the old tool."""
+    from siftd.adapters.registry import declared_tool_aliases
+    from siftd.storage.sqlite import stale_tool_aliases
+
+    return stale_tool_aliases(conn, declared_tool_aliases(_enabled_adapters() if plugins is None else plugins))
+
+
+def repair_tool_aliases(conn: sqlite3.Connection, *, commit: bool = False) -> tuple[int, int]:
+    """Point every stale alias at its declared tool and move the stranded calls.
+
+    Returns ``(aliases, calls)`` moved. The same step ingest runs per harness
+    (:func:`siftd.storage.sqlite.ensure_tool_aliases`), for a DB that doesn't
+    ingest itself, such as a server that receives merges.
+    """
+    from siftd.adapters.registry import declared_tool_aliases
+    from siftd.storage.sqlite import ensure_tool_aliases
+
+    plugins = _enabled_adapters()
+    declared = declared_tool_aliases(plugins)
+    stale = find_stale_tool_aliases(conn, plugins)
+    for harness in sorted({s["harness"] for s in stale}):
+        (harness_id,) = conn.execute("SELECT id FROM harnesses WHERE name = ?", (harness,)).fetchone()
+        ensure_tool_aliases(conn, harness_id, declared[harness])
+    if commit:
+        conn.commit()
+    return len(stale), sum(s["calls"] for s in stale)
+
+
 def create_database(db_path: Path | None = None) -> sqlite3.Connection:
     """Create or open a database, running migrations.
 

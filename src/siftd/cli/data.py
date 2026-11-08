@@ -1485,6 +1485,13 @@ def _fix_blob_refcount(conn, db_path):
     return f"{updated} blob(s) repaired, {deleted} orphan(s) removed"
 
 
+def _fix_tool_aliases(conn, db_path):
+    from siftd.api.database import repair_tool_aliases
+
+    aliases, calls = repair_tool_aliases(conn, commit=True)
+    return f"{aliases} alias(es) re-pointed, {calls} call(s) moved"
+
+
 def _fix_blob_triggers(conn, db_path):
     from siftd.api.database import recreate_blob_triggers
 
@@ -1502,6 +1509,7 @@ _FIX_REGISTRY = {
     "siftd doctor fix --pending-tags": ("Applying queued session tags", _fix_pending_tags),
     "siftd doctor fix --blob-refcount": ("Repairing content blob ref counts", _fix_blob_refcount),
     "siftd doctor fix --triggers": ("Recreating blob ref-count triggers", _fix_blob_triggers),
+    "siftd doctor fix --tool-aliases": ("Re-pointing stale tool aliases", _fix_tool_aliases),
 }
 
 
@@ -1722,6 +1730,7 @@ def cmd_doctor(args) -> int:
             ("discard_unresolved", "--discard-unresolved"),
             ("blob_refcount", "--blob-refcount"),
             ("triggers", "--triggers"),
+            ("tool_aliases", "--tool-aliases"),
         ):
             if getattr(args, flag, False):
                 status.info(f"{name} ignored without 'fix' subcommand")
@@ -1746,6 +1755,8 @@ def cmd_doctor(args) -> int:
             return _doctor_fix_flagged(args, "siftd doctor fix --blob-refcount")
         if getattr(args, "triggers", False):
             return _doctor_fix_flagged(args, "siftd doctor fix --triggers")
+        if getattr(args, "tool_aliases", False):
+            return _doctor_fix_flagged(args, "siftd doctor fix --tool-aliases")
         return _doctor_fix(args)
 
     if action == "db":
@@ -1932,5 +1943,6 @@ exit codes:
     p_doctor.add_argument("--fast", action="store_true", help="Run only fast checks (skips slow and deep).")
     p_doctor.add_argument("--blob-refcount", action="store_true", dest="blob_refcount", help="Re-derive blob ref counts and sweep orphans (use with 'fix').")
     p_doctor.add_argument("--triggers", action="store_true", help="Recreate blob ref-count triggers (use with 'fix').")
+    p_doctor.add_argument("--tool-aliases", action="store_true", dest="tool_aliases", help="Point stale tool aliases at their declared canonical tool and move the stranded calls (use with 'fix').")
     p_doctor.add_argument("--no-hints", action="store_true", dest="no_hints", help="Suppress hint-severity findings.")
     p_doctor.set_defaults(func=cmd_doctor)

@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 210 | 3678 |
+| `tests/` | 211 | 3682 |
 | `tests/adapters/` | 21 | 473 |
 | `tests/architecture/` | 18 | 101 |
 | `tests/cli/` | 31 | 691 |
@@ -319,6 +319,7 @@ docstring so its row is meaningful.
 | [test_target_ref.py](test_target_ref.py) | 27 | Tests for TargetRef — the unified parse → resolve → alias tag-target layer. |
 | [test_temporal_weighting.py](test_temporal_weighting.py) | 17 | Tests for temporal weighting in search.py. |
 | [test_theme.py](test_theme.py) | 15 | Tests for siftd.output.theme — the bespoke "warm obsidian" palette + domain styles. |
+| [test_tool_alias_upgrade.py](test_tool_alias_upgrade.py) | 4 | A declared tool alias takes over from the self-alias an earlier ingest created. |
 | [test_tool_presenters.py](test_tool_presenters.py) | 39 | Tests for painted bridge tool-specific presenters and fidelity integration. |
 | [test_transcript_tags.py](test_transcript_tags.py) | 3 | WS3: element tag chips in CLI conversation-detail transcripts. |
 | [test_turn_fold.py](test_turn_fold.py) | 40 | One fold from stored events to turns, and the preamble made visible on every read surface. |

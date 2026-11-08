@@ -217,6 +217,7 @@ from siftd.doctor.checks.orphaned_chunks import OrphanedChunksCheck  # noqa: E40
 from siftd.doctor.checks.pending_tags import PendingTagsCheck  # noqa: E402
 from siftd.doctor.checks.pricing_provenance import PricingProvenanceCheck  # noqa: E402
 from siftd.doctor.checks.schema_current import SchemaCurrentCheck  # noqa: E402
+from siftd.doctor.checks.tool_aliases import ToolAliasesCheck  # noqa: E402
 from siftd.doctor.checks.workspace_identity import WorkspaceIdentityCheck  # noqa: E402
 
 # Registry of built-in checks
@@ -239,6 +240,7 @@ BUILTIN_CHECKS: list[Check] = [
     FtsIntegrityCheck(),
     ConfigValidCheck(),
     WorkspaceIdentityCheck(),
+    ToolAliasesCheck(),
     DbFkIntegrityCheck(),
     DbBlobRefcountDriftCheck(),
     DbBlobOrphansCheck(),
