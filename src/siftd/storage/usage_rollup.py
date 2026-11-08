@@ -23,7 +23,7 @@ price rule.
 
 import sqlite3
 
-from siftd.storage.sql_helpers import cost_expr_sql, price_join_sql, uncached_input_sql
+from siftd.storage.sql_helpers import cost_expr_sql, price_join_sql, true_input_sql
 
 _TABLE = "usage_by_conv_model"
 
@@ -80,9 +80,9 @@ def rebuild_usage_by_conv_model(conn: sqlite3.Connection, *, commit: bool = Fals
     (the per-provider input-token convention key) + per-response cache sums from
     the polymorphic ``attributes`` table (keyed on ``e.id``, the response event id).
 
-    Token normalization happens HERE (the only place that knows the provider
-    convention): ``input_tokens`` is stored as the TRUE TOTAL input —
-    ``uncached + cache_read + cache_creation`` — via :func:`uncached_input_sql`,
+    Token normalization: ``input_tokens`` is stored as the TRUE TOTAL input —
+    ``uncached + cache_read + cache_creation`` — via :func:`true_input_sql`, the
+    same definition the conversation detail reads (over :func:`response_usage_sql`),
     and the two cache components are also stored disjointly so cost can bill each
     at its rate (:func:`cost_expr_sql`). The token total and the cost share the
     same ``uncached`` definition, so they cannot disagree about what's cached.
@@ -123,8 +123,6 @@ def rebuild_usage_by_conv_model(conn: sqlite3.Connection, *, commit: bool = Fals
         else _has_col(_TABLE, "cache_read_tokens")
     )
 
-    uncached = uncached_input_sql("r")
-
     if cache_aware:
         insert_cols = (
             "(conversation_id, model_id, provider_id, input_tokens, output_tokens, "
@@ -133,7 +131,7 @@ def rebuild_usage_by_conv_model(conn: sqlite3.Connection, *, commit: bool = Fals
         )
         # input_tokens stores the TRUE total; cache components stored disjointly.
         metric_cols = (
-            f"COALESCE(SUM(({uncached}) + r.cache_read + r.cache_creation), 0),\n"
+            f"COALESCE(SUM({true_input_sql('r')}), 0),\n"
             "            COALESCE(SUM(r.output_tokens), 0),"
         )
         cache_cols = (

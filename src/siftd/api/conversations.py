@@ -42,6 +42,8 @@ from siftd.storage.sql_helpers import (
     batched_in_query,
     has_conversation_owners_table,
     owner_predicate,
+    response_usage_sql,
+    true_input_sql,
 )
 from siftd.storage.sqlite import open_database
 from siftd.storage.turns import PREAMBLE_RESPONSE_SQL, fold_turns
@@ -504,11 +506,7 @@ def _list_conversations_impl(
                         (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id)
                     ) AS responses,
                     {_HAS_PREAMBLE_SQL} AS has_preamble,
-                    COALESCE(cs.total_tokens,
-                        (SELECT COALESCE(SUM(er2.input_tokens),0) + COALESCE(SUM(er2.output_tokens),0)
-                         FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
-                         WHERE e2.kind = 'response' AND e2.conversation_id = c.id)
-                    ) AS tokens,
+                    COALESCE(cs.total_tokens, {_LIVE_TOKENS_SQL}) AS tokens,
                     COALESCE(cs.model_name,
                         (SELECT m2.name FROM events e2
                          JOIN event_response er2 ON er2.event_id = e2.id
@@ -546,9 +544,7 @@ def _list_conversations_impl(
                     (SELECT COUNT(*) FROM events WHERE kind = 'prompt' AND conversation_id = c.id) AS prompts,
                     (SELECT COUNT(*) FROM events WHERE kind = 'response' AND conversation_id = c.id) AS responses,
                     {_HAS_PREAMBLE_SQL} AS has_preamble,
-                    (SELECT COALESCE(SUM(er2.input_tokens), 0) + COALESCE(SUM(er2.output_tokens), 0)
-                     FROM events e2 JOIN event_response er2 ON er2.event_id = e2.id
-                     WHERE e2.kind = 'response' AND e2.conversation_id = c.id) AS tokens,
+                    {_LIVE_TOKENS_SQL} AS tokens,
                     NULL AS cost
                 FROM conversations c
                 LEFT JOIN workspaces w ON w.id = c.workspace_id
@@ -593,6 +589,15 @@ def _list_conversations_impl(
 # prompt. It is the SQL form of the rule in siftd.storage.turns.fold_turns (the
 # only thing that makes a turn without a prompt), kept beside the listing that
 # adds it to prompt_count.
+# A conversation's tokens from its events, for rows the rollup hasn't reached (no
+# conversation_stats row yet, or no derived tier at all): the true total, cache
+# included, by the rollup's own definition, so a row reads the same before and
+# after the next rebuild.
+_LIVE_TOKENS_SQL = (
+    f"(SELECT COALESCE(SUM({true_input_sql('r')}), 0) + COALESCE(SUM(r.output_tokens), 0)"
+    f" FROM ({response_usage_sql('e.conversation_id = c.id')}) r)"
+)
+
 _HAS_PREAMBLE_SQL = f"EXISTS (SELECT 1 FROM events WHERE {PREAMBLE_RESPONSE_SQL} AND conversation_id = c.id)"
 
 def _fetch_subagent_parents(

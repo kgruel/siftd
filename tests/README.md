@@ -113,7 +113,7 @@ docstring so its row is meaningful.
 
 | Directory | Test files | Test functions |
 |-----------|------------|----------------|
-| `tests/` | 209 | 3675 |
+| `tests/` | 210 | 3678 |
 | `tests/adapters/` | 21 | 473 |
 | `tests/architecture/` | 18 | 101 |
 | `tests/cli/` | 31 | 691 |
@@ -169,6 +169,7 @@ docstring so its row is meaningful.
 | [test_debug_ids.py](test_debug_ids.py) | 10 | Chunk IDs are always on in JSON. |
 | [test_derivative.py](test_derivative.py) | 20 | Tests for derivative conversation detection, tagging, and backfill. |
 | [test_derived_tier_write_paths.py](test_derived_tier_write_paths.py) | 4 | The derived tier (usage_by_conv_model / conversation_stats) is an invariant: |
+| [test_detail_tokens.py](test_detail_tokens.py) | 3 | The conversation detail reports tokens the way the listing (the usage rollup) does. |
 | [test_dispatch.py](test_dispatch.py) | 6 | Tests for siftd.api.dispatch — Operation IR and execution. |
 | [test_doctor.py](test_doctor.py) | 125 | Tests for the doctor module. |
 | [test_doctor_freelist_edges.py](test_doctor_freelist_edges.py) | 1 | — |

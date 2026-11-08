@@ -31,6 +31,7 @@ from siftd.api.conversations import get_conversation, list_conversations
 from siftd.api.export import export_document
 from siftd.domain import ContentBlock, Conversation, Harness, Prompt, Response, ToolCall
 from siftd.storage.sqlite import create_database, ensure_tool_aliases, get_or_create_harness, store_conversation
+from siftd.storage.usage_rollup import rebuild_rollups
 from siftd.storage.turns import (
     TurnSpan,
     conversation_ids_with_turns,
@@ -169,10 +170,17 @@ class TestRoundTrip:
         assert [c for t in detail.turns for c in _external(conn, t.tool_call_ids)] == [
             c.external_id for r in responses for c in r.tool_calls
         ]
+        # Input is the true total, cache included, as the usage rollup (the listing's
+        # aggregate) reports it; output is what the adapter recorded.
+        rebuild_rollups(conn, commit=True)
+        (rolled_input,) = conn.execute(
+            "SELECT COALESCE(SUM(input_tokens), 0) FROM usage_by_conv_model WHERE conversation_id = ?", (cid,)
+        ).fetchone()
         assert (detail.total_input_tokens, detail.total_output_tokens) == (
-            sum(r.usage.input_tokens for r in responses if r.usage),
+            rolled_input,
             sum(r.usage.output_tokens for r in responses if r.usage),
         )
+        assert rolled_input >= sum(r.usage.input_tokens for r in responses if r.usage)
 
     def test_the_preamble_is_the_first_turn_and_the_prompts_follow(self, db, adapter, case, has_lineage, n_prompts):
         parsed, _, detail = self._stored(db, adapter, case)
